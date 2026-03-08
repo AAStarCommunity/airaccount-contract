@@ -1,0 +1,9 @@
+[submodule "lib/light-account"]
+	path = lib/light-account
+	url = https://github.com/alchemyplatform/light-account
+[submodule "lib/simple-team-account"]
+	path = lib/simple-team-account
+	url = https://github.com/stackup-wallet/simple-team-account
+[submodule "lib/kernel"]
+	path = lib/kernel
+	url = https://github.com/zerodevapp/kernel
