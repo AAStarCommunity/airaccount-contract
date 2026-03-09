@@ -19,6 +19,9 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     /// @dev All registered node identifiers
     bytes32[] public registeredNodes;
 
+    /// @dev Cached aggregated public keys: keccak256(sorted nodeIds) → aggregated G1 key
+    mapping(bytes32 => bytes) public cachedAggKeys;
+
     /// @dev Contract owner for admin functions
     address public owner;
 
@@ -45,6 +48,8 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     event PublicKeyRegistered(bytes32 indexed nodeId, bytes publicKey);
     event PublicKeyUpdated(bytes32 indexed nodeId, bytes oldKey, bytes newKey);
     event PublicKeyRevoked(bytes32 indexed nodeId);
+    event AggKeyCached(bytes32 indexed setHash, uint256 nodeCount);
+    event AggKeyCacheInvalidated(bytes32 indexed nodeId);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     // ─── Errors ───────────────────────────────────────────────────────
@@ -144,20 +149,50 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
         return _verifyPairing(negatedKey, signature, messagePoint, nodeIds.length);
     }
 
-    /// @dev Aggregate public keys of registered nodes using G1Add precompile
+    /// @dev Aggregate public keys of registered nodes using G1Add precompile.
+    ///      Checks cache first; falls back to on-chain aggregation if not cached.
     function _aggregateNodeKeys(bytes32[] memory nodeIds) internal view returns (bytes memory result) {
-        // Load first key
+        // Check cache
+        bytes32 setHash = computeSetHash(nodeIds);
+        bytes memory cached = cachedAggKeys[setHash];
+        if (cached.length == G1_POINT_LENGTH) return cached;
+
+        // Cache miss: aggregate from storage
         bytes32 firstNodeId = nodeIds[0];
         if (!isRegistered[firstNodeId]) revert NodeNotRegistered();
         result = registeredKeys[firstNodeId];
 
-        // Add remaining keys
         for (uint256 i = 1; i < nodeIds.length; i++) {
             bytes32 nodeId = nodeIds[i];
             if (!isRegistered[nodeId]) revert NodeNotRegistered();
             bytes memory key = registeredKeys[nodeId];
             result = _g1Add(result, key);
         }
+    }
+
+    /// @notice Pre-compute and cache an aggregated public key for a node set.
+    ///         Call this off-chain before submitting batched UserOps for gas savings.
+    /// @param nodeIds The node identifiers (order matters for hash)
+    function cacheAggregatedKey(bytes32[] calldata nodeIds) external {
+        if (nodeIds.length == 0) revert NoNodesProvided();
+
+        // Aggregate
+        bytes memory result = registeredKeys[nodeIds[0]];
+        if (!isRegistered[nodeIds[0]]) revert NodeNotRegistered();
+
+        for (uint256 i = 1; i < nodeIds.length; i++) {
+            if (!isRegistered[nodeIds[i]]) revert NodeNotRegistered();
+            result = _g1Add(result, registeredKeys[nodeIds[i]]);
+        }
+
+        bytes32 setHash = computeSetHash(nodeIds);
+        cachedAggKeys[setHash] = result;
+        emit AggKeyCached(setHash, nodeIds.length);
+    }
+
+    /// @notice Compute the cache key for a set of nodeIds
+    function computeSetHash(bytes32[] memory nodeIds) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(nodeIds));
     }
 
     /// @dev G1 point addition via EIP-2537 precompile with assembly
@@ -406,6 +441,56 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
             bytes32 nid = registeredNodes[offset + i];
             nodeIds[i] = nid;
             publicKeys[i] = registeredKeys[nid];
+        }
+    }
+
+    /// @notice Public aggregation for external callers (e.g., BLSAggregator)
+    function aggregateKeys(bytes32[] calldata nodeIds) external view returns (bytes memory) {
+        if (nodeIds.length == 0) revert NoNodesProvided();
+
+        // Check cache first
+        bytes32 setHash = computeSetHash(nodeIds);
+        bytes memory cached = cachedAggKeys[setHash];
+        if (cached.length == G1_POINT_LENGTH) return cached;
+
+        bytes memory result = registeredKeys[nodeIds[0]];
+        if (!isRegistered[nodeIds[0]]) revert NodeNotRegistered();
+
+        for (uint256 i = 1; i < nodeIds.length; i++) {
+            if (!isRegistered[nodeIds[i]]) revert NodeNotRegistered();
+            result = _g1Add(result, registeredKeys[nodeIds[i]]);
+        }
+        return result;
+    }
+
+    /// @dev G2 point addition via EIP-2537 precompile (address 0x0e)
+    function g2Add(bytes memory p1, bytes memory p2) external view returns (bytes memory result) {
+        return _g2Add(p1, p2);
+    }
+
+    function _g2Add(bytes memory p1, bytes memory p2) internal view returns (bytes memory result) {
+        result = new bytes(G2_POINT_LENGTH);
+        assembly {
+            let input := mload(0x40)
+            mstore(0x40, add(input, 512))
+
+            // Copy p1 (256 bytes)
+            let src := add(p1, 0x20)
+            let dst := input
+            for { let i := 0 } lt(i, 8) { i := add(i, 1) } {
+                mstore(add(dst, mul(i, 0x20)), mload(add(src, mul(i, 0x20))))
+            }
+
+            // Copy p2 (256 bytes)
+            src := add(p2, 0x20)
+            dst := add(input, 256)
+            for { let i := 0 } lt(i, 8) { i := add(i, 1) } {
+                mstore(add(dst, mul(i, 0x20)), mload(add(src, mul(i, 0x20))))
+            }
+
+            // staticcall G2Add precompile (0x0e)
+            let success := staticcall(gas(), 0x0e, input, 512, add(result, 0x20), 256)
+            if iszero(success) { revert(0, 0) }
         }
     }
 
