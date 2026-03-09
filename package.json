@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@noble/curves": "^1.8.1",
-    "ethers": "^6.13.5"
+    "ethers": "^6.13.5",
+    "viem": "^2.47.0"
   }
 }

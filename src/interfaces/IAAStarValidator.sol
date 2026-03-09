@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.33;
 
 /// @title IAAStarValidator - Generic algorithm router interface
 /// @notice Routes signature validation to algorithm-specific implementations

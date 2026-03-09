@@ -175,10 +175,106 @@
 
 ## Milestone 2: BLS Migration + YetAA Replacement
 
-**Status**: 🔄 In Progress
 **Branch**: `v0.12.5`
+**Tag**: `v0.12.5-m2`
+**Date**: 2026-03-09
+**Solidity**: 0.8.33, optimizer 10,000 runs, Cancun EVM
 
-*(Results will be recorded upon completion)*
+### Features Completed
+
+| # | Feature | Status |
+|---|---------|--------|
+| F09 | `AAStarBLSAlgorithm` — BLS verification + assembly optimization | ✅ |
+| F10 | `AAStarValidator` — algId router + algorithm registry | ✅ |
+| F11 | `AAStarAirAccountBase` — algId routing (inline ECDSA + external BLS) | ✅ |
+| F12 | Triple signature (ECDSA×2 + BLS aggregate) | ✅ |
+| F13 | Node management (ABI-compatible with YetAA NestJS) | ✅ |
+| F14 | Assembly optimization (mstore, calldatacopy) | ✅ |
+| F15 | Sepolia deployment | ✅ |
+| F17 | BLS E2E: Triple-sig UserOp → handleOps on-chain | ✅ |
+
+### Unit Test Results
+
+**Command**: `forge test`
+**Result**: 71 passed, 0 failed, 0 skipped
+
+| Test Suite | Tests | Status |
+|------------|-------|--------|
+| AAStarAirAccountV7Test (M1) | 15 | ✅ |
+| AAStarAirAccountFactoryV7Test (M1) | 7 | ✅ |
+| AAStarValidatorTest (M2) | 13 | ✅ |
+| AAStarBLSAlgorithmTest (M2) | 25 | ✅ |
+| AAStarAirAccountV7_M2Test (M2) | 11 | ✅ |
+
+### Deployed Addresses (Sepolia, Solc 0.8.33)
+
+| Contract | Address |
+|----------|---------|
+| AAStarBLSAlgorithm | `0xc2096E8D04beb3C337bb388F5352710d62De0287` |
+| AAStarValidator (router) | `0x730a162Ce3202b94cC5B74181B75b11eBB3045B1` |
+| AAStarAirAccountFactoryV7 | `0x5Ba18c50E0375Fb84d6D521366069FE9140Afe04` |
+| AA Account (salt=1) | `0xc278a671Fc80Fe8AaC1b0ac6f122bc58C4b1AA07` |
+
+### E2E Test Results (Sepolia On-Chain)
+
+**Script**: `scripts/test-e2e-bls.ts` (viem + @noble/curves)
+**Deployer/Signer**: `0xb5600060e6de5E11D3636731964218E53caadf0E`
+
+#### BLS Node Registration
+
+| Node | Node ID | Registration Tx |
+|------|---------|----------------|
+| Node 1 | `0xb548c8...506a6d` | `0x215d79b3258c3dcbacd8e3238da0685505c3f3b55f76da8b7cf48009465a9c16` |
+| Node 2 | `0x7f7e62...a9537c` | `0x88285b304ae46bcda44cfd99a62ef4850c9eedced391efccf169d0d06a654080` |
+
+#### Account Setup
+
+| Step | Tx Hash |
+|------|---------|
+| Account Create (salt=1) | `0x5642b1f0298bb1b962bc638e584d38108800a99bd5a1a5349c9fd2e517b37f72` |
+| Set Validator | `0xa1e36274532b7715eab5ab055d866b6606d21b50eef47ffd09a8d8ed455efd55` |
+| EP Deposit (0.01 ETH) | `0x96ed12dc8d19c1b674ff6f3586f6c910f077a746809dc12c8a5b74acc131d37b` |
+| Fund Account (0.005 ETH) | `0xb503c143e26de57fe8e120621eb4c01a1dd0fdbf56e4b5b186b1235795e4a215` |
+
+#### Triple Signature Construction
+
+| Field | Value |
+|-------|-------|
+| userOpHash | `0x7ca8923f12d32f47dc94eecae2b45c78ec2d311c16e9a421eed9f6bd3f882613` |
+| BLS signing scheme | Long (G2 signatures, G1 public keys) |
+| BLS dry-run verification | **VALID** ✅ |
+| Signature length | 739 bytes (1 algId + 32 count + 2×32 nodeIds + 256 blsSig + 256 msgPoint + 65 aaSig + 65 mpSig) |
+
+#### handleOps Submission
+
+| Field | Value |
+|-------|-------|
+| Gas Estimate | 456,896 |
+| **Gas Used** | **259,694** |
+| Block | 10,414,886 |
+| **Tx Hash** | **`0xf60f05f044a1b0a6d2922b3e4b2284d828b5a09b9c2452fe102af8f1eb0c10ff`** |
+| **Etherscan** | **https://sepolia.etherscan.io/tx/0xf60f05f044a1b0a6d2922b3e4b2284d828b5a09b9c2452fe102af8f1eb0c10ff** |
+
+### Gas Comparison: AirAccount vs YetAnotherAA
+
+| Metric | YetAnotherAA | AirAccount M2 | Improvement |
+|--------|-------------|---------------|-------------|
+| handleOps total | 523,306 gas | **259,694 gas** | **-50.4%** |
+| BLS verification (estimated) | ~407,730 gas | ~160,000 gas | ~-60% |
+| Assembly optimization | byte-by-byte copy | mstore/calldatacopy | Eliminated ~300k overhead |
+
+### Contract Source Files (M2)
+
+| File | Description |
+|------|-------------|
+| `src/validators/AAStarBLSAlgorithm.sol` | BLS verification + node management (assembly optimized) |
+| `src/validators/AAStarValidator.sol` | Generic algorithm router (algId-based) |
+| `src/core/AAStarAirAccountBase.sol` | Updated: algId routing, triple signature, validator config |
+| `test/AAStarValidator.t.sol` | 13 tests: registration, routing, ownership |
+| `test/AAStarBLSAlgorithm.t.sol` | 25 tests: node mgmt, input validation, gas estimate |
+| `test/AAStarAirAccountV7_M2.t.sol` | 11 tests: ECDSA compat, algId routing, triple sig |
+| `scripts/test-e2e-bls.ts` | BLS E2E (viem + @noble/curves) |
+| `script/DeployFullSystem.s.sol` | Foundry deployment script |
 
 ---
 

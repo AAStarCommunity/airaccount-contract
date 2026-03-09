@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.33;
 
 /// @title IAAStarAlgorithm - Interface for signature algorithm implementations
 /// @notice Each algorithm (BLS, PQ, etc.) implements this interface
