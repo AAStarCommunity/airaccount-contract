@@ -10,3 +10,21 @@
 [submodule "lib/YetAnotherAA-Validator"]
 	path = lib/YetAnotherAA-Validator
 	url = https://github.com/fanhousanbu/YetAnotherAA-Validator
+[submodule "lib/account-abstraction"]
+	path = lib/account-abstraction
+	url = git@github.com:eth-infinitism/account-abstraction.git
+[submodule "lib/particle-bundler-server"]
+	path = lib/particle-bundler-server
+	url = https://github.com/Particle-Network/particle-bundler-server
+[submodule "lib/stackup-bundler"]
+	path = lib/stackup-bundler
+	url = https://github.com/stackup-wallet/stackup-bundler
+[submodule "lib/ultra-relay"]
+	path = lib/ultra-relay
+	url = https://github.com/zerodevapp/ultra-relay
+[submodule "lib/bundler"]
+	path = lib/bundler
+	url = https://github.com/eth-infinitism/bundler
+[submodule "lib/alto"]
+	path = lib/alto
+	url = https://github.com/pimlicolabs/alto
