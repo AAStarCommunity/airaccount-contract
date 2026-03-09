@@ -1,6 +1,6 @@
 # AirAccount 统一账户与工厂体系设计
 
-> 关联文档：[Validator 升级与 PQ 迁移分析](./validator-upgrade-pq-analysis.md) | [Gas 优化方案](./gas-optimization-plan.md)
+> 关联文档：[v0.12.5 里程碑计划](./v0.12.5-milestone-plan.md) | [Validator 升级与 PQ 迁移分析](./validator-upgrade-pq-analysis.md) | [Gas 优化方案](./gas-optimization-plan.md)
 
 ## 总体架构图
 
