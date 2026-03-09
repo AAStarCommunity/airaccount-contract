@@ -149,7 +149,8 @@ async function main() {
 
   // ── Step 2: Create account ───────────────────────────────────────────────
   console.log("[ 2 ] Create account via factory...");
-  const predictedAddr = await factory.getAddress(wallet.address, 0);
+  // Use getFunction() to avoid ethers.js built-in getAddress() shadowing
+  const predictedAddr = await factory.getFunction("getAddress")(wallet.address, 0);
   console.log(`  Predicted address: ${predictedAddr}`);
 
   const existingCode = await provider.getCode(predictedAddr);
