@@ -1,0 +1,18 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+
+solc_version = "0.8.28"
+evm_version = "cancun"
+via_ir = true
+optimizer = true
+optimizer_runs = 1_000_000
+
+remappings = [
+    "@account-abstraction/=lib/account-abstraction/contracts/",
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "forge-std/=lib/forge-std/src/",
+]

@@ -4,7 +4,8 @@
  Remix plugin state folders
 deps/
 states/
-.env.*
+.env.local
+.env.production
 
 # Debug info
 *.dbg.json
@@ -14,3 +15,7 @@ states/
 .env
 .env.local
 node_modules/
+
+# Foundry
+out/
+cache/
