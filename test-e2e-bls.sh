@@ -51,5 +51,5 @@ echo "  Beneficiary : $ADDRESS_ANNI_EOA"
 [ -n "$DRY_RUN" ] && echo "  Mode        : DRY RUN (no submission)" || echo "  Mode        : LIVE"
 echo ""
 
-cd "$TS_DIR"
+cd "$REPO_ROOT"
 npx tsx "$SCRIPT"
