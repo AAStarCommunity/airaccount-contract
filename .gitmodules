@@ -7,3 +7,6 @@
 [submodule "lib/kernel"]
 	path = lib/kernel
 	url = https://github.com/zerodevapp/kernel
+[submodule "lib/YetAnotherAA-Validator"]
+	path = lib/YetAnotherAA-Validator
+	url = https://github.com/fanhousanbu/YetAnotherAA-Validator
