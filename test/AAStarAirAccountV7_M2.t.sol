@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {Test, Vm} from "forge-std/Test.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
+import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
 import {IAAStarAlgorithm} from "../src/interfaces/IAAStarAlgorithm.sol";
@@ -50,12 +51,21 @@ contract AAStarAirAccountV7_M2Test is Test {
         entryPointMock = new MockEntryPointM2();
         entryPointAddr = address(entryPointMock);
 
-        account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr);
+        account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, _emptyConfig());
         router = new AAStarValidator();
         mockAlg = new MockSuccessAlgorithm();
 
         // Fund account
         vm.deal(address(account), 10 ether);
+    }
+
+    function _emptyConfig() internal pure returns (AAStarAirAccountBase.InitConfig memory) {
+        uint8[] memory noAlgs = new uint8[](0);
+        return AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 0,
+            approvedAlgIds: noAlgs
+        });
     }
 
     // ─── Validator Configuration ──────────────────────────────────────

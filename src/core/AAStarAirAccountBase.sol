@@ -18,6 +18,12 @@ import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
  *      - sig[0]=0x01 → triple signature: ECDSA×2 + BLS aggregate
  *      - sig[0]=0x03 → P256 WebAuthn passkey (EIP-7212)
  *      - Other algId  → external call via validator router
+ *
+ *      Guard enforcement:
+ *      - Guard is deployed atomically in constructor (no unprotected window)
+ *      - Guard.account = address(this) (immutable, survives social recovery)
+ *      - Monotonic config: daily limit can only decrease, algorithms can only be added
+ *      - Tier + guard checks enforced in execute/executeBatch before every _call
  */
 abstract contract AAStarAirAccountBase {
     using ECDSA for bytes32;
@@ -56,8 +62,13 @@ abstract contract AAStarAirAccountBase {
     /// @notice Optional BLS aggregator for batch verification
     address public blsAggregator;
 
-    /// @notice Optional global guard for spending limits
+    /// @notice Global guard for spending limits (set at construction, cannot be removed)
     AAStarGlobalGuard public guard;
+
+    // ── algId Pass-Through (validation → execution) ──
+
+    /// @dev Algorithm ID from the last validated signature, used for tier + guard enforcement
+    uint8 internal _lastValidatedAlgId;
 
     // ── P256 Passkey ──
 
@@ -88,7 +99,15 @@ abstract contract AAStarAirAccountBase {
     struct RecoveryProposal {
         address newOwner;
         uint256 proposedAt;
-        uint256 approvalBitmap; // bit 0 = guardian[0], bit 1 = guardian[1], bit 2 = guardian[2]
+        uint256 approvalBitmap;      // bit 0 = guardian[0], bit 1 = guardian[1], bit 2 = guardian[2]
+        uint256 cancellationBitmap;  // same layout, for 2-of-3 cancel threshold
+    }
+
+    /// @notice Account initialization config (used by constructor)
+    struct InitConfig {
+        address[3] guardians;   // Recovery guardians (address(0) = unused slot)
+        uint256 dailyLimit;     // Guard daily spending limit in wei (0 = no guard)
+        uint8[] approvedAlgIds; // Guard approved algorithms (empty = no guard)
     }
 
     // ─── Custom Errors ────────────────────────────────────────────────
@@ -99,7 +118,7 @@ abstract contract AAStarAirAccountBase {
     error ArrayLengthMismatch();
     error CallFailed(bytes returnData);
     error InvalidP256Key();
-    error TierNotConfigured();
+    error InsufficientTier(uint8 required, uint8 provided);
     error GuardianAlreadySet();
     error InvalidGuardian();
     error MaxGuardiansReached();
@@ -107,15 +126,17 @@ abstract contract AAStarAirAccountBase {
     error NoActiveRecovery();
     error RecoveryTimelockNotExpired();
     error AlreadyApproved();
+    error AlreadyCancelVoted();
     error RecoveryNotApproved();
     error RecoveryAlreadyActive();
     error InvalidNewOwner();
+    error Reentrancy();
 
     // ─── Events ───────────────────────────────────────────────────────
 
     event ValidatorSet(address indexed validator);
     event AggregatorSet(address indexed aggregator);
-    event GuardSet(address indexed guard);
+    event GuardInitialized(address indexed guard, uint256 dailyLimit);
     event P256KeySet(bytes32 x, bytes32 y);
     event TierLimitsSet(uint256 tier1, uint256 tier2);
     event GuardianAdded(uint8 indexed index, address indexed guardian);
@@ -123,6 +144,7 @@ abstract contract AAStarAirAccountBase {
     event RecoveryProposed(address indexed newOwner, address indexed proposedBy);
     event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount);
     event RecoveryExecuted(address indexed oldOwner, address indexed newOwner);
+    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount);
     event RecoveryCancelled();
     event OwnerChanged(address indexed oldOwner, address indexed newOwner);
 
@@ -143,11 +165,54 @@ abstract contract AAStarAirAccountBase {
         _;
     }
 
+    /// @dev Reentrancy guard using transient storage (EIP-1153, ~200 gas vs ~7100 for SSTORE)
+    modifier nonReentrant() {
+        assembly {
+            if tload(0) {
+                mstore(0, 0xab143c06) // Reentrancy() selector
+                revert(0x1c, 4)
+            }
+            tstore(0, 1)
+        }
+        _;
+        assembly {
+            tstore(0, 0)
+        }
+    }
+
     // ─── Constructor ──────────────────────────────────────────────────
 
-    constructor(address _entryPoint, address _owner) {
+    /// @param _entryPoint ERC-4337 EntryPoint address
+    /// @param _owner Initial account owner (ECDSA signer)
+    /// @param _config Initialization config: guardians, guard daily limit, approved algorithms
+    constructor(address _entryPoint, address _owner, InitConfig memory _config) {
         entryPoint = _entryPoint;
         owner = _owner;
+
+        // Initialize guardians (skip address(0) slots)
+        for (uint8 i = 0; i < 3; i++) {
+            address g = _config.guardians[i];
+            if (g != address(0)) {
+                if (g == _owner) revert InvalidGuardian();
+                // Check no duplicates with previously added guardians
+                for (uint8 j = 0; j < guardianCount; j++) {
+                    if (guardians[j] == g) revert GuardianAlreadySet();
+                }
+                guardians[guardianCount] = g;
+                emit GuardianAdded(guardianCount, g);
+                guardianCount++;
+            }
+        }
+
+        // Initialize guard atomically (no unprotected window)
+        if (_config.approvedAlgIds.length > 0 || _config.dailyLimit > 0) {
+            guard = new AAStarGlobalGuard(
+                address(this),
+                _config.dailyLimit,
+                _config.approvedAlgIds
+            );
+            emit GuardInitialized(address(guard), _config.dailyLimit);
+        }
     }
 
     // ─── Configuration (owner only) ─────────────────────────────────
@@ -160,11 +225,6 @@ abstract contract AAStarAirAccountBase {
     function setAggregator(address _aggregator) external onlyOwner {
         blsAggregator = _aggregator;
         emit AggregatorSet(_aggregator);
-    }
-
-    function setGuard(address _guard) external onlyOwner {
-        guard = AAStarGlobalGuard(_guard);
-        emit GuardSet(_guard);
     }
 
     function setP256Key(bytes32 _x, bytes32 _y) external onlyOwner {
@@ -180,10 +240,23 @@ abstract contract AAStarAirAccountBase {
         emit TierLimitsSet(_tier1, _tier2);
     }
 
+    // ─── Guard Configuration (monotonic: only tighten, never loosen) ─
+
+    /// @notice Approve a new algorithm in the guard (add-only, never revoke)
+    function guardApproveAlgorithm(uint8 algId) external onlyOwner {
+        guard.approveAlgorithm(algId);
+    }
+
+    /// @notice Decrease the guard's daily limit (tighten-only, never increase)
+    function guardDecreaseDailyLimit(uint256 newLimit) external onlyOwner {
+        guard.decreaseDailyLimit(newLimit);
+    }
+
     // ─── Signature Validation ─────────────────────────────────────────
 
     /**
      * @dev Validate signature with algId-based routing.
+     *      Persists _lastValidatedAlgId for tier + guard enforcement in execute().
      * @param userOpHash Hash of the UserOperation (from EntryPoint).
      * @param signature  The signature bytes. First byte = algId for routing.
      * @return validationData 0 on success, 1 (SIG_VALIDATION_FAILED) on failure.
@@ -199,18 +272,18 @@ abstract contract AAStarAirAccountBase {
         uint8 firstByte = uint8(signature[0]);
 
         if (firstByte == ALG_BLS) {
-            // BLS triple sig (any length > 1 routes here; malformed sigs return 1)
+            _lastValidatedAlgId = ALG_BLS;
             return _validateTripleSignature(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_P256 && signature.length == 65) {
-            // P256: algId(1) + r(32) + s(32) = 65 bytes
+            _lastValidatedAlgId = ALG_P256;
             return _validateP256(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_ECDSA) {
-            // Explicit ECDSA: algId(1) + r(32) + s(32) + v(1) = 66 bytes
             if (signature.length == 66) {
+                _lastValidatedAlgId = ALG_ECDSA;
                 return _validateECDSA(userOpHash, signature[1:]);
             }
             return 1; // Wrong length for explicit ECDSA
@@ -218,11 +291,13 @@ abstract contract AAStarAirAccountBase {
 
         // Raw ECDSA: 65-byte sig without algId prefix (backwards compat with M1)
         if (signature.length == 65) {
+            _lastValidatedAlgId = ALG_ECDSA;
             return _validateECDSA(userOpHash, signature);
         }
 
         // All other → delegate to external validator router
         if (address(validator) == address(0)) return 1;
+        _lastValidatedAlgId = firstByte;
         return validator.validateSignature(userOpHash, signature);
     }
 
@@ -347,6 +422,13 @@ abstract contract AAStarAirAccountBase {
         return 3;
     }
 
+    /// @dev Map algId to its security tier level
+    function _algTier(uint8 algId) internal pure returns (uint8) {
+        if (algId == ALG_BLS) return 3;   // BLS triple = highest security
+        if (algId == ALG_P256) return 2;  // P256 passkey = medium
+        return 1;                          // ECDSA or unknown = baseline
+    }
+
     // ─── Execution ────────────────────────────────────────────────────
 
     /// @notice Execute a single call from this account.
@@ -354,7 +436,8 @@ abstract contract AAStarAirAccountBase {
         address dest,
         uint256 value,
         bytes calldata func
-    ) external onlyOwnerOrEntryPoint {
+    ) external onlyOwnerOrEntryPoint nonReentrant {
+        _enforceGuard(value);
         _call(dest, value, func);
     }
 
@@ -363,12 +446,41 @@ abstract contract AAStarAirAccountBase {
         address[] calldata dest,
         uint256[] calldata value,
         bytes[] calldata func
-    ) external onlyOwnerOrEntryPoint {
+    ) external onlyOwnerOrEntryPoint nonReentrant {
         if (dest.length != value.length || dest.length != func.length) {
             revert ArrayLengthMismatch();
         }
         for (uint256 i = 0; i < dest.length; i++) {
+            _enforceGuard(value[i]);
             _call(dest[i], value[i], func[i]);
+        }
+    }
+
+    /// @dev Combined tier + guard enforcement, called before every _call.
+    ///      Direct owner calls are treated as ECDSA (tier 1) — large-value
+    ///      transactions must go through EntryPoint with proper multi-sig.
+    function _enforceGuard(uint256 value) internal {
+        uint8 algId = _lastValidatedAlgId;
+
+        // Direct owner call: no signature validation happened, treat as ECDSA (tier 1)
+        if (msg.sender != entryPoint) {
+            algId = ALG_ECDSA;
+        }
+
+        // Tier enforcement always applies
+        if (tier1Limit > 0 || tier2Limit > 0) {
+            uint8 required = requiredTier(value);
+            if (required > 0) {
+                uint8 provided = _algTier(algId);
+                if (provided < required) {
+                    revert InsufficientTier(required, provided);
+                }
+            }
+        }
+
+        // Guard enforcement (daily limit + algorithm whitelist)
+        if (address(guard) != address(0)) {
+            guard.checkTransaction(value, algId);
         }
     }
 
@@ -422,7 +534,8 @@ abstract contract AAStarAirAccountBase {
         activeRecovery = RecoveryProposal({
             newOwner: _newOwner,
             proposedAt: block.timestamp,
-            approvalBitmap: 1 << guardianIndex
+            approvalBitmap: 1 << guardianIndex,
+            cancellationBitmap: 0
         });
 
         emit RecoveryProposed(_newOwner, msg.sender);
@@ -462,11 +575,26 @@ abstract contract AAStarAirAccountBase {
         emit OwnerChanged(oldOwner, r.newOwner);
     }
 
-    /// @notice Cancel active recovery. Only current owner can cancel.
-    function cancelRecovery() external onlyOwner {
+    /// @notice Vote to cancel active recovery. Requires 2-of-3 guardian threshold.
+    /// @dev Same security level as recovery itself. Owner cannot cancel because
+    ///      if the key is stolen, the thief could block legitimate recovery.
+    ///      Each guardian votes independently; when threshold is reached, recovery is cancelled.
+    function cancelRecovery() external {
         if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
-        delete activeRecovery;
-        emit RecoveryCancelled();
+
+        uint8 guardianIndex = _guardianIndex(msg.sender); // reverts if not guardian
+        uint256 bit = 1 << guardianIndex;
+        if (activeRecovery.cancellationBitmap & bit != 0) revert AlreadyCancelVoted();
+
+        activeRecovery.cancellationBitmap |= bit;
+        uint256 count = _popcount(activeRecovery.cancellationBitmap);
+
+        emit RecoveryCancelVoted(msg.sender, count);
+
+        if (count >= RECOVERY_THRESHOLD) {
+            delete activeRecovery;
+            emit RecoveryCancelled();
+        }
     }
 
     /// @dev Find guardian index or revert

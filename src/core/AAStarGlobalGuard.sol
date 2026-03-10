@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.33;
 
-/// @title AAStarGlobalGuard - Hardcoded spending limits and algorithm whitelist
-/// @notice Immutable guard: daily spending limits and algorithm approval.
-///         Checked before every transaction execution.
-/// @dev Per-account contract, deployed alongside the account.
+/// @title AAStarGlobalGuard — Immutable spending guard bound to an AA account
+/// @notice Deployed BY the account contract at construction. Cannot be removed or transferred.
+/// @dev Configuration is monotonic: daily limit can only decrease, algorithms can only be added.
+///      Guard.account is immutable — social recovery changes Account.owner, not Account address,
+///      so guard always remains functional regardless of key rotation.
 contract AAStarGlobalGuard {
-    // ─── Storage ────────────────────────────────────────────────────
+    // ─── Immutable State ─────────────────────────────────────────
 
-    /// @notice Account owner
-    address public owner;
+    /// @notice The AA account that owns this guard (set at construction, never changes)
+    address public immutable account;
+
+    // ─── Mutable State ──────────────────────────────────────────
 
     /// @notice Daily spending limit in wei (0 = unlimited)
     uint256 public dailyLimit;
@@ -17,41 +20,52 @@ contract AAStarGlobalGuard {
     /// @notice Tracks spending per day (day number → amount spent)
     mapping(uint256 => uint256) public dailySpent;
 
-    /// @notice Algorithm whitelist: only approved algIds can be used
+    /// @notice Algorithm whitelist: only approved algIds can be used for transactions
     mapping(uint8 => bool) public approvedAlgorithms;
 
-    // ─── Events ─────────────────────────────────────────────────────
+    // ─── Events ─────────────────────────────────────────────────
 
-    event DailyLimitSet(uint256 oldLimit, uint256 newLimit);
+    event DailyLimitDecreased(uint256 oldLimit, uint256 newLimit);
     event AlgorithmApproved(uint8 indexed algId);
-    event AlgorithmRevoked(uint8 indexed algId);
     event SpendRecorded(uint256 indexed day, uint256 amount, uint256 totalSpent);
 
-    // ─── Errors ─────────────────────────────────────────────────────
+    // ─── Errors ─────────────────────────────────────────────────
 
-    error OnlyOwner();
+    error OnlyAccount();
+    error CanOnlyDecreaseLimit(uint256 current, uint256 requested);
     error DailyLimitExceeded(uint256 requested, uint256 remaining);
     error AlgorithmNotApproved(uint8 algId);
-    error ZeroLimit();
 
-    // ─── Constructor ────────────────────────────────────────────────
+    // ─── Modifier ───────────────────────────────────────────────
 
-    constructor(address _owner, uint256 _dailyLimit) {
-        owner = _owner;
-        dailyLimit = _dailyLimit;
+    modifier onlyAccount() {
+        if (msg.sender != account) revert OnlyAccount();
+        _;
     }
 
-    // ─── Guard Checks ───────────────────────────────────────────────
+    // ─── Constructor ────────────────────────────────────────────
+
+    /// @param _account The AA account contract address (immutable binding)
+    /// @param _dailyLimit Daily spending limit in wei (0 = unlimited)
+    /// @param _algIds Initial approved algorithm IDs
+    constructor(address _account, uint256 _dailyLimit, uint8[] memory _algIds) {
+        account = _account;
+        dailyLimit = _dailyLimit;
+        for (uint256 i = 0; i < _algIds.length; i++) {
+            approvedAlgorithms[_algIds[i]] = true;
+            emit AlgorithmApproved(_algIds[i]);
+        }
+    }
+
+    // ─── Guard Checks (called by account in execute) ────────────
 
     /// @notice Check if a transaction is allowed by the guard.
     /// @param value The ETH value of the transaction
     /// @param algId The algorithm used for signature verification
     /// @return True if allowed
-    function checkTransaction(uint256 value, uint8 algId) external returns (bool) {
-        // Algorithm whitelist check (if any algorithms are approved)
+    function checkTransaction(uint256 value, uint8 algId) external onlyAccount returns (bool) {
         if (!approvedAlgorithms[algId]) revert AlgorithmNotApproved(algId);
 
-        // Daily limit check
         if (dailyLimit > 0 && value > 0) {
             uint256 today = block.timestamp / 1 days;
             uint256 spent = dailySpent[today];
@@ -74,24 +88,21 @@ contract AAStarGlobalGuard {
         return dailyLimit > spent ? dailyLimit - spent : 0;
     }
 
-    // ─── Configuration (owner only) ─────────────────────────────────
+    // ─── Monotonic Configuration (only tighten, never loosen) ───
 
-    function setDailyLimit(uint256 _limit) external {
-        if (msg.sender != owner) revert OnlyOwner();
+    /// @notice Decrease daily limit. Can NEVER increase.
+    function decreaseDailyLimit(uint256 _newLimit) external onlyAccount {
+        if (_newLimit >= dailyLimit) {
+            revert CanOnlyDecreaseLimit(dailyLimit, _newLimit);
+        }
         uint256 old = dailyLimit;
-        dailyLimit = _limit;
-        emit DailyLimitSet(old, _limit);
+        dailyLimit = _newLimit;
+        emit DailyLimitDecreased(old, _newLimit);
     }
 
-    function approveAlgorithm(uint8 algId) external {
-        if (msg.sender != owner) revert OnlyOwner();
+    /// @notice Add a new approved algorithm. Can NEVER revoke.
+    function approveAlgorithm(uint8 algId) external onlyAccount {
         approvedAlgorithms[algId] = true;
         emit AlgorithmApproved(algId);
-    }
-
-    function revokeAlgorithm(uint8 algId) external {
-        if (msg.sender != owner) revert OnlyOwner();
-        approvedAlgorithms[algId] = false;
-        emit AlgorithmRevoked(algId);
     }
 }

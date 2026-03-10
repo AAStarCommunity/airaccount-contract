@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
+import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 
 /// @title SocialRecovery Tests
 /// @notice Comprehensive tests for the social recovery (F28) features in AAStarAirAccountBase
@@ -24,16 +25,22 @@ contract SocialRecoveryTest is Test {
     event RecoveryProposed(address indexed newOwner, address indexed proposedBy);
     event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount);
     event RecoveryExecuted(address indexed oldOwner, address indexed newOwner);
+    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount);
     event RecoveryCancelled();
     event OwnerChanged(address indexed oldOwner, address indexed newOwner);
 
     function setUp() public {
-        account = new AAStarAirAccountV7(entryPointAddr, ownerAddr);
+        uint8[] memory noAlgs = new uint8[](0);
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 0,
+            approvedAlgIds: noAlgs
+        });
+        account = new AAStarAirAccountV7(entryPointAddr, ownerAddr, config);
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────
 
-    /// @dev Add 3 guardians as owner
     function _addThreeGuardians() internal {
         vm.startPrank(ownerAddr);
         account.addGuardian(guardian1);
@@ -42,7 +49,6 @@ contract SocialRecoveryTest is Test {
         vm.stopPrank();
     }
 
-    /// @dev Propose recovery from guardian1
     function _proposeRecoveryFromGuardian1() internal {
         vm.prank(guardian1);
         account.proposeRecovery(newOwnerAddr);
@@ -75,7 +81,7 @@ contract SocialRecoveryTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 3. addGuardian: max 3 guardians, 4th reverts with MaxGuardiansReached
+    // 3. addGuardian: max 3 guardians, 4th reverts
     // ═══════════════════════════════════════════════════════════════════
 
     function test_addGuardian_maxThreeGuardians() public {
@@ -88,7 +94,7 @@ contract SocialRecoveryTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 4. addGuardian: duplicate guardian reverts with GuardianAlreadySet
+    // 4. addGuardian: duplicate reverts
     // ═══════════════════════════════════════════════════════════════════
 
     function test_addGuardian_duplicateReverts() public {
@@ -101,7 +107,7 @@ contract SocialRecoveryTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 5. addGuardian: zero address reverts with InvalidGuardian
+    // 5–6. addGuardian: zero address / owner address reverts
     // ═══════════════════════════════════════════════════════════════════
 
     function test_addGuardian_zeroAddressReverts() public {
@@ -109,10 +115,6 @@ contract SocialRecoveryTest is Test {
         vm.expectRevert(abi.encodeWithSignature("InvalidGuardian()"));
         account.addGuardian(address(0));
     }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // 6. addGuardian: owner address reverts with InvalidGuardian
-    // ═══════════════════════════════════════════════════════════════════
 
     function test_addGuardian_ownerAddressReverts() public {
         vm.prank(ownerAddr);
@@ -127,12 +129,9 @@ contract SocialRecoveryTest is Test {
     function test_removeGuardian_shiftsCorrectly() public {
         _addThreeGuardians();
 
-        // Remove guardian at index 0 (guardian1), expect shift
         vm.prank(ownerAddr);
-
         vm.expectEmit(true, true, false, false);
         emit GuardianRemoved(0, guardian1);
-
         account.removeGuardian(0);
 
         assertEq(account.guardianCount(), 2);
@@ -143,8 +142,6 @@ contract SocialRecoveryTest is Test {
 
     function test_removeGuardian_removesMiddle() public {
         _addThreeGuardians();
-
-        // Remove guardian at index 1 (guardian2)
         vm.prank(ownerAddr);
         account.removeGuardian(1);
 
@@ -155,8 +152,6 @@ contract SocialRecoveryTest is Test {
 
     function test_removeGuardian_removesLast() public {
         _addThreeGuardians();
-
-        // Remove guardian at index 2 (guardian3)
         vm.prank(ownerAddr);
         account.removeGuardian(2);
 
@@ -167,7 +162,6 @@ contract SocialRecoveryTest is Test {
 
     function test_removeGuardian_invalidIndexReverts() public {
         _addThreeGuardians();
-
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("InvalidGuardian()"));
         account.removeGuardian(3);
@@ -175,7 +169,6 @@ contract SocialRecoveryTest is Test {
 
     function test_removeGuardian_nonOwnerReverts() public {
         _addThreeGuardians();
-
         vm.prank(randomAddr);
         vm.expectRevert(abi.encodeWithSignature("NotOwner()"));
         account.removeGuardian(0);
@@ -189,20 +182,15 @@ contract SocialRecoveryTest is Test {
         _addThreeGuardians();
         _proposeRecoveryFromGuardian1();
 
-        // Verify recovery is active
-        (address proposedNewOwner,,) = account.activeRecovery();
+        (address proposedNewOwner,,,) = account.activeRecovery();
         assertEq(proposedNewOwner, newOwnerAddr);
 
-        // Remove a guardian — should cancel recovery
         vm.prank(ownerAddr);
-
         vm.expectEmit(false, false, false, false);
         emit RecoveryCancelled();
-
         account.removeGuardian(2);
 
-        // Verify recovery is cancelled
-        (address clearedOwner,,) = account.activeRecovery();
+        (address clearedOwner,,,) = account.activeRecovery();
         assertEq(clearedOwner, address(0));
     }
 
@@ -214,61 +202,42 @@ contract SocialRecoveryTest is Test {
         _addThreeGuardians();
 
         vm.prank(guardian1);
-
         vm.expectEmit(true, true, false, false);
         emit RecoveryProposed(newOwnerAddr, guardian1);
-
         vm.expectEmit(true, true, false, true);
         emit RecoveryApproved(newOwnerAddr, guardian1, 1);
-
         account.proposeRecovery(newOwnerAddr);
 
-        (address proposed, uint256 proposedAt, uint256 bitmap) = account.activeRecovery();
+        (address proposed, uint256 proposedAt, uint256 bitmap,) = account.activeRecovery();
         assertEq(proposed, newOwnerAddr);
         assertEq(proposedAt, block.timestamp);
-        // guardian1 is index 0, so bit 0 should be set
-        assertEq(bitmap, 1);
+        assertEq(bitmap, 1); // bit 0 set
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 10. proposeRecovery: non-guardian reverts
+    // 10–13. proposeRecovery: revert cases
     // ═══════════════════════════════════════════════════════════════════
 
     function test_proposeRecovery_nonGuardianReverts() public {
         _addThreeGuardians();
-
         vm.prank(randomAddr);
         vm.expectRevert(abi.encodeWithSignature("NotGuardian()"));
         account.proposeRecovery(newOwnerAddr);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // 11. proposeRecovery: newOwner=0 reverts with InvalidNewOwner
-    // ═══════════════════════════════════════════════════════════════════
-
     function test_proposeRecovery_zeroNewOwnerReverts() public {
         _addThreeGuardians();
-
         vm.prank(guardian1);
         vm.expectRevert(abi.encodeWithSignature("InvalidNewOwner()"));
         account.proposeRecovery(address(0));
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // 12. proposeRecovery: newOwner=currentOwner reverts
-    // ═══════════════════════════════════════════════════════════════════
-
     function test_proposeRecovery_currentOwnerReverts() public {
         _addThreeGuardians();
-
         vm.prank(guardian1);
         vm.expectRevert(abi.encodeWithSignature("InvalidNewOwner()"));
         account.proposeRecovery(ownerAddr);
     }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // 13. proposeRecovery: second proposal while active reverts
-    // ═══════════════════════════════════════════════════════════════════
 
     function test_proposeRecovery_alreadyActiveReverts() public {
         _addThreeGuardians();
@@ -288,19 +257,16 @@ contract SocialRecoveryTest is Test {
         _proposeRecoveryFromGuardian1();
 
         vm.prank(guardian2);
-
         vm.expectEmit(true, true, false, true);
         emit RecoveryApproved(newOwnerAddr, guardian2, 2);
-
         account.approveRecovery();
 
-        (,, uint256 bitmap) = account.activeRecovery();
-        // bit 0 (guardian1) + bit 1 (guardian2) = 3
-        assertEq(bitmap, 3);
+        (,, uint256 bitmap,) = account.activeRecovery();
+        assertEq(bitmap, 3); // bit 0 + bit 1
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 15. approveRecovery: same guardian can't approve twice
+    // 15–16. approveRecovery: revert cases
     // ═══════════════════════════════════════════════════════════════════
 
     function test_approveRecovery_sameGuardianTwiceReverts() public {
@@ -312,13 +278,8 @@ contract SocialRecoveryTest is Test {
         account.approveRecovery();
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // 16. approveRecovery: no active recovery reverts
-    // ═══════════════════════════════════════════════════════════════════
-
     function test_approveRecovery_noActiveRecoveryReverts() public {
         _addThreeGuardians();
-
         vm.prank(guardian1);
         vm.expectRevert(abi.encodeWithSignature("NoActiveRecovery()"));
         account.approveRecovery();
@@ -332,64 +293,46 @@ contract SocialRecoveryTest is Test {
         _addThreeGuardians();
         _proposeRecoveryFromGuardian1();
 
-        // Second approval
         vm.prank(guardian2);
         account.approveRecovery();
 
-        // Warp past timelock (2 days)
         vm.warp(block.timestamp + 2 days);
 
         vm.expectEmit(true, true, false, false);
         emit RecoveryExecuted(ownerAddr, newOwnerAddr);
-
         vm.expectEmit(true, true, false, false);
         emit OwnerChanged(ownerAddr, newOwnerAddr);
 
         account.executeRecovery();
 
         assertEq(account.owner(), newOwnerAddr);
-
-        // Active recovery should be cleared
-        (address cleared,,) = account.activeRecovery();
+        (address cleared,,,) = account.activeRecovery();
         assertEq(cleared, address(0));
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 18. executeRecovery: reverts before timelock
+    // 18–20. executeRecovery: revert cases
     // ═══════════════════════════════════════════════════════════════════
 
     function test_executeRecovery_revertsBeforeTimelock() public {
         _addThreeGuardians();
         _proposeRecoveryFromGuardian1();
-
         vm.prank(guardian2);
         account.approveRecovery();
 
-        // Warp to just before timelock expires
         vm.warp(block.timestamp + 2 days - 1);
-
         vm.expectRevert(abi.encodeWithSignature("RecoveryTimelockNotExpired()"));
         account.executeRecovery();
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // 19. executeRecovery: reverts with only 1 approval
-    // ═══════════════════════════════════════════════════════════════════
-
     function test_executeRecovery_revertsWithInsufficientApprovals() public {
         _addThreeGuardians();
         _proposeRecoveryFromGuardian1();
-
-        // Only 1 approval (from proposer), warp past timelock
         vm.warp(block.timestamp + 2 days);
 
         vm.expectRevert(abi.encodeWithSignature("RecoveryNotApproved()"));
         account.executeRecovery();
     }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // 20. executeRecovery: reverts with no active recovery
-    // ═══════════════════════════════════════════════════════════════════
 
     function test_executeRecovery_revertsNoActiveRecovery() public {
         vm.expectRevert(abi.encodeWithSignature("NoActiveRecovery()"));
@@ -397,45 +340,35 @@ contract SocialRecoveryTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 21. Full recovery flow: propose -> approve -> warp -> execute
+    // 21. Full recovery flow
     // ═══════════════════════════════════════════════════════════════════
 
     function test_fullRecoveryFlow() public {
-        // Step 1: Owner adds 3 guardians
         _addThreeGuardians();
-        assertEq(account.guardianCount(), 3);
 
-        // Step 2: Guardian1 proposes recovery (auto-approves)
         vm.prank(guardian1);
         account.proposeRecovery(newOwnerAddr);
 
-        (address proposed,,) = account.activeRecovery();
+        (address proposed,,,) = account.activeRecovery();
         assertEq(proposed, newOwnerAddr);
 
-        // Step 3: Guardian3 approves (now 2/3 threshold met)
         vm.prank(guardian3);
         account.approveRecovery();
 
-        (,, uint256 bitmap) = account.activeRecovery();
-        // bit 0 (guardian1) + bit 2 (guardian3) = 5
-        assertEq(bitmap, 5);
+        (,, uint256 bitmap,) = account.activeRecovery();
+        assertEq(bitmap, 5); // bit 0 + bit 2
 
-        // Step 4: Warp past timelock
         vm.warp(block.timestamp + 2 days);
 
-        // Step 5: Anyone can execute
         vm.prank(randomAddr);
         account.executeRecovery();
 
-        // Step 6: Verify owner changed
         assertEq(account.owner(), newOwnerAddr);
 
-        // Step 7: Old owner can no longer call owner-only functions
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("NotOwner()"));
         account.addGuardian(makeAddr("newGuardian"));
 
-        // Step 8: New owner can call owner-only functions (remove one first to make room)
         vm.startPrank(newOwnerAddr);
         account.removeGuardian(0);
         account.addGuardian(makeAddr("newGuardian"));
@@ -443,49 +376,100 @@ contract SocialRecoveryTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 22. cancelRecovery: owner cancels
+    // 22. cancelRecovery: requires 2-of-3 guardians (same as recovery)
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_cancelRecovery_ownerCancels() public {
+    function test_cancelRecovery_singleGuardianNotEnough() public {
         _addThreeGuardians();
         _proposeRecoveryFromGuardian1();
 
-        vm.prank(ownerAddr);
-
-        vm.expectEmit(false, false, false, false);
-        emit RecoveryCancelled();
-
+        // One guardian votes to cancel — not enough
+        vm.prank(guardian2);
+        vm.expectEmit(true, false, false, true);
+        emit RecoveryCancelVoted(guardian2, 1);
         account.cancelRecovery();
 
-        (address cleared,,) = account.activeRecovery();
+        // Recovery still active
+        (address stillActive,,,) = account.activeRecovery();
+        assertEq(stillActive, newOwnerAddr);
+    }
+
+    function test_cancelRecovery_twoGuardiansCancels() public {
+        _addThreeGuardians();
+        _proposeRecoveryFromGuardian1();
+
+        // First guardian votes to cancel
+        vm.prank(guardian2);
+        account.cancelRecovery();
+
+        // Second guardian votes — reaches 2-of-3 threshold → cancellation happens
+        vm.prank(guardian3);
+        vm.expectEmit(true, false, false, true);
+        emit RecoveryCancelVoted(guardian3, 2);
+        vm.expectEmit(false, false, false, false);
+        emit RecoveryCancelled();
+        account.cancelRecovery();
+
+        // Recovery is cancelled
+        (address cleared,,,) = account.activeRecovery();
         assertEq(cleared, address(0));
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 23. cancelRecovery: non-owner can't cancel
+    // 23. cancelRecovery: owner CANNOT cancel
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_cancelRecovery_nonOwnerReverts() public {
+    function test_cancelRecovery_ownerReverts() public {
         _addThreeGuardians();
         _proposeRecoveryFromGuardian1();
 
-        vm.prank(guardian1);
-        vm.expectRevert(abi.encodeWithSignature("NotOwner()"));
+        vm.prank(ownerAddr);
+        vm.expectRevert(abi.encodeWithSignature("NotGuardian()"));
         account.cancelRecovery();
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 24. cancelRecovery: reverts when no active recovery
+    // 24. cancelRecovery: non-guardian can't cancel
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_cancelRecovery_nonGuardianReverts() public {
+        _addThreeGuardians();
+        _proposeRecoveryFromGuardian1();
+
+        vm.prank(randomAddr);
+        vm.expectRevert(abi.encodeWithSignature("NotGuardian()"));
+        account.cancelRecovery();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 25. cancelRecovery: no active recovery reverts
     // ═══════════════════════════════════════════════════════════════════
 
     function test_cancelRecovery_noActiveRecoveryReverts() public {
-        vm.prank(ownerAddr);
+        _addThreeGuardians();
+        vm.prank(guardian1);
         vm.expectRevert(abi.encodeWithSignature("NoActiveRecovery()"));
         account.cancelRecovery();
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 25. executeRecovery: works with all 3 guardians approving
+    // 26. cancelRecovery: same guardian can't vote twice
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_cancelRecovery_sameGuardianTwiceReverts() public {
+        _addThreeGuardians();
+        _proposeRecoveryFromGuardian1();
+
+        vm.prank(guardian2);
+        account.cancelRecovery();
+
+        vm.prank(guardian2);
+        vm.expectRevert(abi.encodeWithSignature("AlreadyCancelVoted()"));
+        account.cancelRecovery();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 27. executeRecovery: all 3 guardians approve
     // ═══════════════════════════════════════════════════════════════════
 
     function test_executeRecovery_allThreeGuardiansApprove() public {
@@ -494,48 +478,41 @@ contract SocialRecoveryTest is Test {
 
         vm.prank(guardian2);
         account.approveRecovery();
-
         vm.prank(guardian3);
         account.approveRecovery();
 
-        (,, uint256 bitmap) = account.activeRecovery();
-        // All 3 bits set: 0b111 = 7
-        assertEq(bitmap, 7);
+        (,, uint256 bitmap,) = account.activeRecovery();
+        assertEq(bitmap, 7); // 0b111
 
         vm.warp(block.timestamp + 2 days);
         account.executeRecovery();
-
         assertEq(account.owner(), newOwnerAddr);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 26. executeRecovery: exact timelock boundary (at exactly 2 days)
+    // 28. executeRecovery: exact timelock boundary
     // ═══════════════════════════════════════════════════════════════════
 
     function test_executeRecovery_exactTimelockBoundary() public {
         _addThreeGuardians();
-
         uint256 proposalTime = block.timestamp;
         _proposeRecoveryFromGuardian1();
 
         vm.prank(guardian2);
         account.approveRecovery();
 
-        // Warp to exactly 2 days (should succeed since check is <, not <=)
         vm.warp(proposalTime + 2 days);
         account.executeRecovery();
-
         assertEq(account.owner(), newOwnerAddr);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 27. Recovery after recovery: can do a second recovery after first
+    // 29. Second recovery after first
     // ═══════════════════════════════════════════════════════════════════
 
     function test_secondRecoveryAfterFirst() public {
         _addThreeGuardians();
 
-        // First recovery
         vm.warp(1000);
         _proposeRecoveryFromGuardian1();
         vm.prank(guardian2);
@@ -544,18 +521,95 @@ contract SocialRecoveryTest is Test {
         account.executeRecovery();
         assertEq(account.owner(), newOwnerAddr);
 
-        // Second recovery: propose a different new owner
         address secondNewOwner = makeAddr("secondNewOwner");
-        vm.warp(1000 + 3 days); // Move forward a bit
+        vm.warp(1000 + 3 days);
         vm.prank(guardian1);
         account.proposeRecovery(secondNewOwner);
+        vm.prank(guardian3);
+        account.approveRecovery();
+        vm.warp(1000 + 5 days);
+        account.executeRecovery();
+        assertEq(account.owner(), secondNewOwner);
+    }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // 30. Stolen key cannot block recovery
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_stolenKey_cannotBlockRecovery() public {
+        _addThreeGuardians();
+
+        _proposeRecoveryFromGuardian1();
+        vm.prank(guardian2);
+        account.approveRecovery();
+
+        // Thief tries to cancel — not a guardian
+        vm.prank(ownerAddr);
+        vm.expectRevert(abi.encodeWithSignature("NotGuardian()"));
+        account.cancelRecovery();
+
+        // Recovery succeeds
+        vm.warp(block.timestamp + 2 days);
+        account.executeRecovery();
+        assertEq(account.owner(), newOwnerAddr);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 31. Cancel and re-propose
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_cancelAndRepropose() public {
+        _addThreeGuardians();
+        _proposeRecoveryFromGuardian1();
+
+        // 2 guardians cancel
+        vm.prank(guardian1);
+        account.cancelRecovery();
+        vm.prank(guardian2);
+        account.cancelRecovery();
+
+        (address cleared,,,) = account.activeRecovery();
+        assertEq(cleared, address(0));
+
+        // Re-propose with different owner
+        address anotherOwner = makeAddr("anotherOwner");
+        vm.prank(guardian2);
+        account.proposeRecovery(anotherOwner);
         vm.prank(guardian3);
         account.approveRecovery();
 
-        vm.warp(1000 + 5 days); // 2 days after second proposal
+        vm.warp(block.timestamp + 2 days);
         account.executeRecovery();
+        assertEq(account.owner(), anotherOwner);
+    }
 
-        assertEq(account.owner(), secondNewOwner);
+    // ═══════════════════════════════════════════════════════════════════
+    // 32. Cancel race: cancel votes don't persist across proposals
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_cancelBitmapClearedOnNewProposal() public {
+        _addThreeGuardians();
+
+        // First proposal
+        _proposeRecoveryFromGuardian1();
+
+        // One cancel vote (not enough)
+        vm.prank(guardian2);
+        account.cancelRecovery();
+
+        // Remove guardian to force-cancel via removeGuardian (resets everything)
+        vm.prank(ownerAddr);
+        account.removeGuardian(2); // cancels recovery, removes guardian3
+
+        // Add back a guardian
+        vm.prank(ownerAddr);
+        account.addGuardian(guardian3);
+
+        // New proposal — cancel bitmap should be fresh
+        vm.prank(guardian1);
+        account.proposeRecovery(newOwnerAddr);
+
+        (,,, uint256 cancelBitmap) = account.activeRecovery();
+        assertEq(cancelBitmap, 0); // Clean slate
     }
 }

@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
+import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 
@@ -16,8 +17,17 @@ contract AAStarAirAccountV7M3Test is Test {
 
     function setUp() public {
         (ownerAddr, ownerKey) = makeAddrAndKey("owner");
-        account = new AAStarAirAccountV7(entryPoint, ownerAddr);
+        account = new AAStarAirAccountV7(entryPoint, ownerAddr, _emptyConfig());
         vm.deal(address(account), 10 ether);
+    }
+
+    function _emptyConfig() internal pure returns (AAStarAirAccountBase.InitConfig memory) {
+        uint8[] memory noAlgs = new uint8[](0);
+        return AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 0,
+            approvedAlgIds: noAlgs
+        });
     }
 
     // ─── P256 Key Management ─────────────────────────────────────────
@@ -130,19 +140,50 @@ contract AAStarAirAccountV7M3Test is Test {
         account.setAggregator(address(0xAA));
     }
 
-    // ─── Guard Configuration ─────────────────────────────────────────
+    // ─── Guard Initialization (constructor) ────────────────────────────
 
-    function test_setGuard() public {
-        guard = new AAStarGlobalGuard(ownerAddr, 1 ether);
-        vm.prank(ownerAddr);
-        account.setGuard(address(guard));
-        assertEq(address(account.guard()), address(guard));
+    function test_guardInitializedAtConstruction() public {
+        uint8[] memory algIds = new uint8[](2);
+        algIds[0] = 0x02; // ECDSA
+        algIds[1] = 0x01; // BLS
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 1 ether,
+            approvedAlgIds: algIds
+        });
+        AAStarAirAccountV7 guardedAccount = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
+
+        assertTrue(address(guardedAccount.guard()) != address(0));
+        AAStarGlobalGuard g = guardedAccount.guard();
+        assertEq(g.account(), address(guardedAccount));
+        assertEq(g.dailyLimit(), 1 ether);
+        assertTrue(g.approvedAlgorithms(0x02));
+        assertTrue(g.approvedAlgorithms(0x01));
     }
 
-    function test_setGuard_onlyOwner() public {
+    function test_noGuardWhenEmptyConfig() public view {
+        // account was created with _emptyConfig() in setUp
+        assertEq(address(account.guard()), address(0));
+    }
+
+    function test_guardApproveAlgorithm_onlyOwner() public {
+        // Create a guarded account
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02;
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 1 ether,
+            approvedAlgIds: algIds
+        });
+        AAStarAirAccountV7 ga = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
+
+        vm.prank(ownerAddr);
+        ga.guardApproveAlgorithm(0x03); // P256
+        assertTrue(ga.guard().approvedAlgorithms(0x03));
+
         vm.prank(address(0xDEAD));
         vm.expectRevert(abi.encodeWithSignature("NotOwner()"));
-        account.setGuard(address(0x1234));
+        ga.guardApproveAlgorithm(0x01);
     }
 
     // ─── Owner Mutability (for social recovery) ──────────────────────
