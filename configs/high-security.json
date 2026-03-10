@@ -1,0 +1,25 @@
+{
+  "name": "High Security Account",
+  "description": "Maximum security for high-value wallets",
+  "dailyLimit": "100000000000000000",
+  "dailyLimitDisplay": "0.1 ETH",
+  "tier1Limit": "10000000000000000",
+  "tier1LimitDisplay": "0.01 ETH (Passkey only)",
+  "tier2Limit": "50000000000000000",
+  "tier2LimitDisplay": "0.05 ETH (Passkey + DVT/BLS)",
+  "tier3Note": "Above 0.05 ETH requires Passkey + BLS + Guardian co-sign",
+  "guardians": {
+    "guardian1": { "label": "Hardware wallet", "address": "" },
+    "guardian2": { "label": "Trusted person (family)", "address": "" },
+    "guardian3": { "label": "Community Safe (auto-filled)", "address": "" }
+  },
+  "approvedAlgorithms": [
+    { "id": 2, "name": "ECDSA", "description": "Standard Ethereum signature" },
+    { "id": 3, "name": "P256", "description": "WebAuthn Passkey (fingerprint/face)" },
+    { "id": 1, "name": "BLS", "description": "DVT aggregate signature" },
+    { "id": 4, "name": "Cumulative T2", "description": "P256 + BLS combined" },
+    { "id": 5, "name": "Cumulative T3", "description": "P256 + BLS + Guardian" }
+  ],
+  "recoveryTimelock": "2 days",
+  "recoveryThreshold": "2 of 3 guardians"
+}

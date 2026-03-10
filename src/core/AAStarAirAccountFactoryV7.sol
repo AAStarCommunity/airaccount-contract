@@ -122,11 +122,13 @@ contract AAStarAirAccountFactoryV7 {
         address guardian2,
         uint256 dailyLimit
     ) internal view returns (AAStarAirAccountBase.InitConfig memory) {
-        // Default approved algorithms: ECDSA, BLS, P256
-        uint8[] memory algIds = new uint8[](3);
+        // Default approved algorithms: ECDSA, BLS, P256, Cumulative T2, Cumulative T3
+        uint8[] memory algIds = new uint8[](5);
         algIds[0] = 0x02; // ALG_ECDSA
         algIds[1] = 0x01; // ALG_BLS
         algIds[2] = 0x03; // ALG_P256
+        algIds[3] = 0x04; // ALG_CUMULATIVE_T2 (P256 + BLS)
+        algIds[4] = 0x05; // ALG_CUMULATIVE_T3 (P256 + BLS + Guardian)
 
         return AAStarAirAccountBase.InitConfig({
             guardians: [guardian1, guardian2, defaultCommunityGuardian],

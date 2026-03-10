@@ -34,6 +34,8 @@ abstract contract AAStarAirAccountBase {
     uint8 internal constant ALG_BLS = 0x01;
     uint8 internal constant ALG_ECDSA = 0x02;
     uint8 internal constant ALG_P256 = 0x03;
+    uint8 internal constant ALG_CUMULATIVE_T2 = 0x04; // P256 + BLS
+    uint8 internal constant ALG_CUMULATIVE_T3 = 0x05; // P256 + BLS + Guardian ECDSA
 
     uint256 internal constant G2_POINT_LENGTH = 256;
 
@@ -103,6 +105,22 @@ abstract contract AAStarAirAccountBase {
         uint256 cancellationBitmap;  // same layout, for 2-of-3 cancel threshold
     }
 
+    /// @notice Read-only snapshot of the account's current configuration
+    struct AccountConfig {
+        address accountOwner;
+        address guardAddress;
+        uint256 dailyLimit;
+        uint256 dailyRemaining;
+        uint256 tier1Limit;
+        uint256 tier2Limit;
+        address[3] guardianAddresses;
+        uint8 guardianCount;
+        bool hasP256Key;
+        bool hasValidator;
+        bool hasAggregator;
+        bool hasActiveRecovery;
+    }
+
     /// @notice Account initialization config (used by constructor)
     struct InitConfig {
         address[3] guardians;   // Recovery guardians (address(0) = unused slot)
@@ -131,6 +149,7 @@ abstract contract AAStarAirAccountBase {
     error RecoveryAlreadyActive();
     error InvalidNewOwner();
     error Reentrancy();
+    error InvalidGuardianSignature();
 
     // ─── Events ───────────────────────────────────────────────────────
 
@@ -252,6 +271,34 @@ abstract contract AAStarAirAccountBase {
         guard.decreaseDailyLimit(newLimit);
     }
 
+    // ─── Config Introspection ────────────────────────────────────────
+
+    /// @notice Returns a snapshot of the account's current configuration.
+    ///         Useful for off-chain UIs to display account status and security posture.
+    function getConfigDescription() external view returns (AccountConfig memory) {
+        uint256 remaining = 0;
+        uint256 limit = 0;
+        if (address(guard) != address(0)) {
+            remaining = guard.remainingDailyAllowance();
+            limit = guard.dailyLimit();
+        }
+
+        return AccountConfig({
+            accountOwner: owner,
+            guardAddress: address(guard),
+            dailyLimit: limit,
+            dailyRemaining: remaining,
+            tier1Limit: tier1Limit,
+            tier2Limit: tier2Limit,
+            guardianAddresses: guardians,
+            guardianCount: guardianCount,
+            hasP256Key: p256KeyX != bytes32(0),
+            hasValidator: address(validator) != address(0),
+            hasAggregator: blsAggregator != address(0),
+            hasActiveRecovery: activeRecovery.newOwner != address(0)
+        });
+    }
+
     // ─── Signature Validation ─────────────────────────────────────────
 
     /**
@@ -279,6 +326,16 @@ abstract contract AAStarAirAccountBase {
         if (firstByte == ALG_P256 && signature.length == 65) {
             _lastValidatedAlgId = ALG_P256;
             return _validateP256(userOpHash, signature[1:]);
+        }
+
+        if (firstByte == ALG_CUMULATIVE_T2) {
+            _lastValidatedAlgId = ALG_CUMULATIVE_T2;
+            return _validateCumulativeTier2(userOpHash, signature[1:]);
+        }
+
+        if (firstByte == ALG_CUMULATIVE_T3) {
+            _lastValidatedAlgId = ALG_CUMULATIVE_T3;
+            return _validateCumulativeTier3(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_ECDSA) {
@@ -401,6 +458,138 @@ abstract contract AAStarAirAccountBase {
         }
     }
 
+    /**
+     * @dev Validate cumulative tier 2 signature: P256 passkey + BLS aggregate.
+     *
+     * Signature format (after algId byte stripped):
+     *   [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSignature(256)][messagePoint(256)][messagePointSignature(65)]
+     *
+     * Security layers:
+     *   1. P256 passkey validates userOpHash (device-bound authentication)
+     *   2. BLS aggregate validates messagePoint against registered nodes
+     *   3. messagePointSignature binds messagePoint to owner (prevents manipulation)
+     */
+    function _validateCumulativeTier2(
+        bytes32 userOpHash,
+        bytes calldata sigData
+    ) internal view returns (uint256) {
+        if (address(validator) == address(0)) return 1;
+
+        // LAYER 1: P256 passkey verification (first 64 bytes)
+        if (sigData.length < 64) return 1;
+        if (_validateP256(userOpHash, sigData[0:64]) != 0) return 1;
+
+        // LAYER 2: BLS aggregate verification (remaining bytes)
+        bytes calldata blsPayload = sigData[64:];
+
+        // Parse nodeIds count
+        if (blsPayload.length < 32) return 1;
+        uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
+        if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
+
+        uint256 nodeIdsDataLength = nodeIdsLength * 32;
+        // Expected: nodeIdsLength(32) + nodeIds(N*32) + blsSig(256) + messagePoint(256) + messagePointSig(65)
+        uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 256 + 65;
+        if (blsPayload.length != expectedLength) return 1;
+
+        uint256 baseOffset = 32 + nodeIdsDataLength;
+
+        // Verify messagePoint signature (owner must sign the messagePoint)
+        bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
+        bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
+
+        bytes32 mpHash = keccak256(messagePoint).toEthSignedMessageHash();
+        address mpRecovered = mpHash.recover(messagePointSignature);
+        if (mpRecovered != owner) return 1;
+
+        // BLS verification via validator router
+        address blsAlg = validator.getAlgorithm(ALG_BLS);
+        if (blsAlg == address(0)) return 1;
+
+        // BLS payload for validator: nodeIds + blsSig + messagePoint (skip nodeIdsLength prefix)
+        bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
+
+        try IAAStarAlgorithm(blsAlg).validate(userOpHash, blsVerifyData) returns (uint256 blsResult) {
+            return blsResult;
+        } catch {
+            return 1;
+        }
+    }
+
+    /**
+     * @dev Validate cumulative tier 3 signature: P256 passkey + BLS aggregate + Guardian ECDSA.
+     *
+     * Signature format (after algId byte stripped):
+     *   [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSignature(256)][messagePoint(256)][messagePointSignature(65)][guardianECDSA(65)]
+     *
+     * Security layers:
+     *   1. P256 passkey validates userOpHash (device-bound authentication)
+     *   2. BLS aggregate validates messagePoint against registered nodes
+     *   3. Guardian ECDSA co-sign: last 65 bytes must recover to one of guardians[0..2]
+     */
+    function _validateCumulativeTier3(
+        bytes32 userOpHash,
+        bytes calldata sigData
+    ) internal view returns (uint256) {
+        if (address(validator) == address(0)) return 1;
+
+        // LAYER 1: P256 passkey verification (first 64 bytes)
+        if (sigData.length < 64) return 1;
+        if (_validateP256(userOpHash, sigData[0:64]) != 0) return 1;
+
+        // LAYER 3: Guardian ECDSA co-sign (last 65 bytes)
+        if (sigData.length < 129) return 1; // At minimum: 64 (P256) + 65 (guardian)
+        bytes calldata guardianSig = sigData[sigData.length - 65:];
+
+        bytes32 guardianHash = userOpHash.toEthSignedMessageHash();
+        address guardianRecovered = guardianHash.recover(guardianSig);
+
+        bool isGuardian = false;
+        for (uint8 i = 0; i < guardianCount; i++) {
+            if (guardians[i] == guardianRecovered) {
+                isGuardian = true;
+                break;
+            }
+        }
+        if (!isGuardian) return 1;
+
+        // LAYER 2: BLS aggregate verification (bytes between P256 and guardian sig)
+        bytes calldata blsPayload = sigData[64:sigData.length - 65];
+
+        // Parse nodeIds count
+        if (blsPayload.length < 32) return 1;
+        uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
+        if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
+
+        uint256 nodeIdsDataLength = nodeIdsLength * 32;
+        // Expected: nodeIdsLength(32) + nodeIds(N*32) + blsSig(256) + messagePoint(256) + messagePointSig(65)
+        uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 256 + 65;
+        if (blsPayload.length != expectedLength) return 1;
+
+        uint256 baseOffset = 32 + nodeIdsDataLength;
+
+        // Verify messagePoint signature (owner must sign the messagePoint)
+        bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
+        bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
+
+        bytes32 mpHash = keccak256(messagePoint).toEthSignedMessageHash();
+        address mpRecovered = mpHash.recover(messagePointSignature);
+        if (mpRecovered != owner) return 1;
+
+        // BLS verification via validator router
+        address blsAlg = validator.getAlgorithm(ALG_BLS);
+        if (blsAlg == address(0)) return 1;
+
+        // BLS payload for validator: nodeIds + blsSig + messagePoint (skip nodeIdsLength prefix)
+        bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
+
+        try IAAStarAlgorithm(blsAlg).validate(userOpHash, blsVerifyData) returns (uint256 blsResult) {
+            return blsResult;
+        } catch {
+            return 1;
+        }
+    }
+
     /// @dev Extract nodeIds array from sigData
     function _extractNodeIds(bytes calldata sigData, uint256 count) internal pure returns (bytes32[] memory nodeIds) {
         nodeIds = new bytes32[](count);
@@ -424,9 +613,11 @@ abstract contract AAStarAirAccountBase {
 
     /// @dev Map algId to its security tier level
     function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == ALG_BLS) return 3;   // BLS triple = highest security
-        if (algId == ALG_P256) return 2;  // P256 passkey = medium
-        return 1;                          // ECDSA or unknown = baseline
+        if (algId == ALG_CUMULATIVE_T3) return 3; // P256 + BLS + Guardian = highest
+        if (algId == ALG_BLS) return 3;            // BLS triple = highest security
+        if (algId == ALG_CUMULATIVE_T2) return 2;  // P256 + BLS = medium
+        if (algId == ALG_P256) return 2;           // P256 passkey = medium
+        return 1;                                   // ECDSA or unknown = baseline
     }
 
     // ─── Execution ────────────────────────────────────────────────────
