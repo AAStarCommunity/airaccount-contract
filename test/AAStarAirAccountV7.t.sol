@@ -61,7 +61,8 @@ contract AAStarAirAccountV7Test is Test {
         return AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
-            approvedAlgIds: noAlgs
+            approvedAlgIds: noAlgs,
+            minDailyLimit: 0
         });
     }
 

@@ -35,7 +35,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         return AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
-            approvedAlgIds: noAlgs
+            approvedAlgIds: noAlgs,
+            minDailyLimit: 0
         });
     }
 
@@ -91,7 +92,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [guardian1, guardian2, address(0)],
             dailyLimit: 5 ether,
-            approvedAlgIds: algIds
+            approvedAlgIds: algIds,
+            minDailyLimit: 0
         });
 
         address account = factory.createAccount(ownerA, 0, config);

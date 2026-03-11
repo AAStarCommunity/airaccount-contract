@@ -131,6 +131,7 @@ abstract contract AAStarAirAccountBase {
         address[3] guardians;   // Recovery guardians (address(0) = unused slot)
         uint256 dailyLimit;     // Guard daily spending limit in wei (0 = no guard)
         uint8[] approvedAlgIds; // Guard approved algorithms (empty = no guard)
+        uint256 minDailyLimit;  // Floor for decreaseDailyLimit — cannot go below this (0 = no floor)
     }
 
     // ─── Custom Errors ────────────────────────────────────────────────
@@ -234,7 +235,8 @@ abstract contract AAStarAirAccountBase {
             guard = new AAStarGlobalGuard(
                 address(this),
                 _config.dailyLimit,
-                _config.approvedAlgIds
+                _config.approvedAlgIds,
+                _config.minDailyLimit
             );
             emit GuardInitialized(address(guard), _config.dailyLimit);
         }
@@ -620,13 +622,20 @@ abstract contract AAStarAirAccountBase {
         return 3;
     }
 
-    /// @dev Map algId to its security tier level
+    /// @dev Map algId to its security tier level.
+    ///
+    ///      Tier model (cumulative factors):
+    ///        Tier 1 — single factor:  ECDSA (0x02) or bare P256 passkey (0x03)
+    ///        Tier 2 — dual factor:    P256 passkey + BLS DVT co-sign (0x04)
+    ///        Tier 3 — triple factor:  P256 + BLS + Guardian ECDSA (0x05) or legacy BLS triple (0x01)
+    ///
+    ///      Bare P256 passkey (0x03) is Tier 1 — it is the default single-factor auth
+    ///      for all standard transactions. DVT co-sign (BLS) is required for Tier 2+.
     function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == ALG_CUMULATIVE_T3) return 3; // P256 + BLS + Guardian = highest
-        if (algId == ALG_BLS) return 3;            // BLS triple = highest security
-        if (algId == ALG_CUMULATIVE_T2) return 2;  // P256 + BLS = medium
-        if (algId == ALG_P256) return 2;           // P256 passkey = medium
-        return 1;                                   // ECDSA or unknown = baseline
+        if (algId == ALG_CUMULATIVE_T3) return 3; // P256 + BLS + Guardian ECDSA
+        if (algId == ALG_BLS) return 3;            // legacy BLS triple (ECDSA×2 + BLS, M2 format)
+        if (algId == ALG_CUMULATIVE_T2) return 2;  // P256 + BLS DVT co-sign
+        return 1;                                   // ECDSA, bare P256, or unknown = single-factor
     }
 
     // ─── Execution ────────────────────────────────────────────────────

@@ -37,7 +37,8 @@ contract DeployAirAccountV7 is Script {
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
-            approvedAlgIds: emptyAlgs
+            approvedAlgIds: emptyAlgs,
+            minDailyLimit: 0
         });
         address account = factory.createAccount(deployer, 0, config);
         console.log("Account deployed at:", account);
