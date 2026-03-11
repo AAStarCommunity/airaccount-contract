@@ -8,6 +8,34 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.12.6] - 2026-03-11
+
+### Added
+- **`version()` view function** — returns contract version string `"0.12.6"`. All future releases will update this constant.
+- **`VERSION` constant** — `string public constant VERSION = "0.12.6"` in `AAStarAirAccountV7`
+
+### Fixed (GPT-5.2 Security Review)
+- **Finding 1**: `_lastValidatedAlgId` storage variable → transient storage queue (`_storeValidatedAlgId` / `_consumeValidatedAlgId`). Prevents cross-UserOp algId contamination when EntryPoint bundles multiple ops from same sender.
+- **Finding 2**: `AAStarBLSAlgorithm.registerPublicKey` — added `onlyOwner` (was permissionless, allowing BLS tier bypass)
+- **Finding 5**: `setTierLimits` — added `tier1 <= tier2` validation to prevent misconfiguration
+- **Finding 6**: `createAccountWithDefaults` — added non-zero guardian validation
+
+### Documentation
+- `docs/acceptance-guide.md` — product manager acceptance guide with full deployment, E2E flows, gas tables
+- `docs/gpt52-review-response.md` — GPT-5.2 security review response with assessment and fix status
+- `docs/M5-plan.md` — M5 milestone plan: ERC20 token guard, governance hardening, guardian validation, chain compatibility
+- `CHANGELOG.md` — this file
+
+### Known Design Notes
+- `dailyLimit = 0` means **unlimited** (no cap), not "zero budget" — consistent with Guard's `if (dailyLimit > 0)` check
+- DVT/BLS security value is **key isolation** (requires DVT cluster private keys), not on-chain anomaly detection; off-chain risk control is a protocol-layer concern
+- Tier enforcement is ETH-only (msg.value); ERC20 value tiers planned for M5
+
+### Test Results
+- **Foundry**: 200/200 passing
+
+---
+
 ## [v0.12.5-m4] - 2026-03-11
 
 ### Added
