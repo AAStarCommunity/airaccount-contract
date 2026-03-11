@@ -68,9 +68,14 @@ abstract contract AAStarAirAccountBase {
     AAStarGlobalGuard public guard;
 
     // ── algId Pass-Through (validation → execution) ──
+    // Uses transient storage (EIP-1153) to avoid cross-UserOp contamination.
+    // When EntryPoint bundles multiple UserOps from the same sender,
+    // validation runs for all ops before execution. A storage variable would
+    // be overwritten by the last validation, but transient storage keyed by
+    // nonce ensures each execution reads the correct algId.
 
-    /// @dev Algorithm ID from the last validated signature, used for tier + guard enforcement
-    uint8 internal _lastValidatedAlgId;
+    /// @dev Transient storage slot base for algId (slot = ALG_ID_SLOT_BASE + nonce)
+    uint256 internal constant ALG_ID_SLOT_BASE = 0x0A1600;
 
     // ── P256 Passkey ──
 
@@ -305,7 +310,9 @@ abstract contract AAStarAirAccountBase {
 
     /**
      * @dev Validate signature with algId-based routing.
-     *      Persists _lastValidatedAlgId for tier + guard enforcement in execute().
+     *      Stores validated algId in transient storage queue for execute() to consume.
+     *      Queue design prevents cross-UserOp contamination when EntryPoint bundles
+     *      multiple UserOps from the same sender (all validations run before executions).
      * @param userOpHash Hash of the UserOperation (from EntryPoint).
      * @param signature  The signature bytes. First byte = algId for routing.
      * @return validationData 0 on success, 1 (SIG_VALIDATION_FAILED) on failure.
@@ -321,28 +328,28 @@ abstract contract AAStarAirAccountBase {
         uint8 firstByte = uint8(signature[0]);
 
         if (firstByte == ALG_BLS) {
-            _lastValidatedAlgId = ALG_BLS;
+            _storeValidatedAlgId(ALG_BLS);
             return _validateTripleSignature(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_P256 && signature.length == 65) {
-            _lastValidatedAlgId = ALG_P256;
+            _storeValidatedAlgId(ALG_P256);
             return _validateP256(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_CUMULATIVE_T2) {
-            _lastValidatedAlgId = ALG_CUMULATIVE_T2;
+            _storeValidatedAlgId(ALG_CUMULATIVE_T2);
             return _validateCumulativeTier2(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_CUMULATIVE_T3) {
-            _lastValidatedAlgId = ALG_CUMULATIVE_T3;
+            _storeValidatedAlgId(ALG_CUMULATIVE_T3);
             return _validateCumulativeTier3(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_ECDSA) {
             if (signature.length == 66) {
-                _lastValidatedAlgId = ALG_ECDSA;
+                _storeValidatedAlgId(ALG_ECDSA);
                 return _validateECDSA(userOpHash, signature[1:]);
             }
             return 1; // Wrong length for explicit ECDSA
@@ -350,13 +357,13 @@ abstract contract AAStarAirAccountBase {
 
         // Raw ECDSA: 65-byte sig without algId prefix (backwards compat with M1)
         if (signature.length == 65) {
-            _lastValidatedAlgId = ALG_ECDSA;
+            _storeValidatedAlgId(ALG_ECDSA);
             return _validateECDSA(userOpHash, signature);
         }
 
         // All other → delegate to external validator router
         if (address(validator) == address(0)) return 1;
-        _lastValidatedAlgId = firstByte;
+        _storeValidatedAlgId(firstByte);
         return validator.validateSignature(userOpHash, signature);
     }
 
@@ -630,7 +637,8 @@ abstract contract AAStarAirAccountBase {
         uint256 value,
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
-        _enforceGuard(value);
+        uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
+        _enforceGuard(value, algId);
         _call(dest, value, func);
     }
 
@@ -643,23 +651,18 @@ abstract contract AAStarAirAccountBase {
         if (dest.length != value.length || dest.length != func.length) {
             revert ArrayLengthMismatch();
         }
+        uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
         for (uint256 i = 0; i < dest.length; i++) {
-            _enforceGuard(value[i]);
+            _enforceGuard(value[i], algId);
             _call(dest[i], value[i], func[i]);
         }
     }
 
     /// @dev Combined tier + guard enforcement, called before every _call.
-    ///      Direct owner calls are treated as ECDSA (tier 1) — large-value
-    ///      transactions must go through EntryPoint with proper multi-sig.
-    function _enforceGuard(uint256 value) internal {
-        uint8 algId = _lastValidatedAlgId;
-
-        // Direct owner call: no signature validation happened, treat as ECDSA (tier 1)
-        if (msg.sender != entryPoint) {
-            algId = ALG_ECDSA;
-        }
-
+    ///      algId is resolved once per execute/executeBatch invocation:
+    ///      - EntryPoint calls: consumed from transient storage queue
+    ///      - Direct owner calls: forced to ALG_ECDSA (tier 1)
+    function _enforceGuard(uint256 value, uint8 algId) internal {
         // Tier enforcement always applies
         if (tier1Limit > 0 || tier2Limit > 0) {
             uint8 required = requiredTier(value);
@@ -674,6 +677,28 @@ abstract contract AAStarAirAccountBase {
         // Guard enforcement (daily limit + algorithm whitelist)
         if (address(guard) != address(0)) {
             guard.checkTransaction(value, algId);
+        }
+    }
+
+    // ─── Transient Storage AlgId Queue ────────────────────────────────
+
+    /// @dev Push validated algId to transient storage queue.
+    ///      Called during validateUserOp (validation phase).
+    function _storeValidatedAlgId(uint8 algId) internal {
+        assembly {
+            let writeIdx := tload(ALG_ID_SLOT_BASE)
+            tstore(add(add(ALG_ID_SLOT_BASE, 2), writeIdx), algId)
+            tstore(ALG_ID_SLOT_BASE, add(writeIdx, 1))
+        }
+    }
+
+    /// @dev Pop validated algId from transient storage queue.
+    ///      Called during execute/executeBatch (execution phase).
+    function _consumeValidatedAlgId() internal returns (uint8 algId) {
+        assembly {
+            let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
+            algId := tload(add(add(ALG_ID_SLOT_BASE, 2), readIdx))
+            tstore(add(ALG_ID_SLOT_BASE, 1), add(readIdx, 1))
         }
     }
 
