@@ -12,6 +12,12 @@ contract AAStarGlobalGuard {
     /// @notice The AA account that owns this guard (set at construction, never changes)
     address public immutable account;
 
+    /// @notice Absolute floor — daily limit can never be decreased below this value.
+    ///         Set at construction, immutable. Prevents a stolen ECDSA key from
+    ///         calling decreaseDailyLimit(0) to remove all spending protection.
+    ///         Set to 0 if no floor is desired (limit can be decreased to 0 = unlimited).
+    uint256 public immutable minDailyLimit;
+
     // ─── Mutable State ──────────────────────────────────────────
 
     /// @notice Daily spending limit in wei (0 = unlimited)
@@ -33,6 +39,7 @@ contract AAStarGlobalGuard {
 
     error OnlyAccount();
     error CanOnlyDecreaseLimit(uint256 current, uint256 requested);
+    error BelowMinDailyLimit(uint256 requested, uint256 minimum);
     error DailyLimitExceeded(uint256 requested, uint256 remaining);
     error AlgorithmNotApproved(uint8 algId);
 
@@ -48,9 +55,13 @@ contract AAStarGlobalGuard {
     /// @param _account The AA account contract address (immutable binding)
     /// @param _dailyLimit Daily spending limit in wei (0 = unlimited)
     /// @param _algIds Initial approved algorithm IDs
-    constructor(address _account, uint256 _dailyLimit, uint8[] memory _algIds) {
+    /// @param _minDailyLimit Floor for daily limit — decreaseDailyLimit cannot go below this.
+    ///        Pass 0 to allow decreasing all the way to 0 (removes protection).
+    ///        Typical value: 10% of initial dailyLimit (e.g., 0.01 ETH if limit is 0.1 ETH).
+    constructor(address _account, uint256 _dailyLimit, uint8[] memory _algIds, uint256 _minDailyLimit) {
         account = _account;
         dailyLimit = _dailyLimit;
+        minDailyLimit = _minDailyLimit;
         for (uint256 i = 0; i < _algIds.length; i++) {
             approvedAlgorithms[_algIds[i]] = true;
             emit AlgorithmApproved(_algIds[i]);
@@ -90,10 +101,13 @@ contract AAStarGlobalGuard {
 
     // ─── Monotonic Configuration (only tighten, never loosen) ───
 
-    /// @notice Decrease daily limit. Can NEVER increase.
+    /// @notice Decrease daily limit. Can NEVER increase. Cannot go below minDailyLimit.
     function decreaseDailyLimit(uint256 _newLimit) external onlyAccount {
         if (_newLimit >= dailyLimit) {
             revert CanOnlyDecreaseLimit(dailyLimit, _newLimit);
+        }
+        if (_newLimit < minDailyLimit) {
+            revert BelowMinDailyLimit(_newLimit, minDailyLimit);
         }
         uint256 old = dailyLimit;
         dailyLimit = _newLimit;

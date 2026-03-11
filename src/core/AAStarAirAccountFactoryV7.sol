@@ -131,10 +131,14 @@ contract AAStarAirAccountFactoryV7 {
         algIds[3] = 0x04; // ALG_CUMULATIVE_T2 (P256 + BLS)
         algIds[4] = 0x05; // ALG_CUMULATIVE_T3 (P256 + BLS + Guardian)
 
+        // minDailyLimit = 10% of dailyLimit — stolen ECDSA key cannot reduce limit below this floor
+        uint256 minLimit = dailyLimit / 10;
+
         return AAStarAirAccountBase.InitConfig({
             guardians: [guardian1, guardian2, defaultCommunityGuardian],
             dailyLimit: dailyLimit,
-            approvedAlgIds: algIds
+            approvedAlgIds: algIds,
+            minDailyLimit: minLimit
         });
     }
 

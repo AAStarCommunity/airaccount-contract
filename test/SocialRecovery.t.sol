@@ -34,7 +34,8 @@ contract SocialRecoveryTest is Test {
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
-            approvedAlgIds: noAlgs
+            approvedAlgIds: noAlgs,
+            minDailyLimit: 0
         });
         account = new AAStarAirAccountV7(entryPointAddr, ownerAddr, config);
     }

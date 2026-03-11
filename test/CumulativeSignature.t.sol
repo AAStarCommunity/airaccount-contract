@@ -87,7 +87,8 @@ contract CumulativeSignatureTest is Test {
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [guardianWallet1.addr, guardianWallet2.addr, guardianWallet3.addr],
             dailyLimit: 0,
-            approvedAlgIds: noAlgs
+            approvedAlgIds: noAlgs,
+            minDailyLimit: 0
         });
         account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, config);
 
@@ -156,7 +157,8 @@ contract CumulativeSignatureTest is Test {
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
-            approvedAlgIds: noAlgs
+            approvedAlgIds: noAlgs,
+            minDailyLimit: 0
         });
         AAStarAirAccountV7 failAccount = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, config);
         vm.deal(address(failAccount), 10 ether);
