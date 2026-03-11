@@ -61,11 +61,11 @@ contract AAStarBLSAlgorithmTest is Test {
         bls.registerPublicKey(NODE1, pubKey2);
     }
 
-    function test_registerPublicKey_anyone() public {
-        // Anyone can register (open access, future: requires PNT stake)
+    function test_registerPublicKey_onlyOwner() public {
+        // Non-owner cannot register (security fix: was permissionless)
         vm.prank(address(0xdead));
+        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
         bls.registerPublicKey(NODE1, pubKey1);
-        assertTrue(bls.isRegistered(NODE1));
     }
 
     // ─── Update ───────────────────────────────────────────────────────

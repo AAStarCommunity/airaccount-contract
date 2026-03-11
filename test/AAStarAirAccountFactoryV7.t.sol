@@ -4,6 +4,8 @@ pragma solidity ^0.8.33;
 import {Test, console2} from "forge-std/Test.sol";
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
+import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
+import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 
 /// @title AAStarAirAccountFactoryV7Test - Unit tests for CREATE2 factory
 contract AAStarAirAccountFactoryV7Test is Test {
@@ -11,73 +13,136 @@ contract AAStarAirAccountFactoryV7Test is Test {
     address public entryPoint;
     address public ownerA;
     address public ownerB;
+    address public guardian1;
+    address public guardian2;
+    address public communityGuardian;
+
+    uint256 constant TEST_DAILY_LIMIT = 0.5 ether;
 
     function setUp() public {
         entryPoint = makeAddr("entryPoint");
         ownerA = makeAddr("ownerA");
         ownerB = makeAddr("ownerB");
+        guardian1 = makeAddr("guardian1");
+        guardian2 = makeAddr("guardian2");
+        communityGuardian = makeAddr("communityGuardian");
 
-        factory = new AAStarAirAccountFactoryV7(entryPoint);
+        factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian);
     }
 
-    /// @notice createAccount should deploy a new account with correct owner and entryPoint
-    function test_createAccount() public {
-        address account = factory.createAccount(ownerA, 0);
+    function _minimalConfig() internal pure returns (AAStarAirAccountBase.InitConfig memory) {
+        uint8[] memory noAlgs = new uint8[](0);
+        return AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 0,
+            approvedAlgIds: noAlgs
+        });
+    }
 
-        assertTrue(account != address(0), "Account should be deployed");
-        assertTrue(account.code.length > 0, "Account should have code");
+    // ─── createAccountWithDefaults ──────────────────────────────────
+
+    function test_createAccountWithDefaults() public {
+        address account = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, TEST_DAILY_LIMIT);
+
+        assertTrue(account.code.length > 0);
 
         AAStarAirAccountV7 acc = AAStarAirAccountV7(payable(account));
-        assertEq(acc.owner(), ownerA, "Owner should match");
-        assertEq(acc.entryPoint(), entryPoint, "EntryPoint should match");
+        assertEq(acc.owner(), ownerA);
+        assertEq(acc.guardianCount(), 3);
+        assertEq(acc.guardians(0), guardian1);
+        assertEq(acc.guardians(1), guardian2);
+        assertEq(acc.guardians(2), communityGuardian);
+
+        // Guard should be initialized with user-specified daily limit
+        assertTrue(address(acc.guard()) != address(0));
+        AAStarGlobalGuard g = acc.guard();
+        assertEq(g.account(), account);
+        assertEq(g.dailyLimit(), TEST_DAILY_LIMIT);
+        assertTrue(g.approvedAlgorithms(0x02)); // ECDSA
+        assertTrue(g.approvedAlgorithms(0x01)); // BLS
+        assertTrue(g.approvedAlgorithms(0x03)); // P256
     }
 
-    /// @notice Creating the same account twice should return the same address (idempotent)
-    function test_createAccount_deterministic() public {
-        address account1 = factory.createAccount(ownerA, 42);
-        address account2 = factory.createAccount(ownerA, 42);
-
-        assertEq(account1, account2, "Same owner + salt should produce same address");
+    function test_createAccountWithDefaults_deterministic() public {
+        address a1 = factory.createAccountWithDefaults(ownerA, 1, guardian1, guardian2, TEST_DAILY_LIMIT);
+        address a2 = factory.createAccountWithDefaults(ownerA, 1, guardian1, guardian2, TEST_DAILY_LIMIT);
+        assertEq(a1, a2);
     }
 
-    /// @notice getAddress prediction should match actual deployment address
+    function test_getAddressWithDefaults_matchesCreated() public {
+        address predicted = factory.getAddressWithDefaults(ownerA, 5, guardian1, guardian2, TEST_DAILY_LIMIT);
+        address actual = factory.createAccountWithDefaults(ownerA, 5, guardian1, guardian2, TEST_DAILY_LIMIT);
+        assertEq(predicted, actual);
+    }
+
+    function test_createAccountWithDefaults_differentLimits() public {
+        address a1 = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, 0.1 ether);
+        address a2 = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, 1 ether);
+        // Different daily limits produce different addresses (different initcode)
+        assertTrue(a1 != a2);
+    }
+
+    // ─── createAccount (full config) ────────────────────────────────
+
+    function test_createAccount_fullConfig() public {
+        uint8[] memory algIds = new uint8[](2);
+        algIds[0] = 0x02;
+        algIds[1] = 0x03;
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [guardian1, guardian2, address(0)],
+            dailyLimit: 5 ether,
+            approvedAlgIds: algIds
+        });
+
+        address account = factory.createAccount(ownerA, 0, config);
+        AAStarAirAccountV7 acc = AAStarAirAccountV7(payable(account));
+
+        assertEq(acc.guardianCount(), 2);
+        assertEq(acc.guardians(0), guardian1);
+        assertEq(acc.guardians(1), guardian2);
+        assertEq(acc.guard().dailyLimit(), 5 ether);
+    }
+
     function test_getAddress_matchesCreated() public {
-        uint256 salt = 123;
-        address predicted = factory.getAddress(ownerA, salt);
-        address actual = factory.createAccount(ownerA, salt);
-
-        assertEq(predicted, actual, "Predicted address should match deployed address");
+        AAStarAirAccountBase.InitConfig memory config = _minimalConfig();
+        address predicted = factory.getAddress(ownerA, 123, config);
+        address actual = factory.createAccount(ownerA, 123, config);
+        assertEq(predicted, actual);
     }
 
-    /// @notice Different owners should produce different account addresses
-    function test_createAccount_differentOwners() public {
-        address accountA = factory.createAccount(ownerA, 0);
-        address accountB = factory.createAccount(ownerB, 0);
+    // ─── Different params produce different addresses ────────────────
 
-        assertTrue(accountA != accountB, "Different owners should get different addresses");
+    function test_differentOwners_differentAddresses() public {
+        address a = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, TEST_DAILY_LIMIT);
+        address b = factory.createAccountWithDefaults(ownerB, 0, guardian1, guardian2, TEST_DAILY_LIMIT);
+        assertTrue(a != b);
     }
 
-    /// @notice Same owner with different salts should produce different addresses
-    function test_createAccount_differentSalts() public {
-        address account1 = factory.createAccount(ownerA, 0);
-        address account2 = factory.createAccount(ownerA, 1);
-
-        assertTrue(account1 != account2, "Different salts should produce different addresses");
+    function test_differentSalts_differentAddresses() public {
+        address a = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, TEST_DAILY_LIMIT);
+        address b = factory.createAccountWithDefaults(ownerA, 1, guardian1, guardian2, TEST_DAILY_LIMIT);
+        assertTrue(a != b);
     }
 
-    /// @notice Factory should store the correct entryPoint
+    // ─── Factory state ──────────────────────────────────────────────
+
     function test_factoryEntryPoint() public view {
-        assertEq(factory.entryPoint(), entryPoint, "Factory entryPoint should match");
+        assertEq(factory.entryPoint(), entryPoint);
     }
 
-    /// @notice createAccount should emit AccountCreated event
+    function test_factoryCommunityGuardian() public view {
+        assertEq(factory.defaultCommunityGuardian(), communityGuardian);
+    }
+
+    // ─── Event emission ─────────────────────────────────────────────
+
     function test_createAccount_emitsEvent() public {
-        uint256 salt = 99;
-        address predicted = factory.getAddress(ownerA, salt);
+        AAStarAirAccountBase.InitConfig memory config = _minimalConfig();
+        address predicted = factory.getAddress(ownerA, 99, config);
 
         vm.expectEmit(true, true, false, true);
-        emit AAStarAirAccountFactoryV7.AccountCreated(predicted, ownerA, salt);
+        emit AAStarAirAccountFactoryV7.AccountCreated(predicted, ownerA, 99);
 
-        factory.createAccount(ownerA, salt);
+        factory.createAccount(ownerA, 99, config);
     }
 }

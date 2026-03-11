@@ -2,47 +2,140 @@
 pragma solidity ^0.8.33;
 
 import {AAStarAirAccountV7} from "./AAStarAirAccountV7.sol";
+import {AAStarAirAccountBase} from "./AAStarAirAccountBase.sol";
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 
 /// @title AAStarAirAccountFactoryV7 - CREATE2 factory for V7 accounts
+/// @notice Deploys account + guard + guardians atomically. No unprotected window.
+/// @dev Provides both full-config and convenience (default guardian) creation methods.
+///      No default daily limit — user must specify their own limit during creation.
 contract AAStarAirAccountFactoryV7 {
     /// @dev The EntryPoint address used for all created accounts
     address public immutable entryPoint;
 
+    /// @dev Default community guardian (Safe multisig provided by the community)
+    address public immutable defaultCommunityGuardian;
+
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
 
-    constructor(address _entryPoint) {
+    /// @param _entryPoint ERC-4337 EntryPoint address
+    /// @param _communityGuardian Default community Safe multisig guardian address
+    constructor(address _entryPoint, address _communityGuardian) {
         entryPoint = _entryPoint;
+        defaultCommunityGuardian = _communityGuardian;
     }
 
-    /// @dev Deploy a new AAStarAirAccountV7 with CREATE2
-    function createAccount(address owner, uint256 salt) external returns (address account) {
-        // Check if already deployed
-        address predicted = getAddress(owner, salt);
+    // ─── Full Configuration ─────────────────────────────────────────
+
+    /// @notice Deploy a new account with full configuration.
+    /// @param owner Account owner (ECDSA signer)
+    /// @param salt CREATE2 salt for deterministic address
+    /// @param config Full initialization config (guardians, guard, algorithms)
+    function createAccount(
+        address owner,
+        uint256 salt,
+        AAStarAirAccountBase.InitConfig memory config
+    ) external returns (address account) {
+        address predicted = getAddress(owner, salt, config);
         if (predicted.code.length > 0) {
             return predicted;
         }
 
         bytes memory bytecode = abi.encodePacked(
             type(AAStarAirAccountV7).creationCode,
-            abi.encode(entryPoint, owner)
+            abi.encode(entryPoint, owner, config)
         );
 
         account = Create2.deploy(0, _getSalt(owner, salt), bytecode);
         emit AccountCreated(account, owner, salt);
     }
 
-    /// @dev Predict the counterfactual address
-    function getAddress(address owner, uint256 salt) public view returns (address) {
+    /// @notice Predict the counterfactual address for a full-config account.
+    function getAddress(
+        address owner,
+        uint256 salt,
+        AAStarAirAccountBase.InitConfig memory config
+    ) public view returns (address) {
         bytes memory bytecode = abi.encodePacked(
             type(AAStarAirAccountV7).creationCode,
-            abi.encode(entryPoint, owner)
+            abi.encode(entryPoint, owner, config)
         );
 
         return Create2.computeAddress(
             _getSalt(owner, salt),
             keccak256(bytecode)
         );
+    }
+
+    // ─── Convenience: Default Guardian Setup ────────────────────────
+
+    /// @notice Deploy account with default community guardian as third guardian.
+    /// @dev User provides 2 personal guardians; community Safe is auto-added as third.
+    ///      Guard is initialized with user-specified dailyLimit and all 3 standard algorithms.
+    /// @param owner Account owner
+    /// @param salt CREATE2 salt
+    /// @param guardian1 User's backup key (passkey, EOA, or second device)
+    /// @param guardian2 Trusted person (spouse, family) or another passkey
+    /// @param dailyLimit Daily spending limit in wei (user chooses based on their needs)
+    function createAccountWithDefaults(
+        address owner,
+        uint256 salt,
+        address guardian1,
+        address guardian2,
+        uint256 dailyLimit
+    ) external returns (address account) {
+        require(guardian1 != address(0) && guardian2 != address(0), "Guardians required");
+        AAStarAirAccountBase.InitConfig memory config = _buildDefaultConfig(
+            guardian1, guardian2, dailyLimit
+        );
+        address predicted = getAddress(owner, salt, config);
+        if (predicted.code.length > 0) {
+            return predicted;
+        }
+
+        bytes memory bytecode = abi.encodePacked(
+            type(AAStarAirAccountV7).creationCode,
+            abi.encode(entryPoint, owner, config)
+        );
+
+        account = Create2.deploy(0, _getSalt(owner, salt), bytecode);
+        emit AccountCreated(account, owner, salt);
+    }
+
+    /// @notice Predict address for a default-config account.
+    function getAddressWithDefaults(
+        address owner,
+        uint256 salt,
+        address guardian1,
+        address guardian2,
+        uint256 dailyLimit
+    ) public view returns (address) {
+        AAStarAirAccountBase.InitConfig memory config = _buildDefaultConfig(
+            guardian1, guardian2, dailyLimit
+        );
+        return getAddress(owner, salt, config);
+    }
+
+    // ─── Internal ───────────────────────────────────────────────────
+
+    function _buildDefaultConfig(
+        address guardian1,
+        address guardian2,
+        uint256 dailyLimit
+    ) internal view returns (AAStarAirAccountBase.InitConfig memory) {
+        // Default approved algorithms: ECDSA, BLS, P256, Cumulative T2, Cumulative T3
+        uint8[] memory algIds = new uint8[](5);
+        algIds[0] = 0x02; // ALG_ECDSA
+        algIds[1] = 0x01; // ALG_BLS
+        algIds[2] = 0x03; // ALG_P256
+        algIds[3] = 0x04; // ALG_CUMULATIVE_T2 (P256 + BLS)
+        algIds[4] = 0x05; // ALG_CUMULATIVE_T3 (P256 + BLS + Guardian)
+
+        return AAStarAirAccountBase.InitConfig({
+            guardians: [guardian1, guardian2, defaultCommunityGuardian],
+            dailyLimit: dailyLimit,
+            approvedAlgIds: algIds
+        });
     }
 
     function _getSalt(address owner, uint256 salt) internal pure returns (bytes32) {

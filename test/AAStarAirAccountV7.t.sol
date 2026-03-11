@@ -48,13 +48,22 @@ contract AAStarAirAccountV7Test is Test {
         mockEntryPoint = new MockEntryPoint();
         entryPointAddr = address(mockEntryPoint);
 
-        account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr);
+        account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, _emptyConfig());
 
         // Fund the account with 10 ETH
         vm.deal(address(account), 10 ether);
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────
+
+    function _emptyConfig() internal pure returns (AAStarAirAccountBase.InitConfig memory) {
+        uint8[] memory noAlgs = new uint8[](0);
+        return AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 0,
+            approvedAlgIds: noAlgs
+        });
+    }
 
     function _buildUserOp(bytes memory signature) internal view returns (PackedUserOperation memory) {
         return PackedUserOperation({

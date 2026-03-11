@@ -1,0 +1,25 @@
+{
+  "name": "Personal Account",
+  "description": "Standard personal wallet with moderate security",
+  "dailyLimit": "1000000000000000000",
+  "dailyLimitDisplay": "1 ETH",
+  "tier1Limit": "100000000000000000",
+  "tier1LimitDisplay": "0.1 ETH (Passkey only)",
+  "tier2Limit": "500000000000000000",
+  "tier2LimitDisplay": "0.5 ETH (Passkey + DVT/BLS)",
+  "tier3Note": "Above 0.5 ETH requires Passkey + BLS + Guardian co-sign",
+  "guardians": {
+    "guardian1": { "label": "Backup device / passkey", "address": "" },
+    "guardian2": { "label": "Trusted person (family)", "address": "" },
+    "guardian3": { "label": "Community Safe (auto-filled)", "address": "" }
+  },
+  "approvedAlgorithms": [
+    { "id": 2, "name": "ECDSA", "description": "Standard Ethereum signature" },
+    { "id": 3, "name": "P256", "description": "WebAuthn Passkey (fingerprint/face)" },
+    { "id": 1, "name": "BLS", "description": "DVT aggregate signature" },
+    { "id": 4, "name": "Cumulative T2", "description": "P256 + BLS combined" },
+    { "id": 5, "name": "Cumulative T3", "description": "P256 + BLS + Guardian" }
+  ],
+  "recoveryTimelock": "2 days",
+  "recoveryThreshold": "2 of 3 guardians"
+}

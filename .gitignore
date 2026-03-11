@@ -6,8 +6,8 @@ deps/
 states/
 .env.local
 .env.production
-
-# Debug info
+.env.*
+ Debug info
 *.dbg.json
 *.tsbuildinfo
 
@@ -19,3 +19,6 @@ node_modules/
 # Foundry
 out/
 cache/
+
+.claude/
+broadcast/

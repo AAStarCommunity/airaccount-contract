@@ -8,8 +8,8 @@ import {AAStarAirAccountBase} from "./AAStarAirAccountBase.sol";
 /// @title AAStarAirAccountV7 - ERC-4337 account for EntryPoint v0.7
 /// @notice Non-upgradable, inherits core logic from AAStarAirAccountBase
 contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
-    constructor(address _entryPoint, address _owner)
-        AAStarAirAccountBase(_entryPoint, _owner) {}
+    constructor(address _entryPoint, address _owner, InitConfig memory _config)
+        AAStarAirAccountBase(_entryPoint, _owner, _config) {}
 
     /// @inheritdoc IAccount
     function validateUserOp(
