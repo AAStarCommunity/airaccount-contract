@@ -359,7 +359,7 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
 
     // ─── Node Management (ABI-compatible with YetAA) ──────────────────
 
-    function registerPublicKey(bytes32 nodeId, bytes calldata publicKey) external {
+    function registerPublicKey(bytes32 nodeId, bytes calldata publicKey) external onlyOwner {
         if (nodeId == bytes32(0)) revert InvalidNodeId();
         if (publicKey.length != G1_POINT_LENGTH) revert InvalidKeyLength();
         if (isRegistered[nodeId]) revert NodeAlreadyRegistered();

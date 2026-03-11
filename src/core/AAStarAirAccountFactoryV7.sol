@@ -84,6 +84,7 @@ contract AAStarAirAccountFactoryV7 {
         address guardian2,
         uint256 dailyLimit
     ) external returns (address account) {
+        require(guardian1 != address(0) && guardian2 != address(0), "Guardians required");
         AAStarAirAccountBase.InitConfig memory config = _buildDefaultConfig(
             guardian1, guardian2, dailyLimit
         );

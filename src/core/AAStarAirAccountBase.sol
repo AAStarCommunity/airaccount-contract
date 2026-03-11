@@ -150,6 +150,7 @@ abstract contract AAStarAirAccountBase {
     error InvalidNewOwner();
     error Reentrancy();
     error InvalidGuardianSignature();
+    error InvalidTierConfig();
 
     // ─── Events ───────────────────────────────────────────────────────
 
@@ -254,6 +255,7 @@ abstract contract AAStarAirAccountBase {
     }
 
     function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwner {
+        if (_tier1 > _tier2 && _tier2 > 0) revert InvalidTierConfig();
         tier1Limit = _tier1;
         tier2Limit = _tier2;
         emit TierLimitsSet(_tier1, _tier2);
