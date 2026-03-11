@@ -510,7 +510,7 @@ pnpm dev    # Opens at http://localhost:5173
 1. **ERC20 value not tracked**: Tier enforcement only checks `msg.value` (ETH). ERC20 transfers with `value=0` fall to Tier 1 regardless of token amount.
 2. **Chain compatibility**: P256 precompile (EIP-7212) and BLS precompiles (EIP-2537) only available on chains with Pectra/Prague upgrades.
 3. **Non-upgradable**: Bug fixes require new Factory deployment + user migration.
-4. **Single bundle same-sender**: If multiple UserOps from the same account are bundled together, `_lastValidatedAlgId` from the last validation is used for all executions.
+4. ~~**Single bundle same-sender**~~: Fixed — uses transient storage queue to prevent cross-UserOp algId contamination.
 
 ---
 

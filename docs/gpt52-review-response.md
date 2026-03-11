@@ -47,7 +47,7 @@ assembly {
 
 **Option B (simpler)**: Use `userOp.nonce` key bits to encode the expected algId, validated in `validateUserOp`. This avoids storage entirely.
 
-**Status**: Deferred to M5. Document as known limitation.
+**Status**: **FIXED** — replaced storage variable with transient storage queue (`_storeValidatedAlgId` / `_consumeValidatedAlgId`). Each `validateUserOp` pushes algId to queue, each `execute/executeBatch` pops from queue. Order preserved even when EntryPoint validates all ops before executing.
 
 ---
 
@@ -297,7 +297,7 @@ Already covered as finding H-3 in our security review. The messagePoint ECDSA si
 
 | # | Finding | Severity | Action | Timeline |
 |---|---------|----------|--------|----------|
-| 1 | `_lastValidatedAlgId` cross-contamination | HIGH | Document as limitation, fix with tstore keyed by nonce | M5 |
+| 1 | `_lastValidatedAlgId` cross-contamination | HIGH | **Fixed with transient storage queue** | **Done** |
 | 2 | BLS `registerPublicKey` permissionless | HIGH | **Add `onlyOwner`** | **Immediate** |
 | 3 | `registerAlgorithm` bypasses timelock | MEDIUM | Add `setupComplete` flag | M5 |
 | 4 | Tier/Guard ETH-only | MEDIUM | Document, plan modular approach | M5+ |
