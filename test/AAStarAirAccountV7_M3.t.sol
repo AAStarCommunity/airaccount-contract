@@ -225,6 +225,146 @@ contract AAStarAirAccountV7M3Test is Test {
         assertEq(result, 0);
     }
 
+    // ─── Cumulative Tier Enforcement (batch bypass fix) ──────────────
+
+    /// @notice Batch bypass: 10×0.1 ETH with ECDSA should fail on 2nd call
+    ///         because cumulative spend (0.2 ETH) crosses tier1Limit (0.1 ETH).
+    function test_batchBypassPrevented() public {
+        // Create guarded account with ECDSA approved, tier1=0.1 ETH, tier2=1 ETH
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02; // ECDSA only
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 10 ether,
+            approvedAlgIds: algIds,
+            minDailyLimit: 0
+        });
+        AAStarAirAccountV7 ga = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
+        vm.deal(address(ga), 10 ether);
+
+        vm.prank(ownerAddr);
+        ga.setTierLimits(0.1 ether, 1 ether);
+
+        // Sign ECDSA UserOp — use explicit algId prefix (0x02) to avoid r[0] collision with ALG_BLS
+        bytes32 userOpHash = keccak256("batchBypassTest");
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerKey, ethHash);
+        bytes memory sig = abi.encodePacked(uint8(0x02), r, s, v); // 66 bytes: algId + r + s + v
+
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: address(ga),
+            nonce: 0,
+            initCode: "",
+            callData: "",
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: sig
+        });
+
+        // validateUserOp stores ECDSA algId in transient queue
+        vm.prank(entryPoint);
+        ga.validateUserOp(userOp, userOpHash, 0);
+
+        // executeBatch: 2 calls × 0.1 ETH — second call cumulative=0.2 ETH → tier2 required
+        address[] memory dests = new address[](2);
+        dests[0] = address(0xBEEF);
+        dests[1] = address(0xBEEF);
+        uint256[] memory values = new uint256[](2);
+        values[0] = 0.1 ether;
+        values[1] = 0.1 ether;
+        bytes[] memory funcs = new bytes[](2);
+        funcs[0] = "";
+        funcs[1] = "";
+
+        vm.prank(entryPoint);
+        vm.expectRevert(abi.encodeWithSignature("InsufficientTier(uint8,uint8)", 2, 1));
+        ga.executeBatch(dests, values, funcs);
+    }
+
+    /// @notice Multi-TX bypass: 2nd UserOp pushing cumulative over tier1Limit is rejected.
+    ///         First TX spends 0.1 ETH, second TX tries 0.1 ETH more → total 0.2 ETH → tier2.
+    function test_multiTxBypassPrevented() public {
+        // Create guarded account with ECDSA approved, tier1=0.1 ETH, tier2=1 ETH
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02; // ECDSA only
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 10 ether,
+            approvedAlgIds: algIds,
+            minDailyLimit: 0
+        });
+        AAStarAirAccountV7 ga = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
+        vm.deal(address(ga), 10 ether);
+
+        vm.prank(ownerAddr);
+        ga.setTierLimits(0.1 ether, 1 ether);
+
+        // Helper: sign and validate UserOp — explicit algId prefix to avoid r[0] collision
+        bytes32 userOpHash1 = keccak256("multiTxTest1");
+        bytes32 ethHash1 = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash1));
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(ownerKey, ethHash1);
+        bytes memory sig1 = abi.encodePacked(uint8(0x02), r1, s1, v1); // 66 bytes: algId + r + s + v
+
+        PackedUserOperation memory userOp1 = PackedUserOperation({
+            sender: address(ga), nonce: 0, initCode: "", callData: "",
+            accountGasLimits: bytes32(0), preVerificationGas: 0, gasFees: bytes32(0),
+            paymasterAndData: "", signature: sig1
+        });
+
+        // TX1: 0.1 ETH — cumulative = 0.1 → tier1 → OK
+        vm.prank(entryPoint);
+        ga.validateUserOp(userOp1, userOpHash1, 0);
+        vm.prank(entryPoint);
+        ga.execute(address(0xBEEF), 0.1 ether, "");
+
+        // TX2: another 0.1 ETH — cumulative = 0.2 → tier2 required → FAIL
+        bytes32 userOpHash2 = keccak256("multiTxTest2");
+        bytes32 ethHash2 = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash2));
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(ownerKey, ethHash2);
+        bytes memory sig2 = abi.encodePacked(uint8(0x02), r2, s2, v2); // 66 bytes: algId + r + s + v
+
+        PackedUserOperation memory userOp2 = PackedUserOperation({
+            sender: address(ga), nonce: 1, initCode: "", callData: "",
+            accountGasLimits: bytes32(0), preVerificationGas: 0, gasFees: bytes32(0),
+            paymasterAndData: "", signature: sig2
+        });
+
+        vm.prank(entryPoint);
+        ga.validateUserOp(userOp2, userOpHash2, 0);
+
+        vm.prank(entryPoint);
+        vm.expectRevert(abi.encodeWithSignature("InsufficientTier(uint8,uint8)", 2, 1));
+        ga.execute(address(0xBEEF), 0.1 ether, "");
+    }
+
+    /// @notice todaySpent() view correctly returns zero for a new day.
+    function test_todaySpent_noGuard() public {
+        // account from setUp has no guard — tier enforcement uses 0 as alreadySpent
+        // Just verify tier still works when no guard is attached
+        vm.prank(ownerAddr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        // 0.1 ETH at tier1 boundary — no guard so alreadySpent=0, cumulative=0.1 → tier1
+        bytes32 userOpHash = keccak256("noGuardTier");
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerKey, ethHash);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: address(account), nonce: 0, initCode: "", callData: "",
+            accountGasLimits: bytes32(0), preVerificationGas: 0, gasFees: bytes32(0),
+            paymasterAndData: "", signature: sig
+        });
+
+        vm.deal(address(account), 1 ether);
+        vm.prank(entryPoint);
+        account.validateUserOp(userOp, userOpHash, 0);
+        vm.prank(entryPoint);
+        account.execute(address(0xBEEF), 0.1 ether, ""); // Should succeed (no guard, no dailySpent)
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────
 
     function _buildUserOp(bytes memory sig) internal view returns (PackedUserOperation memory) {

@@ -671,10 +671,19 @@ abstract contract AAStarAirAccountBase {
     ///      algId is resolved once per execute/executeBatch invocation:
     ///      - EntryPoint calls: consumed from transient storage queue
     ///      - Direct owner calls: forced to ALG_ECDSA (tier 1)
+    ///
+    ///      Tier check uses CUMULATIVE daily spend to prevent bypass:
+    ///      - Batch bypass: 10×0.1 ETH in one executeBatch with ECDSA would
+    ///        total 1 ETH but each call is ≤ tier1Limit. Each call reads the
+    ///        updated dailySpent (written by previous guard.checkTransaction),
+    ///        so by call 2 alreadySpent+value crosses the tier1 boundary → reverts.
+    ///      - Multi-TX bypass: 10 separate UserOps each ≤ tier1Limit. Same fix
+    ///        works because dailySpent persists across transactions.
     function _enforceGuard(uint256 value, uint8 algId) internal {
-        // Tier enforcement always applies
+        // Tier enforcement always applies — use cumulative amount for tier check
         if (tier1Limit > 0 || tier2Limit > 0) {
-            uint8 required = requiredTier(value);
+            uint256 alreadySpent = address(guard) != address(0) ? guard.todaySpent() : 0;
+            uint8 required = requiredTier(alreadySpent + value);
             if (required > 0) {
                 uint8 provided = _algTier(algId);
                 if (provided < required) {
@@ -684,6 +693,8 @@ abstract contract AAStarAirAccountBase {
         }
 
         // Guard enforcement (daily limit + algorithm whitelist)
+        // guard.checkTransaction writes dailySpent so the next call in a batch
+        // will see the updated value via todaySpent() above.
         if (address(guard) != address(0)) {
             guard.checkTransaction(value, algId);
         }
