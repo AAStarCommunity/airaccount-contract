@@ -99,6 +99,11 @@ contract AAStarGlobalGuard {
         return dailyLimit > spent ? dailyLimit - spent : 0;
     }
 
+    /// @notice Query total amount spent today (used by account for cumulative tier enforcement)
+    function todaySpent() external view returns (uint256) {
+        return dailySpent[block.timestamp / 1 days];
+    }
+
     // ─── Monotonic Configuration (only tighten, never loosen) ───
 
     /// @notice Decrease daily limit. Can NEVER increase. Cannot go below minDailyLimit.

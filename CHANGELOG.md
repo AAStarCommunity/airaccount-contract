@@ -8,11 +8,15 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
-## [v0.12.6] - 2026-03-11
+## [v0.12.6] - 2026-03-12
 
 ### Added
 - **`version()` view function** — returns contract version string `"0.12.6"`. All future releases will update this constant.
 - **`VERSION` constant** — `string public constant VERSION = "0.12.6"` in `AAStarAirAccountV7`
+- **`todaySpent()` view** — `AAStarGlobalGuard` exposes today's cumulative spend for external tier enforcement
+- **Cumulative tier enforcement** — `_enforceGuard` now reads `guard.todaySpent()` and checks tier against `(alreadySpent + value)`, preventing two bypass patterns:
+  - **Batch bypass**: `executeBatch([0.1 ETH × 10])` with ECDSA — each call individually ≤ tier1Limit but cumulatively exceeds it; second call reverts with `InsufficientTier`
+  - **Multi-TX bypass**: 10 separate UserOps each ≤ tier1Limit — persistent `dailySpent` storage catches the cumulative total
 
 ### Fixed (GPT-5.2 Security Review)
 - **Finding 1**: `_lastValidatedAlgId` storage variable → transient storage queue (`_storeValidatedAlgId` / `_consumeValidatedAlgId`). Prevents cross-UserOp algId contamination when EntryPoint bundles multiple ops from same sender.
@@ -32,7 +36,7 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 - Tier enforcement is ETH-only (msg.value); ERC20 value tiers planned for M5
 
 ### Test Results
-- **Foundry**: 200/200 passing
+- **Foundry**: 203/203 passing (+3 new cumulative tier tests)
 
 ---
 
