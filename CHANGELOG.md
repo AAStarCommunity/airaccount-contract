@@ -8,6 +8,47 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.13.6] - 2026-03-13 (M5 Business Scenarios + Comprehensive Tests)
+
+### Added — Business Context Documentation
+
+- **`docs/M5-plan.md` — "Feature Business Scenarios — Before & After" section**: Each M5 feature (M5.1–M5.8) now documents:
+  - Real-world user scenario it addresses (concrete attack/failure mode)
+  - How the feature eliminates or mitigates the scenario
+  - Measurable security/UX improvement with user impact context
+
+### Added — Comprehensive Scenario Tests (`test/M5ScenarioTests.t.sol`)
+
+- **22 new scenario-driven tests** organized by milestone, each named after the user story it validates:
+  - **M5.1 (6 tests)**: ERC20 guard — small USDC passes, stolen ECDSA key blocked, batch bypass prevented, daily cap enforces multi-day drain limit, unconfigured token unrestricted, non-ERC20 calldata not intercepted
+  - **M5.2 (2 tests)**: Governance — team finalizes setup and registration blocked, messagePoint cross-op replay prevented
+  - **M5.3 (5 tests)**: Guardian acceptance — happy path, typo guardian rejected, zero guardian rejected, wrong owner binding, wrong salt replay blocked
+  - **M5.7 (3 tests)**: Force guard — zero daily limit rejected, minimal non-zero accepted, raw `createAccount` still flexible
+  - **M5.8 (6 tests)**: Zero-trust — both factors valid passes, TE key alone fails, device alone fails, standard ECDSA unaffected, combined T1 is tier-1, factory approves 0x06
+
+### Added — E2E Test Scripts (Sepolia)
+
+- **`scripts/test-m5-erc20-guard-e2e.ts`** — M5.1 ERC20 token guard E2E:
+  - Deploys account with aPNTs guard (tier1=100, tier2=1000, daily=5000 aPNTs)
+  - Scenario A: 50 aPNTs ECDSA => SUCCESS; Scenario B: 500 aPNTs ECDSA => InsufficientTokenTier
+- **`scripts/test-m5-combined-t1-e2e.ts`** — M5.8 ALG_COMBINED_T1 zero-trust E2E:
+  - Deploys account, registers P256 key, submits UserOp with combined 130-byte sig
+  - Test A: both P256+ECDSA valid => SUCCESS; Test B: fake P256 => rejected; Test C: ECDSA-only backward compat
+- **`scripts/test-m5-guardian-accept-e2e.ts`** — M5.3 guardian acceptance E2E (6 scenarios):
+  - Test A: happy path (both guardians sign) => account created; Tests B–F: typo/zero/wrong-owner/wrong-salt/zero-limit all REVERT
+
+### Fixed
+
+- **`scripts/test-tiered-e2e.ts`** — F55 fix: `mpHash` now binds messagePoint to UserOp:
+  `keccak256(concat([userOpHash, messagePoint]))` instead of `keccak256(messagePoint)`
+  Prevents DVT node from replaying a (messagePoint, BLS sig) pair across different UserOps
+
+### Test Results
+
+- Foundry: **274/274 passed** (22 new M5 scenario tests in `test/M5ScenarioTests.t.sol` + 252 existing)
+
+---
+
 ## [v0.13.5] - 2026-03-13 (M5.7 + M5.8)
 
 ### Added — M5.7: Force Guard Requirement
