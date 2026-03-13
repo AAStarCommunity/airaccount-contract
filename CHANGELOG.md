@@ -12,9 +12,25 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ### M5 Milestone Status: **COMPLETE** ✓
 - 280/280 unit tests passing (all test suites)
-- Deployment script ready: `scripts/deploy-m5.ts`
-- Three E2E test scripts ready for Sepolia verification
+- M5 Factory deployed to Sepolia: `0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9`
+- All three E2E tests verified on Sepolia (15/15 scenarios PASS)
 - CI gate: `.github/workflows/test.yml` (forge test on all PRs)
+
+### AirAccount M5 (Sepolia)
+- **Factory**: `0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9`
+- **Deploy TX**: `0xaca946016fe232b00ad4bec58674ff31d8471fb8371133d72ee8dcfc02ff453a`
+- **Gas used**: 5,302,643
+
+### E2E Verification (Sepolia)
+| Test | Scenarios | Result |
+|------|-----------|--------|
+| M5.3 Guardian Acceptance | 6/6 | ✅ ALL PASS |
+| M5.8 ALG_COMBINED_T1 | 3/3 | ✅ ALL PASS |
+| M5.1 ERC20 Guard | 2/2 | ✅ ALL PASS |
+
+- M5.3 Account (salt=700): `0x866E6B61211f82931dd0a6D9134b4836FA40C15a`
+- M5.8 Account (salt=600): `0x73A7d2Aa0E8F2655F3c580aeCd5F6fcC8C300e32`
+- M5.1 Account (ERC20 guard): `0xdBF6F82cE4fc710D0d548A131aeD776B0Ab94BdC`
 
 ### Added — Deployment Infrastructure
 
