@@ -8,6 +8,22 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.13.3] - 2026-03-13 (M5.4)
+
+### Added — Chain Compatibility & P256 Fallback (F60)
+
+- **`p256FallbackVerifier` storage** in `AAStarAirAccountBase` — fallback pure-Solidity P256 verifier for chains without EIP-7212 precompile at `0x100`
+- **`setP256FallbackVerifier(address)` owner function** — owner can configure fallback verifier post-deployment; set to `address(0)` to disable (precompile-required mode)
+- **`P256FallbackVerifierSet(address)` event** — emitted when fallback is configured
+- **`_validateP256` updated**: tries EIP-7212 precompile first; if precompile call fails or returns empty, falls back to configured verifier using same call interface: `staticcall(abi.encode(hash,r,s,x,y))` → `uint256(1)` for valid
+- **Precompile address table** documented in `docs/M5-plan.md` — confirmed precompile addresses correct across all target chains
+
+### Test Results
+
+- Foundry: **245/245 passed** (8 new M5.4 tests in `test/AAStarAirAccountM5_4.t.sol` + 237 existing)
+
+---
+
 ## [v0.13.2] - 2026-03-13 (M5.3)
 
 ### Added — Guardian Validation (Accept-Pattern)

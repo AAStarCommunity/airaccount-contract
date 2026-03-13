@@ -85,6 +85,11 @@ abstract contract AAStarAirAccountBase {
     /// @notice P256 public key y-coordinate
     bytes32 public p256KeyY;
 
+    /// @notice Fallback P256 verifier for chains without EIP-7212 precompile at 0x100.
+    ///         Must implement same interface: staticcall(abi.encode(hash,r,s,x,y)) → uint256 (1=valid).
+    ///         Set to address(0) to disable fallback (precompile required).
+    address public p256FallbackVerifier;
+
     // ── Tiered Routing ──
 
     /// @notice Tier thresholds: [0]=Tier1 max (ECDSA only), [1]=Tier2 max (dual factor)
@@ -166,6 +171,7 @@ abstract contract AAStarAirAccountBase {
     event AggregatorSet(address indexed aggregator);
     event GuardInitialized(address indexed guard, uint256 dailyLimit);
     event P256KeySet(bytes32 x, bytes32 y);
+    event P256FallbackVerifierSet(address verifier);
     event TierLimitsSet(uint256 tier1, uint256 tier2);
     event GuardianAdded(uint8 indexed index, address indexed guardian);
     event GuardianRemoved(uint8 indexed index, address indexed guardian);
@@ -263,6 +269,14 @@ abstract contract AAStarAirAccountBase {
         p256KeyX = _x;
         p256KeyY = _y;
         emit P256KeySet(_x, _y);
+    }
+
+    /// @notice Set fallback P256 verifier for chains without EIP-7212 precompile (F60 — M5.4).
+    /// @dev Use address(0) to clear the fallback (precompile-only mode).
+    ///      Verifier must accept: staticcall(abi.encode(hash,r,s,x,y)) and return uint256(1) for valid.
+    function setP256FallbackVerifier(address verifier) external onlyOwner {
+        p256FallbackVerifier = verifier;
+        emit P256FallbackVerifierSet(verifier);
     }
 
     function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwner {
@@ -439,14 +453,24 @@ abstract contract AAStarAirAccountBase {
         bytes32 r = bytes32(sigData[0:32]);
         bytes32 s = bytes32(sigData[32:64]);
 
-        // EIP-7212: P256VERIFY(hash, r, s, x, y) → 1 if valid
-        (bool success, bytes memory result) = P256_VERIFIER.staticcall(
-            abi.encode(userOpHash, r, s, p256KeyX, p256KeyY)
-        );
+        bytes memory callData = abi.encode(userOpHash, r, s, p256KeyX, p256KeyY);
+
+        // EIP-7212 precompile at 0x100: P256VERIFY(hash, r, s, x, y) → 1 if valid
+        (bool success, bytes memory result) = P256_VERIFIER.staticcall(callData);
 
         if (success && result.length >= 32) {
             uint256 valid = abi.decode(result, (uint256));
             return valid == 1 ? 0 : 1;
+        }
+
+        // Precompile unavailable — try fallback verifier (F60: chain compatibility)
+        address fallback_ = p256FallbackVerifier;
+        if (fallback_ != address(0)) {
+            (bool fbSuccess, bytes memory fbResult) = fallback_.staticcall(callData);
+            if (fbSuccess && fbResult.length >= 32) {
+                uint256 valid = abi.decode(fbResult, (uint256));
+                return valid == 1 ? 0 : 1;
+            }
         }
 
         return 1;
