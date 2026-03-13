@@ -27,7 +27,9 @@ contract AAStarAirAccountV7M3Test is Test {
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
     }
 
@@ -151,7 +153,9 @@ contract AAStarAirAccountV7M3Test is Test {
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         AAStarAirAccountV7 guardedAccount = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
 
@@ -176,7 +180,9 @@ contract AAStarAirAccountV7M3Test is Test {
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         AAStarAirAccountV7 ga = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
 
@@ -237,7 +243,9 @@ contract AAStarAirAccountV7M3Test is Test {
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 10 ether,
             approvedAlgIds: algIds,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         AAStarAirAccountV7 ga = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
         vm.deal(address(ga), 10 ether);
@@ -293,7 +301,9 @@ contract AAStarAirAccountV7M3Test is Test {
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 10 ether,
             approvedAlgIds: algIds,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         AAStarAirAccountV7 ga = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
         vm.deal(address(ga), 10 ether);

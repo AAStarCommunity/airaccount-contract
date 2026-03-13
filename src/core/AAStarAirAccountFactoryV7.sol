@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {AAStarAirAccountV7} from "./AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "./AAStarAirAccountBase.sol";
+import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 
 /// @title AAStarAirAccountFactoryV7 - CREATE2 factory for V7 accounts
@@ -134,11 +135,17 @@ contract AAStarAirAccountFactoryV7 {
         // minDailyLimit = 10% of dailyLimit — stolen ECDSA key cannot reduce limit below this floor
         uint256 minLimit = dailyLimit / 10;
 
+        // Empty token configs — owner can call guardAddTokenConfig after deployment
+        address[] memory emptyTokens = new address[](0);
+        AAStarGlobalGuard.TokenConfig[] memory emptyTokenConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+
         return AAStarAirAccountBase.InitConfig({
             guardians: [guardian1, guardian2, defaultCommunityGuardian],
             dailyLimit: dailyLimit,
             approvedAlgIds: algIds,
-            minDailyLimit: minLimit
+            minDailyLimit: minLimit,
+            initialTokens: emptyTokens,
+            initialTokenConfigs: emptyTokenConfigs
         });
     }
 

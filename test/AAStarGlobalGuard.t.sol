@@ -16,7 +16,7 @@ contract AAStarGlobalGuardTest is Test {
     function setUp() public {
         uint8[] memory algIds = new uint8[](1);
         algIds[0] = ALG_ECDSA;
-        guard = new AAStarGlobalGuard(account, DAILY_LIMIT, algIds, DAILY_LIMIT / 10);
+        guard = new AAStarGlobalGuard(account, DAILY_LIMIT, algIds, DAILY_LIMIT / 10, new address[](0), new AAStarGlobalGuard.TokenConfig[](0));
     }
 
     // ─── 1. Constructor ────────────────────────────────────────────────
@@ -36,7 +36,7 @@ contract AAStarGlobalGuardTest is Test {
         algIds[0] = ALG_ECDSA;
         algIds[1] = ALG_BLS;
         algIds[2] = ALG_P256;
-        AAStarGlobalGuard g = new AAStarGlobalGuard(account, DAILY_LIMIT, algIds, DAILY_LIMIT / 10);
+        AAStarGlobalGuard g = new AAStarGlobalGuard(account, DAILY_LIMIT, algIds, DAILY_LIMIT / 10, new address[](0), new AAStarGlobalGuard.TokenConfig[](0));
         assertTrue(g.approvedAlgorithms(ALG_ECDSA));
         assertTrue(g.approvedAlgorithms(ALG_BLS));
         assertTrue(g.approvedAlgorithms(ALG_P256));
@@ -218,7 +218,7 @@ contract AAStarGlobalGuardTest is Test {
     function test_unlimitedWhenDailyLimitIsZero() public {
         uint8[] memory algIds = new uint8[](1);
         algIds[0] = ALG_ECDSA;
-        AAStarGlobalGuard unlimitedGuard = new AAStarGlobalGuard(account, 0, algIds, 0);
+        AAStarGlobalGuard unlimitedGuard = new AAStarGlobalGuard(account, 0, algIds, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0));
 
         vm.prank(account);
         bool ok = unlimitedGuard.checkTransaction(1000 ether, ALG_ECDSA);
