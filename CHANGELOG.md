@@ -8,6 +8,33 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.13.5] - 2026-03-13 (M5.7 + M5.8)
+
+### Added — M5.7: Force Guard Requirement
+
+- **`createAccountWithDefaults` now requires `dailyLimit > 0`** — prevents accidentally creating unguarded production accounts via convenience method. Raw `createAccount` remains flexible for testing.
+
+### Added — M5.8: Zero-Trust Tier 1 (ALG_COMBINED_T1 = 0x06)
+
+- **`ALG_COMBINED_T1 = 0x06` constant** — new algorithm identifier
+- **`_validateCombinedT1(userOpHash, sigData)` internal function** — simultaneously verifies P256 passkey AND owner ECDSA on-chain; neither alone is sufficient
+  - Signature format (130 bytes): `[0x06][P256_r(32)][P256_s(32)][ECDSA_r(32)][ECDSA_s(32)][ECDSA_v(1)]`
+  - P256 uses EIP-7212 precompile (with `p256FallbackVerifier` fallback from M5.4)
+  - ECDSA signs `userOpHash.toEthSignedMessageHash()`
+- **`_validateSignature` dispatch updated**: routes `0x06` → `_validateCombinedT1`
+- **`_algTier(0x06)` = tier 1** — same spending limits as ECDSA Tier 1, but dual-factor enforced
+- **Factory `_buildDefaultConfig` updated**: includes 0x06 in default approved algorithms (now 6 algIds: 0x01–0x06)
+
+### Security
+
+- Trust gap eliminated for `ALG_COMBINED_T1` users: chain independently verifies both P256 passkey (device-bound) and ECDSA (TE key). A compromised TE alone or stolen device alone cannot transact.
+
+### Test Results
+
+- Foundry: **252/252 passed** (7 new M5.8 tests in `test/AAStarAirAccountM5_8.t.sol` + 245 existing)
+
+---
+
 ## [v0.13.3] - 2026-03-13 (M5.4)
 
 ### Added — Chain Compatibility & P256 Fallback (F60)

@@ -36,6 +36,7 @@ abstract contract AAStarAirAccountBase {
     uint8 internal constant ALG_P256 = 0x03;
     uint8 internal constant ALG_CUMULATIVE_T2 = 0x04; // P256 + BLS
     uint8 internal constant ALG_CUMULATIVE_T3 = 0x05; // P256 + BLS + Guardian ECDSA
+    uint8 internal constant ALG_COMBINED_T1 = 0x06;   // P256 AND ECDSA simultaneously (zero-trust Tier 1)
 
     uint256 internal constant G2_POINT_LENGTH = 256;
 
@@ -385,6 +386,16 @@ abstract contract AAStarAirAccountBase {
             return 1; // Wrong length for explicit ECDSA
         }
 
+        // ALG_COMBINED_T1 (0x06): P256 passkey AND owner ECDSA — zero-trust Tier 1 (F74/F75/F76)
+        // Signature format: [0x06][P256_r(32)][P256_s(32)][ECDSA_r(32)][ECDSA_s(32)][ECDSA_v(1)]
+        if (firstByte == ALG_COMBINED_T1) {
+            if (signature.length == 130) {
+                _storeValidatedAlgId(ALG_COMBINED_T1);
+                return _validateCombinedT1(userOpHash, signature[1:]);
+            }
+            return 1; // Wrong length
+        }
+
         // Raw ECDSA: 65-byte sig without algId prefix (backwards compat with M1)
         if (signature.length == 65) {
             _storeValidatedAlgId(ALG_ECDSA);
@@ -474,6 +485,71 @@ abstract contract AAStarAirAccountBase {
         }
 
         return 1;
+    }
+
+    /**
+     * @dev Validate ALG_COMBINED_T1 (0x06): P256 passkey AND owner ECDSA simultaneously.
+     *
+     * Zero-trust Tier 1 — chain independently verifies both keys, neither trusts the other.
+     * A compromised TE (ECDSA only) or stolen device (P256 only) cannot transact alone.
+     *
+     * Signature format (129 bytes, after algId byte stripped):
+     *   [P256_r(32)][P256_s(32)][ECDSA_r(32)][ECDSA_s(32)][ECDSA_v(1)]
+     *
+     * ECDSA signs userOpHash with EIP-191 prefix (same as ALG_ECDSA).
+     * P256 verifies userOpHash directly against stored p256KeyX/p256KeyY.
+     * Both must be valid; tier = 1 (same spending limits as ECDSA Tier 1).
+     */
+    function _validateCombinedT1(
+        bytes32 userOpHash,
+        bytes calldata sigData
+    ) internal view returns (uint256) {
+        if (sigData.length != 129) return 1;
+        if (p256KeyX == bytes32(0) && p256KeyY == bytes32(0)) return 1;
+
+        // LAYER 1: P256 passkey verifies userOpHash directly
+        bytes32 p256r = bytes32(sigData[0:32]);
+        bytes32 p256s = bytes32(sigData[32:64]);
+
+        bytes memory p256CallData = abi.encode(userOpHash, p256r, p256s, p256KeyX, p256KeyY);
+        (bool p256Success, bytes memory p256Result) = P256_VERIFIER.staticcall(p256CallData);
+
+        bool p256Valid = false;
+        if (p256Success && p256Result.length >= 32) {
+            p256Valid = abi.decode(p256Result, (uint256)) == 1;
+        }
+
+        // Fallback P256 verifier if precompile unavailable
+        if (!p256Valid) {
+            address fallback_ = p256FallbackVerifier;
+            if (fallback_ != address(0)) {
+                (bool fbOk, bytes memory fbResult) = fallback_.staticcall(p256CallData);
+                if (fbOk && fbResult.length >= 32) {
+                    p256Valid = abi.decode(fbResult, (uint256)) == 1;
+                }
+            }
+        }
+        if (!p256Valid) return 1;
+
+        // LAYER 2: Owner ECDSA signs userOpHash (EIP-191 prefix)
+        bytes32 ecdsaHash = userOpHash.toEthSignedMessageHash();
+        bytes32 ecdsaR = bytes32(sigData[64:96]);
+        bytes32 ecdsaS = bytes32(sigData[96:128]);
+        uint8 ecdsaV = uint8(sigData[128]);
+        if (ecdsaV < 27) ecdsaV += 27;
+
+        address recovered;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, ecdsaHash)
+            mstore(add(ptr, 32), ecdsaV)
+            mstore(add(ptr, 64), ecdsaR)
+            mstore(add(ptr, 96), ecdsaS)
+            let ok := staticcall(3000, 1, ptr, 128, ptr, 32)
+            if ok { recovered := mload(ptr) }
+        }
+
+        return (recovered != address(0) && recovered == owner) ? 0 : 1;
     }
 
     /**

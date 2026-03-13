@@ -98,6 +98,7 @@ contract AAStarAirAccountFactoryV7 {
         uint256 dailyLimit
     ) external returns (address account) {
         require(guardian1 != address(0) && guardian2 != address(0), "Guardians required");
+        require(dailyLimit > 0, "Daily limit required"); // F72: guard must be configured
 
         // Verify both guardians signed the acceptance message (F56 — M5.3)
         bytes32 acceptHash = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt))
@@ -145,13 +146,14 @@ contract AAStarAirAccountFactoryV7 {
         address guardian2,
         uint256 dailyLimit
     ) internal view returns (AAStarAirAccountBase.InitConfig memory) {
-        // Default approved algorithms: ECDSA, BLS, P256, Cumulative T2, Cumulative T3
-        uint8[] memory algIds = new uint8[](5);
+        // Default approved algorithms: ECDSA, BLS, P256, Cumulative T2, Cumulative T3, Combined T1
+        uint8[] memory algIds = new uint8[](6);
         algIds[0] = 0x02; // ALG_ECDSA
         algIds[1] = 0x01; // ALG_BLS
         algIds[2] = 0x03; // ALG_P256
         algIds[3] = 0x04; // ALG_CUMULATIVE_T2 (P256 + BLS)
         algIds[4] = 0x05; // ALG_CUMULATIVE_T3 (P256 + BLS + Guardian)
+        algIds[5] = 0x06; // ALG_COMBINED_T1 (P256 + ECDSA zero-trust)
 
         // minDailyLimit = 10% of dailyLimit — stolen ECDSA key cannot reduce limit below this floor
         uint256 minLimit = dailyLimit / 10;
