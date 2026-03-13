@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.33;
 
-import {Test, console2} from "forge-std/Test.sol";
+import {Test, Vm, console2} from "forge-std/Test.sol";
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
@@ -13,8 +13,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
     address public entryPoint;
     address public ownerA;
     address public ownerB;
-    address public guardian1;
-    address public guardian2;
+    Vm.Wallet public g1Wallet;
+    Vm.Wallet public g2Wallet;
     address public communityGuardian;
 
     uint256 constant TEST_DAILY_LIMIT = 0.5 ether;
@@ -23,11 +23,19 @@ contract AAStarAirAccountFactoryV7Test is Test {
         entryPoint = makeAddr("entryPoint");
         ownerA = makeAddr("ownerA");
         ownerB = makeAddr("ownerB");
-        guardian1 = makeAddr("guardian1");
-        guardian2 = makeAddr("guardian2");
+        g1Wallet = vm.createWallet("guardian1");
+        g2Wallet = vm.createWallet("guardian2");
         communityGuardian = makeAddr("communityGuardian");
 
         factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian);
+    }
+
+    /// @dev Sign the guardian acceptance message for a given owner+salt
+    function _guardianSig(Vm.Wallet memory w, address owner, uint256 salt) internal pure returns (bytes memory) {
+        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt));
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
+        return abi.encodePacked(r, s, v);
     }
 
     function _minimalConfig() internal pure returns (AAStarAirAccountBase.InitConfig memory) {
@@ -45,15 +53,17 @@ contract AAStarAirAccountFactoryV7Test is Test {
     // ─── createAccountWithDefaults ──────────────────────────────────
 
     function test_createAccountWithDefaults() public {
-        address account = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, TEST_DAILY_LIMIT);
+        bytes memory sig1 = _guardianSig(g1Wallet, ownerA, 0);
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 0);
+        address account = factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sig1, g2Wallet.addr, sig2, TEST_DAILY_LIMIT);
 
         assertTrue(account.code.length > 0);
 
         AAStarAirAccountV7 acc = AAStarAirAccountV7(payable(account));
         assertEq(acc.owner(), ownerA);
         assertEq(acc.guardianCount(), 3);
-        assertEq(acc.guardians(0), guardian1);
-        assertEq(acc.guardians(1), guardian2);
+        assertEq(acc.guardians(0), g1Wallet.addr);
+        assertEq(acc.guardians(1), g2Wallet.addr);
         assertEq(acc.guardians(2), communityGuardian);
 
         // Guard should be initialized with user-specified daily limit
@@ -67,22 +77,72 @@ contract AAStarAirAccountFactoryV7Test is Test {
     }
 
     function test_createAccountWithDefaults_deterministic() public {
-        address a1 = factory.createAccountWithDefaults(ownerA, 1, guardian1, guardian2, TEST_DAILY_LIMIT);
-        address a2 = factory.createAccountWithDefaults(ownerA, 1, guardian1, guardian2, TEST_DAILY_LIMIT);
+        bytes memory sig1 = _guardianSig(g1Wallet, ownerA, 1);
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 1);
+        address a1 = factory.createAccountWithDefaults(ownerA, 1, g1Wallet.addr, sig1, g2Wallet.addr, sig2, TEST_DAILY_LIMIT);
+        address a2 = factory.createAccountWithDefaults(ownerA, 1, g1Wallet.addr, sig1, g2Wallet.addr, sig2, TEST_DAILY_LIMIT);
         assertEq(a1, a2);
     }
 
     function test_getAddressWithDefaults_matchesCreated() public {
-        address predicted = factory.getAddressWithDefaults(ownerA, 5, guardian1, guardian2, TEST_DAILY_LIMIT);
-        address actual = factory.createAccountWithDefaults(ownerA, 5, guardian1, guardian2, TEST_DAILY_LIMIT);
+        address predicted = factory.getAddressWithDefaults(ownerA, 5, g1Wallet.addr, g2Wallet.addr, TEST_DAILY_LIMIT);
+        bytes memory sig1 = _guardianSig(g1Wallet, ownerA, 5);
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 5);
+        address actual = factory.createAccountWithDefaults(ownerA, 5, g1Wallet.addr, sig1, g2Wallet.addr, sig2, TEST_DAILY_LIMIT);
         assertEq(predicted, actual);
     }
 
     function test_createAccountWithDefaults_differentLimits() public {
-        address a1 = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, 0.1 ether);
-        address a2 = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, 1 ether);
-        // Different daily limits produce different addresses (different initcode)
+        bytes memory sig1a = _guardianSig(g1Wallet, ownerA, 0);
+        bytes memory sig2a = _guardianSig(g2Wallet, ownerA, 0);
+        address a1 = factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sig1a, g2Wallet.addr, sig2a, 0.1 ether);
+
+        // Different limit → different config → different address (different initcode hash)
+        // Need different salt since we're using the same owner and guardians
+        bytes memory sig1b = _guardianSig(g1Wallet, ownerA, 1);
+        bytes memory sig2b = _guardianSig(g2Wallet, ownerA, 1);
+        address a2 = factory.createAccountWithDefaults(ownerA, 1, g1Wallet.addr, sig1b, g2Wallet.addr, sig2b, 1 ether);
         assertTrue(a1 != a2);
+    }
+
+    // ─── M5.3: Guardian acceptance validation ───────────────────────
+
+    function test_guardian1_invalidSig_reverts() public {
+        bytes memory badSig = abi.encodePacked(bytes32(0), bytes32(0), uint8(27)); // zero sig
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 0);
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, g1Wallet.addr));
+        factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, badSig, g2Wallet.addr, sig2, TEST_DAILY_LIMIT);
+    }
+
+    function test_guardian2_invalidSig_reverts() public {
+        bytes memory sig1 = _guardianSig(g1Wallet, ownerA, 0);
+        bytes memory badSig = abi.encodePacked(bytes32(0), bytes32(0), uint8(27));
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, g2Wallet.addr));
+        factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sig1, g2Wallet.addr, badSig, TEST_DAILY_LIMIT);
+    }
+
+    function test_guardian1_wrongSigner_reverts() public {
+        // g2 signs for g1's slot — wrong signer
+        bytes memory wrongSig = _guardianSig(g2Wallet, ownerA, 0);
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 0);
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, g1Wallet.addr));
+        factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, wrongSig, g2Wallet.addr, sig2, TEST_DAILY_LIMIT);
+    }
+
+    function test_guardian_wrongOwner_reverts() public {
+        // Guardian signs for wrong owner
+        bytes memory sig1 = _guardianSig(g1Wallet, ownerB, 0); // signed for ownerB, not ownerA
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 0);
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, g1Wallet.addr));
+        factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sig1, g2Wallet.addr, sig2, TEST_DAILY_LIMIT);
+    }
+
+    function test_guardian_wrongSalt_reverts() public {
+        // Guardian signs for wrong salt
+        bytes memory sig1 = _guardianSig(g1Wallet, ownerA, 99); // signed for salt=99, not 0
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 0);
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, g1Wallet.addr));
+        factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sig1, g2Wallet.addr, sig2, TEST_DAILY_LIMIT);
     }
 
     // ─── createAccount (full config) ────────────────────────────────
@@ -92,7 +152,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         algIds[0] = 0x02;
         algIds[1] = 0x03;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
-            guardians: [guardian1, guardian2, address(0)],
+            guardians: [g1Wallet.addr, g2Wallet.addr, address(0)],
             dailyLimit: 5 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -104,8 +164,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         AAStarAirAccountV7 acc = AAStarAirAccountV7(payable(account));
 
         assertEq(acc.guardianCount(), 2);
-        assertEq(acc.guardians(0), guardian1);
-        assertEq(acc.guardians(1), guardian2);
+        assertEq(acc.guardians(0), g1Wallet.addr);
+        assertEq(acc.guardians(1), g2Wallet.addr);
         assertEq(acc.guard().dailyLimit(), 5 ether);
     }
 
@@ -119,14 +179,24 @@ contract AAStarAirAccountFactoryV7Test is Test {
     // ─── Different params produce different addresses ────────────────
 
     function test_differentOwners_differentAddresses() public {
-        address a = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, TEST_DAILY_LIMIT);
-        address b = factory.createAccountWithDefaults(ownerB, 0, guardian1, guardian2, TEST_DAILY_LIMIT);
+        bytes memory sig1a = _guardianSig(g1Wallet, ownerA, 0);
+        bytes memory sig2a = _guardianSig(g2Wallet, ownerA, 0);
+        address a = factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sig1a, g2Wallet.addr, sig2a, TEST_DAILY_LIMIT);
+
+        bytes memory sig1b = _guardianSig(g1Wallet, ownerB, 0);
+        bytes memory sig2b = _guardianSig(g2Wallet, ownerB, 0);
+        address b = factory.createAccountWithDefaults(ownerB, 0, g1Wallet.addr, sig1b, g2Wallet.addr, sig2b, TEST_DAILY_LIMIT);
         assertTrue(a != b);
     }
 
     function test_differentSalts_differentAddresses() public {
-        address a = factory.createAccountWithDefaults(ownerA, 0, guardian1, guardian2, TEST_DAILY_LIMIT);
-        address b = factory.createAccountWithDefaults(ownerA, 1, guardian1, guardian2, TEST_DAILY_LIMIT);
+        bytes memory sig1a = _guardianSig(g1Wallet, ownerA, 0);
+        bytes memory sig2a = _guardianSig(g2Wallet, ownerA, 0);
+        address a = factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sig1a, g2Wallet.addr, sig2a, TEST_DAILY_LIMIT);
+
+        bytes memory sig1b = _guardianSig(g1Wallet, ownerA, 1);
+        bytes memory sig2b = _guardianSig(g2Wallet, ownerA, 1);
+        address b = factory.createAccountWithDefaults(ownerA, 1, g1Wallet.addr, sig1b, g2Wallet.addr, sig2b, TEST_DAILY_LIMIT);
         assertTrue(a != b);
     }
 
