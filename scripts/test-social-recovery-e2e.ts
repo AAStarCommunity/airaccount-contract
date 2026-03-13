@@ -322,6 +322,24 @@ async function getRecoveryState(
 
 // ─── Helper: Call contract with expect revert ─────────────────────
 
+// ─── Helper: Clear stale recovery before a fresh test ─────────────
+
+async function clearStaleRecovery(
+  publicClient: PublicClient,
+  accountAddress: Address,
+  wallet1: WalletClient<Transport, Chain, Account>,
+  wallet2: WalletClient<Transport, Chain, Account>
+) {
+  const state = await getRecoveryState(publicClient, accountAddress);
+  if (state.newOwner === "0x0000000000000000000000000000000000000000") return;
+  console.log(`   [Pre-cleanup] Stale recovery on ${accountAddress}, cancelling with 2 guardians...`);
+  const tx1 = await wallet1.writeContract({ address: accountAddress, abi: ACCOUNT_ABI, functionName: "cancelRecovery" });
+  await publicClient.waitForTransactionReceipt({ hash: tx1 });
+  const tx2 = await wallet2.writeContract({ address: accountAddress, abi: ACCOUNT_ABI, functionName: "cancelRecovery" });
+  await publicClient.waitForTransactionReceipt({ hash: tx2 });
+  console.log(`   [Pre-cleanup] Done.`);
+}
+
 async function expectRevert(
   fn: () => Promise<unknown>,
   expectedError: string,
@@ -445,6 +463,9 @@ async function main() {
     charlie.address,
   ]);
 
+  // Pre-cleanup: cancel any leftover active recovery from previous test runs
+  await clearStaleRecovery(publicClient, account1, anniWallet, bobWallet);
+
   // Generate a fresh newOwner address for recovery target
   const newOwnerKey = generatePrivateKey();
   const newOwnerAccount = privateKeyToAccount(newOwnerKey);
@@ -544,6 +565,8 @@ async function main() {
     201n
   );
 
+  await clearStaleRecovery(publicClient, account2, anniWallet, bobWallet);
+
   // Propose recovery
   const newOwner2 = privateKeyToAccount(generatePrivateKey()).address;
   console.log(`   New owner target: ${newOwner2}`);
@@ -632,6 +655,8 @@ async function main() {
     202n
   );
 
+  await clearStaleRecovery(publicClient, account3, anniWallet, bobWallet);
+
   // Propose recovery
   const newOwner3 = privateKeyToAccount(generatePrivateKey()).address;
   console.log("\n3b. Guardian Anni proposes recovery...");
@@ -675,6 +700,8 @@ async function main() {
     guardianAddresses,
     203n
   );
+
+  await clearStaleRecovery(publicClient, account4, anniWallet, bobWallet);
 
   const newOwner4 = privateKeyToAccount(generatePrivateKey()).address;
   console.log(`   Recovery target: ${newOwner4}`);
