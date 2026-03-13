@@ -1,0 +1,19 @@
+{
+  "name": "Developer Test Account",
+  "description": "Minimal config for development and testing (no guard, no guardians)",
+  "dailyLimit": "0",
+  "dailyLimitDisplay": "Unlimited",
+  "tier1Limit": "0",
+  "tier1LimitDisplay": "No tier enforcement",
+  "tier2Limit": "0",
+  "tier2LimitDisplay": "No tier enforcement",
+  "tier3Note": "No tier enforcement — all transactions use any available algorithm",
+  "guardians": {
+    "guardian1": { "label": "Not set", "address": "0x0000000000000000000000000000000000000000" },
+    "guardian2": { "label": "Not set", "address": "0x0000000000000000000000000000000000000000" },
+    "guardian3": { "label": "Not set", "address": "0x0000000000000000000000000000000000000000" }
+  },
+  "approvedAlgorithms": [],
+  "recoveryTimelock": "2 days",
+  "recoveryThreshold": "2 of 3 guardians"
+}

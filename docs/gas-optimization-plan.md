@@ -1,6 +1,23 @@
 # AAStarValidator Gas 优化方案
 
+> **Status**: Partially executed — see Implementation Status section below
+> **Archived items**: Assembly BLS optimizations ✅ DONE | BLS Aggregator ✅ DONE
+> **Pending items**: Aggregator-account integration, bundler integration, nodeId compression → M5
 > 关联文档：[统一架构设计](./airaccount-unified-architecture.md) | [Validator 升级与 PQ 迁移分析](./validator-upgrade-pq-analysis.md)
+
+## Implementation Status (2026-03-13)
+
+| Optimization | Status | Notes |
+|--------------|--------|-------|
+| BLS aggregator contract (`AAStarBLSAggregator`) | ✅ DONE | Full IAggregator implementation deployed |
+| `cacheAggregatedKey()` function | ✅ DONE | Exists in `AAStarBLSAlgorithm`; `scripts/cache-bls-keys.ts` added |
+| Assembly G1Add, pairing, negation | ✅ DONE | All BLS functions use optimized assembly |
+| `validateAggregateSignature()` as view | ✅ DONE | No state changes on validation path |
+| Assembly ecrecover in `_validateECDSA` | ✅ DONE | ~500 gas/tx saving, M5 branch |
+| Aggregator-account integration (setAggregator) | ❌ M5 | Account needs `blsAggregator` set + SDK integration |
+| Bundler `handleAggregatedOps` support | ❌ M5.5 | Requires bundler-side changes |
+| NodeId compression (bytes32 → uint8 index) | ❌ M5.5 | Signature size optimization, deferred |
+| E2E batch benchmark (3+ UserOps) | ❌ M5 | No E2E batch test yet |
 
 ## 现状分析
 
