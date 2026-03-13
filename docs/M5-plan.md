@@ -549,6 +549,248 @@ all transactions. Standard automation-friendly accounts continue using 0x02.
 
 ---
 
+---
+
+## Feature Business Scenarios — Before & After
+
+> Each M5 feature is motivated by a real user/business scenario. This section documents
+> the exact problem that existed before, how users were affected, and what the feature
+> enables after implementation.
+
+---
+
+### M5.1 — ERC20 Token-Aware Guard
+
+#### Before (M4 and earlier)
+
+**Scenario**: Alice holds 10,000 USDC in her AirAccount. Her account tier limits are
+configured as: Tier 1 ≤ 0.1 ETH (ECDSA only), Tier 2 ≤ 1 ETH (P256+BLS).
+
+Alice's phone is stolen. The thief extracts her TE (Trusted Execution Environment) ECDSA
+key — perhaps via a compromised app or a vulnerable device. The guard prevents ETH transfers
+above 0.1 ETH with ECDSA alone. However, the thief calls:
+
+```
+account.execute(USDC, 0, transfer(thief_wallet, 10000 * 1e6))
+```
+
+`msg.value = 0` — the guard's ETH check passes. The ERC20 calldata is ignored.
+**All 10,000 USDC is drained with a single ECDSA signature.**
+
+**Impact**: Any ERC20 token could be fully drained despite spending limits "protecting"
+the account. Real-world DeFi accounts hold 80%+ of value in ERC20 tokens.
+
+#### After (M5.1)
+
+The guard parses `transfer(address,uint256)` and `approve(address,uint256)` calldata.
+Token-specific tier thresholds apply (configured in native token units — no oracle needed):
+
+```
+USDC: tier1Limit = 100e6 ($100), tier2Limit = 1000e6 ($1000), dailyLimit = 5000e6 ($5000)
+```
+
+Same attack scenario:
+- Thief tries `transfer(thief, 10000 USDC)` with ECDSA → `InsufficientTokenTier(2, 1)` — **REVERTED**
+- Thief tries ten batches of 60 USDC each → cumulative check catches it at the second call — **REVERTED**
+- Thief tries across multiple blocks → `tokenDailySpent` persists per 24-hour window — **CAPPED**
+
+Alice recovers her account via social recovery. The thief got nothing.
+
+**Business value**: Closes the #1 attack surface on smart wallets — ERC20 draining.
+Required for production DeFi wallets where token balances exceed ETH balances.
+
+---
+
+### M5.2 — Governance Hardening (setupComplete + messagePoint binding)
+
+#### Before (M4 and earlier)
+
+**Scenario A — Rogue validator registration**:
+The AAStar team deploys a validator router. Any time after deployment, the team's owner
+key could call `registerAlgorithm(0x02, maliciousECDSA)` and silently replace the ECDSA
+verifier with a backdoored version — no timelock, no community warning, immediate effect.
+Users would have no on-chain signal that the validator was modified post-setup.
+
+**Scenario B — messagePoint cross-UserOp replay**:
+An EntryPoint bundler collects UserOps from Alice and Bob in the same block. Both use
+Tier 2 (P256+BLS). Alice's messagePoint is `mp_alice`. The bundler (or a watching DVT node)
+extracts `mp_alice` and its signature from the mempool. If Alice later submits another
+UserOp with the same P256+BLS combo (different `userOpHash`), the node can replay the old
+`mpSig_alice` — the old signature still validates because `keccak256(mp)` doesn't include
+`userOpHash`. This allows a malicious DVT node to participate in tier 2/3 validation for
+UserOps it never actually verified.
+
+#### After (M5.2)
+
+**A — setupComplete**:
+The team calls `finalizeSetup()` once all initial algorithms are registered.
+`setupComplete = true` is stored on-chain and emits `SetupFinalized`. Any user can verify
+this state. After finalization:
+- `registerAlgorithm` reverts with `SetupAlreadyClosed`
+- New algorithms require `proposeAlgorithm(algId, addr)` + 7-day wait + `executeProposal(algId)`
+- Community has 7 days to audit and reject any suspicious proposal
+
+**B — messagePoint binding**:
+Owner now signs `keccak256(abi.encodePacked(userOpHash, messagePoint))`. The signature is
+tied to a specific UserOperation. Replay from a different UserOp produces a different hash —
+the old signature fails `ecrecover`. DVT node collaboration is proven per-operation.
+
+**Business value**: Validator governance matches the security level of a 7-day Safe timelock.
+MessagePoint binding closes the BLS relay attack surface documented in security review.
+
+---
+
+### M5.3 — Guardian Validation (Accept-Pattern)
+
+#### Before (M4 and earlier)
+
+**Scenario**: David creates an AirAccount for his elderly mother Carol. He names her friend
+Bob as guardian 2. David accidentally types Bob's address wrong (one character off).
+
+`createAccountWithDefaults(carol, 0, alice, 0xBOB_TYPO, limit)` — succeeds silently.
+
+Six months later, Carol's phone is lost. She needs social recovery. She contacts Bob.
+Bob tries to call `approveRecovery()` — his transaction fails because the stored guardian
+address is the wrong one. The actual `0xBOB_TYPO` address is an uncontrolled throwaway.
+With only 1-of-3 guardians able to sign (Alice), recovery is permanently impossible.
+Carol's funds are locked forever.
+
+**Additional scenario**: A UI bug in a web app pre-fills a guardian field with
+`0x0000...0000` (zero address). The factory call succeeds, but zero address can never sign.
+
+#### After (M5.3)
+
+`createAccountWithDefaults` requires guardian acceptance signatures:
+```typescript
+// Guardian1 must sign before account creation
+const acceptMsg = keccak256(encodePacked(["ACCEPT_GUARDIAN", owner, salt]))
+const guardian1Sig = await guardian1Wallet.signMessage(acceptMsg)
+```
+
+If Bob types his own address wrong (signs with his real key but wrong address in the call),
+`tryRecover(guardian1Sig)` returns a different address → `GuardianDidNotAccept(wrongAddr)`.
+
+If the UI puts zero address, there's no key to sign with → `GuardianDidNotAccept(0x0)`.
+
+The account can only be created when both named guardians prove they hold the correct key.
+
+**Business value**: Eliminates the #1 social recovery failure mode (wrong guardian address).
+Matches the UX expectations of non-technical users who expect the app to validate inputs.
+Required for any production onboarding flow.
+
+---
+
+### M5.4 — Chain Compatibility & P256 Fallback
+
+#### Before (M4 and earlier)
+
+**Scenario**: The AAStar team wants to deploy AirAccount on Polygon PoS for a partner
+who needs gasless UX with aPNTs on Polygon. AirAccount uses the EIP-7212 precompile at
+`0x100` for P256 verification. On Polygon PoS (Napoli upgrade), P256 is at a different
+address. The `staticcall` to `0x100` fails silently — `_validateP256` returns 1 (failure).
+
+Every P256 transaction is rejected. The account falls back to ECDSA-only mode, but
+ALG_P256 and all cumulative algorithms (T2, T3, COMBINED_T1) stop working. The partner
+cannot offer tiered security on Polygon.
+
+Similarly, zkSync Era implements P256 via RIP-7212 but with a different precompile address.
+
+#### After (M5.4)
+
+Owner calls `setP256FallbackVerifier(daimoP256VerifierAddr)` after account creation.
+
+`daimoP256VerifierAddr` is Daimo's pure-Solidity P256Verifier.sol — a well-audited,
+gas-optimized (~174k gas) fallback deployed at a known address on all chains.
+
+`_validateP256` tries the EIP-7212 precompile first (3000 gas, fast). If the precompile
+call fails or returns empty, it falls back to the Solidity verifier seamlessly.
+
+Account owners on Polygon, zkSync, Linea, and Scroll can:
+1. Deploy the account normally
+2. Call `setP256FallbackVerifier(daimo_verifier_on_this_chain)`
+3. All P256-based tiers (T2, T3, COMBINED_T1) work immediately
+
+**Business value**: Unlocks deployment on 4+ additional chains without contract changes.
+Same security guarantee, same UX, chain-agnostic P256 verification.
+
+---
+
+### M5.7 — Force Guard Requirement (dailyLimit > 0)
+
+#### Before (M4 and earlier)
+
+**Scenario**: A developer integrates AirAccount for a mobile wallet. They call:
+```solidity
+createAccountWithDefaults(owner, 0, g1, g2, 0)
+```
+
+`dailyLimit = 0` means **no cap** (per Guard design: `if (dailyLimit > 0) { check cap }`).
+The guard is deployed and linked, but it imposes zero limits. The account is functionally
+unguarded. Any tier-1 ECDSA transaction can drain unlimited ETH.
+
+A code review would see "guard configured" and assume security is in place. But
+`dailyLimit = 0` is a footgun that looks safe but isn't.
+
+#### After (M5.7)
+
+```
+require(dailyLimit > 0, "Daily limit required")
+```
+
+`createAccountWithDefaults` rejects zero limit. Developers must explicitly choose a limit.
+This forces a conversation: "What's the user's daily spending limit?" rather than accepting
+a default that disables all protection.
+
+Raw `createAccount(owner, salt, config)` remains unrestricted for testing and advanced use.
+
+**Business value**: Prevents a class of misconfiguration bugs in production wallet deployments.
+Forces developers to reason about spending limits during integration rather than post-incident.
+
+---
+
+### M5.8 — Zero-Trust Tier 1 (ALG_COMBINED_T1 = 0x06)
+
+#### Before (M4 and earlier)
+
+**Scenario**: AirAccount's Tier 1 uses ECDSA — the owner key held by the TE (Trusted
+Execution Environment). The TE asks the device passkey (P256) to authenticate, then signs
+the UserOp with ECDSA. On-chain, the validator only sees the ECDSA signature.
+
+Attack model: An advanced attacker compromises the TE itself (OS vulnerability, SDK exploit,
+supply chain attack on the wallet app). The attacker now holds the ECDSA key. They can:
+- Submit up to `tier1Limit` ETH per transaction (e.g., 0.1 ETH)
+- Do so 10 times per day up to `dailyLimit` (e.g., 1 ETH/day)
+- The chain cannot distinguish "TE signed after passkey auth" vs "attacker signed directly"
+
+For users who keep small balances, this is acceptable. For power users with `tier1Limit`
+of 0.01 ETH and 0.1 ETH daily — still 0.1 ETH daily risk from TE compromise.
+
+#### After (M5.8)
+
+With `ALG_COMBINED_T1 = 0x06`, the account verifies BOTH on-chain:
+1. P256 passkey signs `userOpHash` directly (device-bound — cannot be extracted from TE)
+2. ECDSA owner key signs `userOpHash` with EIP-191 prefix
+
+The TE compromise scenario:
+- Attacker has ECDSA key ✓
+- Attacker lacks physical device + biometric → cannot produce P256 signature ✗
+- On-chain verification of P256 fails → transaction rejected
+
+The device theft scenario:
+- Attacker has device + can unlock biometric ✓ → P256 signature OK
+- But ECDSA key is in TE (server-side) → cannot produce ECDSA signature ✗
+- Both must be valid → transaction rejected
+
+Only when BOTH the physical device AND the TE key cooperate can a Tier-1 transaction
+proceed. The user's account security now matches a hardware wallet — no single point of
+compromise can drain funds.
+
+**Business value**: Closes the last trust gap in the Tier 1 security model. Enables
+institutional-grade security for casual transactions. Recommended for accounts where
+`tier1Limit` is set high enough that TE compromise represents meaningful financial risk.
+
+---
+
 ## Post-M5 Checklist (run after all M5 tasks complete)
 
 - [ ] **Gas Analysis V2** — Update `docs/gas-analysis.md` with M5 gas measurements
