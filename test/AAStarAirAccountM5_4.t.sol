@@ -188,15 +188,20 @@ contract AAStarAirAccountM5_4Test is Test {
     }
 
     function test_deploymentChainRequirement_documented() public pure {
-        // This test documents the deployment requirement:
-        // AirAccount P256 features require EIP-7212 precompile at address(0x100).
-        // Supported chains (as of 2026-03):
-        //   - Ethereum mainnet (Pectra, 2025-05-07)
-        //   - Base / Optimism (Isthmus, 2025-05-09)
-        //   - Arbitrum (ArbOS 51, 2026-01-08)
-        //   - BNB Chain (Pascal, 2025-03-20) — EIP-7212 status: verify before deploy
-        //   - zkSync Era — EIP-7212 supported (early adopter)
-        // NOT supported: chains without EIP-7212 (deploy will result in P256 always failing)
+        // Deployment requirement: EIP-7212 (P256, 0x100) + EIP-2537 (BLS, 0x0b-0x12) both required.
+        //
+        // Chain support matrix (as of 2026-03):
+        //   Chain              EIP-7212 (P256)                  EIP-2537 (BLS)
+        //   Ethereum mainnet   YES — Fusaka, 2025-12-03         YES — Pectra, 2025-05-07
+        //   Base               YES — Fjord, 2024-07-10          YES — Isthmus, 2025-05-09
+        //   Optimism           YES — Fjord, 2024-07-10          YES — Isthmus, 2025-05-09
+        //   Arbitrum           YES — ArbOS 31, ~2024 Q3         YES — ArbOS 51, 2026-01-08
+        //   BNB Chain          verify before deploy             YES — Pascal, 2025-03-20
+        //   zkSync Era         YES (early adopter)              verify before deploy
+        //
+        // Deploy only on chains where BOTH precompiles are confirmed active.
+        // If EIP-7212 is absent: P256 validation fails immediately (no fallback).
+        // If EIP-2537 is absent: BLS validation fails immediately (no fallback).
         assertTrue(true);
     }
 
