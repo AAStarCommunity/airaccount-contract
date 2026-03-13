@@ -5,6 +5,7 @@ import {Test, Vm, console2} from "forge-std/Test.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
+import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {IStakeManager} from "@account-abstraction/interfaces/IStakeManager.sol";
@@ -62,7 +63,9 @@ contract AAStarAirAccountV7Test is Test {
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
     }
 

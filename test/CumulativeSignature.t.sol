@@ -4,6 +4,7 @@ pragma solidity ^0.8.33;
 import {Test, Vm} from "forge-std/Test.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
+import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
 import {IAAStarAlgorithm} from "../src/interfaces/IAAStarAlgorithm.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
@@ -88,7 +89,9 @@ contract CumulativeSignatureTest is Test {
             guardians: [guardianWallet1.addr, guardianWallet2.addr, guardianWallet3.addr],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, config);
 
@@ -158,7 +161,9 @@ contract CumulativeSignatureTest is Test {
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         AAStarAirAccountV7 failAccount = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, config);
         vm.deal(address(failAccount), 10 ether);

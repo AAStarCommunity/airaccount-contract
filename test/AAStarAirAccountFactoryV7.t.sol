@@ -36,7 +36,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
     }
 
@@ -93,7 +95,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             guardians: [guardian1, guardian2, address(0)],
             dailyLimit: 5 ether,
             approvedAlgIds: algIds,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
 
         address account = factory.createAccount(ownerA, 0, config);

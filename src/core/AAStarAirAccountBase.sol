@@ -128,10 +128,12 @@ abstract contract AAStarAirAccountBase {
 
     /// @notice Account initialization config (used by constructor)
     struct InitConfig {
-        address[3] guardians;   // Recovery guardians (address(0) = unused slot)
-        uint256 dailyLimit;     // Guard daily spending limit in wei (0 = no guard)
-        uint8[] approvedAlgIds; // Guard approved algorithms (empty = no guard)
-        uint256 minDailyLimit;  // Floor for decreaseDailyLimit — cannot go below this (0 = no floor)
+        address[3] guardians;                      // Recovery guardians (address(0) = unused slot)
+        uint256 dailyLimit;                        // Guard ETH daily spending limit in wei (0 = no guard)
+        uint8[] approvedAlgIds;                    // Guard approved algorithms (empty = no guard)
+        uint256 minDailyLimit;                     // Floor for decreaseDailyLimit (0 = no floor)
+        address[] initialTokens;                   // ERC20 tokens with spending limits (may be empty)
+        AAStarGlobalGuard.TokenConfig[] initialTokenConfigs; // Per-token tier/daily configs, 1:1 with initialTokens
     }
 
     // ─── Custom Errors ────────────────────────────────────────────────
@@ -236,7 +238,9 @@ abstract contract AAStarAirAccountBase {
                 address(this),
                 _config.dailyLimit,
                 _config.approvedAlgIds,
-                _config.minDailyLimit
+                _config.minDailyLimit,
+                _config.initialTokens,
+                _config.initialTokenConfigs
             );
             emit GuardInitialized(address(guard), _config.dailyLimit);
         }
@@ -275,9 +279,19 @@ abstract contract AAStarAirAccountBase {
         guard.approveAlgorithm(algId);
     }
 
-    /// @notice Decrease the guard's daily limit (tighten-only, never increase)
+    /// @notice Decrease the guard's ETH daily limit (tighten-only, never increase)
     function guardDecreaseDailyLimit(uint256 newLimit) external onlyOwner {
         guard.decreaseDailyLimit(newLimit);
+    }
+
+    /// @notice Add a new ERC20 token config to the guard (monotonic: add-only, never remove)
+    function guardAddTokenConfig(address token, AAStarGlobalGuard.TokenConfig calldata config) external onlyOwner {
+        guard.addTokenConfig(token, config);
+    }
+
+    /// @notice Decrease a token's daily limit in the guard (tighten-only, never increase)
+    function guardDecreaseTokenDailyLimit(address token, uint256 newLimit) external onlyOwner {
+        guard.decreaseTokenDailyLimit(token, newLimit);
     }
 
     // ─── Config Introspection ────────────────────────────────────────
@@ -681,7 +695,7 @@ abstract contract AAStarAirAccountBase {
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
-        _enforceGuard(value, algId);
+        _enforceGuard(value, algId, dest, func);
         _call(dest, value, func);
     }
 
@@ -696,7 +710,7 @@ abstract contract AAStarAirAccountBase {
         }
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
         for (uint256 i = 0; i < dest.length; i++) {
-            _enforceGuard(value[i], algId);
+            _enforceGuard(value[i], algId, dest[i], func[i]);
             _call(dest[i], value[i], func[i]);
         }
     }
@@ -713,8 +727,12 @@ abstract contract AAStarAirAccountBase {
     ///        so by call 2 alreadySpent+value crosses the tier1 boundary → reverts.
     ///      - Multi-TX bypass: 10 separate UserOps each ≤ tier1Limit. Same fix
     ///        works because dailySpent persists across transactions.
-    function _enforceGuard(uint256 value, uint8 algId) internal {
-        // Tier enforcement always applies — use cumulative amount for tier check
+    /// @dev ERC20 transfer(address,uint256) and approve(address,uint256) selectors
+    bytes4 internal constant ERC20_TRANSFER  = 0xa9059cbb;
+    bytes4 internal constant ERC20_APPROVE   = 0x095ea7b3;
+
+    function _enforceGuard(uint256 value, uint8 algId, address dest, bytes calldata func) internal {
+        // ETH tier enforcement: cumulative daily spend prevents batch/multi-TX bypass
         if (tier1Limit > 0 || tier2Limit > 0) {
             uint256 alreadySpent = address(guard) != address(0) ? guard.todaySpent() : 0;
             uint8 required = requiredTier(alreadySpent + value);
@@ -726,11 +744,19 @@ abstract contract AAStarAirAccountBase {
             }
         }
 
-        // Guard enforcement (daily limit + algorithm whitelist)
-        // guard.checkTransaction writes dailySpent so the next call in a batch
-        // will see the updated value via todaySpent() above.
+        // ETH daily limit + algorithm whitelist (writes dailySpent so next batch call sees updated value)
         if (address(guard) != address(0)) {
             guard.checkTransaction(value, algId);
+        }
+
+        // ERC20 token tier + daily limit enforcement (M5.1)
+        // Parse transfer(to, amount) and approve(spender, amount): amount at calldata offset 36
+        if (func.length >= 68 && address(guard) != address(0)) {
+            bytes4 sel = bytes4(func[:4]);
+            if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
+                uint256 tokenAmount = abi.decode(func[36:68], (uint256));
+                guard.checkTokenTransaction(dest, tokenAmount, algId);
+            }
         }
     }
 

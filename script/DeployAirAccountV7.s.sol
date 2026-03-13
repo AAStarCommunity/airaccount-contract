@@ -4,6 +4,7 @@ pragma solidity ^0.8.33;
 import {Script, console} from "forge-std/Script.sol";
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
+import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 
 /// @title DeployAirAccountV7 - Foundry deploy script for Sepolia
 /// @notice Deploys Factory + creates first account with full config
@@ -38,7 +39,9 @@ contract DeployAirAccountV7 is Script {
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
             approvedAlgIds: emptyAlgs,
-            minDailyLimit: 0
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         address account = factory.createAccount(deployer, 0, config);
         console.log("Account deployed at:", account);

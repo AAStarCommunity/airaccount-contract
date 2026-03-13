@@ -8,6 +8,35 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.13.0] - 2026-03-13 (M5.1)
+
+### Added — ERC20 Token-Aware Guard
+
+- **`AAStarGlobalGuard.TokenConfig` struct** — per-token tier thresholds and daily cap in token's native units
+- **`checkTokenTransaction(token, amount, algId)`** — enforces token tier limits (cumulative, prevents batch bypass) and daily cap; unconfigured tokens pass through with no limits
+- **`addTokenConfig(token, config)`** — monotonic: add-only, never remove; reverts if already configured
+- **`decreaseTokenDailyLimit(token, newLimit)`** — monotonic tighten-only for token daily cap
+- **`tokenTodaySpent(token)`** — view for off-chain monitoring
+- **Guard constructor extended**: accepts `address[] initialTokens, TokenConfig[] initialConfigs` — tokens configured at deployment (factory passes empty arrays by default)
+- **`_enforceGuard` now parses ERC20 calldata** — detects `transfer(address,uint256)` (0xa9059cbb) and `approve(address,uint256)` (0x095ea7b3), extracts amount, calls `guard.checkTokenTransaction`
+- **Account `guardAddTokenConfig(token, config)`** — owner pass-through to guard, monotonic
+- **Account `guardDecreaseTokenDailyLimit(token, newLimit)`** — owner pass-through to guard
+- **`InitConfig` extended** with `initialTokens` and `initialTokenConfigs` fields
+- **`_algTier` mirrored in guard** — `_algTier(algId)` private function in guard for token tier enforcement; must stay in sync with account's `_algTier`
+- **23 new unit tests** in `test/AAStarGlobalGuardM5.t.sol` — tier enforcement, daily limits, cumulative batch bypass prevention, monotonic config, ERC20 calldata parsing integration
+
+### Security
+- ERC20 token transfers (`value=0`) now subject to tier enforcement — previous M4 design allowed unlimited ERC20 transfers with ECDSA regardless of tier
+- Batch bypass prevention applies to both ETH and ERC20 paths — cumulative read before each call, write after
+
+### Test Results
+- Foundry: **226/226 passed** (23 new M5.1 + 203 existing)
+- Tiered E2E (Sepolia): 5/5 passed ✅
+- Social Recovery E2E: 5/5 passed ✅ (added `clearStaleRecovery` idempotent cleanup)
+- Gasless E2E: PASSED ✅ (163,999 gas)
+
+---
+
 ## [v0.12.6] - 2026-03-12
 
 ### Added
