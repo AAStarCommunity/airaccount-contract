@@ -553,11 +553,11 @@ abstract contract AAStarAirAccountBase {
 
         uint256 baseOffset = 32 + nodeIdsDataLength;
 
-        // Verify messagePoint signature (owner must sign the messagePoint)
+        // Verify messagePoint signature (owner must sign userOpHash+messagePoint — prevents cross-op replay)
         bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
         bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
 
-        bytes32 mpHash = keccak256(messagePoint).toEthSignedMessageHash();
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
         address mpRecovered = mpHash.recover(messagePointSignature);
         if (mpRecovered != owner) return 1;
 
@@ -627,11 +627,11 @@ abstract contract AAStarAirAccountBase {
 
         uint256 baseOffset = 32 + nodeIdsDataLength;
 
-        // Verify messagePoint signature (owner must sign the messagePoint)
+        // Verify messagePoint signature (owner must sign userOpHash+messagePoint — prevents cross-op replay)
         bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
         bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
 
-        bytes32 mpHash = keccak256(messagePoint).toEthSignedMessageHash();
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
         address mpRecovered = mpHash.recover(messagePointSignature);
         if (mpRecovered != owner) return 1;
 

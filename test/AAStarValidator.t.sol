@@ -123,4 +123,44 @@ contract AAStarValidatorTest is Test {
         router.registerAlgorithm(0x01, address(mockAlg));
         assertEq(router.getAlgorithm(0x01), address(mockAlg));
     }
+
+    // ─── M5.2: setupComplete / finalizeSetup ─────────────────────────
+
+    function test_setupComplete_initiallyFalse() public view {
+        assertFalse(router.setupComplete());
+    }
+
+    function test_finalizeSetup_setsFlag() public {
+        router.finalizeSetup();
+        assertTrue(router.setupComplete());
+    }
+
+    function test_finalizeSetup_onlyOwner() public {
+        vm.prank(address(0xdead));
+        vm.expectRevert(AAStarValidator.OnlyOwner.selector);
+        router.finalizeSetup();
+    }
+
+    function test_registerAlgorithm_afterFinalizeSetup_reverts() public {
+        router.finalizeSetup();
+        vm.expectRevert(AAStarValidator.SetupAlreadyClosed.selector);
+        router.registerAlgorithm(0x01, address(mockAlg));
+    }
+
+    function test_proposeAlgorithm_afterFinalizeSetup_stillWorks() public {
+        router.finalizeSetup();
+        // proposeAlgorithm uses 7-day timelock — not blocked by setupComplete
+        router.proposeAlgorithm(0x01, address(mockAlg));
+        (address alg, uint256 proposedAt) = router.proposals(0x01);
+        assertEq(alg, address(mockAlg));
+        assertGt(proposedAt, 0);
+    }
+
+    function test_executeProposal_afterFinalizeSetup_stillWorks() public {
+        router.finalizeSetup();
+        router.proposeAlgorithm(0x01, address(mockAlg));
+        vm.warp(block.timestamp + 7 days + 1);
+        router.executeProposal(0x01);
+        assertEq(router.getAlgorithm(0x01), address(mockAlg));
+    }
 }

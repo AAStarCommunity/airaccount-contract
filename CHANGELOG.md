@@ -8,6 +8,26 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.13.1] - 2026-03-13 (M5.2)
+
+### Added — Governance Hardening
+
+- **`AAStarValidator.setupComplete` flag** — bool storage variable, initially `false`
+- **`AAStarValidator.finalizeSetup()`** — owner-only, one-way: sets `setupComplete = true`, emits `SetupFinalized`. After this call, `registerAlgorithm` is permanently disabled.
+- **`AAStarValidator.SetupAlreadyClosed` error** — reverts if `registerAlgorithm` is called after `finalizeSetup()`
+- **`AAStarValidator.SetupFinalized` event** — emitted on finalization
+
+### Fixed (Security)
+
+- **F55 — messagePoint cross-op replay prevention**: `_validateCumulativeTier2` and `_validateCumulativeTier3` now require owner to sign `keccak256(abi.encodePacked(userOpHash, messagePoint))` instead of just `keccak256(messagePoint)`. This binds the messagePoint attestation to a specific UserOperation, preventing a DVT node from reusing a previously captured (userOpHash, messagePoint) pair from a different operation.
+
+### Test Results
+
+- Foundry: **232/232 passed** (6 new M5.2 tests in `AAStarValidator.t.sol` + 226 existing)
+- All existing cumulative signature tests updated to sign `keccak256(userOpHash ++ messagePoint)`
+
+---
+
 ## [v0.13.0] - 2026-03-13 (M5.1)
 
 ### Added — ERC20 Token-Aware Guard
