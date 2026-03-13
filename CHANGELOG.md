@@ -8,6 +8,57 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.14.0] - 2026-03-13 (M5 Complete — Deploy Scripts + Security Hardening)
+
+### M5 Milestone Status: **COMPLETE** ✓
+- 280/280 unit tests passing (all test suites)
+- Deployment script ready: `scripts/deploy-m5.ts`
+- Three E2E test scripts ready for Sepolia verification
+- CI gate: `.github/workflows/test.yml` (forge test on all PRs)
+
+### Added — Deployment Infrastructure
+
+- **`scripts/deploy-m5.ts`** — Factory deployment with token preset auto-population:
+  - Reads `configs/token-presets.json` for selected profile (conservative/standard/trader)
+  - Auto-populates `initialTokens`/`initialTokenConfigs` for USDC/USDT/WETH/WBTC/aPNTs
+  - Supports `TOKEN_PROFILE=<profile>` env override
+  - Prints summary + next-step E2E commands after deploy
+
+- **`configs/token-presets.json`** — Per-chain token tier/daily limit profiles:
+  - Chains: Sepolia (11155111), Ethereum mainnet (1), Base (8453)
+  - Tokens: USDC, USDT, WETH, WBTC, aPNTs
+  - Profiles: conservative (beginner), standard (personal), trader (high volume)
+  - All configs satisfy: `dailyLimit >= tier2Limit >= tier1Limit`
+
+### Fixed — Security
+
+- **`AAStarGlobalGuard`: `dailyLimit >= tier2Limit` invariant enforced** — previously, if `dailyLimit < tier2Limit`, the daily cap would fire silently before tier enforcement, making `tier2Limit` unreachable dead config. Now validated at add time with `InvalidTokenConfig` error.
+- **`configs/default-personal.json`**: Added `ALG_COMBINED_T1 (0x06)` to `approvedAlgorithms` (was missing despite being added to factory's `_buildDefaultConfig`)
+
+### Fixed — P256 Fallback Removed (fail-fast)
+
+- **`AAStarAirAccountBase`**: Removed `p256FallbackVerifier` storage, setter, and fallback branch
+- P256 now fails fast (returns 1) when EIP-7212 precompile unavailable — no expensive pure-Solidity fallback (~280k gas) that could cause unpredictable OOG
+- Deploy documentation: EIP-7212 required; supported chains: all major L2s + Ethereum mainnet (Fusaka, 2025-12-03)
+
+### Added — CI
+
+- **`.github/workflows/test.yml`** — Foundry test gate on all PRs to `main`
+
+### Added — M6 Planning
+
+- **`docs/M6-plan.md`** expanded with M6.4–M6.7:
+  - M6.4: Session Key (IAAStarValidator module, no base contract change)
+  - M6.5: Will Execution (WillExecutor.sol + DVT off-chain scanner)
+  - M6.6: Privacy — OAPD near-term; pluggable calldata parser for M6
+  - M6.7: Post-Quantum — architecture ready, deferred (gas 500k–5M, no EVM precompile)
+
+### Test Results
+
+- Foundry: **280/280 passed** (16 test suites, 0 failed, 0 skipped)
+
+---
+
 ## [v0.13.6] - 2026-03-13 (M5 Business Scenarios + Comprehensive Tests)
 
 ### Added — Business Context Documentation
