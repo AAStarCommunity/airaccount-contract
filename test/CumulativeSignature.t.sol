@@ -4,6 +4,7 @@ pragma solidity ^0.8.33;
 import {Test, Vm} from "forge-std/Test.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
+import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
 import {IAAStarAlgorithm} from "../src/interfaces/IAAStarAlgorithm.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
@@ -87,7 +88,10 @@ contract CumulativeSignatureTest is Test {
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [guardianWallet1.addr, guardianWallet2.addr, guardianWallet3.addr],
             dailyLimit: 0,
-            approvedAlgIds: noAlgs
+            approvedAlgIds: noAlgs,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, config);
 
@@ -156,7 +160,10 @@ contract CumulativeSignatureTest is Test {
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
-            approvedAlgIds: noAlgs
+            approvedAlgIds: noAlgs,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         AAStarAirAccountV7 failAccount = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, config);
         vm.deal(address(failAccount), 10 ether);
@@ -310,7 +317,7 @@ contract CumulativeSignatureTest is Test {
     /// @dev Build cumulative tier 2 signature: P256(64) + BLS payload
     /// Format: [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][messagePoint(256)][messagePointSig(65)]
     function _buildCumulativeT2Sig(
-        bytes32, /* userOpHash */
+        bytes32 userOpHash,
         Vm.Wallet memory mpSigner
     ) internal pure returns (bytes memory) {
         // P256 r,s (fake — the precompile is mocked)
@@ -324,8 +331,8 @@ contract CumulativeSignatureTest is Test {
         bytes memory messagePoint = new bytes(256);
         messagePoint[0] = 0x42;
 
-        // MessagePoint signature (ECDSA over keccak256(messagePoint))
-        bytes32 mpHash = keccak256(messagePoint);
+        // MessagePoint signature — binds messagePoint to userOpHash to prevent cross-op replay (F55)
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint));
         (uint8 v, bytes32 r, bytes32 s) = _signHash(mpSigner, mpHash);
 
         return abi.encodePacked(
@@ -357,8 +364,8 @@ contract CumulativeSignatureTest is Test {
         bytes memory messagePoint = new bytes(256);
         messagePoint[0] = 0x42;
 
-        // MessagePoint signature (ECDSA over keccak256(messagePoint))
-        bytes32 mpHash = keccak256(messagePoint);
+        // MessagePoint signature — binds messagePoint to userOpHash to prevent cross-op replay (F55)
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint));
         (uint8 v1, bytes32 r1, bytes32 s1) = _signHash(mpSigner, mpHash);
 
         // Guardian ECDSA co-sign (ECDSA over userOpHash)
@@ -378,7 +385,7 @@ contract CumulativeSignatureTest is Test {
 
     /// @dev Build cumulative tier 3 signature with a custom hash for guardian signing (for testing invalid guardian)
     function _buildCumulativeT3Sig_withGuardianHash(
-        bytes32, /* userOpHash */
+        bytes32 userOpHash,
         Vm.Wallet memory mpSigner,
         Vm.Wallet memory guardianSigner,
         bytes32 guardianSignHash
@@ -392,7 +399,8 @@ contract CumulativeSignatureTest is Test {
         bytes memory messagePoint = new bytes(256);
         messagePoint[0] = 0x42;
 
-        bytes32 mpHash = keccak256(messagePoint);
+        // Note: uses userOpHash binding (F55) — even for the "wrong guardian hash" test, messagePoint sig is correct
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint));
         (uint8 v1, bytes32 r1, bytes32 s1) = _signHash(mpSigner, mpHash);
 
         // Guardian signs the WRONG hash instead of userOpHash

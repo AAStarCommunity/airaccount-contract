@@ -729,8 +729,9 @@ async function main() {
   console.log(`  BLS agg   : ${bls2.aggSigEncoded.slice(0, 42)}...`);
   console.log(`  MsgPoint  : ${bls2.msgPointEncoded.slice(0, 42)}...`);
 
-  // MessagePoint signature: owner ECDSA sign of keccak256(messagePoint)
-  const mpHash2 = keccak256(bls2.msgPointEncoded);
+  // MessagePoint signature: owner ECDSA sign of keccak256(userOpHash ++ messagePoint)
+  // F55 (M5.2): bind messagePoint to userOpHash to prevent cross-UserOp replay attacks
+  const mpHash2 = keccak256(concat([hash2, bls2.msgPointEncoded]));
   const mpSig2 = await signer.signMessage({ message: { raw: hexToBytes(mpHash2) } });
 
   // Pack cumulative T2 signature:
@@ -779,8 +780,9 @@ async function main() {
   const bls3 = buildBlsComponents(hash3);
   console.log(`  BLS agg   : ${bls3.aggSigEncoded.slice(0, 42)}...`);
 
-  // MessagePoint signature
-  const mpHash3 = keccak256(bls3.msgPointEncoded);
+  // MessagePoint signature: owner ECDSA sign of keccak256(userOpHash ++ messagePoint)
+  // F55 (M5.2): bind messagePoint to userOpHash to prevent cross-UserOp replay attacks
+  const mpHash3 = keccak256(concat([hash3, bls3.msgPointEncoded]));
   const mpSig3 = await signer.signMessage({ message: { raw: hexToBytes(mpHash3) } });
 
   // Guardian ECDSA signature: ANNI signs the userOpHash with EIP-191 personal sign

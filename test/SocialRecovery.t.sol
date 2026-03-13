@@ -4,6 +4,7 @@ pragma solidity ^0.8.33;
 import {Test} from "forge-std/Test.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
+import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 
 /// @title SocialRecovery Tests
 /// @notice Comprehensive tests for the social recovery (F28) features in AAStarAirAccountBase
@@ -34,7 +35,10 @@ contract SocialRecoveryTest is Test {
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             dailyLimit: 0,
-            approvedAlgIds: noAlgs
+            approvedAlgIds: noAlgs,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         account = new AAStarAirAccountV7(entryPointAddr, ownerAddr, config);
     }

@@ -36,6 +36,7 @@ abstract contract AAStarAirAccountBase {
     uint8 internal constant ALG_P256 = 0x03;
     uint8 internal constant ALG_CUMULATIVE_T2 = 0x04; // P256 + BLS
     uint8 internal constant ALG_CUMULATIVE_T3 = 0x05; // P256 + BLS + Guardian ECDSA
+    uint8 internal constant ALG_COMBINED_T1 = 0x06;   // P256 AND ECDSA simultaneously (zero-trust Tier 1)
 
     uint256 internal constant G2_POINT_LENGTH = 256;
 
@@ -68,9 +69,14 @@ abstract contract AAStarAirAccountBase {
     AAStarGlobalGuard public guard;
 
     // ── algId Pass-Through (validation → execution) ──
+    // Uses transient storage (EIP-1153) to avoid cross-UserOp contamination.
+    // When EntryPoint bundles multiple UserOps from the same sender,
+    // validation runs for all ops before execution. A storage variable would
+    // be overwritten by the last validation, but transient storage keyed by
+    // nonce ensures each execution reads the correct algId.
 
-    /// @dev Algorithm ID from the last validated signature, used for tier + guard enforcement
-    uint8 internal _lastValidatedAlgId;
+    /// @dev Transient storage slot base for algId (slot = ALG_ID_SLOT_BASE + nonce)
+    uint256 internal constant ALG_ID_SLOT_BASE = 0x0A1600;
 
     // ── P256 Passkey ──
 
@@ -123,9 +129,12 @@ abstract contract AAStarAirAccountBase {
 
     /// @notice Account initialization config (used by constructor)
     struct InitConfig {
-        address[3] guardians;   // Recovery guardians (address(0) = unused slot)
-        uint256 dailyLimit;     // Guard daily spending limit in wei (0 = no guard)
-        uint8[] approvedAlgIds; // Guard approved algorithms (empty = no guard)
+        address[3] guardians;                      // Recovery guardians (address(0) = unused slot)
+        uint256 dailyLimit;                        // Guard ETH daily spending limit in wei (0 = no guard)
+        uint8[] approvedAlgIds;                    // Guard approved algorithms (empty = no guard)
+        uint256 minDailyLimit;                     // Floor for decreaseDailyLimit (0 = no floor)
+        address[] initialTokens;                   // ERC20 tokens with spending limits (may be empty)
+        AAStarGlobalGuard.TokenConfig[] initialTokenConfigs; // Per-token tier/daily configs, 1:1 with initialTokens
     }
 
     // ─── Custom Errors ────────────────────────────────────────────────
@@ -229,7 +238,10 @@ abstract contract AAStarAirAccountBase {
             guard = new AAStarGlobalGuard(
                 address(this),
                 _config.dailyLimit,
-                _config.approvedAlgIds
+                _config.approvedAlgIds,
+                _config.minDailyLimit,
+                _config.initialTokens,
+                _config.initialTokenConfigs
             );
             emit GuardInitialized(address(guard), _config.dailyLimit);
         }
@@ -268,9 +280,19 @@ abstract contract AAStarAirAccountBase {
         guard.approveAlgorithm(algId);
     }
 
-    /// @notice Decrease the guard's daily limit (tighten-only, never increase)
+    /// @notice Decrease the guard's ETH daily limit (tighten-only, never increase)
     function guardDecreaseDailyLimit(uint256 newLimit) external onlyOwner {
         guard.decreaseDailyLimit(newLimit);
+    }
+
+    /// @notice Add a new ERC20 token config to the guard (monotonic: add-only, never remove)
+    function guardAddTokenConfig(address token, AAStarGlobalGuard.TokenConfig calldata config) external onlyOwner {
+        guard.addTokenConfig(token, config);
+    }
+
+    /// @notice Decrease a token's daily limit in the guard (tighten-only, never increase)
+    function guardDecreaseTokenDailyLimit(address token, uint256 newLimit) external onlyOwner {
+        guard.decreaseTokenDailyLimit(token, newLimit);
     }
 
     // ─── Config Introspection ────────────────────────────────────────
@@ -305,7 +327,9 @@ abstract contract AAStarAirAccountBase {
 
     /**
      * @dev Validate signature with algId-based routing.
-     *      Persists _lastValidatedAlgId for tier + guard enforcement in execute().
+     *      Stores validated algId in transient storage queue for execute() to consume.
+     *      Queue design prevents cross-UserOp contamination when EntryPoint bundles
+     *      multiple UserOps from the same sender (all validations run before executions).
      * @param userOpHash Hash of the UserOperation (from EntryPoint).
      * @param signature  The signature bytes. First byte = algId for routing.
      * @return validationData 0 on success, 1 (SIG_VALIDATION_FAILED) on failure.
@@ -321,53 +345,97 @@ abstract contract AAStarAirAccountBase {
         uint8 firstByte = uint8(signature[0]);
 
         if (firstByte == ALG_BLS) {
-            _lastValidatedAlgId = ALG_BLS;
+            _storeValidatedAlgId(ALG_BLS);
             return _validateTripleSignature(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_P256 && signature.length == 65) {
-            _lastValidatedAlgId = ALG_P256;
+            _storeValidatedAlgId(ALG_P256);
             return _validateP256(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_CUMULATIVE_T2) {
-            _lastValidatedAlgId = ALG_CUMULATIVE_T2;
+            _storeValidatedAlgId(ALG_CUMULATIVE_T2);
             return _validateCumulativeTier2(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_CUMULATIVE_T3) {
-            _lastValidatedAlgId = ALG_CUMULATIVE_T3;
+            _storeValidatedAlgId(ALG_CUMULATIVE_T3);
             return _validateCumulativeTier3(userOpHash, signature[1:]);
         }
 
         if (firstByte == ALG_ECDSA) {
             if (signature.length == 66) {
-                _lastValidatedAlgId = ALG_ECDSA;
+                _storeValidatedAlgId(ALG_ECDSA);
                 return _validateECDSA(userOpHash, signature[1:]);
             }
             return 1; // Wrong length for explicit ECDSA
         }
 
+        // ALG_COMBINED_T1 (0x06): P256 passkey AND owner ECDSA — zero-trust Tier 1 (F74/F75/F76)
+        // Signature format: [0x06][P256_r(32)][P256_s(32)][ECDSA_r(32)][ECDSA_s(32)][ECDSA_v(1)]
+        if (firstByte == ALG_COMBINED_T1) {
+            if (signature.length == 130) {
+                _storeValidatedAlgId(ALG_COMBINED_T1);
+                return _validateCombinedT1(userOpHash, signature[1:]);
+            }
+            return 1; // Wrong length
+        }
+
         // Raw ECDSA: 65-byte sig without algId prefix (backwards compat with M1)
         if (signature.length == 65) {
-            _lastValidatedAlgId = ALG_ECDSA;
+            _storeValidatedAlgId(ALG_ECDSA);
             return _validateECDSA(userOpHash, signature);
         }
 
         // All other → delegate to external validator router
         if (address(validator) == address(0)) return 1;
-        _lastValidatedAlgId = firstByte;
+        _storeValidatedAlgId(firstByte);
         return validator.validateSignature(userOpHash, signature);
     }
 
-    /// @dev Inline ECDSA validation (EIP-191 personal sign)
+    /// @dev Inline ECDSA validation using direct ecrecover precompile.
+    ///      ~500 gas saving vs OZ ECDSA.recover() — avoids bytes memory allocation.
+    ///      Still enforces EIP-2 s-value malleability check.
     function _validateECDSA(
         bytes32 userOpHash,
         bytes calldata signature
     ) internal view returns (uint256) {
+        if (signature.length != 65) return 1;
         bytes32 hash = userOpHash.toEthSignedMessageHash();
-        address recovered = hash.recover(signature);
-        return recovered == owner ? 0 : 1;
+
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            // Read r, s, v directly from calldata (avoids bytes memory copy)
+            r := calldataload(signature.offset)
+            s := calldataload(add(signature.offset, 32))
+            // v is the last byte of the 65-byte signature
+            v := byte(0, calldataload(add(signature.offset, 64)))
+        }
+
+        // EIP-2: reject malleable signatures — s must be in lower half of secp256k1 order
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            return 1;
+        }
+        // Normalize v: some signers produce v=0/1 instead of 27/28
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) return 1;
+
+        address recovered;
+        assembly {
+            // ecrecover precompile (0x01): input = hash(32) | v(32) | r(32) | s(32)
+            let ptr := mload(0x40)
+            mstore(ptr,          hash)
+            mstore(add(ptr, 32), v)
+            mstore(add(ptr, 64), r)
+            mstore(add(ptr, 96), s)
+            let ok := staticcall(3000, 1, ptr, 128, ptr, 32)
+            if ok { recovered := mload(ptr) }
+        }
+
+        return (recovered != address(0) && recovered == owner) ? 0 : 1;
     }
 
     /// @dev P256 (secp256r1) passkey validation via EIP-7212 precompile
@@ -382,17 +450,64 @@ abstract contract AAStarAirAccountBase {
         bytes32 r = bytes32(sigData[0:32]);
         bytes32 s = bytes32(sigData[32:64]);
 
-        // EIP-7212: P256VERIFY(hash, r, s, x, y) → 1 if valid
-        (bool success, bytes memory result) = P256_VERIFIER.staticcall(
-            abi.encode(userOpHash, r, s, p256KeyX, p256KeyY)
-        );
+        bytes memory callData = abi.encode(userOpHash, r, s, p256KeyX, p256KeyY);
 
-        if (success && result.length >= 32) {
-            uint256 valid = abi.decode(result, (uint256));
-            return valid == 1 ? 0 : 1;
+        // EIP-7212 precompile at 0x100: P256VERIFY(hash, r, s, x, y) → 1 if valid
+        // Deployment requirement: only deploy on chains with EIP-7212 precompile active.
+        // If precompile is unavailable, fail fast rather than fall back to expensive Solidity.
+        (bool success, bytes memory result) = P256_VERIFIER.staticcall(callData);
+        if (!success || result.length < 32) return 1;
+        return abi.decode(result, (uint256)) == 1 ? 0 : 1;
+    }
+
+    /**
+     * @dev Validate ALG_COMBINED_T1 (0x06): P256 passkey AND owner ECDSA simultaneously.
+     *
+     * Zero-trust Tier 1 — chain independently verifies both keys, neither trusts the other.
+     * A compromised TE (ECDSA only) or stolen device (P256 only) cannot transact alone.
+     *
+     * Signature format (129 bytes, after algId byte stripped):
+     *   [P256_r(32)][P256_s(32)][ECDSA_r(32)][ECDSA_s(32)][ECDSA_v(1)]
+     *
+     * ECDSA signs userOpHash with EIP-191 prefix (same as ALG_ECDSA).
+     * P256 verifies userOpHash directly against stored p256KeyX/p256KeyY.
+     * Both must be valid; tier = 1 (same spending limits as ECDSA Tier 1).
+     */
+    function _validateCombinedT1(
+        bytes32 userOpHash,
+        bytes calldata sigData
+    ) internal view returns (uint256) {
+        if (sigData.length != 129) return 1;
+        if (p256KeyX == bytes32(0) && p256KeyY == bytes32(0)) return 1;
+
+        // LAYER 1: P256 passkey verifies userOpHash directly
+        bytes32 p256r = bytes32(sigData[0:32]);
+        bytes32 p256s = bytes32(sigData[32:64]);
+
+        bytes memory p256CallData = abi.encode(userOpHash, p256r, p256s, p256KeyX, p256KeyY);
+        (bool p256Success, bytes memory p256Result) = P256_VERIFIER.staticcall(p256CallData);
+        if (!p256Success || p256Result.length < 32) return 1;
+        if (abi.decode(p256Result, (uint256)) != 1) return 1;
+
+        // LAYER 2: Owner ECDSA signs userOpHash (EIP-191 prefix)
+        bytes32 ecdsaHash = userOpHash.toEthSignedMessageHash();
+        bytes32 ecdsaR = bytes32(sigData[64:96]);
+        bytes32 ecdsaS = bytes32(sigData[96:128]);
+        uint8 ecdsaV = uint8(sigData[128]);
+        if (ecdsaV < 27) ecdsaV += 27;
+
+        address recovered;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, ecdsaHash)
+            mstore(add(ptr, 32), ecdsaV)
+            mstore(add(ptr, 64), ecdsaR)
+            mstore(add(ptr, 96), ecdsaS)
+            let ok := staticcall(3000, 1, ptr, 128, ptr, 32)
+            if ok { recovered := mload(ptr) }
         }
 
-        return 1;
+        return (recovered != address(0) && recovered == owner) ? 0 : 1;
     }
 
     /**
@@ -496,11 +611,11 @@ abstract contract AAStarAirAccountBase {
 
         uint256 baseOffset = 32 + nodeIdsDataLength;
 
-        // Verify messagePoint signature (owner must sign the messagePoint)
+        // Verify messagePoint signature (owner must sign userOpHash+messagePoint — prevents cross-op replay)
         bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
         bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
 
-        bytes32 mpHash = keccak256(messagePoint).toEthSignedMessageHash();
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
         address mpRecovered = mpHash.recover(messagePointSignature);
         if (mpRecovered != owner) return 1;
 
@@ -570,11 +685,11 @@ abstract contract AAStarAirAccountBase {
 
         uint256 baseOffset = 32 + nodeIdsDataLength;
 
-        // Verify messagePoint signature (owner must sign the messagePoint)
+        // Verify messagePoint signature (owner must sign userOpHash+messagePoint — prevents cross-op replay)
         bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
         bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
 
-        bytes32 mpHash = keccak256(messagePoint).toEthSignedMessageHash();
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
         address mpRecovered = mpHash.recover(messagePointSignature);
         if (mpRecovered != owner) return 1;
 
@@ -613,13 +728,20 @@ abstract contract AAStarAirAccountBase {
         return 3;
     }
 
-    /// @dev Map algId to its security tier level
+    /// @dev Map algId to its security tier level.
+    ///
+    ///      Tier model (cumulative factors):
+    ///        Tier 1 — single factor:  ECDSA (0x02) or bare P256 passkey (0x03)
+    ///        Tier 2 — dual factor:    P256 passkey + BLS DVT co-sign (0x04)
+    ///        Tier 3 — triple factor:  P256 + BLS + Guardian ECDSA (0x05) or legacy BLS triple (0x01)
+    ///
+    ///      Bare P256 passkey (0x03) is Tier 1 — it is the default single-factor auth
+    ///      for all standard transactions. DVT co-sign (BLS) is required for Tier 2+.
     function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == ALG_CUMULATIVE_T3) return 3; // P256 + BLS + Guardian = highest
-        if (algId == ALG_BLS) return 3;            // BLS triple = highest security
-        if (algId == ALG_CUMULATIVE_T2) return 2;  // P256 + BLS = medium
-        if (algId == ALG_P256) return 2;           // P256 passkey = medium
-        return 1;                                   // ECDSA or unknown = baseline
+        if (algId == ALG_CUMULATIVE_T3) return 3; // P256 + BLS + Guardian ECDSA
+        if (algId == ALG_BLS) return 3;            // legacy BLS triple (ECDSA×2 + BLS, M2 format)
+        if (algId == ALG_CUMULATIVE_T2) return 2;  // P256 + BLS DVT co-sign
+        return 1;                                   // ECDSA, bare P256, or unknown = single-factor
     }
 
     // ─── Execution ────────────────────────────────────────────────────
@@ -630,7 +752,8 @@ abstract contract AAStarAirAccountBase {
         uint256 value,
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
-        _enforceGuard(value);
+        uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
+        _enforceGuard(value, algId, dest, func);
         _call(dest, value, func);
     }
 
@@ -643,26 +766,34 @@ abstract contract AAStarAirAccountBase {
         if (dest.length != value.length || dest.length != func.length) {
             revert ArrayLengthMismatch();
         }
+        uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
         for (uint256 i = 0; i < dest.length; i++) {
-            _enforceGuard(value[i]);
+            _enforceGuard(value[i], algId, dest[i], func[i]);
             _call(dest[i], value[i], func[i]);
         }
     }
 
     /// @dev Combined tier + guard enforcement, called before every _call.
-    ///      Direct owner calls are treated as ECDSA (tier 1) — large-value
-    ///      transactions must go through EntryPoint with proper multi-sig.
-    function _enforceGuard(uint256 value) internal {
-        uint8 algId = _lastValidatedAlgId;
+    ///      algId is resolved once per execute/executeBatch invocation:
+    ///      - EntryPoint calls: consumed from transient storage queue
+    ///      - Direct owner calls: forced to ALG_ECDSA (tier 1)
+    ///
+    ///      Tier check uses CUMULATIVE daily spend to prevent bypass:
+    ///      - Batch bypass: 10×0.1 ETH in one executeBatch with ECDSA would
+    ///        total 1 ETH but each call is ≤ tier1Limit. Each call reads the
+    ///        updated dailySpent (written by previous guard.checkTransaction),
+    ///        so by call 2 alreadySpent+value crosses the tier1 boundary → reverts.
+    ///      - Multi-TX bypass: 10 separate UserOps each ≤ tier1Limit. Same fix
+    ///        works because dailySpent persists across transactions.
+    /// @dev ERC20 transfer(address,uint256) and approve(address,uint256) selectors
+    bytes4 internal constant ERC20_TRANSFER  = 0xa9059cbb;
+    bytes4 internal constant ERC20_APPROVE   = 0x095ea7b3;
 
-        // Direct owner call: no signature validation happened, treat as ECDSA (tier 1)
-        if (msg.sender != entryPoint) {
-            algId = ALG_ECDSA;
-        }
-
-        // Tier enforcement always applies
+    function _enforceGuard(uint256 value, uint8 algId, address dest, bytes calldata func) internal {
+        // ETH tier enforcement: cumulative daily spend prevents batch/multi-TX bypass
         if (tier1Limit > 0 || tier2Limit > 0) {
-            uint8 required = requiredTier(value);
+            uint256 alreadySpent = address(guard) != address(0) ? guard.todaySpent() : 0;
+            uint8 required = requiredTier(alreadySpent + value);
             if (required > 0) {
                 uint8 provided = _algTier(algId);
                 if (provided < required) {
@@ -671,9 +802,41 @@ abstract contract AAStarAirAccountBase {
             }
         }
 
-        // Guard enforcement (daily limit + algorithm whitelist)
+        // ETH daily limit + algorithm whitelist (writes dailySpent so next batch call sees updated value)
         if (address(guard) != address(0)) {
             guard.checkTransaction(value, algId);
+        }
+
+        // ERC20 token tier + daily limit enforcement (M5.1)
+        // Parse transfer(to, amount) and approve(spender, amount): amount at calldata offset 36
+        if (func.length >= 68 && address(guard) != address(0)) {
+            bytes4 sel = bytes4(func[:4]);
+            if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
+                uint256 tokenAmount = abi.decode(func[36:68], (uint256));
+                guard.checkTokenTransaction(dest, tokenAmount, algId);
+            }
+        }
+    }
+
+    // ─── Transient Storage AlgId Queue ────────────────────────────────
+
+    /// @dev Push validated algId to transient storage queue.
+    ///      Called during validateUserOp (validation phase).
+    function _storeValidatedAlgId(uint8 algId) internal {
+        assembly {
+            let writeIdx := tload(ALG_ID_SLOT_BASE)
+            tstore(add(add(ALG_ID_SLOT_BASE, 2), writeIdx), algId)
+            tstore(ALG_ID_SLOT_BASE, add(writeIdx, 1))
+        }
+    }
+
+    /// @dev Pop validated algId from transient storage queue.
+    ///      Called during execute/executeBatch (execution phase).
+    function _consumeValidatedAlgId() internal returns (uint8 algId) {
+        assembly {
+            let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
+            algId := tload(add(add(ALG_ID_SLOT_BASE, 2), readIdx))
+            tstore(add(ALG_ID_SLOT_BASE, 1), add(readIdx, 1))
         }
     }
 

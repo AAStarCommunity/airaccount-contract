@@ -1,0 +1,121 @@
+{
+  "_comment": "Common ERC20 token spending presets. Limits are in token native units (wei-equivalent).",
+  "_note": "dailyLimit must be >= tier2Limit >= tier1Limit (enforced by guard contract)",
+
+  "chains": {
+    "11155111": {
+      "_name": "Sepolia Testnet",
+      "tokens": {
+        "USDC": {
+          "address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        },
+        "USDT": {
+          "address": "0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        },
+        "WETH": {
+          "address": "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9",
+          "decimals": 18,
+          "conservative": { "tier1Limit": "100000000000000000",   "tier2Limit": "1000000000000000000",  "dailyLimit": "5000000000000000000"  },
+          "standard":     { "tier1Limit": "500000000000000000",   "tier2Limit": "5000000000000000000",  "dailyLimit": "10000000000000000000" },
+          "trader":       { "tier1Limit": "2000000000000000000",  "tier2Limit": "10000000000000000000", "dailyLimit": "50000000000000000000" }
+        },
+        "WBTC": {
+          "address": "0x29f2D40B0605204364af54EC677bD022dA425d03",
+          "decimals": 8,
+          "conservative": { "tier1Limit": "1000000",   "tier2Limit": "10000000",  "dailyLimit": "50000000"  },
+          "standard":     { "tier1Limit": "5000000",   "tier2Limit": "50000000",  "dailyLimit": "100000000" },
+          "trader":       { "tier1Limit": "20000000",  "tier2Limit": "200000000", "dailyLimit": "500000000" }
+        },
+        "aPNTs": {
+          "address": "0xDf669834F04988BcEE0E3B6013B6b867Bd38778d",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        }
+      }
+    },
+    "1": {
+      "_name": "Ethereum Mainnet",
+      "tokens": {
+        "USDC": {
+          "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        },
+        "USDT": {
+          "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        },
+        "WETH": {
+          "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+          "decimals": 18,
+          "conservative": { "tier1Limit": "100000000000000000",  "tier2Limit": "1000000000000000000", "dailyLimit": "5000000000000000000"  },
+          "standard":     { "tier1Limit": "500000000000000000",  "tier2Limit": "5000000000000000000", "dailyLimit": "10000000000000000000" },
+          "trader":       { "tier1Limit": "2000000000000000000", "tier2Limit": "10000000000000000000","dailyLimit": "50000000000000000000" }
+        },
+        "WBTC": {
+          "address": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+          "decimals": 8,
+          "conservative": { "tier1Limit": "1000000",   "tier2Limit": "10000000",  "dailyLimit": "50000000"  },
+          "standard":     { "tier1Limit": "5000000",   "tier2Limit": "50000000",  "dailyLimit": "100000000" },
+          "trader":       { "tier1Limit": "20000000",  "tier2Limit": "200000000", "dailyLimit": "500000000" }
+        },
+        "aPNTs": {
+          "address": "TBD",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        }
+      }
+    },
+    "8453": {
+      "_name": "Base Mainnet",
+      "tokens": {
+        "USDC": {
+          "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        },
+        "WETH": {
+          "address": "0x4200000000000000000000000000000000000006",
+          "decimals": 18,
+          "conservative": { "tier1Limit": "100000000000000000",  "tier2Limit": "1000000000000000000", "dailyLimit": "5000000000000000000"  },
+          "standard":     { "tier1Limit": "500000000000000000",  "tier2Limit": "5000000000000000000", "dailyLimit": "10000000000000000000" },
+          "trader":       { "tier1Limit": "2000000000000000000", "tier2Limit": "10000000000000000000","dailyLimit": "50000000000000000000" }
+        }
+      }
+    }
+  },
+
+  "profiles": {
+    "conservative": {
+      "_desc": "Beginner / daily user. Small limits, maximum protection.",
+      "_tokens": ["USDC", "USDT", "WETH", "WBTC", "aPNTs"]
+    },
+    "standard": {
+      "_desc": "Standard personal account. Balanced limits for regular use.",
+      "_tokens": ["USDC", "USDT", "WETH", "WBTC", "aPNTs"]
+    },
+    "trader": {
+      "_desc": "Active trader. Higher limits, requires P256+BLS for large moves.",
+      "_tokens": ["USDC", "USDT", "WETH", "WBTC", "aPNTs"]
+    }
+  }
+}
