@@ -415,46 +415,105 @@ flexible (for testing and advanced use cases):
 
 ---
 
-## M5.8 — T1 Security Enhancement (P256-first mode)
+## M5.8 — Zero-Trust Tier 1: ALG_COMBINED_T1 (0x06)
 
 ### Problem
 
-Tier 1 currently accepts either ECDSA (0x02) OR P256 passkey (0x03) independently.
-ECDSA private keys can be stolen (phishing, malware). P256 keys are device-bound
-(secure enclave/TPM) and cannot be remotely extracted — no key extraction risk.
+The current TE (Trusted Execution Environment) model has a trust gap:
 
-### Proposal
+```
+User → [P256 passkey authenticates to TE off-chain] → TE signs with ECDSA → chain sees ECDSA only
+```
 
-Add an optional per-account security mode: if `p256RequiredForTier1 = true`, all
-transactions (including Tier 1) must include a P256 signature in addition to ECDSA.
-This makes ALL transactions device-bound by default.
+When a user submits an ECDSA Tier 1 UserOp, the chain has no way to verify whether the
+TE actually required P256 authentication before signing. A compromised TE or stolen ECDSA
+key can transact without any passkey involvement.
 
+The zero-trust model requires that both the TE (ECDSA key) AND the device (P256 passkey)
+sign the same `userOpHash` independently. Neither trusts the other — the chain verifies both.
+
+### Design: ALG_COMBINED_T1 = 0x06
+
+New algId `0x06` simultaneously verifies **P256 passkey AND owner ECDSA** on-chain.
+Neither signature alone is sufficient. Both must be valid against the same `userOpHash`.
+
+**Signature format** (130 bytes total):
+```
+[0x06][P256_r(32)][P256_s(32)][ECDSA_r(32)][ECDSA_s(32)][ECDSA_v(1)]
+  1  +    32     +    32     +    32      +    32      +    1       = 130 bytes
+```
+
+**Validation logic**:
 ```solidity
-// New field in account:
-bool public p256RequiredForTier1; // if true, all tiers must include P256
+uint8 internal constant ALG_COMBINED_T1 = 0x06;
 
-// In _enforceGuard:
-if (p256RequiredForTier1 && _algTier(algId) < 2 && algId != ALG_P256) {
-    // algId must be P256 or cumulative (which includes P256)
-    revert P256RequiredForTier1();
+function _validateCombinedT1(
+    bytes32 userOpHash,
+    bytes calldata sigData
+) internal view returns (uint256) {
+    if (sigData.length != 130) return 1;
+
+    // Verify P256 passkey signs userOpHash directly
+    bytes32 p256r = bytes32(sigData[0:32]);
+    bytes32 p256s = bytes32(sigData[32:64]);
+    (bool p256ok,) = P256_VERIFIER.staticcall(
+        abi.encode(userOpHash, p256r, p256s, p256x, p256y)
+    );
+    if (!p256ok) return 1;
+
+    // Verify ECDSA owner signs userOpHash (EIP-191 prefix)
+    bytes32 hash = userOpHash.toEthSignedMessageHash();
+    bytes32 r; bytes32 s; uint8 v;
+    assembly {
+        r := calldataload(add(sigData.offset, 64))
+        s := calldataload(add(sigData.offset, 96))
+        v := byte(0, calldataload(add(sigData.offset, 128)))
+    }
+    if (v < 27) v += 27;
+    address recovered;
+    assembly {
+        let ptr := mload(0x40)
+        mstore(ptr, hash)
+        mstore(add(ptr, 32), v)
+        mstore(add(ptr, 64), r)
+        mstore(add(ptr, 96), s)
+        let ok := staticcall(3000, 1, ptr, 128, ptr, 32)
+        if ok { recovered := mload(ptr) }
+    }
+    return (recovered != address(0) && recovered == owner) ? 0 : 1;
 }
 ```
 
-**Trade-offs**:
-- PRO: Eliminates ECDSA key theft attack on Tier 1 (~all normal transactions)
-- PRO: P256 gas cost is negligible (EIP-7212 precompile, ~40k gas total)
-- CON: If P256 key is lost, Tier 1 is bricked until social recovery (but social recovery works)
-- CON: Requires P256 key to be set on account
-- CON: Breaks automation (bots can't easily provide P256 sigs without device)
+**Tier mapping**: `_algTier(0x06) = 1` — same Tier 1 spending limits, but dual-factor enforced.
 
-**Recommendation**: opt-in flag, off by default. User enables via `enableP256Tier1Requirement()`.
-Backend/scripts that use ECDSA directly won't be affected unless opted in.
+**Trust model comparison**:
+
+| algId | What chain verifies | TE trust requirement |
+|-------|--------------------|-----------------------|
+| 0x02 (ECDSA) | ECDSA only | Full trust in TE |
+| 0x03 (P256) | P256 only | N/A (device-bound) |
+| 0x06 (combined) | P256 AND ECDSA | Zero trust — both verified independently |
+
+**Trade-offs**:
+- PRO: Chain independently verifies P256 passkey — no trust in TE
+- PRO: Stolen ECDSA key alone cannot transact (needs device P256)
+- PRO: Compromised TE alone cannot transact (needs device P256)
+- PRO: No new storage slot — reuses existing `p256x`/`p256y` and `owner`
+- CON: Gas cost ~90k (P256 ~40k + ECDSA ~45k) vs ~45k for single sig
+- CON: Automation scripts need both keys — breaks pure-ECDSA bots
+- CON: If P256 key is lost, must use social recovery (same as T2/T3)
+
+**Recommendation**: opt-in by account. Users with high security requirements use 0x06 for
+all transactions. Standard automation-friendly accounts continue using 0x02.
 
 ### Tasks
 
-- [ ] F74: Add `p256RequiredForTier1` flag and `enableP256Tier1Requirement()` to account
-- [ ] F75: Update `_enforceGuard` to check flag before allowing Tier 1 with ECDSA alone
-- [ ] F76: Unit tests for P256-required mode (enabled/disabled, with/without P256 key)
+- [ ] F74: Add `ALG_COMBINED_T1 = 0x06` constant to `AAStarAirAccountBase`
+- [ ] F75: Implement `_validateCombinedT1()` in `AAStarAirAccountBase`
+- [ ] F76: Update `_validateSignature()` dispatch: route 0x06 to `_validateCombinedT1`
+- [ ] F77: Update `_algTier()`: `case 0x06: return 1;`
+- [ ] F78: Add 0x06 to default approved algorithms in factory `_buildDefaultConfig()`
+- [ ] F79: Unit tests — both sigs valid, P256 invalid, ECDSA invalid, wrong length
 
 ---
 
@@ -466,7 +525,7 @@ Backend/scripts that use ECDSA directly won't be affected unless opted in.
 4. **M5.4** (F59-F62) — Chain compatibility ← deployment expansion
 5. **M5.6** (F67-F70) — Gas optimization (BLS aggregator integration)
 6. **M5.7** (F71-F73) — Force guard requirement ← production safety
-7. **M5.8** (F74-F76) — P256-first mode ← advanced security opt-in
+7. **M5.8** (F74-F79) — Zero-trust T1: ALG_COMBINED_T1 (0x06) ← advanced security
 8. **M5.5** → **MOVED TO M6** — Weight-based signatures
 
 ---
