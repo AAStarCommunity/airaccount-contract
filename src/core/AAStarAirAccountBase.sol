@@ -369,14 +369,48 @@ abstract contract AAStarAirAccountBase {
         return validator.validateSignature(userOpHash, signature);
     }
 
-    /// @dev Inline ECDSA validation (EIP-191 personal sign)
+    /// @dev Inline ECDSA validation using direct ecrecover precompile.
+    ///      ~500 gas saving vs OZ ECDSA.recover() — avoids bytes memory allocation.
+    ///      Still enforces EIP-2 s-value malleability check.
     function _validateECDSA(
         bytes32 userOpHash,
         bytes calldata signature
     ) internal view returns (uint256) {
+        if (signature.length != 65) return 1;
         bytes32 hash = userOpHash.toEthSignedMessageHash();
-        address recovered = hash.recover(signature);
-        return recovered == owner ? 0 : 1;
+
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            // Read r, s, v directly from calldata (avoids bytes memory copy)
+            r := calldataload(signature.offset)
+            s := calldataload(add(signature.offset, 32))
+            // v is the last byte of the 65-byte signature
+            v := byte(0, calldataload(add(signature.offset, 64)))
+        }
+
+        // EIP-2: reject malleable signatures — s must be in lower half of secp256k1 order
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            return 1;
+        }
+        // Normalize v: some signers produce v=0/1 instead of 27/28
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) return 1;
+
+        address recovered;
+        assembly {
+            // ecrecover precompile (0x01): input = hash(32) | v(32) | r(32) | s(32)
+            let ptr := mload(0x40)
+            mstore(ptr,          hash)
+            mstore(add(ptr, 32), v)
+            mstore(add(ptr, 64), r)
+            mstore(add(ptr, 96), s)
+            let ok := staticcall(3000, 1, ptr, 128, ptr, 32)
+            if ok { recovered := mload(ptr) }
+        }
+
+        return (recovered != address(0) && recovered == owner) ? 0 : 1;
     }
 
     /// @dev P256 (secp256r1) passkey validation via EIP-7212 precompile
