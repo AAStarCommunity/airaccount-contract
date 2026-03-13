@@ -313,3 +313,45 @@ Gasless adds ~54k gas overhead vs standard M3 (181,067 vs 127,249) due to paymas
 | `scripts/test-tiered-e2e.ts` | Tiered signature E2E (3 tiers + 2 negative) |
 | `scripts/test-social-recovery-e2e.ts` | Social recovery E2E (5 scenarios) |
 | `scripts/deploy-m4.ts` | Deploy M4 Factory (cumulative sigs) |
+| `scripts/deploy-m5.ts` | Deploy M5 Factory (ERC20 guard + COMBINED_T1) |
+| `scripts/test-m5-gasless-e2e.ts` | **M5 gasless lifecycle** — uses M5 factory + new account |
+
+---
+
+## M5 Gasless E2E Re-run (2026-03-13)
+
+**Status**: ✅ PASSED
+**Script**: `scripts/test-m5-gasless-e2e.ts`
+**Factory**: M5 `0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9`
+
+### New M5 Gasless Account
+
+| Field | Value |
+|-------|-------|
+| Address | `0xe196792cB06602165d8922FB30E52708a1d90390` |
+| Salt | 820 |
+| Factory | M5 `0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9` |
+| Creation TX | `0x21aebaeb631caaf086f4d5677cc0afb7874754a242248b1452cd588a5aa7d436` |
+| Config | ECDSA (0x02) + COMBINED_T1 (0x06), 1 ETH daily limit |
+
+### Gasless Transaction
+
+| Field | Value |
+|-------|-------|
+| Action | `execute(self, 0.0001 ETH, 0x)` |
+| UserOp TX | `0x9b7ab29b9d9e8cbfea0f7db82718dd62f0dfcd3d9cf95d2c9182512f9a759778` |
+| Etherscan | https://sepolia.etherscan.io/tx/0x9b7ab29b9d9e8cbfea0f7db82718dd62f0dfcd3d9cf95d2c9182512f9a759778 |
+| Bundler gas used | **230,496** |
+| AA account ETH change | **0 (ZERO COST)** |
+| aPNTs deducted | ~0 (price oracle returned $2101 ETH/USD) |
+
+### M3 vs M5 Gasless Comparison
+
+| Metric | M3 | M5 | Notes |
+|--------|----|----|-------|
+| Factory | `0xce4231...` | `0x1ffa94...` | New version |
+| Account | `0x4bFf35...` | `0xe19679...` | New account |
+| Bundler gas | ~230k | **230,496** | Similar (ERC20 guard adds ~2k overhead) |
+| ETH cost to account | 0 | **0** | Gasless confirmed ✓ |
+| SuperPaymaster | `0x16cE0c...` | `0x16cE0c...` | Unchanged |
+| Key improvement | — | ERC20 guard enforced | M5 account has per-token limits |

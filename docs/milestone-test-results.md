@@ -280,7 +280,174 @@
 
 ## Milestone 3: AirAccount Features
 
-**Status**: ⏳ Pending
 **Branch**: `v0.12.5`
+**Date**: 2026-03-10
+**Status**: ✅ Complete
 
-*(Results will be recorded upon completion)*
+### Features Completed
+
+| # | Feature | Status |
+|---|---------|--------|
+| F20 | `AAStarGlobalGuard` — immutable spending guard (ETH daily limit) | ✅ |
+| F21 | Guard monotonic: limit only decreases | ✅ |
+| F22 | Social recovery: 2-of-3 guardian threshold + timelock | ✅ |
+| F23 | `createAccountWithDefaults`: guardian non-zero validation | ✅ |
+| F24 | P256 passkey registration (`setP256Key`) | ✅ |
+| F25 | `AAStarValidator` governance: 7-day timelock for algorithm changes | ✅ |
+| F26 | Gasless E2E via SuperPaymaster (aPNTs as gas token) | ✅ |
+
+### Unit Test Results
+
+**Result**: 97 passed, 0 failed, 0 skipped
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| AAStarAirAccountV7Test | 15 | ✅ |
+| AAStarAirAccountV7_M2Test | 11 | ✅ |
+| AAStarAirAccountV7M3Test | 22 | ✅ |
+| AAStarValidatorTest | 13 | ✅ |
+| AAStarValidatorM3Test | 16 | ✅ |
+| AAStarBLSAlgorithmTest | 25 | ✅ |
+| AAStarGlobalGuardTest | 26 | ✅ |
+
+### Deployed Addresses (Sepolia)
+
+| Contract | Address |
+|----------|---------|
+| AirAccount Factory V7 (M3) | `0xce4231da69015273819b6aab78d840d62cf206c1` |
+| M3 Test Account | `0x4bFf3539b73CA3a29d89C00C8c511b884211E31B` |
+
+### E2E Tests (Sepolia)
+
+| Test | Result | TX / Notes |
+|------|--------|------------|
+| M3 ECDSA UserOp | ✅ PASS | Gas: 127,249 (-51% vs M2) |
+| Gasless (SuperPaymaster + aPNTs) | ✅ PASS | ETH unchanged; aPNTs deducted as gas |
+
+**Reference**: `docs/gasless-e2e-test-report.md`, `docs/test-m3-report-result.md`
+
+---
+
+## Milestone 4: Cumulative Signatures + Social Recovery
+
+**Branch**: `v0.12.5`
+**Date**: 2026-03-11
+**Status**: ✅ Complete
+
+### Features Completed
+
+| # | Feature | Status |
+|---|---------|--------|
+| F30 | Cumulative Tier 2: `ALG_T2 (0x04)` — P256 + BLS dual factor | ✅ |
+| F31 | Cumulative Tier 3: `ALG_T3 (0x05)` — P256 + BLS + Guardian | ✅ |
+| F32 | `_algTier()` mapping: 0x01/0x03/0x04→Tier2, 0x02→Tier1, 0x05→Tier3 | ✅ |
+| F33 | Social recovery: `proposeRecovery` + `approveRecovery` + `executeRecovery` | ✅ |
+| F34 | Recovery timelock (48h) + 2-of-3 threshold | ✅ |
+| F35 | Transient storage queue for cross-boundary algId passing | ✅ |
+| F36 | `registerPublicKey` restricted to `onlyOwner` | ✅ |
+| F37 | `setTierLimits` validates `tier1 <= tier2` | ✅ |
+
+### Unit Test Results
+
+**Result**: 200+ passed, 0 failed
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| CumulativeSignatureTest | 8 | ✅ |
+| SocialRecoveryTest | 37 | ✅ |
+| AAStarAirAccountV7M3Test | 22 | ✅ |
+| All prior suites | — | ✅ |
+
+### Deployed Addresses (Sepolia)
+
+| Contract | Address |
+|----------|---------|
+| AirAccount Factory V7 (M4) | `0x914db0a849f55e68a726c72fd02b7114b1176d88` |
+| Tier test account (salt=400) | `0x117C702AC0660B9A8f4545c8EA9c92933E6925d7` |
+
+### E2E Gas Results (Sepolia)
+
+| Algorithm | Gas Used | Notes |
+|-----------|----------|-------|
+| Tier 1 ECDSA (0x02) | **140,352** | Single ECDSA sig |
+| Tier 2 P256+BLS (0x04) | **278,634** | Dual factor |
+| Tier 3 P256+BLS+Guardian (0x05) | **288,351** | Triple factor |
+| Social Recovery (full flow) | **395,570** | 2-of-3 guardians, 48h timelock |
+
+**5 tiered tests + 5 social recovery tests ALL PASSED on Sepolia**
+
+---
+
+## Milestone 5: ERC20 Guard + Zero-Trust Tier 1
+
+**Branch**: `M5`
+**Date**: 2026-03-13
+**Status**: ✅ Complete
+
+### Features Completed
+
+| # | Feature | Status |
+|---|---------|--------|
+| F47-F53 | M5.1 ERC20 Token Guard (per-token tier/daily limits) | ✅ |
+| F54-F55 | M5.2 Governance hardening (setupComplete + messagePoint binding) | ✅ |
+| F56, F58 | M5.3 Guardian acceptance signatures | ✅ |
+| F59-F61 | M5.4 Chain compatibility (fail-fast, no fallback) | ✅ |
+| F71-F73 | M5.7 Force guard (dailyLimit > 0 required) | ✅ |
+| F74-F79 | M5.8 ALG_COMBINED_T1 (0x06): P256 + ECDSA zero-trust | ✅ |
+| F67 | M5.6 BLS aggregator: deploy + setAggregator | ✅ |
+| — | dailyLimit ≥ tier2Limit invariant fix | ✅ |
+| — | Token presets (conservative/standard/trader) | ✅ |
+| — | Gasless E2E re-run with M5 factory | ✅ |
+
+### Unit Test Results
+
+**Command**: `forge test --summary`
+**Result**: **280/280 passed**, 0 failed, 0 skipped (16 suites)
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| AAStarAirAccountV7Test | 15 | ✅ |
+| AAStarAirAccountV7_M2Test | 11 | ✅ |
+| AAStarAirAccountV7M3Test | 22 | ✅ |
+| AAStarAirAccountM5_4Test | 6 | ✅ |
+| AAStarAirAccountM5_8Test | 7 | ✅ |
+| AAStarBLSAggregatorTest | 13 | ✅ |
+| AAStarBLSAlgorithmTest | 25 | ✅ |
+| AAStarBLSAlgorithmM3Test | 6 | ✅ |
+| AAStarGlobalGuardTest | 26 | ✅ |
+| AAStarGlobalGuardM5Test | 29 | ✅ |
+| AAStarValidatorTest | 19 | ✅ |
+| AAStarValidatorM3Test | 16 | ✅ |
+| CumulativeSignatureTest | 8 | ✅ |
+| M5ScenarioTests | 22 | ✅ |
+| SocialRecoveryTest | 37 | ✅ |
+| AAStarAirAccountFactoryV7Test | 16 | ✅ |
+
+### Deployed Addresses (Sepolia)
+
+| Contract | Address | Deploy Tx | Gas |
+|----------|---------|-----------|-----|
+| AirAccount Factory V7 (M5) | `0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9` | `0xaca946016fe2...453a` | 5,302,643 |
+| AAStarBLSAggregator | `0x7700aec8a15a94db5697c581de8c88ecf83b59ff` | `0x5b6de23a144b...c0a27` | 855,052 |
+
+### E2E Test Results (Sepolia)
+
+| Test | Scenarios | Result | Key Gas |
+|------|-----------|--------|---------|
+| M5.3 Guardian Acceptance | 6/6 | ✅ ALL PASS | — |
+| M5.8 ALG_COMBINED_T1 | 3/3 | ✅ ALL PASS | 162,081 (zero-trust) / 114,403 (ECDSA) |
+| M5.1 ERC20 Guard | 2/2 | ✅ ALL PASS | — |
+| F67 BLS Aggregator | 2 steps | ✅ ALL PASS | 47,757 (setAggregator) |
+| Gasless E2E (M5 factory) | 4 phases | ✅ ALL PASS | 230,496 (bundler), 0 ETH account cost |
+
+### Gas Comparison: M4 → M5
+
+| Operation | M4 Gas | M5 Gas | Change |
+|-----------|--------|--------|--------|
+| Tier 1 ECDSA | 140,352 | **114,403** | **-18.5%** |
+| Tier 1 ALG_COMBINED_T1 | — | **162,081** | New feature |
+| Tier 2 P256+BLS | 278,634 | ~278,634 | Unchanged |
+| Tier 3 P256+BLS+Guard | 288,351 | ~288,351 | Unchanged |
+| Gasless (bundler) | ~200k | **230,496** | ERC20 guard overhead |
+
+**Reference**: `docs/m5-deployment-record.md`
