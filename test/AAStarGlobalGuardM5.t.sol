@@ -337,6 +337,93 @@ contract AAStarGlobalGuardM5Test is Test {
         guard.checkTokenTransaction(mockToken, 500 * USDC_DEC, ALG_ECDSA);
     }
 
+    // ─── 9. InvalidTokenConfig validation (dailyLimit >= tier2Limit bug fix) ───
+
+    function test_invalidTokenConfig_tier1GtTier2_reverts() public {
+        // tier1=500 > tier2=100 — incoherent: tier1 can never be exceeded to reach tier2
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InvalidTokenConfig.selector,
+            otherToken, 500 * USDC_DEC, 100 * USDC_DEC, 5000 * USDC_DEC
+        ));
+        guard.addTokenConfig(otherToken, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 500 * USDC_DEC,
+            tier2Limit: 100 * USDC_DEC,
+            dailyLimit: 5000 * USDC_DEC
+        }));
+    }
+
+    function test_invalidTokenConfig_dailyLtTier2_reverts() public {
+        // dailyLimit=500 < tier2=1000 — tier2 range is unreachable, daily blocks first
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InvalidTokenConfig.selector,
+            otherToken, 100 * USDC_DEC, 1000 * USDC_DEC, 500 * USDC_DEC
+        ));
+        guard.addTokenConfig(otherToken, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100 * USDC_DEC,
+            tier2Limit: 1000 * USDC_DEC,
+            dailyLimit: 500 * USDC_DEC   // daily < tier2 → tier2Limit is dead
+        }));
+    }
+
+    function test_invalidTokenConfig_dailyLtTier1_onlyTier1Set_reverts() public {
+        // tier2=0 but daily=50 < tier1=100 — tier1 max also unreachable
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InvalidTokenConfig.selector,
+            otherToken, 100 * USDC_DEC, 0, 50 * USDC_DEC
+        ));
+        guard.addTokenConfig(otherToken, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100 * USDC_DEC,
+            tier2Limit: 0,
+            dailyLimit: 50 * USDC_DEC
+        }));
+    }
+
+    function test_validTokenConfig_dailyEqualsTier2_passes() public {
+        // dailyLimit == tier2Limit is the minimum valid config — tier2 max exactly reachable
+        vm.prank(account);
+        guard.addTokenConfig(otherToken, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100 * USDC_DEC,
+            tier2Limit: 1000 * USDC_DEC,
+            dailyLimit: 1000 * USDC_DEC  // daily == tier2: valid edge case
+        }));
+        (uint256 t1, uint256 t2, uint256 daily) = guard.tokenConfigs(otherToken);
+        assertEq(t2, daily);
+    }
+
+    function test_validTokenConfig_dailyGtTier2_passes() public {
+        // Normal case: daily > tier2 — both tier1 and tier2 fully reachable
+        vm.prank(account);
+        guard.addTokenConfig(otherToken, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100 * USDC_DEC,
+            tier2Limit: 500 * USDC_DEC,
+            dailyLimit: 2000 * USDC_DEC
+        }));
+        (,, uint256 daily) = guard.tokenConfigs(otherToken);
+        assertEq(daily, 2000 * USDC_DEC);
+    }
+
+    function test_constructor_invalidTokenConfig_reverts() public {
+        // Constructor also validates — can't deploy guard with incoherent token config
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = ALG_ECDSA;
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(0xBAD);
+        AAStarGlobalGuard.TokenConfig[] memory cfgs = new AAStarGlobalGuard.TokenConfig[](1);
+        cfgs[0] = AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100 * USDC_DEC,
+            tier2Limit: 1000 * USDC_DEC,
+            dailyLimit: 200 * USDC_DEC  // daily < tier2 — invalid
+        });
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InvalidTokenConfig.selector,
+            address(0xBAD), 100 * USDC_DEC, 1000 * USDC_DEC, 200 * USDC_DEC
+        ));
+        new AAStarGlobalGuard(account, 1 ether, algIds, 0, tokens, cfgs);
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────
 
     function _getConfig(address token) internal view returns (uint256 t1, uint256 t2, uint256 daily) {

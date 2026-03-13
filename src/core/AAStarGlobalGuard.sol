@@ -64,12 +64,28 @@ contract AAStarGlobalGuard {
     error TokenCanOnlyDecreaseLimit(address token, uint256 current, uint256 requested);
     error TokenDailyLimitExceeded(address token, uint256 requested, uint256 remaining);
     error InsufficientTokenTier(uint8 required, uint8 provided);
+    /// @dev Fired when token tier/daily limits are logically inconsistent:
+    ///      tier1 <= tier2 <= dailyLimit (when non-zero) must hold, otherwise
+    ///      the daily limit silently caps users below their configured tier max.
+    error InvalidTokenConfig(address token, uint256 tier1, uint256 tier2, uint256 daily);
 
     // ─── Modifier ───────────────────────────────────────────────
 
     modifier onlyAccount() {
         if (msg.sender != account) revert OnlyAccount();
         _;
+    }
+
+    /// @dev Validate token tier/daily config coherence.
+    ///      Rules (each only checked when both values are non-zero):
+    ///        tier1 <= tier2   — tier2 range must start above tier1 max
+    ///        tier2 <= daily   — daily cap must cover the full tier2 range
+    ///        tier1 <= daily   — daily cap must cover at least tier1 range
+    function _validateTokenConfig(address token, uint256 t1, uint256 t2, uint256 daily) internal pure {
+        bool bad = (t1 > 0 && t2 > 0 && t1 > t2)
+            || (t2 > 0 && daily > 0 && daily < t2)
+            || (t1 > 0 && t2 == 0 && daily > 0 && daily < t1);
+        if (bad) revert InvalidTokenConfig(token, t1, t2, daily);
     }
 
     // ─── Constructor ────────────────────────────────────────────
@@ -98,8 +114,10 @@ contract AAStarGlobalGuard {
         }
         for (uint256 i = 0; i < _initialTokens.length; i++) {
             address tok = _initialTokens[i];
-            tokenConfigs[tok] = _initialConfigs[i];
-            emit TokenConfigAdded(tok, _initialConfigs[i].tier1Limit, _initialConfigs[i].tier2Limit, _initialConfigs[i].dailyLimit);
+            TokenConfig memory cfg = _initialConfigs[i];
+            _validateTokenConfig(tok, cfg.tier1Limit, cfg.tier2Limit, cfg.dailyLimit);
+            tokenConfigs[tok] = cfg;
+            emit TokenConfigAdded(tok, cfg.tier1Limit, cfg.tier2Limit, cfg.dailyLimit);
         }
     }
 
@@ -198,6 +216,7 @@ contract AAStarGlobalGuard {
         if (existing.tier1Limit != 0 || existing.tier2Limit != 0 || existing.dailyLimit != 0) {
             revert TokenAlreadyConfigured(token);
         }
+        _validateTokenConfig(token, config.tier1Limit, config.tier2Limit, config.dailyLimit);
         tokenConfigs[token] = config;
         emit TokenConfigAdded(token, config.tier1Limit, config.tier2Limit, config.dailyLimit);
     }
