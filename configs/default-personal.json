@@ -18,7 +18,8 @@
     { "id": 3, "name": "P256", "description": "WebAuthn Passkey (fingerprint/face)" },
     { "id": 1, "name": "BLS", "description": "DVT aggregate signature" },
     { "id": 4, "name": "Cumulative T2", "description": "P256 + BLS combined" },
-    { "id": 5, "name": "Cumulative T3", "description": "P256 + BLS + Guardian" }
+    { "id": 5, "name": "Cumulative T3", "description": "P256 + BLS + Guardian" },
+    { "id": 6, "name": "Combined T1", "description": "P256 + ECDSA dual-factor (M5.8)" }
   ],
   "recoveryTimelock": "2 days",
   "recoveryThreshold": "2 of 3 guardians"
