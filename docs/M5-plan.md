@@ -354,12 +354,28 @@ The UX flow:
 
 Our precompile addresses are correct. No changes needed.
 
-### Tasks
+### Deployment Requirement (Final Decision — 2026-03-13)
 
-- [ ] F59: Document chain-specific deployment configs (precompile availability per chain)
-- [ ] F60: Integrate fallback P256 verifier (Daimo's P256Verifier.sol) for chains without EIP-7212
-- [ ] F61: Consider fallback BLS library for chains without EIP-2537 (or document as requirement)
-- [ ] F62: Multi-chain deployment script with per-chain precompile detection
+AirAccount requires **both** EIP-7212 and EIP-2537 precompiles. No fallback.
+
+| Chain | EIP-7212 (P256, 0x100) | EIP-2537 (BLS, 0x0b–0x12) | Deploy? |
+|-------|----------------------|--------------------------|---------|
+| Ethereum mainnet | ✅ Fusaka 2025-12-03 | ✅ Pectra 2025-05-07 | ✅ |
+| Base | ✅ Fjord 2024-07-10 | ✅ Isthmus 2025-05-09 | ✅ |
+| Optimism | ✅ Fjord 2024-07-10 | ✅ Isthmus 2025-05-09 | ✅ |
+| Arbitrum One/Nova | ✅ ArbOS 31 ~2024 Q3 | ✅ ArbOS 51 2026-01-08 | ✅ |
+| BNB Chain | verify | ✅ Pascal 2025-03-20 | verify |
+| zkSync Era | ✅ early adopter | verify | verify |
+
+Fallback verifiers were considered (F60, F61) and **rejected**: pure-Solidity P256
+costs ~280k gas (~100× precompile), making gas unpredictable and potentially worse
+than a clean failure. Fail-fast is the correct behavior. Verify precompile support
+before deploying to any new chain.
+
+- [x] F59: Chain deployment table documented above
+- [x] F60: Rejected — fail-fast instead of Solidity fallback
+- [x] F61: Rejected — same rationale as F60
+- [ ] F62: Multi-chain deployment script with per-chain precompile verification
 
 ---
 
