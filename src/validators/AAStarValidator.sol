@@ -21,6 +21,9 @@ contract AAStarValidator is IAAStarValidator {
     /// @dev Contract owner
     address public owner;
 
+    /// @dev Once true, registerAlgorithm is permanently disabled; use proposeAlgorithm + executeProposal instead
+    bool public setupComplete;
+
     /// @dev Timelock duration for algorithm proposals
     uint256 public constant TIMELOCK_DURATION = 7 days;
 
@@ -37,6 +40,7 @@ contract AAStarValidator is IAAStarValidator {
     event AlgorithmProposed(uint8 indexed algId, address indexed algorithm, uint256 executeAfter);
     event ProposalCancelled(uint8 indexed algId);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event SetupFinalized();
 
     // ─── Errors ───────────────────────────────────────────────────────
 
@@ -48,6 +52,7 @@ contract AAStarValidator is IAAStarValidator {
     error NoActiveProposal();
     error TimelockNotExpired(uint256 remaining);
     error ProposalAlreadyPending();
+    error SetupAlreadyClosed();
 
     // ─── Constructor ──────────────────────────────────────────────────
 
@@ -82,15 +87,25 @@ contract AAStarValidator is IAAStarValidator {
     // ─── Algorithm Registry ───────────────────────────────────────────
 
     /// @notice Register an algorithm implementation. Only-add: cannot update or remove.
+    /// @dev Disabled once setupComplete is true — use proposeAlgorithm + executeProposal after setup.
     /// @param algId The algorithm identifier (first byte of signature)
     /// @param algorithm The algorithm contract address
     function registerAlgorithm(uint8 algId, address algorithm) external {
         if (msg.sender != owner) revert OnlyOwner();
+        if (setupComplete) revert SetupAlreadyClosed();
         if (algorithm == address(0)) revert InvalidAlgorithmAddress();
         if (algorithms[algId] != address(0)) revert AlgorithmAlreadyRegistered();
 
         algorithms[algId] = algorithm;
         emit AlgorithmRegistered(algId, algorithm);
+    }
+
+    /// @notice Lock direct registration permanently. After this call, new algorithms require 7-day timelock.
+    /// @dev One-way: cannot be undone. Emits SetupFinalized.
+    function finalizeSetup() external {
+        if (msg.sender != owner) revert OnlyOwner();
+        setupComplete = true;
+        emit SetupFinalized();
     }
 
     // ─── Governance: Timelock Proposals ────────────────────────────────
