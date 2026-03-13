@@ -216,3 +216,18 @@ AirAccount M3 is competitive with the lightest wallets despite including guard e
 5. **EIP-7702 delegation** — next major version, eliminates account deployment cost entirely.
 6. **Monitor P256 precompile gas** across L2s — gas costs vary significantly between chains.
    Reference: `docs/M5-plan.md` section M5.4 for chain compatibility table.
+
+---
+
+## TODO: Gas Analysis V2
+
+After M5 completes, update this document with:
+
+- **New baseline**: M5 factory gas (ERC20 token guard adds ~2,100 gas per ERC20 tx)
+- **Aggregator batch savings**: measure actual gas per UserOp with 3/5/10 batched ops
+- **P256-first mode overhead**: measure tier enforcement with `p256RequiredForTier1 = true`
+- **Assembly ecrecover savings**: confirm ~500 gas reduction vs OZ baseline (M5 branch)
+- **Chain comparison**: OP Sepolia vs Sepolia gas cost difference for P256/BLS precompiles
+- **Multi-chain deployment cost table**: deploy gas on each target chain
+
+Reference: `docs/M5-plan.md` Post-M5 Checklist.

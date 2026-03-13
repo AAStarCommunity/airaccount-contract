@@ -5,6 +5,31 @@
 **Scope**: `src/core/AAStarAirAccountBase.sol`, `AAStarGlobalGuard.sol`, `AAStarAirAccountFactoryV7.sol`, `AAStarAirAccountV7.sol`, and all validator/algorithm contracts
 **Solidity**: 0.8.33, Cancun EVM, via-IR, 10k optimizer runs
 
+## Fix Status Summary (updated 2026-03-13)
+
+| Finding | Status | Resolution |
+|---------|--------|------------|
+| C-1: P256 precompile availability | ❌ Open → M5 F60 | Fallback P256Verifier.sol planned |
+| C-2: BLS precompile dependency | ❌ Open → M5 F61 | Document chain requirements; optional software fallback |
+| C-3: Transient storage Cancun | ✅ Acceptable | Cancun is deployment requirement — documented |
+| H-1: No cross-chain replay protection | ✅ Acceptable | EntryPoint includes chainId; low impact |
+| H-2: Inconsistent hashing (ECDSA vs P256) | ✅ Acceptable | Not exploitable; natspec added |
+| H-3: messagePoint binding | ❌ Open → M5 F55 | Bind userOpHash into messagePoint hash |
+| M-1: Daily limit batch bypass | ✅ FIXED | `todaySpent()` cumulative check in `_enforceGuard` |
+| M-2: removeGuardian cancels recovery | ✅ By design | Intentional safety behavior |
+| M-3: No config validation for algIds | ✅ FIXED | Factory `_buildDefaultConfig` includes 0x04/0x05 |
+| M-4: `_popcount` gas cost | ✅ Acceptable | Negligible for 3-bit bitmaps |
+| M-5: BLS payload slice bug | ✅ FIXED | `blsPayload[32:]` skips nodeIdsLength prefix |
+| L-1: Factory no access control | ✅ By design | Standard ERC-4337 counterfactual pattern |
+| L-2: No tier enforcement events | ❌ Open → M5 | Add diagnostic events (UX improvement) |
+| L-3: Guard cannot be upgraded | ✅ By design | Non-upgradable is core philosophy |
+
+**GPT-5.2 Review additional findings** (see `docs/gpt52-review-response.md`):
+- Finding 1 (algId cross-contamination) → ✅ FIXED (transient storage queue)
+- Finding 2 (permissionless registerPublicKey) → ✅ FIXED (onlyOwner)
+- Finding 5 (tier limit misconfiguration) → ✅ FIXED (tier1 ≤ tier2 validation)
+- Finding 6 (zero guardian in factory) → ✅ FIXED (non-zero guardian validation)
+
 ---
 
 ## Executive Summary

@@ -363,24 +363,111 @@ Our precompile addresses are correct. No changes needed.
 
 ---
 
-## M5.5 — Weight-Based Multi-Signature (From M4.5 Research)
+## M5.5 — Weight-Based Multi-Signature (From M4.5 Research) → DEFERRED TO M6
 
-### Tasks
-
-- [ ] F63: Implement `_validateWeightedSignature()` — bitmap-based source selection (algId 0x06)
-- [ ] F64: Configurable weights per signature source
-- [ ] F65: Per-tier weight thresholds
-- [ ] F66: Unit tests and integration tests
+> **Decision (2026-03-13)**: M5.5 is moved to M6. The current Tier 1/2/3 cumulative model
+> covers 95% of use cases and is battle-tested (203 unit tests + 15 E2E tests).
+> Weight-based signatures require a frontend config UI for weight customization.
+> Adding algId 0x06 as opt-in without breaking existing 0x04/0x05 is planned for M6.
+> See full analysis in `docs/M4.5-weighted-signature-research.md`.
 
 ---
 
-## Priority Order
+## M5.6 — Gas Optimization Completion (From M5 branch)
+
+### Already Done in M5 branch
+
+- [x] **Assembly ecrecover** in `_validateECDSA` — ~500 gas/tx saved (`AAStarAirAccountBase.sol`)
+- [x] **BLS key cache script** — `scripts/cache-bls-keys.ts` for pre-computing `cacheAggregatedKey()`
+
+### Tasks
+
+- [ ] F67: BLS aggregator account integration — set `blsAggregator` on accounts, test batch UserOp flow
+- [ ] F68: SDK integration for `handleAggregatedOps` batch submission (off-chain bundler changes)
+- [ ] F69: NodeId compression — replace bytes32 nodeIds with uint8 indices for smaller calldata
+- [ ] F70: E2E batch gas benchmark — verify ~150k gas/op with 3+ batched UserOps
+
+---
+
+## M5.7 — Force Guard Requirement
+
+### Problem
+
+`createAccount(owner, salt, config)` with empty config creates an unguarded account
+(`guard = address(0)`). This is intentional for testing but inadvisable for production.
+
+### Design
+
+Enforce guard in the factory's convenience method while keeping the raw `createAccount`
+flexible (for testing and advanced use cases):
+
+```solidity
+// In AAStarAirAccountFactoryV7.createAccount():
+// Option: require non-empty approvedAlgIds OR non-zero dailyLimit
+// OR: just document that createAccountWithDefaults is the production path
+```
+
+### Tasks
+
+- [ ] F71: Evaluate whether to enforce guard in `createAccount()` or only in `createAccountWithDefaults()`
+- [ ] F72: If enforced: add `require(config.approvedAlgIds.length > 0 || config.dailyLimit > 0)`
+- [ ] F73: Update factory tests for the enforcement
+
+---
+
+## M5.8 — T1 Security Enhancement (P256-first mode)
+
+### Problem
+
+Tier 1 currently accepts either ECDSA (0x02) OR P256 passkey (0x03) independently.
+ECDSA private keys can be stolen (phishing, malware). P256 keys are device-bound
+(secure enclave/TPM) and cannot be remotely extracted — no key extraction risk.
+
+### Proposal
+
+Add an optional per-account security mode: if `p256RequiredForTier1 = true`, all
+transactions (including Tier 1) must include a P256 signature in addition to ECDSA.
+This makes ALL transactions device-bound by default.
+
+```solidity
+// New field in account:
+bool public p256RequiredForTier1; // if true, all tiers must include P256
+
+// In _enforceGuard:
+if (p256RequiredForTier1 && _algTier(algId) < 2 && algId != ALG_P256) {
+    // algId must be P256 or cumulative (which includes P256)
+    revert P256RequiredForTier1();
+}
+```
+
+**Trade-offs**:
+- PRO: Eliminates ECDSA key theft attack on Tier 1 (~all normal transactions)
+- PRO: P256 gas cost is negligible (EIP-7212 precompile, ~40k gas total)
+- CON: If P256 key is lost, Tier 1 is bricked until social recovery (but social recovery works)
+- CON: Requires P256 key to be set on account
+- CON: Breaks automation (bots can't easily provide P256 sigs without device)
+
+**Recommendation**: opt-in flag, off by default. User enables via `enableP256Tier1Requirement()`.
+Backend/scripts that use ECDSA directly won't be affected unless opted in.
+
+### Tasks
+
+- [ ] F74: Add `p256RequiredForTier1` flag and `enableP256Tier1Requirement()` to account
+- [ ] F75: Update `_enforceGuard` to check flag before allowing Tier 1 with ECDSA alone
+- [ ] F76: Unit tests for P256-required mode (enabled/disabled, with/without P256 key)
+
+---
+
+## Priority Order (updated 2026-03-13)
 
 1. **M5.1** (F47-F53) — ERC20 token guard ← highest business value
-2. **M5.2** (F54-F55) — Governance hardening ← security critical
+2. **M5.2** (F54-F55) — Governance hardening ← security critical (C-1/C-2/H-3 from security review)
 3. **M5.3** (F56-F58) — Guardian validation ← UX improvement
 4. **M5.4** (F59-F62) — Chain compatibility ← deployment expansion
-5. **M5.5** (F63-F66) — Weight-based signatures ← future capability
+5. **M5.6** (F67-F70) — Gas optimization (BLS aggregator integration)
+6. **M5.7** (F71-F73) — Force guard requirement ← production safety
+7. **M5.8** (F74-F76) — P256-first mode ← advanced security opt-in
+8. **M5.5** → **MOVED TO M6** — Weight-based signatures
 
 ---
 
@@ -391,9 +478,24 @@ Our precompile addresses are correct. No changes needed.
 - Validator: setupComplete flag, registerAlgorithm blocked after finalize
 - messagePoint: bound to userOpHash, old-format signature rejected
 - Guardian: acceptance signatures, invalid signer rejection
+- P256-required mode: enabled/disabled paths
+- Force guard: factory enforcement
 
 ### E2E Tests (target: +5 tests)
 - ERC20 transfer blocked by insufficient tier
 - ERC20 approval blocked by daily limit
 - Guardian acceptance flow on Sepolia
 - Multi-chain deployment (Sepolia + OP Sepolia)
+- Batch UserOp via aggregator (BLS Tier 2/3)
+
+---
+
+## Post-M5 Checklist (run after all M5 tasks complete)
+
+- [ ] **Gas Analysis V2** — Update `docs/gas-analysis.md` with M5 gas measurements
+  (new tokens check overhead, aggregator batch savings, P256-first mode cost)
+- [ ] **Gasless E2E Test** — Re-run full gasless flow per `docs/gasless-e2e-test-report.md`
+  standard with M5 factory (new contract addresses, M5 features enabled)
+- [ ] **Deployment Record** — Create `docs/m5-deployment-record.md` following the same
+  standard as `docs/yetanother-deployment-record.md` with all M5 deployed addresses,
+  tx hashes, gas costs, and verification links

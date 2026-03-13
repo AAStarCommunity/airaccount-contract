@@ -1,5 +1,10 @@
 # M4 Milestone Plan — Cumulative Signature + E2E Onboarding Flow
 
+> **[ARCHIVED — 2026-03-13]** M4 is 100% complete. All M4.1–M4.4 tasks done.
+> 5 tiered E2E tests + 5 social recovery E2E tests ALL PASSED on Sepolia.
+> M4.5 (weight-based multi-sig) research complete; prototype deferred to M6.
+> Deployed: Factory `0x914db0a849f55e68a726c72fd02b7114b1176d88` (Sepolia)
+
 ## Overview
 
 M4 focuses on two main areas:

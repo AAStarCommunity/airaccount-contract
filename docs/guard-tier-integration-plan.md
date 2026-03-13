@@ -1,5 +1,14 @@
 # Guard + Tier Integration Plan (v2)
 
+> **[ARCHIVED — 2026-03-13]** All items in this plan have been implemented in v0.12.5 M3/M4.
+> The two-phase initialization design (Phase 1: no-guard → Phase 2: initializeGuard) is
+> **superseded** by atomic constructor initialization. Guard is now deployed in the account
+> constructor — no separate `initializeGuard()` call needed. See `AAStarAirAccountBase.sol`
+> constructor and `AAStarAirAccountFactoryV7.createAccountWithDefaults()`.
+>
+> **M5 follow-up**: Force guard requirement in `createAccount()` (currently allows no-guard
+> if empty config) — tracked in `docs/M5-plan.md` M5.2.
+>
 > Resolves: Guard initialization & immutability, algId pass-through, tier enforcement
 > Target: v0.12.5 M4
 

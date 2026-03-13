@@ -117,5 +117,32 @@ Track EIP-7212 precompile gas costs on chains we support. Costs vary significant
 
 ---
 
+## Post-M5 Mandatory Runs
+
+### Gasless E2E Test (after M5 completes)
+Follow the same test standard as `docs/gasless-e2e-test-report.md`:
+- Deploy M5 factory to Sepolia
+- Fund account with aPNTs
+- Execute gasless transfer via SuperPaymaster
+- Verify ETH balance unchanged
+- Record gas costs, tx hashes, block numbers
+- Document any behavior changes from ERC20 token guard presence
+- Save new report as `docs/m5-gasless-e2e-test-report.md`
+
+### Deployment Record (after M5 completes)
+Follow the same standard as `docs/yetanother-deployment-record.md`:
+- Record all M5 deployed contract addresses
+- TX hashes for each deployment
+- Gas used per contract
+- Etherscan verification links
+- Network, deployer, EntryPoint version
+- Known issues or notes
+- Save as `docs/m5-deployment-record.md`
+
+### Gas Analysis V2 (after M5 completes)
+Update `docs/gas-analysis.md` with M5 gas measurements — see TODO section in that file.
+
+---
+
 *Last updated: 2026-03-13*
 *Source analysis: `docs/gas-analysis.md` — Potential Future Optimizations*
