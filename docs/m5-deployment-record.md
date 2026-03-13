@@ -11,6 +11,49 @@
 
 ---
 
+## All Deployed Contracts — Sepolia (Complete Table)
+
+> Cumulative across all milestones. Deployer: `0xb5600060e6de5E11D3636731964218E53caadf0E`
+
+### Infrastructure (shared, milestone-independent)
+
+| Contract | Address | Deploy Tx | Purpose |
+|----------|---------|-----------|---------|
+| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | (ERC-4337 canonical) | UserOp bundler entrypoint |
+| SuperPaymaster | `0x16cE0c7d846f9446bbBeb9C5a84A4D140fAeD94A` | (external) | Gas sponsorship in aPNTs |
+| aPNTs Token | `0xDf669834F04988BcEE0E3B6013B6b867Bd38778d` | (external) | ERC-20 gas token |
+| SBT | `0x677423f5Dad98D19cAE8661c36F094289cb6171a` | (external) | Soul-bound identity |
+| Registry | `0x7Ba70C5bFDb3A4d0cBd220534f3BE177fefc1788` | (external) | Role-based SBT minting |
+| Price Feed (Chainlink) | `0x694AA1769357215DE4FAC081bf1f309aDC325306` | (external) | ETH/USD oracle |
+
+### AirAccount Contracts (by milestone)
+
+| Milestone | Contract | Address | Deploy Tx | Gas Used | Notes |
+|-----------|----------|---------|-----------|----------|-------|
+| **YetAA (legacy)** | AAStarValidator | `0xF780Cc3FB161F8df8C076f86E89CE8B685985395` | `0x901a946407ef...c34a4f` | ~205k | Legacy; still functional |
+| **YetAA (legacy)** | AAStarAccountFactoryV7 | `0x26a0B9B6119b9292a6105B7cEDc58E54767D0B31` | `0x570a6b84ae80...7f7a88` | — | Proxy factory |
+| **M1** | AirAccount Factory V7 | `0x26Af93f34d6e3c3f08208d1e95811CE7FAcD7E7f` | (M1 E2E) | — | ECDSA-only |
+| **M2** | AAStarBLSAlgorithm | `0xc2096E8D04beb3C337bb388F5352710d62De0287` | (M2 deploy) | — | BLS12-381 verifier |
+| **M2** | AAStarValidator (router) | `0x730a162Ce3202b94cC5B74181B75b11eBB3045B1` | (M2 deploy) | — | algId router |
+| **M2** | AirAccount Factory V7 | `0x5Ba18c50E0375Fb84d6D521366069FE9140Afe04` | (M2 deploy) | — | BLS triple sig |
+| **M3** | AirAccount Factory V7 | `0xce4231da69015273819b6aab78d840d62cf206c1` | (M3 deploy) | — | Security hardened |
+| **M4** | AirAccount Factory V7 | `0x914db0a849f55e68a726c72fd02b7114b1176d88` | (M4 deploy) | — | Cumulative sigs + social recovery |
+| **M5** | **AirAccount Factory V7** | **`0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9`** | `0xaca946016fe2...453a` | **5,302,643** | **Current — ERC20 guard + COMBINED_T1** |
+| **M5** | **AAStarBLSAggregator** | **`0x7700aec8a15a94db5697c581de8c88ecf83b59ff`** | `0x5b6de23a144b...c0a27` | **855,052** | **F67 — IAggregator for batch BLS** |
+
+### M5 Test Accounts (Sepolia)
+
+| Salt | Address | Purpose | Creation Tx |
+|------|---------|---------|-------------|
+| 700 | `0x866E6B61211f82931dd0a6D9134b4836FA40C15a` | M5.3 Guardian acceptance | `0xed2fd9aa50c4...28f46` |
+| 600 | `0x73A7d2Aa0E8F2655F3c580aeCd5F6fcC8C300e32` | M5.8 ALG_COMBINED_T1 | `0x1d872b6aba38...dc49a` |
+| — | `0xdBF6F82cE4fc710D0d548A131aeD776B0Ab94BdC` | M5.1 ERC20 guard | `0xf1f92f44a165...c905` |
+| 820 | `0xe196792cB06602165d8922FB30E52708a1d90390` | Gasless E2E | `0x21aebaeb631c...d436` |
+| 810 | `0x5B037C9CEcCCFcD48c0552129Aca56D96F3D9cFE` | F67 BLS aggregator acc1 | `0x18e3b50cb9de...898f` |
+| 811 | `0x272ed1D9b1eC6E2AeeEcD42Db290722E314e9645` | F67 BLS aggregator acc2 | `0x80ad870b4320...d73a` |
+
+---
+
 ## M5 Feature Summary
 
 | Feature | Description | Key Change |
@@ -124,7 +167,34 @@ Script: `scripts/test-m5-erc20-guard-e2e.ts`
 | A | 50 aPNTs ECDSA (within tier1=100) | Transfer succeeds | ✅ PASS |
 | B | 500 aPNTs ECDSA (exceeds tier1=100) | `InsufficientTokenTier(2,1)` | ✅ PASS |
 
-**Total E2E: 11/11 scenarios PASS**
+### F67 — BLS Aggregator Integration (2 Steps)
+
+Script: `scripts/test-m5-bls-aggregator-e2e.ts`
+
+| # | Step | Expected | Result | Gas |
+|---|------|----------|--------|-----|
+| 1 | Deploy 2 accounts + `setAggregator` on each | `hasAggregator = true` | ✅ PASS | 47,757 × 2 |
+| 2 | Single ECDSA UserOp on aggregator-configured account | UserOp succeeds | ✅ PASS | **137,528** |
+
+- BLS Aggregator: `0x7700aec8a15a94db5697c581de8c88ecf83b59ff`
+- Account 1 (salt=810): `0x5B037C9CEcCCFcD48c0552129Aca56D96F3D9cFE`
+- Account 2 (salt=811): `0x272ed1D9b1eC6E2AeeEcD42Db290722E314e9645`
+
+### Gasless E2E — M5 Factory
+
+Script: `scripts/test-m5-gasless-e2e.ts`
+
+| Phase | Step | Result | Key Data |
+|-------|------|--------|---------|
+| 0 | Create M5 account (salt=820) | ✅ | `0xe196792cB066...` |
+| 1 | SBT + aPNTs + ETH funding | ✅ | SBT minted, 100 aPNTs minted |
+| 2 | Build gasless UserOp (SuperPaymaster) | ✅ | paymasterAndData 72 bytes |
+| 3 | Submit handleOps, verify zero ETH cost | ✅ PASS | Gas: **230,496**, ETH change: **0** |
+
+- Gasless TX: `0x9b7ab29b9d9e8cbfea0f7db82718dd62f0dfcd3d9cf95d2c9182512f9a759778`
+- Account: `0xe196792cB06602165d8922FB30E52708a1d90390`
+
+**Total E2E: 15/15 scenarios PASS + F67 (2 steps) + Gasless (4 phases) all PASS**
 
 ---
 
@@ -319,12 +389,15 @@ AIRACCOUNT_M5_ACCOUNT_ERC20_GUARD=0xdBF6F82cE4fc710D0d548A131aeD776B0Ab94BdC
 
 ## Known Gaps (Deferred to M6 or Later)
 
-| Item | Reason | Reference |
-|------|--------|-----------|
-| F57: Frontend guardian onboarding flow | Out of contract repo scope | M5.3 |
-| F62: Multi-chain deployment script | Sepolia only; mainnet/L2 pending | M5.4 |
-| F67-F70: BLS aggregator integration | Requires off-chain bundler changes | M5.6 |
-| Gasless E2E re-run with M5 factory | Old factory address in gasless scripts | Post-M5 checklist |
+| Item | Status | Reason | Reference |
+|------|--------|--------|-----------|
+| F57: Frontend guardian onboarding flow | ❌ Deferred | Out of contract repo scope | M5.3 |
+| F62: Multi-chain deployment script | ❌ Deferred | Sepolia only; mainnet/L2 pending | M5.4 |
+| F67: BLS aggregator `setAggregator` | ✅ Done | Deployed + configured on test accounts | M5.6 |
+| F68: SDK `handleAggregatedOps` bundler | ❌ Deferred | Requires off-chain bundler infrastructure | M5.6 |
+| F69: NodeId compression (bytes32→uint8) | ❌ Deferred | Contract change; modest savings; breaks sig format | M5.6 |
+| F70: E2E batch gas benchmark | ✅ Done (partial) | Single UserOp benchmark done; full batch needs F68 | M5.6 |
+| Gasless E2E re-run with M5 factory | ✅ Done | `scripts/test-m5-gasless-e2e.ts` — M5 factory + new account | Post-M5 |
 
 ---
 
