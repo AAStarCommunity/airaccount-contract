@@ -22,6 +22,25 @@ AirAccount M3 achieves **127,249 gas** for a basic ECDSA UserOp execution on Sep
 | AAStarGlobalGuard | ~400,000 (bundled) | ~2,000 |
 | AAStarBLSAggregator | 855,052 | 3,883 |
 
+**Why does AAStarGlobalGuard (~2,000 bytes) cost ~400k gas?**
+
+The confusion is that "small contract ≠ cheap deployment". EVM deployment cost formula:
+```
+Gas = CREATE opcode (32,000) + bytecodeStorage (200 gas/byte × size) + constructorExecution
+```
+2,000 bytes × 200 = **400,000 gas just for bytecode storage** — this is an EVM protocol constant.
+`immutable` variables (`account`, `minDailyLimit`) are baked into bytecode, not stored separately,
+but they do increase bytecode size. SSTORE calls in the constructor (dailyLimit, approvedAlgorithms)
+add another ~50,000 gas. Total: ~480,000. The ~400k figure is a rough estimate.
+The per-byte cost is unavoidable; only reducing bytecode size would help.
+
+**Why does AAStarBLSAggregator (3,883 bytes) cost 855k gas?**
+3,883 bytes × 200 = **776,600 gas** for bytecode storage alone.
+The bytecode is large because: (1) `GENERATOR_POINT` is a 128-byte constant baked into bytecode;
+(2) `P_HIGH`/`P_LOW` BLS field modulus constants; (3) multiple assembly-heavy functions
+(`_g2Add`, `_verifyPairing`, `_negateG1Point`) generate dense bytecode.
+This is a one-time cost shared by all users — economically fine.
+
 **Account creation comparison:**
 
 | Method | Gas | Notes |
@@ -145,13 +164,13 @@ AirAccount M3 achieves **127,249 gas** for a basic ECDSA UserOp execution on Sep
 
 ### Potential Future Optimizations
 
-| Optimization | Estimated Savings | Complexity |
-|-------------|-------------------|------------|
-| BLS key caching (aggregateKeys) | ~20,000 per multi-node verify | Low |
-| Batch UserOp aggregation | ~40% per op in batch | Medium (aggregator) |
-| Assembly-optimized ecrecover | ~500 per ECDSA | Low |
-| Packed guardian storage | ~2,100 per read (1 slot vs 3) | Medium |
-| EIP-7702 delegation | ~21,000 (no account deployment) | High |
+| Optimization | Estimated Savings | Complexity | Status |
+|-------------|-------------------|------------|--------|
+| BLS key caching (aggregateKeys) | ~20,000 per multi-node verify | Low | ✅ Ready — `cacheAggregatedKey()` already in `AAStarBLSAlgorithm`. Backend must call it before submitting batched UserOps. Zero contract changes. |
+| Assembly-optimized ecrecover | ~500 per ECDSA | Low | ✅ Ready — Replace OZ `ECDSA.recover()` with direct `ecrecover` precompile assembly in `_validateECDSA`. Straightforward refactor. |
+| Batch UserOp aggregation | ~40% per op in batch | Medium | 📋 TODO (M5.5) — `AAStarBLSAggregator` contract is done. Remaining work is SDK/backend integration. |
+| Packed guardian storage | ~2,100 per read (1 slot vs 3) | Medium | 📋 TODO (M5) — Pack `guardianCount + guardian[0]` into one slot (21 bytes < 32). Requires storage layout refactor. |
+| EIP-7702 delegation | ~21,000 (no account deployment) | High | 📋 TODO (v1.0) — Next major version. Eliminates account deployment entirely. |
 
 ### Contract Size
 
@@ -182,7 +201,18 @@ AirAccount M3 is competitive with the lightest wallets despite including guard e
 
 ## Recommendations
 
-1. **Enable BLS key caching** for frequently-used node sets — saves ~20k gas per tier 2/3 transaction
-2. **Pack guardian addresses** into fewer storage slots — saves ~4k gas on recovery operations
-3. **Consider EIP-7702** for next major version — eliminates account deployment entirely
-4. **Monitor P256 precompile gas** across L2s — gas costs vary significantly between chains
+### Immediately Actionable (no contract changes required)
+
+1. **Enable BLS key caching** — call `AAStarBLSAlgorithm.cacheAggregatedKey(nodeIds)` once per node
+   set before submitting batched UserOps. Saves ~20k gas per Tier 2/3 transaction. Backend task only.
+
+2. **Assembly-optimized ecrecover** — replace `ECDSA.recover()` from OZ with direct `ecrecover`
+   precompile call in `_validateECDSA`. Saves ~500 gas per ECDSA UserOp. See `docs/TODO.md`.
+
+### Deferred to M5 / Future Versions
+
+3. **Pack guardian addresses** — saves ~4k gas on recovery operations. See `docs/TODO.md`.
+4. **Batch UserOp aggregation** — SDK/backend integration for `AAStarBLSAggregator`. See `docs/TODO.md`.
+5. **EIP-7702 delegation** — next major version, eliminates account deployment cost entirely.
+6. **Monitor P256 precompile gas** across L2s — gas costs vary significantly between chains.
+   Reference: `docs/M5-plan.md` section M5.4 for chain compatibility table.
