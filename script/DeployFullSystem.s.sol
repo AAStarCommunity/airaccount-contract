@@ -12,12 +12,12 @@ contract DeployFullSystem is Script {
     // EntryPoint v0.7 (canonical address)
     address constant ENTRYPOINT = 0x0000000071727De22E5E9d8BAf0edAc6f37da032;
 
-    // Default community guardian (Safe multisig — replace with actual address)
-    address constant COMMUNITY_GUARDIAN = address(0); // TODO: set before production deploy
-
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
+        address communityGuardian = vm.envAddress("COMMUNITY_GUARDIAN");
+
+        require(communityGuardian != address(0), "COMMUNITY_GUARDIAN must be set");
 
         console.log("Deployer:", deployer);
         console.log("EntryPoint:", ENTRYPOINT);
@@ -39,7 +39,7 @@ contract DeployFullSystem is Script {
         // 4. Deploy Factory
         AAStarAirAccountFactoryV7 factory = new AAStarAirAccountFactoryV7(
             ENTRYPOINT,
-            COMMUNITY_GUARDIAN
+            communityGuardian
         );
         console.log("AAStarAirAccountFactoryV7:", address(factory));
 
