@@ -249,6 +249,29 @@ contract AAStarAirAccountV7_M2Test is Test {
         assertEq(result, 0, "Valid triple sig with mock BLS should pass");
     }
 
+    // ─── messagePoint binding: old format (no userOpHash) is rejected ─
+
+    function test_tripleSignature_oldMpBinding_fails() public {
+        // M5.2 security: mpHash must be keccak256(userOpHash || messagePoint).
+        // An attacker using the old format keccak256(messagePoint) — without userOpHash — must be rejected.
+        vm.prank(ownerWallet.addr);
+        account.setValidator(address(router));
+
+        router.registerAlgorithm(0x01, address(mockAlg));
+
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        // Build signature with OLD-style mpHash (keccak256(messagePoint) only, no userOpHash binding)
+        bytes memory tripSig = _buildTripleSigOldMpHash(userOpHash, ownerWallet, ownerWallet);
+
+        userOp.signature = abi.encodePacked(uint8(0x01), tripSig);
+
+        vm.prank(entryPointAddr);
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "Old-style mpHash (without userOpHash binding) must be rejected");
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────
 
     function _buildUserOp(address sender) internal pure returns (PackedUserOperation memory) {
@@ -305,5 +328,34 @@ contract AAStarAirAccountV7_M2Test is Test {
     function _signHash(Vm.Wallet memory w, bytes32 hash) internal pure returns (uint8 v, bytes32 r, bytes32 s) {
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
         (v, r, s) = vm.sign(w.privateKey, ethHash);
+    }
+
+    /// @dev Like _buildTripleSig but uses OLD binding: keccak256(messagePoint) without userOpHash.
+    ///      This was the pre-M5.2 format; any sig built this way must now be rejected.
+    function _buildTripleSigOldMpHash(
+        bytes32 userOpHash,
+        Vm.Wallet memory aaSigner,
+        Vm.Wallet memory mpSigner
+    ) internal pure returns (bytes memory) {
+        uint256 nodeIdsLength = 1;
+        bytes32 fakeNodeId = keccak256("testnode");
+        bytes memory blsSig = new bytes(256);
+        bytes memory messagePoint = new bytes(256);
+        messagePoint[0] = 0x42;
+
+        (uint8 v1, bytes32 r1, bytes32 s1) = _signHash(aaSigner, userOpHash);
+
+        // OLD format: sign only keccak256(messagePoint), NOT keccak256(userOpHash || messagePoint)
+        bytes32 oldMpHash = keccak256(messagePoint);
+        (uint8 v2, bytes32 r2, bytes32 s2) = _signHash(mpSigner, oldMpHash);
+
+        return abi.encodePacked(
+            bytes32(nodeIdsLength),
+            fakeNodeId,
+            blsSig,
+            messagePoint,
+            abi.encodePacked(r1, s1, v1),
+            abi.encodePacked(r2, s2, v2)
+        );
     }
 }
