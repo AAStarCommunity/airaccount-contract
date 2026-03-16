@@ -22,15 +22,32 @@ contract AAStarAirAccountFactoryV7 {
     /// @dev Default community guardian (Safe multisig provided by the community)
     address public immutable defaultCommunityGuardian;
 
+    /// @dev Default token addresses for new accounts (chain-specific, set at deploy time)
+    address[] private _defaultTokenAddresses;
+    /// @dev Default token spending configs aligned with _defaultTokenAddresses
+    AAStarGlobalGuard.TokenConfig[] private _defaultTokenConfigs;
+
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
 
     error GuardianDidNotAccept(address guardian);
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
-    constructor(address _entryPoint, address _communityGuardian) {
+    /// @param defaultTokens Token addresses to pre-configure for all new accounts (empty = no defaults)
+    /// @param defaultConfigs Spending limits aligned with defaultTokens
+    constructor(
+        address _entryPoint,
+        address _communityGuardian,
+        address[] memory defaultTokens,
+        AAStarGlobalGuard.TokenConfig[] memory defaultConfigs
+    ) {
+        require(defaultTokens.length == defaultConfigs.length, "Token/config length mismatch");
         entryPoint = _entryPoint;
         defaultCommunityGuardian = _communityGuardian;
+        for (uint256 i = 0; i < defaultTokens.length; i++) {
+            _defaultTokenAddresses.push(defaultTokens[i]);
+            _defaultTokenConfigs.push(defaultConfigs[i]);
+        }
     }
 
     // ─── Full Configuration ─────────────────────────────────────────
@@ -158,17 +175,22 @@ contract AAStarAirAccountFactoryV7 {
         // minDailyLimit = 10% of dailyLimit — stolen ECDSA key cannot reduce limit below this floor
         uint256 minLimit = dailyLimit / 10;
 
-        // Empty token configs — owner can call guardAddTokenConfig after deployment
-        address[] memory emptyTokens = new address[](0);
-        AAStarGlobalGuard.TokenConfig[] memory emptyTokenConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        // Use chain-specific defaults set at factory deploy time; copy from storage to memory
+        uint256 n = _defaultTokenAddresses.length;
+        address[] memory tokens = new address[](n);
+        AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](n);
+        for (uint256 i = 0; i < n; i++) {
+            tokens[i] = _defaultTokenAddresses[i];
+            configs[i] = _defaultTokenConfigs[i];
+        }
 
         return AAStarAirAccountBase.InitConfig({
             guardians: [guardian1, guardian2, defaultCommunityGuardian],
             dailyLimit: dailyLimit,
             approvedAlgIds: algIds,
             minDailyLimit: minLimit,
-            initialTokens: emptyTokens,
-            initialTokenConfigs: emptyTokenConfigs
+            initialTokens: tokens,
+            initialTokenConfigs: configs
         });
     }
 

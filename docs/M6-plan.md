@@ -1,7 +1,7 @@
 # M6 Milestone Plan — Weight-Based Signatures & Advanced Security Modes
 
-> **Status**: STUB — Planning deferred until M5 is complete.
-> Created: 2026-03-13. Revisit after M5 deployment.
+> **Status**: PLANNING — M5 complete. M6 implementation can begin.
+> Created: 2026-03-13. Updated: 2026-03-16 (M5 finalized).
 
 ## Overview
 
@@ -154,6 +154,18 @@ Revisit when: (a) EVM PQ precompile EIP reaches "Final" status, OR
 
 ---
 
+## Completed in M5 (no longer deferred)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `setupComplete` flag for `AAStarValidator` | ✅ Done | `finalizeSetup()` locks direct registration permanently |
+| messagePoint binding to userOpHash | ✅ Done | `keccak256(userOpHash ‖ messagePoint)` in `_validateTripleSignature` |
+| Packed guardian storage | ✅ Done | `_guardian0 + _guardianCount` packed in one slot; saves ~2,100 gas/read |
+| P256 (0x03) guard tier alignment | ✅ Done | P256 single-sig = Tier 1 in both account and guard |
+| Factory default token config | ✅ Done | Constructor accepts `defaultTokens[]`; `deploy-m5.ts` passes Sepolia presets |
+| dailyLimit = 0 prohibition | ✅ Done | Guard rejects token configs where tier limits set but dailyLimit = 0 |
+| EIP-2 s-value malleability check (COMBINED_T1) | ✅ Done | High-s ECDSA rejected in `_validateCombinedT1` |
+
 ## Deferred From M5
 
 | Item | Reason | Reference |
@@ -161,14 +173,17 @@ Revisit when: (a) EVM PQ precompile EIP reaches "Final" status, OR
 | Weight-based signatures (algId 0x07) | M4/M5 fixed tier model covers 95% of use cases; needs battle-testing first | M4.5 research doc |
 | Guardian consent for security weakening | Depends on M6.1 weight model | M5.3 extension |
 | Frontend weight UI | Needs M6.1 contract first | — |
+| `addGuardian` post-deployment acceptance | `createAccountWithDefaults` is already protected; direct `addGuardian` call is owner-only risk | M5.3 Option B |
 
 ---
 
 ## Prerequisites
 
-- M5 fully deployed and battle-tested on mainnet
-- `ALG_COMBINED_T1 = 0x06` (M5.8) proven in production — validates dual-factor on-chain
-- Chain compatibility (M5.4) confirmed for all target L2s
+- [x] M5 fully deployed on Sepolia — factory `0x03d47604c5b04194ce4cc09d26e14eaf856875bc`
+- [x] `ALG_COMBINED_T1 = 0x06` (M5.8) proven in production E2E
+- [x] All GPT security review findings addressed (P256 tier, messagePoint binding, dailyLimit=0)
+- [ ] Chain compatibility (M5.4) confirmed for all target L2s
+- [ ] M5 battle-tested on mainnet before M6 launch
 
 ---
 

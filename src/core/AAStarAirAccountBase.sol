@@ -95,11 +95,12 @@ abstract contract AAStarAirAccountBase {
 
     // ── Social Recovery (F28) ──
 
-    /// @notice Recovery guardians (max 3)
-    address[3] public guardians;
-
-    /// @notice Number of active guardians
-    uint8 public guardianCount;
+    // Packed storage: _guardian0 (20 bytes) + _guardianCount (1 byte) = 21 bytes — fits in one slot.
+    // Saves 1 SLOAD (~2,100 gas) on every guardian check (proposeRecovery, approveRecovery, cancelRecovery).
+    address private _guardian0;
+    uint8 private _guardianCount;  // packed with _guardian0 in same 32-byte slot
+    address private _guardian1;
+    address private _guardian2;
 
     /// @notice Active recovery proposal
     RecoveryProposal public activeRecovery;
@@ -224,12 +225,12 @@ abstract contract AAStarAirAccountBase {
             if (g != address(0)) {
                 if (g == _owner) revert InvalidGuardian();
                 // Check no duplicates with previously added guardians
-                for (uint8 j = 0; j < guardianCount; j++) {
-                    if (guardians[j] == g) revert GuardianAlreadySet();
+                for (uint8 j = 0; j < _guardianCount; j++) {
+                    if (_getGuardian(j) == g) revert GuardianAlreadySet();
                 }
-                guardians[guardianCount] = g;
-                emit GuardianAdded(guardianCount, g);
-                guardianCount++;
+                _setGuardian(_guardianCount, g);
+                emit GuardianAdded(_guardianCount, g);
+                _guardianCount++;
             }
         }
 
@@ -295,6 +296,21 @@ abstract contract AAStarAirAccountBase {
         guard.decreaseTokenDailyLimit(token, newLimit);
     }
 
+    // ─── Guardian Public Getters (maintain interface from packed private storage) ──
+
+    /// @notice Returns guardian address at index (0-2). Returns address(0) for empty slots.
+    function guardians(uint256 i) external view returns (address) {
+        if (i == 0) return _guardian0;
+        if (i == 1) return _guardian1;
+        if (i == 2) return _guardian2;
+        return address(0);
+    }
+
+    /// @notice Returns number of active guardians.
+    function guardianCount() external view returns (uint8) {
+        return _guardianCount;
+    }
+
     // ─── Config Introspection ────────────────────────────────────────
 
     /// @notice Returns a snapshot of the account's current configuration.
@@ -314,8 +330,8 @@ abstract contract AAStarAirAccountBase {
             dailyRemaining: remaining,
             tier1Limit: tier1Limit,
             tier2Limit: tier2Limit,
-            guardianAddresses: guardians,
-            guardianCount: guardianCount,
+            guardianAddresses: [_guardian0, _guardian1, _guardian2],
+            guardianCount: _guardianCount,
             hasP256Key: p256KeyX != bytes32(0),
             hasValidator: address(validator) != address(0),
             hasAggregator: blsAggregator != address(0),
@@ -493,6 +509,10 @@ abstract contract AAStarAirAccountBase {
         bytes32 ecdsaHash = userOpHash.toEthSignedMessageHash();
         bytes32 ecdsaR = bytes32(sigData[64:96]);
         bytes32 ecdsaS = bytes32(sigData[96:128]);
+        // EIP-2: reject high-s signatures — consistent with _validateECDSA
+        if (uint256(ecdsaS) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            return 1;
+        }
         uint8 ecdsaV = uint8(sigData[128]);
         if (ecdsaV < 27) ecdsaV += 27;
 
@@ -551,8 +571,9 @@ abstract contract AAStarAirAccountBase {
         address recovered = hash.recover(aaSignature);
         if (recovered != owner) return 1;
 
-        // SECURITY 2: MessagePoint signature must validate messagePoint
-        bytes32 mpHash = keccak256(messagePoint).toEthSignedMessageHash();
+        // SECURITY 2: MessagePoint signature must validate messagePoint bound to userOpHash
+        // Binding prevents replay of a valid (messagePoint, mpSig) pair across different UserOps
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
         address mpRecovered = mpHash.recover(messagePointSignature);
         if (mpRecovered != owner) return 1;
 
@@ -662,8 +683,8 @@ abstract contract AAStarAirAccountBase {
         address guardianRecovered = guardianHash.recover(guardianSig);
 
         bool isGuardian = false;
-        for (uint8 i = 0; i < guardianCount; i++) {
-            if (guardians[i] == guardianRecovered) {
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_getGuardian(i) == guardianRecovered) {
                 isGuardian = true;
                 break;
             }
@@ -845,30 +866,30 @@ abstract contract AAStarAirAccountBase {
     /// @notice Add a recovery guardian. Max 3 guardians.
     function addGuardian(address _guardian) external onlyOwner {
         if (_guardian == address(0) || _guardian == owner) revert InvalidGuardian();
-        if (guardianCount >= 3) revert MaxGuardiansReached();
+        if (_guardianCount >= 3) revert MaxGuardiansReached();
 
         // Check not already set
-        for (uint8 i = 0; i < guardianCount; i++) {
-            if (guardians[i] == _guardian) revert GuardianAlreadySet();
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_getGuardian(i) == _guardian) revert GuardianAlreadySet();
         }
 
-        guardians[guardianCount] = _guardian;
-        emit GuardianAdded(guardianCount, _guardian);
-        guardianCount++;
+        _setGuardian(_guardianCount, _guardian);
+        emit GuardianAdded(_guardianCount, _guardian);
+        _guardianCount++;
     }
 
     /// @notice Remove a guardian by index.
     function removeGuardian(uint8 index) external onlyOwner {
-        if (index >= guardianCount) revert InvalidGuardian();
+        if (index >= _guardianCount) revert InvalidGuardian();
 
-        address removed = guardians[index];
+        address removed = _getGuardian(index);
 
         // Shift remaining guardians
-        for (uint8 i = index; i < guardianCount - 1; i++) {
-            guardians[i] = guardians[i + 1];
+        for (uint8 i = index; i < _guardianCount - 1; i++) {
+            _setGuardian(i, _getGuardian(uint8(i + 1)));
         }
-        guardians[guardianCount - 1] = address(0);
-        guardianCount--;
+        _setGuardian(_guardianCount - 1, address(0));
+        _guardianCount--;
 
         // Cancel any active recovery (guardian set changed)
         if (activeRecovery.newOwner != address(0)) {
@@ -953,10 +974,24 @@ abstract contract AAStarAirAccountBase {
         }
     }
 
+    /// @dev Get guardian address by index from packed storage.
+    function _getGuardian(uint8 i) private view returns (address) {
+        if (i == 0) return _guardian0;
+        if (i == 1) return _guardian1;
+        return _guardian2;
+    }
+
+    /// @dev Set guardian address by index into packed storage.
+    function _setGuardian(uint8 i, address addr) private {
+        if (i == 0) { _guardian0 = addr; return; }
+        if (i == 1) { _guardian1 = addr; return; }
+        _guardian2 = addr;
+    }
+
     /// @dev Find guardian index or revert
     function _guardianIndex(address addr) internal view returns (uint8) {
-        for (uint8 i = 0; i < guardianCount; i++) {
-            if (guardians[i] == addr) return i;
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_getGuardian(i) == addr) return i;
         }
         revert NotGuardian();
     }

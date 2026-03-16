@@ -317,8 +317,9 @@ async function main() {
   }
 
   // ECDSA signatures
+  // mpHash binds messagePoint to the specific userOpHash (M5.2 security requirement)
   const aaSignature = await signer.signMessage({ message: { raw: hexToBytes(userOpHash) } });
-  const mpHash = keccak256(msgPointEncoded);
+  const mpHash = keccak256((`0x` + userOpHash.slice(2) + msgPointEncoded.slice(2)) as Hex);
   const mpSignature = await signer.signMessage({ message: { raw: hexToBytes(mpHash) } });
 
   console.log(`  AA sig: ${aaSignature.slice(0, 22)}...`);
