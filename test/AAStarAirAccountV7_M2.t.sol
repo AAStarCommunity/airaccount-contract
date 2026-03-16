@@ -288,8 +288,8 @@ contract AAStarAirAccountV7_M2Test is Test {
         // AA signature (ECDSA over userOpHash)
         (uint8 v1, bytes32 r1, bytes32 s1) = _signHash(aaSigner, userOpHash);
 
-        // MessagePoint signature (ECDSA over keccak256(messagePoint))
-        bytes32 mpHash = keccak256(messagePoint);
+        // MessagePoint signature (ECDSA over keccak256(userOpHash || messagePoint))
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint));
         (uint8 v2, bytes32 r2, bytes32 s2) = _signHash(mpSigner, mpHash);
 
         return abi.encodePacked(

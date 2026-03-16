@@ -223,4 +223,48 @@ contract AAStarAirAccountM5_8Test is Test {
         // Already covered by factory tests; this test validates the constant value
         assertEq(ALG_COMBINED_T1, 0x06);
     }
+
+    // ─── 8. EIP-2 s-value malleability check (Issue 5 fix) ──────────
+
+    function test_combinedT1_highS_ecdsaRejected() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        // Build a valid ECDSA sig first, then flip s to the high half (malleable form)
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerWallet.privateKey, ethHash);
+
+        // Produce the canonical high-s counterpart: s' = secp256k1_n - s
+        bytes32 secp256k1_n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
+        bytes32 highS = bytes32(uint256(secp256k1_n) - uint256(s));
+        // Flip v accordingly
+        uint8 flippedV = v == 27 ? 28 : 27;
+
+        userOp.signature = abi.encodePacked(
+            uint8(ALG_COMBINED_T1),
+            bytes32(uint256(0xAA)), // p256r (mock always valid)
+            bytes32(uint256(0xBB)), // p256s
+            r,
+            highS,   // high-s — must be rejected
+            flippedV
+        );
+
+        vm.prank(entryPointAddr);
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "High-s ECDSA signature must be rejected (EIP-2 malleability)");
+    }
+
+    function test_combinedT1_lowS_ecdsaAccepted() public {
+        // Confirm that a standard (low-s) signature still passes after the fix
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        userOp.signature = _buildCombinedT1Sig(
+            userOpHash, ownerWallet, bytes32(uint256(0xAA)), bytes32(uint256(0xBB))
+        );
+
+        vm.prank(entryPointAddr);
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 0, "Low-s ECDSA signature must still be accepted");
+    }
 }

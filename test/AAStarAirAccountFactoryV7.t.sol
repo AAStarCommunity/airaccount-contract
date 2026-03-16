@@ -27,7 +27,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
         g2Wallet = vm.createWallet("guardian2");
         communityGuardian = makeAddr("communityGuardian");
 
-        factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian);
+        address[] memory noTokens = new address[](0);
+        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs);
     }
 
     /// @dev Sign the guardian acceptance message for a given owner+salt

@@ -125,7 +125,9 @@ contract M5ScenarioTests is Test {
         communityGuardian = makeAddr("communityGuardian");
 
         entryPoint = new MockEP();
-        factory = new AAStarAirAccountFactoryV7(address(entryPoint), communityGuardian);
+        address[] memory noTokens = new address[](0);
+        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        factory = new AAStarAirAccountFactoryV7(address(entryPoint), communityGuardian, noTokens, noConfigs);
         mockAlg = new MockAlg();
         p256Valid = new MockP256Valid();
         p256Invalid = new MockP256Invalid();
