@@ -223,4 +223,76 @@ contract AAStarAirAccountFactoryV7Test is Test {
 
         factory.createAccount(ownerA, 99, config);
     }
+
+    // ─── Default token config (constructor injection) ────────────────
+
+    /// @dev Factory with 1 default token pre-loaded; accounts created via createAccountWithDefaults
+    ///      inherit that token config automatically via _buildDefaultConfig.
+    function test_createAccountWithDefaults_inheritsDefaultTokens() public {
+        address mockToken = address(0xBEEF);
+        address[] memory tokens = new address[](1);
+        tokens[0] = mockToken;
+        AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1);
+        configs[0] = AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100e6,
+            tier2Limit: 1000e6,
+            dailyLimit: 5000e6
+        });
+
+        AAStarAirAccountFactoryV7 tokenFactory = new AAStarAirAccountFactoryV7(
+            entryPoint, communityGuardian, tokens, configs
+        );
+
+        bytes memory sig1 = _guardianSig(g1Wallet, ownerA, 0);
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 0);
+        address account = tokenFactory.createAccountWithDefaults(
+            ownerA, 0, g1Wallet.addr, sig1, g2Wallet.addr, sig2, TEST_DAILY_LIMIT
+        );
+
+        AAStarGlobalGuard g = AAStarAirAccountV7(payable(account)).guard();
+        (uint256 t1, uint256 t2, uint256 daily) = g.tokenConfigs(mockToken);
+        assertEq(t1, 100e6,   "tier1Limit mismatch");
+        assertEq(t2, 1000e6,  "tier2Limit mismatch");
+        assertEq(daily, 5000e6, "dailyLimit mismatch");
+    }
+
+    function test_factoryWithNoDefaultTokens_accountHasNoTokenConfig() public {
+        // The default setUp factory has no token config — accounts should have empty token configs
+        bytes memory sig1 = _guardianSig(g1Wallet, ownerA, 0);
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 0);
+        address account = factory.createAccountWithDefaults(
+            ownerA, 0, g1Wallet.addr, sig1, g2Wallet.addr, sig2, TEST_DAILY_LIMIT
+        );
+
+        AAStarGlobalGuard g = AAStarAirAccountV7(payable(account)).guard();
+        (uint256 t1, uint256 t2, uint256 daily) = g.tokenConfigs(address(0xDEAD));
+        assertEq(t1, 0);
+        assertEq(t2, 0);
+        assertEq(daily, 0);
+    }
+
+    // ─── Packed guardian storage ─────────────────────────────────────
+
+    /// @dev Empty guardian slots must return address(0) (packed storage edge case).
+    function test_packedStorage_emptySlot_returnsAddressZero() public {
+        // Create account with only 2 guardians → slot index 2 must be address(0)
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02;
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [g1Wallet.addr, g2Wallet.addr, address(0)],
+            dailyLimit: 1 ether,
+            approvedAlgIds: algIds,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+
+        address account = factory.createAccount(ownerA, 77, config);
+        AAStarAirAccountV7 acc = AAStarAirAccountV7(payable(account));
+
+        assertEq(acc.guardianCount(), 2);
+        assertEq(acc.guardians(0), g1Wallet.addr);
+        assertEq(acc.guardians(1), g2Wallet.addr);
+        assertEq(acc.guardians(2), address(0)); // empty slot must be zero
+    }
 }
