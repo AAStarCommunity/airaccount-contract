@@ -144,6 +144,20 @@ contract. Guard binding model changes significantly.
 
 ---
 
+### [M6] Guard strict mode — blockUnconfiguredTokens flag
+**Background**: Kimi 2.5 audit correctly identified that unconfigured ERC20 tokens pass through
+the guard without tier limits. This is an explicit design decision (opt-in per token), but
+power users / high-security accounts may want to block ALL token transfers unless the token
+is explicitly configured.
+**Approach**: Add `bool public blockUnconfiguredTokens` to `AAStarGlobalGuard`.
+- Default: `false` (current behavior, backward compatible)
+- When `true`: `checkTokenTransaction` reverts for any token not in `tokenConfigs`
+- Can only be set to `true` by account owner (monotonic: once enabled, cannot disable)
+**Risk mitigated**: Stolen ECDSA key cannot drain long-tail/airdrop tokens not in the config.
+**Files**: `src/core/AAStarGlobalGuard.sol` — `checkTokenTransaction()`, new setter.
+
+---
+
 ## Monitoring / Operational
 
 ### [Ongoing] P256 precompile gas across L2s
