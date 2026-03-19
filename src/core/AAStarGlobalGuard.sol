@@ -161,7 +161,17 @@ contract AAStarGlobalGuard {
 
     /// @notice Check if an ERC20 token transaction is allowed.
     ///         Enforces algorithm whitelist, token tier limits (cumulative), and token daily limit.
-    ///         If token is not configured, passes through with no limits applied.
+    ///
+    ///         DESIGN: Guard is opt-in per token. Unconfigured tokens pass through with no limits.
+    ///         Rationale: blocking all unconfigured tokens would prevent users from handling new
+    ///         airdrops or tokens added after account creation. High-value tokens (USDC, USDT,
+    ///         WETH, WBTC, aPNTs) are pre-configured at account creation via factory defaults.
+    ///         A future "strict mode" flag (blockUnconfiguredTokens) is planned for M6.
+    ///
+    ///         NOTE: Checks happen at execution, not validation (ERC-4337 constraint: validation
+    ///         must be stateless; cumulative spend tracking requires state writes → must be exec).
+    ///         Consequence: a blocked execution still consumes gas from the account's EP deposit.
+    ///         This is standard ERC-4337 behavior, not specific to this implementation.
     /// @param token    ERC20 token contract address (= calldata dest)
     /// @param amount   Token amount from parsed calldata (transfer/approve amount)
     /// @param algId    Algorithm used for this UserOp
