@@ -49,7 +49,7 @@ const PRIVATE_KEY_CHARLIE = process.env.PRIVATE_KEY_CHARLIE as Hex;
 // (ADDRESS_BOB_EOA in .env may not match PRIVATE_KEY_BOB)
 
 const ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
-const M3_FACTORY = "0x914db0a849f55e68a726c72fd02b7114b1176d88" as Address;
+const M3_FACTORY = (process.env.FACTORY_ADDRESS ?? process.env.AIRACCOUNT_M5_FACTORY ?? "0x24cd3231a8dd261da8cb1e6b017d1d1c4077c078") as Address;
 
 // ─── Load compiled artifact ────────────────────────────────────────
 
@@ -159,6 +159,13 @@ const FACTORY_ABI = [
           { name: "guardians", type: "address[3]" },
           { name: "dailyLimit", type: "uint256" },
           { name: "approvedAlgIds", type: "uint8[]" },
+          { name: "minDailyLimit", type: "uint256" },
+          { name: "initialTokens", type: "address[]" },
+          { name: "initialTokenConfigs", type: "tuple[]", components: [
+            { name: "tier1Limit", type: "uint256" },
+            { name: "tier2Limit", type: "uint256" },
+            { name: "dailyLimit", type: "uint256" },
+          ]},
         ],
       },
     ],
@@ -178,6 +185,13 @@ const FACTORY_ABI = [
           { name: "guardians", type: "address[3]" },
           { name: "dailyLimit", type: "uint256" },
           { name: "approvedAlgIds", type: "uint8[]" },
+          { name: "minDailyLimit", type: "uint256" },
+          { name: "initialTokens", type: "address[]" },
+          { name: "initialTokenConfigs", type: "tuple[]", components: [
+            { name: "tier1Limit", type: "uint256" },
+            { name: "tier2Limit", type: "uint256" },
+            { name: "dailyLimit", type: "uint256" },
+          ]},
         ],
       },
     ],
@@ -226,6 +240,9 @@ async function deployAccountWithGuardians(
     guardians: guardianAddresses,
     dailyLimit: parseEther("1"), // 1 ETH daily limit
     approvedAlgIds: [0x02], // ECDSA only for recovery test
+    minDailyLimit: 0n,
+    initialTokens: [] as Address[],
+    initialTokenConfigs: [],
   };
 
   // Predict address

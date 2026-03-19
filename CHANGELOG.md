@@ -164,7 +164,7 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 ### Added — Guardian Validation (Accept-Pattern)
 
 - **`AAStarAirAccountFactoryV7.createAccountWithDefaults` updated signature**: now requires `guardian1Sig` and `guardian2Sig` acceptance signatures
-  - Each guardian must sign: `keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt)).toEthSignedMessageHash()`
+  - Each guardian must sign: `keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()` (domain-separated since Codex audit fix 2026-03-19)
   - On-chain verification before account deployment — prevents typo/invalid guardian addresses
 - **`GuardianDidNotAccept(address guardian)` error** — reverts if signature doesn't recover to declared guardian address
 - Uses `ECDSA.tryRecover` (no-revert path) for safe handling of malformed signatures

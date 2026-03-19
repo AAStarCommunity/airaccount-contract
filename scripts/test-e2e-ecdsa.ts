@@ -1,13 +1,6 @@
 /**
  * test-e2e-ecdsa.ts
  *
- * DEPRECATED: This script uses the old 2-arg Factory constructor (entryPoint, communityGuardian).
- * The current factory requires 4 args: (entryPoint, communityGuardian, defaultTokens, defaultConfigs).
- * Do NOT deploy a new factory using this script — it will fail or produce an unusable factory.
- * Use scripts/deploy-m5.ts to deploy a current factory.
- *
- * This script is retained for historical reference of the M1 ECDSA E2E flow only.
- *
  * Complete E2E: deploy Factory, create account, build UserOp, sign with ECDSA,
  * submit via EntryPoint v0.7 handleOps on Sepolia.
  *
@@ -33,6 +26,7 @@ import {
   formatEther,
   parseGwei,
   encodeFunctionData,
+  encodeAbiParameters,
   encodePacked,
   toHex,
   hexToBytes,
@@ -309,11 +303,21 @@ async function main() {
     const factoryAbi = artifact.abi;
 
     console.log("  Deploying AAStarAirAccountFactoryV7...");
-    
-    // Encode constructor args: entryPoint address
-    const constructorArgs = encodePacked(
-      ["address"],
-      [ENTRYPOINT]
+
+    // Encode constructor args: (entryPoint, communityGuardian, defaultTokens[], defaultConfigs[])
+    // Using zero address as communityGuardian and empty arrays for this basic ECDSA test
+    const constructorArgs = encodeAbiParameters(
+      [
+        { type: "address" },
+        { type: "address" },
+        { type: "address[]" },
+        { type: "tuple[]", components: [
+          { name: "tier1Limit", type: "uint256" },
+          { name: "tier2Limit", type: "uint256" },
+          { name: "dailyLimit", type: "uint256" },
+        ]},
+      ],
+      [ENTRYPOINT, "0x0000000000000000000000000000000000000000", [], []]
     );
     const deployBytecode = concat([factoryBytecode, constructorArgs]) as `0x${string}`;
     

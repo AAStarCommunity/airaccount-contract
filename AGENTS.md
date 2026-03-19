@@ -384,7 +384,7 @@ factory.createAccountWithDefaults(
     owner,
     salt,
     guardian1,      // Backup key/passkey
-    guardian1Sig,   // EIP-191 signature of keccak256("ACCEPT_GUARDIAN", owner, salt)
+    guardian1Sig,   // EIP-191 signature of keccak256("ACCEPT_GUARDIAN", chainId, factory, owner, salt)
     guardian2,      // Trusted person
     guardian2Sig,
     dailyLimit      // User's chosen daily limit (wei)

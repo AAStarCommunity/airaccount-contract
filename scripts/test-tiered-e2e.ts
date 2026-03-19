@@ -59,7 +59,7 @@ const RPC_URL =
   process.env.SEPOLIA_RPC ?? process.env.SEPOLIA_RPC_URL ?? required("SEPOLIA_RPC_URL");
 const ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
 
-const FACTORY_ADDR = "0x914db0a849f55e68a726c72fd02b7114b1176d88" as Address;
+const FACTORY_ADDR = (process.env.FACTORY_ADDRESS ?? process.env.AIRACCOUNT_M5_FACTORY ?? "0x24cd3231a8dd261da8cb1e6b017d1d1c4077c078") as Address;
 const BLS_ALGORITHM_ADDR = "0xc2096E8D04beb3C337bb388F5352710d62De0287" as Address;
 const VALIDATOR_ROUTER_ADDR = "0x730a162Ce3202b94cC5B74181B75b11eBB3045B1" as Address;
 
@@ -160,6 +160,13 @@ const FACTORY_ABI = [
           { name: "guardians", type: "address[3]" },
           { name: "dailyLimit", type: "uint256" },
           { name: "approvedAlgIds", type: "uint8[]" },
+          { name: "minDailyLimit", type: "uint256" },
+          { name: "initialTokens", type: "address[]" },
+          { name: "initialTokenConfigs", type: "tuple[]", components: [
+            { name: "tier1Limit", type: "uint256" },
+            { name: "tier2Limit", type: "uint256" },
+            { name: "dailyLimit", type: "uint256" },
+          ]},
         ],
       },
     ],
@@ -179,6 +186,13 @@ const FACTORY_ABI = [
           { name: "guardians", type: "address[3]" },
           { name: "dailyLimit", type: "uint256" },
           { name: "approvedAlgIds", type: "uint8[]" },
+          { name: "minDailyLimit", type: "uint256" },
+          { name: "initialTokens", type: "address[]" },
+          { name: "initialTokenConfigs", type: "tuple[]", components: [
+            { name: "tier1Limit", type: "uint256" },
+            { name: "tier2Limit", type: "uint256" },
+            { name: "dailyLimit", type: "uint256" },
+          ]},
         ],
       },
     ],
@@ -406,6 +420,9 @@ async function main() {
     ],
     dailyLimit: parseEther("10"), // 10 ETH daily limit
     approvedAlgIds: [1, 2, 3, 4, 5], // All algorithms: BLS, ECDSA, P256, Cumulative T2, T3
+    minDailyLimit: 0n,
+    initialTokens: [] as Address[],
+    initialTokenConfigs: [],
   };
 
   const predictedAddr = await publicClient.readContract({

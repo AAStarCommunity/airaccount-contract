@@ -75,6 +75,13 @@ const factoryAbi = [
           { name: "guardians", type: "address[3]" },
           { name: "dailyLimit", type: "uint256" },
           { name: "approvedAlgIds", type: "uint8[]" },
+          { name: "minDailyLimit", type: "uint256" },
+          { name: "initialTokens", type: "address[]" },
+          { name: "initialTokenConfigs", type: "tuple[]", components: [
+            { name: "tier1Limit", type: "uint256" },
+            { name: "tier2Limit", type: "uint256" },
+            { name: "dailyLimit", type: "uint256" },
+          ]},
         ],
       },
     ],
@@ -94,6 +101,13 @@ const factoryAbi = [
           { name: "guardians", type: "address[3]" },
           { name: "dailyLimit", type: "uint256" },
           { name: "approvedAlgIds", type: "uint8[]" },
+          { name: "minDailyLimit", type: "uint256" },
+          { name: "initialTokens", type: "address[]" },
+          { name: "initialTokenConfigs", type: "tuple[]", components: [
+            { name: "tier1Limit", type: "uint256" },
+            { name: "tier2Limit", type: "uint256" },
+            { name: "dailyLimit", type: "uint256" },
+          ]},
         ],
       },
     ],
@@ -187,6 +201,9 @@ async function main() {
     ] as readonly [Address, Address, Address],
     dailyLimit: 0n,
     approvedAlgIds: [] as number[],
+    minDailyLimit: 0n,
+    initialTokens: [] as Address[],
+    initialTokenConfigs: [],
   };
 
   const salt = 0n;
