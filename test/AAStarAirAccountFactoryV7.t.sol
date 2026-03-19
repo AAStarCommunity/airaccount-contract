@@ -369,4 +369,29 @@ contract AAStarAirAccountFactoryV7Test is Test {
         vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, g1Wallet.addr));
         factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sigForOtherFactory, g2Wallet.addr, correctSig2, TEST_DAILY_LIMIT);
     }
+
+    // ─── Codex audit: LOW — address zero and dedup validation ────────
+
+    /// @dev address(0) as a default token address should revert at factory deploy time.
+    function test_invalidDefaultConfig_addressZero_reverts() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(0); // zero address
+        AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1);
+        configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
+        vm.expectRevert("Default token address zero");
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+    }
+
+    /// @dev Duplicate token address in default config should revert at factory deploy time.
+    function test_invalidDefaultConfig_duplicateToken_reverts() public {
+        address mockToken = address(0xBEEF);
+        address[] memory tokens = new address[](2);
+        tokens[0] = mockToken;
+        tokens[1] = mockToken; // duplicate
+        AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](2);
+        configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
+        configs[1] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
+        vm.expectRevert("Duplicate default token");
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+    }
 }
