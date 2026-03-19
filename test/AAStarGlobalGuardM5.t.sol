@@ -519,6 +519,25 @@ contract AAStarGlobalGuardM5Test is Test {
         assertTrue(ok); // daily limit = 5000, exact fill
     }
 
+    // ─── Codex audit: LOW — unknown algId returns tier 0, fails enforcement ──
+
+    /// @dev An algId not in the explicit mapping returns tier 0.
+    ///      Even a Tier 1 token check fails: InsufficientTokenTier(1, 0).
+    ///      Prevents a newly-added algId from silently bypassing tier limits
+    ///      if _algTier is not updated.
+    function test_unknownAlgId_failsTokenTierCheck() public {
+        uint8 unknownAlg = 0xFF;
+        vm.prank(account);
+        guard.approveAlgorithm(unknownAlg);
+
+        // _algTier(0xFF) = 0 < required Tier 1 → must revert
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InsufficientTokenTier.selector, uint8(1), uint8(0)
+        ));
+        guard.checkTokenTransaction(mockToken, 1 * USDC_DEC, unknownAlg);
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────
 
     function _getConfig(address token) internal view returns (uint256 t1, uint256 t2, uint256 daily) {
