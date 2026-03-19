@@ -41,7 +41,8 @@
 | **M5 r1** | AirAccount Factory V7 | `0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9` | `0xaca946016fe2...453a` | 5,302,643 | Superseded — see M5 r2 |
 | **M5 r2** | AirAccount Factory V7 | `0xb1e9fede6894a1628232c7492262b22e32d69563` | `0x3f06cc25b3c7...22f7` | 5,565,757 | Superseded — see M5 r3 |
 | **M5 r3** | AirAccount Factory V7 | `0x03d47604c5b04194ce4cc09d26e14eaf856875bc` | `0xc0bd2480a9b5...1e8` | 5,646,614 | Superseded — see M5 r4 |
-| **M5 r4** | **AirAccount Factory V7** | **`0x24cd3231a8dd261da8cb1e6b017d1d1c4077c078`** | `0xfb73609bd6ff826f7126ac6fea5a64d39c8502bb09c5ea2be1febba57afa1f47` | **5,663,960** | **Current — domain-separated guardian hash, token config validation, explicit algTier** |
+| **M5 r4** | AirAccount Factory V7 | `0x24cd3231a8dd261da8cb1e6b017d1d1c4077c078` | `0xfb73609bd6ff826f7126ac6fea5a64d39c8502bb09c5ea2be1febba57afa1f47` | 5,663,960 | Superseded — see M5 r5 |
+| **M5 r5** | **AirAccount Factory V7** | **`0xd72a236d84be6c388a8bc7deb64afd54704ae385`** | `0x2e457d3c529244f296b5756ebd4a55377d0966bb8e3617db6ed69543c4b8e401` | **5,672,318** | **Current — addr/dedup validation in constructor, all Codex+script fixes applied** |
 | **M5** | **AAStarBLSAggregator** | **`0x7700aec8a15a94db5697c581de8c88ecf83b59ff`** | `0x5b6de23a144b...c0a27` | **855,052** | **F67 — IAggregator for batch BLS** |
 
 ### M5 Test Accounts (Sepolia)
