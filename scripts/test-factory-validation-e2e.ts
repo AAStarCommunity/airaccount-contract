@@ -68,6 +68,7 @@ const FACTORY_BYTECODE = artifact.bytecode.object as Hex;
 // ─── ABI types for constructor args ──────────────────────────────────────────
 
 // constructor(address _entryPoint, address _communityGuardian, address[] defaultTokens, TokenConfig[] defaultConfigs)
+// TokenConfig struct: { tier1Limit, tier2Limit, dailyLimit } — 3 fields only
 const CONSTRUCTOR_INPUTS = [
   { type: "address", name: "_entryPoint" },
   { type: "address", name: "_communityGuardian" },
@@ -79,7 +80,6 @@ const CONSTRUCTOR_INPUTS = [
       { type: "uint256", name: "tier1Limit" },
       { type: "uint256", name: "tier2Limit" },
       { type: "uint256", name: "dailyLimit" },
-      { type: "uint256", name: "minDailyLimit" },
     ],
   },
 ] as const;
@@ -88,7 +88,7 @@ const CONSTRUCTOR_INPUTS = [
 
 function encodeDeployData(
   tokens: Address[],
-  configs: { tier1Limit: bigint; tier2Limit: bigint; dailyLimit: bigint; minDailyLimit: bigint }[]
+  configs: { tier1Limit: bigint; tier2Limit: bigint; dailyLimit: bigint }[]
 ): Hex {
   const args = encodeAbiParameters(CONSTRUCTOR_INPUTS, [
     ENTRYPOINT,
@@ -124,7 +124,7 @@ async function main() {
   try {
     const data = encodeDeployData(
       ["0x0000000000000000000000000000000000000000" as Address],
-      [{ tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 5000n, minDailyLimit: 0n }]
+      [{ tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 5000n }]
     );
     await publicClient.estimateGas({ data, account: owner.address });
     console.log("  FAIL: Should have reverted but didn't");
@@ -150,8 +150,8 @@ async function main() {
     const data = encodeDeployData(
       [DUMMY_TOKEN_A, DUMMY_TOKEN_A],
       [
-        { tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 5000n, minDailyLimit: 0n },
-        { tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 5000n, minDailyLimit: 0n },
+        { tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 5000n },
+        { tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 5000n },
       ]
     );
     await publicClient.estimateGas({ data, account: owner.address });
@@ -177,7 +177,7 @@ async function main() {
   try {
     const data = encodeDeployData(
       [DUMMY_TOKEN_A],
-      [{ tier1Limit: 1000n, tier2Limit: 100n, dailyLimit: 5000n, minDailyLimit: 0n }]
+      [{ tier1Limit: 1000n, tier2Limit: 100n, dailyLimit: 5000n }]
     );
     await publicClient.estimateGas({ data, account: owner.address });
     console.log("  FAIL: Should have reverted but didn't");
@@ -202,7 +202,7 @@ async function main() {
   try {
     const data = encodeDeployData(
       [DUMMY_TOKEN_A],
-      [{ tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 0n, minDailyLimit: 0n }]
+      [{ tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 0n }]
     );
     await publicClient.estimateGas({ data, account: owner.address });
     console.log("  FAIL: Should have reverted but didn't");
@@ -228,8 +228,8 @@ async function main() {
     const data = encodeDeployData(
       [DUMMY_TOKEN_A, DUMMY_TOKEN_B],
       [
-        { tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 5000n, minDailyLimit: 0n },
-        { tier1Limit: 50n, tier2Limit: 500n, dailyLimit: 2000n, minDailyLimit: 0n },
+        { tier1Limit: 100n, tier2Limit: 1000n, dailyLimit: 5000n },
+        { tier1Limit: 50n, tier2Limit: 500n, dailyLimit: 2000n },
       ]
     );
     const gas = await publicClient.estimateGas({ data, account: owner.address });

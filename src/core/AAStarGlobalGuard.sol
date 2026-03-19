@@ -273,9 +273,9 @@ contract AAStarGlobalGuard {
     /// @dev Maps algId to security tier level. Must stay in sync with account's _algTier.
     ///      When new algIds are added to the account, update this mapping too.
     function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == 0x05 || algId == 0x01) return 3;          // ALG_CUMULATIVE_T3, ALG_BLS legacy triple
-        if (algId == 0x04) return 2;                           // CUMULATIVE_T2 (P256 + BLS dual-factor)
-        if (algId == 0x02 || algId == 0x03 || algId == 0x06) return 1; // ECDSA, bare P256, COMBINED_T1
+        if (algId == 0x05 || algId == 0x01) return 3;                  // ALG_CUMULATIVE_T3, ALG_BLS legacy triple
+        if (algId == 0x04) return 2;                                    // CUMULATIVE_T2 (P256 + BLS dual-factor)
+        if (algId == 0x02 || algId == 0x03 || algId == 0x06 || algId == 0x08) return 1; // ECDSA, P256, COMBINED_T1, SESSION_KEY
         return 0;
     }
 }

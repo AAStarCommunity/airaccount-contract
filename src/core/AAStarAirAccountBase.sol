@@ -7,6 +7,12 @@ import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {IAAStarValidator} from "../interfaces/IAAStarValidator.sol";
 import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
 import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
+import {ICalldataParser} from "../interfaces/ICalldataParser.sol";
+
+/// @dev Minimal interface for CalldataParserRegistry — avoids circular import
+interface ICalldataParserRegistry {
+    function getParser(address dest) external view returns (address);
+}
 
 /**
  * @title AAStarAirAccountBase
@@ -37,6 +43,7 @@ abstract contract AAStarAirAccountBase {
     uint8 internal constant ALG_CUMULATIVE_T2 = 0x04; // P256 + BLS
     uint8 internal constant ALG_CUMULATIVE_T3 = 0x05; // P256 + BLS + Guardian ECDSA
     uint8 internal constant ALG_COMBINED_T1 = 0x06;   // P256 AND ECDSA simultaneously (zero-trust Tier 1)
+    uint8 internal constant ALG_SESSION_KEY = 0x08;   // Time-limited session key (ephemeral ECDSA, Tier 1)
 
     uint256 internal constant G2_POINT_LENGTH = 256;
 
@@ -67,6 +74,11 @@ abstract contract AAStarAirAccountBase {
 
     /// @notice Global guard for spending limits (set at construction, cannot be removed)
     AAStarGlobalGuard public guard;
+
+    /// @notice Optional calldata parser registry for DeFi protocol support (address(0) = disabled)
+    ///         When set, the guard uses protocol-specific parsers to understand DeFi calldata
+    ///         (e.g., Uniswap swaps) rather than falling back to ERC20 transfer parsing only.
+    address public parserRegistry;
 
     // ── algId Pass-Through (validation → execution) ──
     // Uses transient storage (EIP-1153) to avoid cross-UserOp contamination.
@@ -167,6 +179,7 @@ abstract contract AAStarAirAccountBase {
     event ValidatorSet(address indexed validator);
     event AggregatorSet(address indexed aggregator);
     event GuardInitialized(address indexed guard, uint256 dailyLimit);
+    event ParserRegistrySet(address indexed registry);
     event P256KeySet(bytes32 x, bytes32 y);
     event TierLimitsSet(uint256 tier1, uint256 tier2);
     event GuardianAdded(uint8 indexed index, address indexed guardian);
@@ -258,6 +271,14 @@ abstract contract AAStarAirAccountBase {
     function setAggregator(address _aggregator) external onlyOwner {
         blsAggregator = _aggregator;
         emit AggregatorSet(_aggregator);
+    }
+
+    /// @notice Set the calldata parser registry for DeFi protocol support.
+    ///         Can be updated by owner (unlike guard which is immutable).
+    ///         Set to address(0) to disable parser support.
+    function setParserRegistry(address registry) external onlyOwner {
+        parserRegistry = registry;
+        emit ParserRegistrySet(registry);
     }
 
     function setP256Key(bytes32 _x, bytes32 _y) external onlyOwner {
@@ -765,6 +786,7 @@ abstract contract AAStarAirAccountBase {
         if (algId == ALG_ECDSA) return 1;             // bare ECDSA
         if (algId == ALG_P256) return 1;              // bare P256 passkey (single-factor)
         if (algId == ALG_COMBINED_T1) return 1;       // zero-trust combined (P256 + ECDSA)
+        if (algId == ALG_SESSION_KEY) return 1;       // session key (ephemeral, time-limited, Tier 1)
         return 0;                                      // unknown algId — fails all tier enforcement
     }
 
@@ -831,13 +853,29 @@ abstract contract AAStarAirAccountBase {
             guard.checkTransaction(value, algId);
         }
 
-        // ERC20 token tier + daily limit enforcement (M5.1)
-        // Parse transfer(to, amount) and approve(spender, amount): amount at calldata offset 36
-        if (func.length >= 68 && address(guard) != address(0)) {
-            bytes4 sel = bytes4(func[:4]);
-            if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
-                uint256 tokenAmount = abi.decode(func[36:68], (uint256));
-                guard.checkTokenTransaction(dest, tokenAmount, algId);
+        // ERC20/DeFi token tier + daily limit enforcement (M5.1 + M6.6b)
+        if (func.length >= 4 && address(guard) != address(0)) {
+            bool tokenHandled = false;
+
+            // M6.6b: DeFi parser registry check (runs first, more specific)
+            if (parserRegistry != address(0)) {
+                address parser = ICalldataParserRegistry(parserRegistry).getParser(dest);
+                if (parser != address(0)) {
+                    (address tok, uint256 amt) = ICalldataParser(parser).parseTokenTransfer(func);
+                    if (tok != address(0) && amt > 0) {
+                        guard.checkTokenTransaction(tok, amt, algId);
+                        tokenHandled = true;
+                    }
+                }
+            }
+
+            // Fallback: native ERC20 transfer/approve parsing (M5.1)
+            if (!tokenHandled && func.length >= 68) {
+                bytes4 sel = bytes4(func[:4]);
+                if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
+                    uint256 tokenAmount = abi.decode(func[36:68], (uint256));
+                    guard.checkTokenTransaction(dest, tokenAmount, algId);
+                }
             }
         }
     }
