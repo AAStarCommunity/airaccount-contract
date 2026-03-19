@@ -266,8 +266,9 @@ function createAccountWithDefaults(
     address guardian2, bytes calldata guardian2Sig,
     uint256 dailyLimit
 ) external returns (address account) {
-    // Verify guardian1 signed: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt))
-    bytes32 acceptHash = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt));
+    // Verify guardian1 signed acceptance (domain-separated: chainId + factory + owner + salt)
+    // NOTE: production hash includes chainId + address(this) — see Codex audit fix 2026-03-19
+    bytes32 acceptHash = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(this), owner, salt));
     bytes32 ethHash = acceptHash.toEthSignedMessageHash();
     require(ethHash.recover(guardian1Sig) == guardian1, "Guardian1 not accepted");
     require(ethHash.recover(guardian2Sig) == guardian2, "Guardian2 not accepted");
@@ -678,8 +679,8 @@ Carol's funds are locked forever.
 
 `createAccountWithDefaults` requires guardian acceptance signatures:
 ```typescript
-// Guardian1 must sign before account creation
-const acceptMsg = keccak256(encodePacked(["ACCEPT_GUARDIAN", owner, salt]))
+// Guardian1 must sign before account creation (domain-separated — Codex audit fix 2026-03-19)
+const acceptMsg = keccak256(encodePacked(["ACCEPT_GUARDIAN", chainId, factoryAddr, owner, salt]))
 const guardian1Sig = await guardian1Wallet.signMessage(acceptMsg)
 ```
 
