@@ -45,7 +45,13 @@ contract AAStarAirAccountFactoryV7 {
         entryPoint = _entryPoint;
         defaultCommunityGuardian = _communityGuardian;
         for (uint256 i = 0; i < defaultTokens.length; i++) {
-            // Validate each default token config eagerly — invalid configs revert here rather
+            address tok = defaultTokens[i];
+            require(tok != address(0), "Default token address zero");
+            // Dedup check: O(n^2) but n is small (≤10 expected) and this is deploy-time only
+            for (uint256 j = 0; j < i; j++) {
+                require(_defaultTokenAddresses[j] != tok, "Duplicate default token");
+            }
+            // Validate tier/daily relationship eagerly — invalid configs revert here rather
             // than failing silently for every createAccountWithDefaults call.
             AAStarGlobalGuard.TokenConfig memory cfg = defaultConfigs[i];
             bool bad = (cfg.tier1Limit > 0 && cfg.tier2Limit > 0 && cfg.tier1Limit > cfg.tier2Limit)
@@ -53,7 +59,7 @@ contract AAStarAirAccountFactoryV7 {
                 || (cfg.tier1Limit > 0 && cfg.tier2Limit == 0 && cfg.dailyLimit > 0 && cfg.dailyLimit < cfg.tier1Limit)
                 || ((cfg.tier1Limit > 0 || cfg.tier2Limit > 0) && cfg.dailyLimit == 0);
             require(!bad, "Invalid default token config");
-            _defaultTokenAddresses.push(defaultTokens[i]);
+            _defaultTokenAddresses.push(tok);
             _defaultTokenConfigs.push(cfg);
         }
     }

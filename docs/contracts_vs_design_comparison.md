@@ -61,7 +61,7 @@ This document maps the documented design goals against actual implementation sta
 | Requirement | Design Spec | Implementation | Status |
 |-------------|-------------|----------------|--------|
 | Acceptance signature | Guardian signs acceptance message | `tryRecover(guardian1Sig)` | ✅ MATCH |
-| Binding to owner+salt | Prevent replay across accounts | `keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt))` | ✅ MATCH |
+| Binding to chain+factory+owner+salt | Prevent replay across chains and factories | `keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt))` | ✅ MATCH |
 | Factory verification | Verify both guardians before deployment | `createAccountWithDefaults` | ✅ MATCH |
 | Error handling | Revert with specific guardian address | `GuardianDidNotAccept(guardian)` | ✅ MATCH |
 
