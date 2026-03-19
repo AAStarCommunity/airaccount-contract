@@ -22,15 +22,40 @@ contract AAStarAirAccountFactoryV7 {
     /// @dev Default community guardian (Safe multisig provided by the community)
     address public immutable defaultCommunityGuardian;
 
+    /// @dev Default token addresses for new accounts (chain-specific, set at deploy time)
+    address[] private _defaultTokenAddresses;
+    /// @dev Default token spending configs aligned with _defaultTokenAddresses
+    AAStarGlobalGuard.TokenConfig[] private _defaultTokenConfigs;
+
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
 
     error GuardianDidNotAccept(address guardian);
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
-    constructor(address _entryPoint, address _communityGuardian) {
+    /// @param defaultTokens Token addresses to pre-configure for all new accounts (empty = no defaults)
+    /// @param defaultConfigs Spending limits aligned with defaultTokens
+    constructor(
+        address _entryPoint,
+        address _communityGuardian,
+        address[] memory defaultTokens,
+        AAStarGlobalGuard.TokenConfig[] memory defaultConfigs
+    ) {
+        require(defaultTokens.length == defaultConfigs.length, "Token/config length mismatch");
         entryPoint = _entryPoint;
         defaultCommunityGuardian = _communityGuardian;
+        for (uint256 i = 0; i < defaultTokens.length; i++) {
+            // Validate each default token config eagerly — invalid configs revert here rather
+            // than failing silently for every createAccountWithDefaults call.
+            AAStarGlobalGuard.TokenConfig memory cfg = defaultConfigs[i];
+            bool bad = (cfg.tier1Limit > 0 && cfg.tier2Limit > 0 && cfg.tier1Limit > cfg.tier2Limit)
+                || (cfg.tier2Limit > 0 && cfg.dailyLimit > 0 && cfg.dailyLimit < cfg.tier2Limit)
+                || (cfg.tier1Limit > 0 && cfg.tier2Limit == 0 && cfg.dailyLimit > 0 && cfg.dailyLimit < cfg.tier1Limit)
+                || ((cfg.tier1Limit > 0 || cfg.tier2Limit > 0) && cfg.dailyLimit == 0);
+            require(!bad, "Invalid default token config");
+            _defaultTokenAddresses.push(defaultTokens[i]);
+            _defaultTokenConfigs.push(cfg);
+        }
     }
 
     // ─── Full Configuration ─────────────────────────────────────────
@@ -79,7 +104,7 @@ contract AAStarAirAccountFactoryV7 {
 
     /// @notice Deploy account with default community guardian as third guardian.
     /// @dev User provides 2 personal guardians with acceptance signatures.
-    ///      Each guardian must sign: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt))
+    ///      Each guardian must sign: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
     ///      Guard is initialized with user-specified dailyLimit and all 3 standard algorithms.
     /// @param owner Account owner
     /// @param salt CREATE2 salt
@@ -88,6 +113,9 @@ contract AAStarAirAccountFactoryV7 {
     /// @param guardian2 Trusted person (spouse, family) or another passkey
     /// @param guardian2Sig guardian2's acceptance signature
     /// @param dailyLimit Daily spending limit in wei (user chooses based on their needs)
+    /// @dev Guardian acceptance hash is domain-separated:
+    ///      keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
+    ///      Including chainId and address(this) prevents cross-chain and cross-factory replay.
     function createAccountWithDefaults(
         address owner,
         uint256 salt,
@@ -100,8 +128,9 @@ contract AAStarAirAccountFactoryV7 {
         require(guardian1 != address(0) && guardian2 != address(0), "Guardians required");
         require(dailyLimit > 0, "Daily limit required"); // F72: guard must be configured
 
-        // Verify both guardians signed the acceptance message (F56 — M5.3)
-        bytes32 acceptHash = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt))
+        // Verify both guardians signed the domain-separated acceptance message (F56 — M5.3)
+        // chainId + address(this) prevent replay across chains and factories with same owner+salt
+        bytes32 acceptHash = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(this), owner, salt))
             .toEthSignedMessageHash();
         (address recovered1,,) = acceptHash.tryRecover(guardian1Sig);
         if (recovered1 != guardian1) revert GuardianDidNotAccept(guardian1);
@@ -158,17 +187,22 @@ contract AAStarAirAccountFactoryV7 {
         // minDailyLimit = 10% of dailyLimit — stolen ECDSA key cannot reduce limit below this floor
         uint256 minLimit = dailyLimit / 10;
 
-        // Empty token configs — owner can call guardAddTokenConfig after deployment
-        address[] memory emptyTokens = new address[](0);
-        AAStarGlobalGuard.TokenConfig[] memory emptyTokenConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        // Use chain-specific defaults set at factory deploy time; copy from storage to memory
+        uint256 n = _defaultTokenAddresses.length;
+        address[] memory tokens = new address[](n);
+        AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](n);
+        for (uint256 i = 0; i < n; i++) {
+            tokens[i] = _defaultTokenAddresses[i];
+            configs[i] = _defaultTokenConfigs[i];
+        }
 
         return AAStarAirAccountBase.InitConfig({
             guardians: [guardian1, guardian2, defaultCommunityGuardian],
             dailyLimit: dailyLimit,
             approvedAlgIds: algIds,
             minDailyLimit: minLimit,
-            initialTokens: emptyTokens,
-            initialTokenConfigs: emptyTokenConfigs
+            initialTokens: tokens,
+            initialTokenConfigs: configs
         });
     }
 

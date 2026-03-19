@@ -84,7 +84,8 @@ contract AAStarGlobalGuard {
     function _validateTokenConfig(address token, uint256 t1, uint256 t2, uint256 daily) internal pure {
         bool bad = (t1 > 0 && t2 > 0 && t1 > t2)
             || (t2 > 0 && daily > 0 && daily < t2)
-            || (t1 > 0 && t2 == 0 && daily > 0 && daily < t1);
+            || (t1 > 0 && t2 == 0 && daily > 0 && daily < t1)
+            || ((t1 > 0 || t2 > 0) && daily == 0); // tier limits require dailyLimit > 0 for cumulative tracking
         if (bad) revert InvalidTokenConfig(token, t1, t2, daily);
     }
 
@@ -160,7 +161,17 @@ contract AAStarGlobalGuard {
 
     /// @notice Check if an ERC20 token transaction is allowed.
     ///         Enforces algorithm whitelist, token tier limits (cumulative), and token daily limit.
-    ///         If token is not configured, passes through with no limits applied.
+    ///
+    ///         DESIGN: Guard is opt-in per token. Unconfigured tokens pass through with no limits.
+    ///         Rationale: blocking all unconfigured tokens would prevent users from handling new
+    ///         airdrops or tokens added after account creation. High-value tokens (USDC, USDT,
+    ///         WETH, WBTC, aPNTs) are pre-configured at account creation via factory defaults.
+    ///         A future "strict mode" flag (blockUnconfiguredTokens) is planned for M6.
+    ///
+    ///         NOTE: Checks happen at execution, not validation (ERC-4337 constraint: validation
+    ///         must be stateless; cumulative spend tracking requires state writes → must be exec).
+    ///         Consequence: a blocked execution still consumes gas from the account's EP deposit.
+    ///         This is standard ERC-4337 behavior, not specific to this implementation.
     /// @param token    ERC20 token contract address (= calldata dest)
     /// @param amount   Token amount from parsed calldata (transfer/approve amount)
     /// @param algId    Algorithm used for this UserOp
@@ -222,10 +233,14 @@ contract AAStarGlobalGuard {
     }
 
     /// @notice Decrease a token's daily limit. Can NEVER increase.
+    ///         Cannot decrease to 0 when tier limits are configured — that would break cumulative tracking.
     function decreaseTokenDailyLimit(address token, uint256 newLimit) external onlyAccount {
         TokenConfig storage cfg = tokenConfigs[token];
         if (newLimit >= cfg.dailyLimit) {
             revert TokenCanOnlyDecreaseLimit(token, cfg.dailyLimit, newLimit);
+        }
+        if (newLimit == 0 && (cfg.tier1Limit > 0 || cfg.tier2Limit > 0)) {
+            revert InvalidTokenConfig(token, cfg.tier1Limit, cfg.tier2Limit, newLimit);
         }
         uint256 old = cfg.dailyLimit;
         cfg.dailyLimit = newLimit;
@@ -258,9 +273,9 @@ contract AAStarGlobalGuard {
     /// @dev Maps algId to security tier level. Must stay in sync with account's _algTier.
     ///      When new algIds are added to the account, update this mapping too.
     function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == 0x05) return 3;                            // ALG_CUMULATIVE_T3
-        if (algId == 0x01 || algId == 0x03 || algId == 0x04) return 2; // BLS, P256, T2
-        if (algId == 0x02 || algId == 0x06) return 1;          // ECDSA, COMBINED_T1
+        if (algId == 0x05 || algId == 0x01) return 3;          // ALG_CUMULATIVE_T3, ALG_BLS legacy triple
+        if (algId == 0x04) return 2;                           // CUMULATIVE_T2 (P256 + BLS dual-factor)
+        if (algId == 0x02 || algId == 0x03 || algId == 0x06) return 1; // ECDSA, bare P256, COMBINED_T1
         return 0;
     }
 }

@@ -183,7 +183,12 @@ async function main() {
   const factoryDeployData = encodeDeployData({
     abi: factoryArtifact.abi,
     bytecode: factoryArtifact.bytecode,
-    args: [ENTRYPOINT, COMMUNITY_GUARDIAN],
+    args: [
+      ENTRYPOINT,
+      COMMUNITY_GUARDIAN,
+      tokenAddresses,
+      tokenConfigs.map(c => ({ tier1Limit: c.tier1Limit, tier2Limit: c.tier2Limit, dailyLimit: c.dailyLimit })),
+    ],
   });
 
   const factoryTxHash = await walletClient.sendTransaction({

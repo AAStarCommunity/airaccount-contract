@@ -28,5 +28,5 @@ Then open `http://localhost:5173` in your browser.
 - This is a **developer demo**, not a production UI
 - The factory address points to the M3 deployment on Sepolia
 - Config templates are loaded from `../configs/*.json`
-- Uses [viem](https://viem.sh) for all chain interactions (no ethers.js)
+- Uses [viem](https://viem.sh) for all chain interactions
 - Vite serves as the dev server and handles TypeScript compilation

@@ -38,7 +38,10 @@
 | **M2** | AirAccount Factory V7 | `0x5Ba18c50E0375Fb84d6D521366069FE9140Afe04` | (M2 deploy) | — | BLS triple sig |
 | **M3** | AirAccount Factory V7 | `0xce4231da69015273819b6aab78d840d62cf206c1` | (M3 deploy) | — | Security hardened |
 | **M4** | AirAccount Factory V7 | `0x914db0a849f55e68a726c72fd02b7114b1176d88` | (M4 deploy) | — | Cumulative sigs + social recovery |
-| **M5** | **AirAccount Factory V7** | **`0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9`** | `0xaca946016fe2...453a` | **5,302,643** | **Current — ERC20 guard + COMBINED_T1** |
+| **M5 r1** | AirAccount Factory V7 | `0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9` | `0xaca946016fe2...453a` | 5,302,643 | Superseded — see M5 r2 |
+| **M5 r2** | AirAccount Factory V7 | `0xb1e9fede6894a1628232c7492262b22e32d69563` | `0x3f06cc25b3c7...22f7` | 5,565,757 | Superseded — see M5 r3 |
+| **M5 r3** | AirAccount Factory V7 | `0x03d47604c5b04194ce4cc09d26e14eaf856875bc` | `0xc0bd2480a9b5...1e8` | 5,646,614 | Superseded — see M5 r4 |
+| **M5 r4** | **AirAccount Factory V7** | **`0x24cd3231a8dd261da8cb1e6b017d1d1c4077c078`** | `0xfb73609bd6ff826f7126ac6fea5a64d39c8502bb09c5ea2be1febba57afa1f47` | **5,663,960** | **Current — domain-separated guardian hash, token config validation, explicit algTier** |
 | **M5** | **AAStarBLSAggregator** | **`0x7700aec8a15a94db5697c581de8c88ecf83b59ff`** | `0x5b6de23a144b...c0a27` | **855,052** | **F67 — IAggregator for batch BLS** |
 
 ### M5 Test Accounts (Sepolia)
@@ -79,18 +82,19 @@
 | EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
 | Deployed at | 2026-03-13 |
 | Deploy script | `scripts/deploy-m5.ts` |
-| Token profile | `standard` (auto-loaded from `configs/token-presets.json`) |
+| Token profile | `standard` — 5 tokens (USDC/USDT/WETH/WBTC/aPNTs) baked into factory constructor via `configs/token-presets.json` |
 
 ### Deployed Factory
 
 | Field | Value |
 |-------|-------|
 | Contract | `AAStarAirAccountFactoryV7.sol` |
-| Address | `0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9` |
-| Tx Hash | `0xaca946016fe232b00ad4bec58674ff31d8471fb8371133d72ee8dcfc02ff453a` |
-| Gas Used | 5,302,643 |
-| Etherscan | https://sepolia.etherscan.io/address/0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9 |
-| Deploy TX | https://sepolia.etherscan.io/tx/0xaca946016fe232b00ad4bec58674ff31d8471fb8371133d72ee8dcfc02ff453a |
+| Address | `0x03d47604c5b04194ce4cc09d26e14eaf856875bc` |
+| Tx Hash | `0xc0bd2480a9b549b57d6a16bc7ac62b6187a4d9e7fa666f810dabc6e9d031f1e8` |
+| Gas Used | 5,646,614 |
+| Etherscan | https://sepolia.etherscan.io/address/0x03d47604c5b04194ce4cc09d26e14eaf856875bc |
+| Deploy TX | https://sepolia.etherscan.io/tx/0xc0bd2480a9b549b57d6a16bc7ac62b6187a4d9e7fa666f810dabc6e9d031f1e8 |
+| Changes vs r2 | Packed guardian storage: `_guardian0+_guardianCount` in one slot; saves ~2,100 gas/read on social recovery path |
 
 > **Note**: The factory includes `AAStarAirAccountV7` and `AAStarGlobalGuard` creation code embedded via constructor. Each `createAccount` call deploys both an account and a guard atomically. No implementation proxy — non-upgradable by design.
 
@@ -285,7 +289,7 @@ Script: `scripts/test-m5-gasless-e2e.ts`
 
 ## Token Presets (Standard Profile — Sepolia)
 
-Auto-populated via `configs/token-presets.json` during factory deploy.
+Reference config from `configs/token-presets.json`. **Not auto-populated at deploy** — tokens are configured post-deploy by calling `guardAddTokenConfig` on each account. The addresses below are the Sepolia values to use.
 
 | Token | Address (Sepolia) | Tier 1 | Tier 2 | Daily |
 |-------|-------------------|--------|--------|-------|
