@@ -125,7 +125,9 @@ contract M5ScenarioTests is Test {
         communityGuardian = makeAddr("communityGuardian");
 
         entryPoint = new MockEP();
-        factory = new AAStarAirAccountFactoryV7(address(entryPoint), communityGuardian);
+        address[] memory noTokens = new address[](0);
+        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        factory = new AAStarAirAccountFactoryV7(address(entryPoint), communityGuardian, noTokens, noConfigs);
         mockAlg = new MockAlg();
         p256Valid = new MockP256Valid();
         p256Invalid = new MockP256Invalid();
@@ -183,9 +185,9 @@ contract M5ScenarioTests is Test {
     }
 
     function _guardianAcceptSig(Vm.Wallet memory w, address owner, uint256 salt)
-        internal pure returns (bytes memory)
+        internal view returns (bytes memory)
     {
-        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt));
+        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(factory), owner, salt));
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
         return abi.encodePacked(r, s, v);

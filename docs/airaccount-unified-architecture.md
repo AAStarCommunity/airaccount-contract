@@ -945,7 +945,7 @@ YetAnotherAA 完整体系：
 
 #### C. 当前 E2E 测试脚本的依赖分析
 
-`scripts/test-e2e-bls.ts` 当前直接使用 `@noble/curves` + `ethers`，**不依赖 YetAnotherAA 的 NestJS 服务**。但生产环境中：
+`scripts/test-e2e-bls.ts` 使用 `@noble/curves` + `viem`（viem only，不使用 ethers.js），**不依赖 YetAnotherAA 的 NestJS 服务**。但生产环境中：
 
 ```
 生产环境签名流程：
@@ -972,7 +972,7 @@ YetAnotherAA 完整体系：
 方案 A：独立 airaccount-signer 服务（推荐）
 
   新建独立仓库：airaccount-signer
-  技术栈：与 YetAnotherAA 相同（NestJS + @noble/curves + ethers）
+  技术栈：NestJS + @noble/curves + viem（viem only，不使用 ethers.js）
   复用：从 YetAnotherAA 提取 BlsModule + SignatureModule + NodeModule + GossipModule
   改造：
     - 将合约交互指向 AAStarBLSValidator（而非 AAStarValidator）

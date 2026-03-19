@@ -26,10 +26,14 @@ contract DeployAirAccountV7 is Script {
 
         vm.startBroadcast(deployerKey);
 
-        // Deploy Factory
+        // Deploy Factory (no default token config in script — use deploy-m5.ts for chain-specific tokens)
+        address[] memory noTokens = new address[](0);
+        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
         AAStarAirAccountFactoryV7 factory = new AAStarAirAccountFactoryV7(
             ENTRYPOINT_V07,
-            COMMUNITY_GUARDIAN
+            COMMUNITY_GUARDIAN,
+            noTokens,
+            noConfigs
         );
         console.log("Factory deployed at:", address(factory));
 

@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {Script, console} from "forge-std/Script.sol";
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
+import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
 import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
 
@@ -36,10 +37,14 @@ contract DeployFullSystem is Script {
         validatorRouter.registerAlgorithm(0x01, address(blsAlg));
         console.log("Registered BLS algorithm (algId=0x01)");
 
-        // 4. Deploy Factory
+        // 4. Deploy Factory (no default token config in script — use deploy-m5.ts for chain-specific tokens)
+        address[] memory noTokens = new address[](0);
+        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
         AAStarAirAccountFactoryV7 factory = new AAStarAirAccountFactoryV7(
             ENTRYPOINT,
-            COMMUNITY_GUARDIAN
+            COMMUNITY_GUARDIAN,
+            noTokens,
+            noConfigs
         );
         console.log("AAStarAirAccountFactoryV7:", address(factory));
 

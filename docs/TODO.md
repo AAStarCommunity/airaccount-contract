@@ -7,17 +7,78 @@ to avoid being forgotten. Each item has a priority milestone and the reason it w
 
 ## Gas Optimizations
 
-### [M5] Packed guardian storage
-**Savings**: ~2,100 gas per storage read on social recovery path (~4,200 gas total for 2-of-3 threshold).
-**Current state**: `address[3] public guardians` occupies 3 storage slots (1 SLOAD each on recovery).
-`uint8 public guardianCount` occupies a separate 4th slot.
-**Optimization**: Pack `guardianCount (1 byte)` + `guardian[0] (20 bytes)` into one slot (21 bytes < 32).
-Store `guardian[1]` and `guardian[2]` in the next two slots as before, or pack all 3 with count.
-**Why deferred**: Requires storage layout restructure in `AAStarAirAccountBase`. Since the contract
-is non-upgradable, this only benefits new deployments. Recovery operations are already infrequent.
-**Files**: `src/core/AAStarAirAccountBase.sol` — struct layout, `guardianCount` initialization,
-`_guardianIndex()`, `proposeRecovery()`, `approveRecovery()`, `cancelRecovery()`, `executeRecovery()`.
-**Reference**: `docs/gas-analysis.md` — Potential Future Optimizations table.
+### [M6] Factory deployment gas — EIP-1167 clone factory
+**Current cost**: 5,104,901 gas (~0.05 ETH at 10 gwei mainnet). One-time per network.
+**Root cause**: Solidity `new ContractName()` syntax embeds full initcode of both
+`AAStarAirAccountV7` (~13k bytes) and `AAStarGlobalGuard` (~4k bytes) into the factory's
+own bytecode. Factory runtime = 23,476 bytes × ~200 gas/byte ≈ 4.7M + overhead.
+
+**Option A — EIP-1167 minimal proxy clone factory (recommended)**
+- Deploy one `AAStarAirAccountV7` implementation contract once (~200k gas)
+- `createAccount` clones it via 45-byte proxy: ~80–120k gas per account (vs current ~140–280k)
+- Implementation address is hardcoded in clone bytecode — non-upgradable, satisfies design constraint
+- Limitation: `AAStarGlobalGuard` has `immutable account` binding, must still be deployed fresh
+  per account; guard deployment gas (~100k) cannot be eliminated by cloning
+- Net factory deploy savings: ~4M gas (5.1M → ~1M)
+
+**Option B — reduce optimizer_runs further**
+- Current: 1,000 runs (down from 10,000), factory = 23,476 bytes
+- At 200 runs: factory ≈ 21,754 bytes → deploy cost ~4.3M gas (~800k savings)
+- Trade-off: higher per-call gas on every account transaction
+- Not recommended — per-call cost compounds across all users
+
+**Cost breakdown** (measured at deploy, 1,000 optimizer runs):
+
+| 组成 | 字节数 | Gas 估算 |
+|------|--------|---------|
+| Factory 自身逻辑 | ~3k bytes | ~600k |
+| 内嵌 V7 initcode | ~13k bytes | ~2.6M |
+| 内嵌 Guard initcode | ~4k bytes | ~800k |
+| 内嵌 V7 内的 Guard 引用等 | ... | ... |
+| **合计** | **23,476 bytes × ~200 gas/byte** | **~4.7M + tx overhead** |
+⏺ 贵是因为工厂部署时要把 AAStarAirAccountV7 + AAStarGlobalGuard 的完整 initcode 都打包进去（Solidity 的 new
+  ContractName() 语法）。
+
+  粗算：
+
+  ┌───────────────────────────┬──────────────────────────────┬─────────────────────┐
+  │           组成            │            字节数            │      Gas 估算       │
+  ├───────────────────────────┼──────────────────────────────┼─────────────────────┤
+  │ Factory 自身逻辑          │ ~3k bytes                    │ ~600k               │
+  ├───────────────────────────┼──────────────────────────────┼─────────────────────┤
+  │ 内嵌 V7 initcode          │ ~13k bytes                   │ ~2.6M               │
+  ├───────────────────────────┼──────────────────────────────┼─────────────────────┤
+  │ 内嵌 Guard initcode       │ ~4k bytes                    │ ~800k               │
+  ├───────────────────────────┼──────────────────────────────┼─────────────────────┤
+  │ 内嵌 V7 内的 Guard 引用等 │ ...                          │ ...                 │
+  ├───────────────────────────┼──────────────────────────────┼─────────────────────┤
+  │ 合计                      │ 23,476 bytes × ~200 gas/byte │ ~4.7M + tx overhead │
+  └───────────────────────────┴──────────────────────────────┴─────────────────────┘
+
+  不过这是一次性成本，factory 只部署一次，每个用户的账户创建 gas 是另算的（之前测试大概 140k-280k 量级）。
+
+  如果你想压缩 factory 部署成本，主要有两个方向：
+
+  方向 1：Clone Factory（EIP-1167 最小代理）
+  - 部署一个 implementation 合约（一次）
+  - 每个账户 clone() 一个 45-byte 代理，gas 降到约 80-120k
+  - 代价：实现地址硬编码在 clone 字节码里，不能升级——但 clone 本质是不可升级的，符合你的设计原则
+  - 限制：AAStarGlobalGuard 是 immutable account 绑定的，guard 还是得每次 new，这部分 gas 没法省
+
+  方向 2：降低 optimizer_runs 继续优化
+  - 我们从 10,000 降到 1,000 已经省了约 20 万 gas（5.3M → 5.1M）
+  - 再往下 200 runs 能到约 4.3M，但 per-call gas 会上涨
+
+  当前的 5.1M gas 在 Sepolia 上是 ~0.001 ETH（极低费率），主网按 10 gwei 算大约 5M × 10gwei = 0.05 ETH ≈ $100。如果
+  factory 一个网络只部署一次，这个成本是可接受的。
+
+每个用户账户创建 gas 另算（约 140k–280k，与工厂部署无关）。
+
+**Why deferred**: Factory is deployed once per network. At 10 gwei mainnet ~$100,
+acceptable for launch. Clone pattern requires refactoring account initialization
+(must use `initialize()` instead of constructor) which is a significant change.
+**Watch trigger**: If deploying to multiple chains frequently, or if mainnet gas > 50 gwei.
+**Files**: `src/core/AAStarAirAccountFactoryV7.sol`, `src/core/AAStarAirAccountV7.sol`
 
 ---
 
@@ -72,29 +133,6 @@ Prevents griefing via `addGuardian(unknowingAddress)`.
 
 ---
 
-### [M5] setupComplete flag for AAStarValidator
-**Goal**: Prevent Finding 3 — the bypass of 7-day timelock via direct `registerAlgorithm()`.
-**Approach**: Add `bool public setupComplete` to `AAStarValidator`. Once set:
-- `registerAlgorithm()` (immediate path) is permanently disabled
-- Only `proposeAlgorithm` + `executeProposal` (7-day timelock) is allowed
-- Owner calls `finalizeSetup()` after initial algorithm registration
-**Reference**: `docs/gpt52-review-response.md` Finding 3, `docs/M5-plan.md` section M5.2.
-**Files**: `src/validators/AAStarValidator.sol`.
-
----
-
-### [M5] messagePoint binding context (governance hardening)
-**Goal**: Bind `messagePoint` to the specific UserOp hash to prevent replay across transactions.
-**Current state**: `messagePointSignature` proves the owner signed the messagePoint, but the
-messagePoint itself is not explicitly bound to `userOpHash`. The BLS nodes independently bind
-their signatures to the messagePoint — this is the existing protection.
-**Approach**: Add `keccak256(userOpHash || messagePoint)` as the message for the owner's
-`messagePointSignature`, replacing the current `keccak256(messagePoint)`.
-**Why deferred**: Current design has implicit binding via BLS nodes' independent signing.
-The explicit binding makes the security argument cleaner but is not an urgent fix.
-**Reference**: `docs/M5-plan.md` section M5.2, `docs/gpt52-review-response.md` Finding 4.
-
----
 
 ### [v1.0] EIP-7702 delegation support
 **Goal**: Eliminate ~2.4M gas account deployment cost. An EOA can temporarily delegate to
@@ -103,6 +141,20 @@ AirAccount logic via EIP-7702, making the account usable without deploying a con
 **Design change**: Account must be redesigned to not rely on `address(this)` being a separate
 contract. Guard binding model changes significantly.
 **Reference**: `docs/gas-analysis.md` Recommendations section.
+
+---
+
+### [M6] Guard strict mode — blockUnconfiguredTokens flag
+**Background**: Kimi 2.5 audit correctly identified that unconfigured ERC20 tokens pass through
+the guard without tier limits. This is an explicit design decision (opt-in per token), but
+power users / high-security accounts may want to block ALL token transfers unless the token
+is explicitly configured.
+**Approach**: Add `bool public blockUnconfiguredTokens` to `AAStarGlobalGuard`.
+- Default: `false` (current behavior, backward compatible)
+- When `true`: `checkTokenTransaction` reverts for any token not in `tokenConfigs`
+- Can only be set to `true` by account owner (monotonic: once enabled, cannot disable)
+**Risk mitigated**: Stolen ECDSA key cannot drain long-tail/airdrop tokens not in the config.
+**Files**: `src/core/AAStarGlobalGuard.sol` — `checkTokenTransaction()`, new setter.
 
 ---
 
@@ -144,5 +196,38 @@ Update `docs/gas-analysis.md` with M5 gas measurements — see TODO section in t
 
 ---
 
-*Last updated: 2026-03-13*
+## Protocol Forward Compatibility
+
+### [M7+] EIP-8130 / Native AA compatibility layer
+**Goal**: Ensure AirAccount can migrate to protocol-level native AA without full rewrite
+when Ethereum adopts a native AA standard (EIP-8130 or EIP-8141, target: Hegota 2026 H2).
+
+**Key actions required (priority order)**:
+
+1. **Verifier adapter contract** — Wrap `IAAStarAlgorithm` as EIP-8130 `IVerifier`:
+   `IAAStarAlgorithm.validate(bytes32, bytes) → uint256`
+   wraps to: `IVerifier.verify(bytes32, bytes) → bytes32 ownerId`
+   Cost: ~50 LOC adapter, zero changes to existing algorithm contracts.
+
+2. **ownerId migration** — Expand owner identity from `address` (20 bytes) to `bytes32`
+   (full keccak256, ~2^85 quantum collision resistance vs current ~2^53).
+   Affects: owner storage layout + `_validateOwner()` in `AAStarAirAccountBase.sol`.
+
+3. **Account Lock ↔ Social Recovery alignment** — Map `cancelRecovery()` timelock pattern
+   to EIP-8130 `lock() / requestUnlock() / unlock()` 3-step lifecycle.
+
+4. **algId ↔ verifier type namespace**:
+   `0x02 ECDSA → K1(0x01)` adapter only;
+   `0x03 P256 → P256_WEBAUTHN(0x03)` align WebAuthn data format;
+   `0x01 BLS → Custom(0x00)` deploy as permissionless verifier contract.
+
+**Why deferred**: EIP-8130 is Draft, competing with EIP-8141 (Vitalik-backed, higher adoption
+probability). Acting before Hegota EIP selection is confirmed = wasted migration cost.
+**Watch trigger**: Hegota fork EIP finalization (expected Q3 2026).
+**Full plan**: `docs/eip-8130-upgrade-plan.md`
+**Background analysis**: `docs/eip-8130-analysis.md`
+
+---
+
+*Last updated: 2026-03-15*
 *Source analysis: `docs/gas-analysis.md` — Potential Future Optimizations*

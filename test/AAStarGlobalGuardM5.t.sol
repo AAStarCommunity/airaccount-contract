@@ -84,15 +84,17 @@ contract AAStarGlobalGuardM5Test is Test {
         guard.checkTokenTransaction(mockToken, 101 * USDC_DEC, ALG_ECDSA);
     }
 
-    function test_tier2_P256_exceedsTier1_passes() public {
+    function test_tier1_P256_exceedsTier1_reverts() public {
+        // P256 single-factor = Tier 1 (same as ECDSA). Cannot authorize Tier 2 amounts alone.
         vm.prank(account);
-        bool ok = guard.checkTokenTransaction(mockToken, 500 * USDC_DEC, ALG_P256);
-        assertTrue(ok);
+        vm.expectRevert(abi.encodeWithSelector(AAStarGlobalGuard.InsufficientTokenTier.selector, 2, 1));
+        guard.checkTokenTransaction(mockToken, 500 * USDC_DEC, ALG_P256);
     }
 
     function test_tier3_P256_exceedsTier2_reverts() public {
+        // P256 is Tier 1. Amount 1001 USDC > tier2Limit (1000) requires Tier 3. P256 provides Tier 1.
         vm.prank(account);
-        vm.expectRevert(abi.encodeWithSelector(AAStarGlobalGuard.InsufficientTokenTier.selector, 3, 2));
+        vm.expectRevert(abi.encodeWithSelector(AAStarGlobalGuard.InsufficientTokenTier.selector, 3, 1));
         guard.checkTokenTransaction(mockToken, 1001 * USDC_DEC, ALG_P256);
     }
 
@@ -155,15 +157,20 @@ contract AAStarGlobalGuardM5Test is Test {
         guard.checkTokenTransaction(mockToken, 60 * USDC_DEC, ALG_ECDSA);
     }
 
-    function test_batchBypass_P256_cumulativeExceedsTier2_reverts() public {
+    function test_batchBypass_T2_cumulativeExceedsTier2_reverts() public {
+        // ALG_T2 (0x04) is Tier 2. Each individual tx is within tier2Limit (1000 USDC),
+        // but cumulatively they exceed tier2Limit — guard must require tier3 for the second tx.
+        vm.prank(account);
+        guard.approveAlgorithm(ALG_T2);
+
         // First call: 900 USDC (cumulative 900 ≤ 1000, tier2 ok)
         vm.prank(account);
-        guard.checkTokenTransaction(mockToken, 900 * USDC_DEC, ALG_P256);
+        guard.checkTokenTransaction(mockToken, 900 * USDC_DEC, ALG_T2);
 
         // Second call: 200 USDC (cumulative 1100 > 1000, needs tier3)
         vm.prank(account);
         vm.expectRevert(abi.encodeWithSelector(AAStarGlobalGuard.InsufficientTokenTier.selector, 3, 2));
-        guard.checkTokenTransaction(mockToken, 200 * USDC_DEC, ALG_P256);
+        guard.checkTokenTransaction(mockToken, 200 * USDC_DEC, ALG_T2);
     }
 
     function test_tokenTodaySpent_updatesOnSpend() public {
@@ -422,6 +429,113 @@ contract AAStarGlobalGuardM5Test is Test {
             address(0xBAD), 100 * USDC_DEC, 1000 * USDC_DEC, 200 * USDC_DEC
         ));
         new AAStarGlobalGuard(account, 1 ether, algIds, 0, tokens, cfgs);
+    }
+
+    // ─── 10. dailyLimit=0 prohibition when tier limits set ───────────────
+
+    function test_validateTokenConfig_tier1WithoutDailyLimit_reverts() public {
+        // tier1 > 0 but dailyLimit = 0 → cumulative tracking would be broken
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InvalidTokenConfig.selector,
+            otherToken, 100 * USDC_DEC, 0, 0
+        ));
+        guard.addTokenConfig(otherToken, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100 * USDC_DEC,
+            tier2Limit: 0,
+            dailyLimit: 0
+        }));
+    }
+
+    function test_validateTokenConfig_tier2WithoutDailyLimit_reverts() public {
+        // tier2 > 0 but dailyLimit = 0 → cumulative tracking would be broken
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InvalidTokenConfig.selector,
+            otherToken, 0, 1000 * USDC_DEC, 0
+        ));
+        guard.addTokenConfig(otherToken, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 0,
+            tier2Limit: 1000 * USDC_DEC,
+            dailyLimit: 0
+        }));
+    }
+
+    function test_validateTokenConfig_dailyOnlyNoTiers_passes() public {
+        // dailyOnly config (no tier limits, just daily cap) is still valid
+        vm.prank(account);
+        guard.addTokenConfig(otherToken, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 0,
+            tier2Limit: 0,
+            dailyLimit: 1000 * USDC_DEC
+        }));
+        (,, uint256 daily) = guard.tokenConfigs(otherToken);
+        assertEq(daily, 1000 * USDC_DEC);
+    }
+
+    function test_decreaseTokenDailyLimit_toZero_withTierLimits_reverts() public {
+        // mockToken has tier1=100, tier2=1000, daily=5000 — cannot decrease daily to 0
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InvalidTokenConfig.selector,
+            mockToken, 100 * USDC_DEC, 1000 * USDC_DEC, 0
+        ));
+        guard.decreaseTokenDailyLimit(mockToken, 0);
+    }
+
+    function test_decreaseTokenDailyLimit_toNonZero_withTierLimits_succeeds() public {
+        // Decreasing to a non-zero value is always fine
+        vm.prank(account);
+        guard.decreaseTokenDailyLimit(mockToken, 1000 * USDC_DEC);
+        (,, uint256 daily) = guard.tokenConfigs(mockToken);
+        assertEq(daily, 1000 * USDC_DEC);
+    }
+
+    // ─── 11. ALG_BLS tier mapping alignment ───────────────────────────
+
+    uint8 constant ALG_BLS = 0x01;
+
+    function test_algBLS_isGuardTier3_satisfiesTier3Token() public {
+        // ALG_BLS (0x01) is now Tier 3 in guard — must satisfy Tier 3 token requirements
+        vm.prank(account);
+        guard.approveAlgorithm(ALG_BLS);
+
+        // Amount exceeds tier2 (1000 USDC) — requires Tier 3
+        vm.prank(account);
+        bool ok = guard.checkTokenTransaction(mockToken, 2000 * USDC_DEC, ALG_BLS);
+        assertTrue(ok);
+    }
+
+    function test_algBLS_isGuardTier3_matchesAccountTier() public {
+        // Verify _algTier(0x01) == 3: ALG_BLS guard tier must match account tier
+        // Previously was Tier 2 (bug), now corrected to Tier 3
+        vm.prank(account);
+        guard.approveAlgorithm(ALG_BLS);
+
+        // If still Tier 2, this would revert with InsufficientTokenTier(3, 2)
+        // After fix, it should pass because Tier 3 >= Tier 3
+        vm.prank(account);
+        bool ok = guard.checkTokenTransaction(mockToken, 5000 * USDC_DEC, ALG_BLS);
+        assertTrue(ok); // daily limit = 5000, exact fill
+    }
+
+    // ─── Codex audit: LOW — unknown algId returns tier 0, fails enforcement ──
+
+    /// @dev An algId not in the explicit mapping returns tier 0.
+    ///      Even a Tier 1 token check fails: InsufficientTokenTier(1, 0).
+    ///      Prevents a newly-added algId from silently bypassing tier limits
+    ///      if _algTier is not updated.
+    function test_unknownAlgId_failsTokenTierCheck() public {
+        uint8 unknownAlg = 0xFF;
+        vm.prank(account);
+        guard.approveAlgorithm(unknownAlg);
+
+        // _algTier(0xFF) = 0 < required Tier 1 → must revert
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InsufficientTokenTier.selector, uint8(1), uint8(0)
+        ));
+        guard.checkTokenTransaction(mockToken, 1 * USDC_DEC, unknownAlg);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
