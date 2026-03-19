@@ -40,7 +40,8 @@
 | **M4** | AirAccount Factory V7 | `0x914db0a849f55e68a726c72fd02b7114b1176d88` | (M4 deploy) | — | Cumulative sigs + social recovery |
 | **M5 r1** | AirAccount Factory V7 | `0x1ffa949fc5fa34a36ba2466ac3556d961951c3b9` | `0xaca946016fe2...453a` | 5,302,643 | Superseded — see M5 r2 |
 | **M5 r2** | AirAccount Factory V7 | `0xb1e9fede6894a1628232c7492262b22e32d69563` | `0x3f06cc25b3c7...22f7` | 5,565,757 | Superseded — see M5 r3 |
-| **M5 r3** | **AirAccount Factory V7** | **`0x03d47604c5b04194ce4cc09d26e14eaf856875bc`** | `0xc0bd2480a9b5...1e8` | **5,646,614** | **Current — packed guardian storage (M6 gas opt)** |
+| **M5 r3** | AirAccount Factory V7 | `0x03d47604c5b04194ce4cc09d26e14eaf856875bc` | `0xc0bd2480a9b5...1e8` | 5,646,614 | Superseded — see M5 r4 |
+| **M5 r4** | **AirAccount Factory V7** | **`0x24cd3231a8dd261da8cb1e6b017d1d1c4077c078`** | `0xfb73609bd6ff826f7126ac6fea5a64d39c8502bb09c5ea2be1febba57afa1f47` | **5,663,960** | **Current — domain-separated guardian hash, token config validation, explicit algTier** |
 | **M5** | **AAStarBLSAggregator** | **`0x7700aec8a15a94db5697c581de8c88ecf83b59ff`** | `0x5b6de23a144b...c0a27` | **855,052** | **F67 — IAggregator for batch BLS** |
 
 ### M5 Test Accounts (Sepolia)

@@ -1,6 +1,11 @@
 /**
  * Deploy M4 AirAccount contracts to Sepolia via viem
  *
+ * DEPRECATED: This script uses the old 2-arg Factory constructor (entryPoint, communityGuardian).
+ * The current factory requires 4 args: (entryPoint, communityGuardian, defaultTokens, defaultConfigs).
+ * Do NOT use this script to deploy a new factory — it will fail or produce an unusable factory.
+ * Use scripts/deploy-m5.ts instead.
+ *
  * Deploys the updated Factory with cumulative signature support (algId 0x04, 0x05).
  * The creation code embedded in the Factory includes _validateCumulativeTier2/Tier3.
  *

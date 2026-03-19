@@ -45,8 +45,16 @@ contract AAStarAirAccountFactoryV7 {
         entryPoint = _entryPoint;
         defaultCommunityGuardian = _communityGuardian;
         for (uint256 i = 0; i < defaultTokens.length; i++) {
+            // Validate each default token config eagerly — invalid configs revert here rather
+            // than failing silently for every createAccountWithDefaults call.
+            AAStarGlobalGuard.TokenConfig memory cfg = defaultConfigs[i];
+            bool bad = (cfg.tier1Limit > 0 && cfg.tier2Limit > 0 && cfg.tier1Limit > cfg.tier2Limit)
+                || (cfg.tier2Limit > 0 && cfg.dailyLimit > 0 && cfg.dailyLimit < cfg.tier2Limit)
+                || (cfg.tier1Limit > 0 && cfg.tier2Limit == 0 && cfg.dailyLimit > 0 && cfg.dailyLimit < cfg.tier1Limit)
+                || ((cfg.tier1Limit > 0 || cfg.tier2Limit > 0) && cfg.dailyLimit == 0);
+            require(!bad, "Invalid default token config");
             _defaultTokenAddresses.push(defaultTokens[i]);
-            _defaultTokenConfigs.push(defaultConfigs[i]);
+            _defaultTokenConfigs.push(cfg);
         }
     }
 
@@ -96,7 +104,7 @@ contract AAStarAirAccountFactoryV7 {
 
     /// @notice Deploy account with default community guardian as third guardian.
     /// @dev User provides 2 personal guardians with acceptance signatures.
-    ///      Each guardian must sign: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt))
+    ///      Each guardian must sign: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
     ///      Guard is initialized with user-specified dailyLimit and all 3 standard algorithms.
     /// @param owner Account owner
     /// @param salt CREATE2 salt
@@ -105,6 +113,9 @@ contract AAStarAirAccountFactoryV7 {
     /// @param guardian2 Trusted person (spouse, family) or another passkey
     /// @param guardian2Sig guardian2's acceptance signature
     /// @param dailyLimit Daily spending limit in wei (user chooses based on their needs)
+    /// @dev Guardian acceptance hash is domain-separated:
+    ///      keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
+    ///      Including chainId and address(this) prevents cross-chain and cross-factory replay.
     function createAccountWithDefaults(
         address owner,
         uint256 salt,
@@ -117,8 +128,9 @@ contract AAStarAirAccountFactoryV7 {
         require(guardian1 != address(0) && guardian2 != address(0), "Guardians required");
         require(dailyLimit > 0, "Daily limit required"); // F72: guard must be configured
 
-        // Verify both guardians signed the acceptance message (F56 — M5.3)
-        bytes32 acceptHash = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt))
+        // Verify both guardians signed the domain-separated acceptance message (F56 — M5.3)
+        // chainId + address(this) prevent replay across chains and factories with same owner+salt
+        bytes32 acceptHash = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(this), owner, salt))
             .toEthSignedMessageHash();
         (address recovered1,,) = acceptHash.tryRecover(guardian1Sig);
         if (recovered1 != guardian1) revert GuardianDidNotAccept(guardian1);

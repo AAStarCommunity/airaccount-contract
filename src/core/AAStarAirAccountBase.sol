@@ -759,10 +759,13 @@ abstract contract AAStarAirAccountBase {
     ///      Bare P256 passkey (0x03) is Tier 1 — it is the default single-factor auth
     ///      for all standard transactions. DVT co-sign (BLS) is required for Tier 2+.
     function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == ALG_CUMULATIVE_T3) return 3; // P256 + BLS + Guardian ECDSA
-        if (algId == ALG_BLS) return 3;            // legacy BLS triple (ECDSA×2 + BLS, M2 format)
-        if (algId == ALG_CUMULATIVE_T2) return 2;  // P256 + BLS DVT co-sign
-        return 1;                                   // ECDSA, bare P256, or unknown = single-factor
+        if (algId == ALG_CUMULATIVE_T3) return 3;     // P256 + BLS + Guardian ECDSA
+        if (algId == ALG_BLS) return 3;               // legacy BLS triple (ECDSA×2 + BLS, M2 format)
+        if (algId == ALG_CUMULATIVE_T2) return 2;     // P256 + BLS DVT co-sign
+        if (algId == ALG_ECDSA) return 1;             // bare ECDSA
+        if (algId == ALG_P256) return 1;              // bare P256 passkey (single-factor)
+        if (algId == ALG_COMBINED_T1) return 1;       // zero-trust combined (P256 + ECDSA)
+        return 0;                                      // unknown algId — fails all tier enforcement
     }
 
     // ─── Execution ────────────────────────────────────────────────────
