@@ -32,9 +32,15 @@ contract AAStarAirAccountFactoryV7Test is Test {
         factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs);
     }
 
-    /// @dev Sign the guardian acceptance message for a given owner+salt
-    function _guardianSig(Vm.Wallet memory w, address owner, uint256 salt) internal pure returns (bytes memory) {
-        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt));
+    /// @dev Sign the domain-separated guardian acceptance message for setUp factory + owner + salt.
+    function _guardianSig(Vm.Wallet memory w, address owner, uint256 salt) internal view returns (bytes memory) {
+        return _guardianSigFor(w, address(factory), owner, salt);
+    }
+
+    /// @dev Sign the domain-separated guardian acceptance message for an explicit factory address.
+    ///      Mirrors: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
+    function _guardianSigFor(Vm.Wallet memory w, address factoryAddr, address owner, uint256 salt) internal view returns (bytes memory) {
+        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, factoryAddr, owner, salt));
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
         return abi.encodePacked(r, s, v);
@@ -243,8 +249,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
             entryPoint, communityGuardian, tokens, configs
         );
 
-        bytes memory sig1 = _guardianSig(g1Wallet, ownerA, 0);
-        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 0);
+        bytes memory sig1 = _guardianSigFor(g1Wallet, address(tokenFactory), ownerA, 0);
+        bytes memory sig2 = _guardianSigFor(g2Wallet, address(tokenFactory), ownerA, 0);
         address account = tokenFactory.createAccountWithDefaults(
             ownerA, 0, g1Wallet.addr, sig1, g2Wallet.addr, sig2, TEST_DAILY_LIMIT
         );

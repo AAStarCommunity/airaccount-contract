@@ -1,6 +1,13 @@
 /**
  * test-e2e-ecdsa.ts
  *
+ * DEPRECATED: This script uses the old 2-arg Factory constructor (entryPoint, communityGuardian).
+ * The current factory requires 4 args: (entryPoint, communityGuardian, defaultTokens, defaultConfigs).
+ * Do NOT deploy a new factory using this script — it will fail or produce an unusable factory.
+ * Use scripts/deploy-m5.ts to deploy a current factory.
+ *
+ * This script is retained for historical reference of the M1 ECDSA E2E flow only.
+ *
  * Complete E2E: deploy Factory, create account, build UserOp, sign with ECDSA,
  * submit via EntryPoint v0.7 handleOps on Sepolia.
  *

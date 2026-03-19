@@ -10,14 +10,15 @@
  *   - Real case: user copies wallet address, misses one hex char => guardian slot useless.
  *
  * AFTER M5.3:
- *   - Each guardian must sign an acceptance message BEFORE account creation:
- *       keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt)).toEthSignedMessageHash()
+ *   - Each guardian must sign a domain-separated acceptance message BEFORE account creation:
+ *       keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
  *   - Factory verifies both acceptance signatures on-chain.
  *   - If guardian address is wrong (typo, wrong network, wrong person), factory REVERTS.
  *   - Guarantee: at deployment, both guardians are confirmed reachable and aware.
+ *   - chainId + factory prevent cross-chain and cross-factory replay of acceptance signatures.
  *
  * Acceptance message format:
- *   sign(keccak256(concat(["ACCEPT_GUARDIAN", owner_address(20), salt(32)])).toEthSignedMessageHash())
+ *   sign(keccak256(concat(["ACCEPT_GUARDIAN", chainId(32), factory(20), owner_address(20), salt(32)])).toEthSignedMessageHash())
  *
  * Tests:
  *   A: Both guardians sign correctly => account created successfully
@@ -133,16 +134,17 @@ const ACCOUNT_ABI = [
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Build the guardian acceptance message hash.
- * Mirrors factory: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", owner, salt)).toEthSignedMessageHash()
+ * Build the domain-separated guardian acceptance message hash.
+ * Mirrors factory: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
  *
  * Note: toEthSignedMessageHash prepends "\x19Ethereum Signed Message:\n32"
+ * Domain separation (chainId + factory) prevents cross-chain and cross-factory replay.
  */
-function buildAcceptanceHash(owner: Address, salt: bigint): Hex {
-  // Encode: "ACCEPT_GUARDIAN" (bytes) + owner (address, 20 bytes) + salt (uint256, 32 bytes)
+function buildAcceptanceHash(factoryAddr: Address, owner: Address, salt: bigint, chainId: bigint): Hex {
+  // Encode: "ACCEPT_GUARDIAN" + chainId (uint256) + factory (address) + owner (address) + salt (uint256)
   const packed = encodePacked(
-    ["string", "address", "uint256"],
-    ["ACCEPT_GUARDIAN", owner, salt]
+    ["string", "uint256", "address", "address", "uint256"],
+    ["ACCEPT_GUARDIAN", chainId, factoryAddr, owner, salt]
   );
   const innerHash = keccak256(packed);
 
@@ -196,21 +198,17 @@ async function main() {
   console.log(`  Guardian2: ${guardian2.address}`);
 
   // Compute the acceptance hash (what each guardian must sign)
-  const acceptHashA = buildAcceptanceHash(owner.address, saltA);
+  const chainId = BigInt(await publicClient.getChainId());
+  const acceptHashA = buildAcceptanceHash(FACTORY_ADDR, owner.address, saltA, chainId);
   console.log(`  Acceptance hash: ${acceptHashA}`);
 
-  // Each guardian signs the acceptance hash (EIP-191 prefixed via signMessage with raw)
-  // Note: The hash is ALREADY toEthSignedMessageHash, so we sign the raw bytes
-  // Actually: factory calls keccak256(...).toEthSignedMessageHash() and then ECDSA.tryRecover(acceptHash, sig)
-  // tryRecover expects: sig = ECDSA sign(acceptHash) where acceptHash is already toEthSignedMessageHash'd
-  // So we sign the INNER hash (before EIP-191 prefix) using signMessage which adds EIP-191 prefix
-  const innerHashA = (() => {
-    const packed = encodePacked(
-      ["string", "address", "uint256"],
-      ["ACCEPT_GUARDIAN", owner.address, saltA]
-    );
-    return keccak256(packed);
-  })();
+  // Each guardian signs the INNER hash (before EIP-191 prefix) using signMessage which adds EIP-191 prefix.
+  // Factory calls keccak256(...).toEthSignedMessageHash() then ECDSA.tryRecover(acceptHash, sig).
+  // Domain-separated: includes chainId + factory address to prevent cross-chain/cross-factory replay.
+  const innerHashA = keccak256(encodePacked(
+    ["string", "uint256", "address", "address", "uint256"],
+    ["ACCEPT_GUARDIAN", chainId, FACTORY_ADDR, owner.address, saltA]
+  ));
 
   // signMessage with raw bytes applies EIP-191 prefix internally, matching toEthSignedMessageHash
   const g1SigA = await g1Client.signMessage({ message: { raw: hexToBytes(innerHashA) } });
@@ -259,8 +257,8 @@ async function main() {
 
   try {
     const innerHashB = keccak256(encodePacked(
-      ["string", "address", "uint256"],
-      ["ACCEPT_GUARDIAN", owner.address, saltB]
+      ["string", "uint256", "address", "address", "uint256"],
+      ["ACCEPT_GUARDIAN", chainId, FACTORY_ADDR, owner.address, saltB]
     ));
     // g2 signs for saltB, but we claim guardian1 as the guardian
     const wrongSig = await g2Client.signMessage({ message: { raw: hexToBytes(innerHashB) } });
@@ -314,15 +312,15 @@ async function main() {
 
   try {
     const innerHashD = keccak256(encodePacked(
-      ["string", "address", "uint256"],
+      ["string", "uint256", "address", "address", "uint256"],
       // Sign for wrong owner (guardian2 address used as owner — simulates owner address mismatch)
-      ["ACCEPT_GUARDIAN", guardian2.address as Address, saltD]
+      ["ACCEPT_GUARDIAN", chainId, FACTORY_ADDR, guardian2.address as Address, saltD]
     ));
     const wrongOwnerSig = await g1Client.signMessage({ message: { raw: hexToBytes(innerHashD) } });
 
     const innerHashD2 = keccak256(encodePacked(
-      ["string", "address", "uint256"],
-      ["ACCEPT_GUARDIAN", owner.address, saltD]
+      ["string", "uint256", "address", "address", "uint256"],
+      ["ACCEPT_GUARDIAN", chainId, FACTORY_ADDR, owner.address, saltD]
     ));
     const correctG2Sig = await g2Client.signMessage({ message: { raw: hexToBytes(innerHashD2) } });
 
@@ -347,8 +345,8 @@ async function main() {
   try {
     // Sign for wrong salt
     const wrongSaltHash = keccak256(encodePacked(
-      ["string", "address", "uint256"],
-      ["ACCEPT_GUARDIAN", owner.address, SALT_BASE + 10n] // wrong salt
+      ["string", "uint256", "address", "address", "uint256"],
+      ["ACCEPT_GUARDIAN", chainId, FACTORY_ADDR, owner.address, SALT_BASE + 10n] // wrong salt
     ));
     const wrongSaltSig1 = await g1Client.signMessage({ message: { raw: hexToBytes(wrongSaltHash) } });
     const wrongSaltSig2 = await g2Client.signMessage({ message: { raw: hexToBytes(wrongSaltHash) } });
@@ -371,8 +369,8 @@ async function main() {
 
   try {
     const innerHashF = keccak256(encodePacked(
-      ["string", "address", "uint256"],
-      ["ACCEPT_GUARDIAN", owner.address, saltF]
+      ["string", "uint256", "address", "address", "uint256"],
+      ["ACCEPT_GUARDIAN", chainId, FACTORY_ADDR, owner.address, saltF]
     ));
     const g1SigF = await g1Client.signMessage({ message: { raw: hexToBytes(innerHashF) } });
     const g2SigF = await g2Client.signMessage({ message: { raw: hexToBytes(innerHashF) } });
