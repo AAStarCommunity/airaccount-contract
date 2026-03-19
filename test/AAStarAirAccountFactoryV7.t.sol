@@ -301,4 +301,72 @@ contract AAStarAirAccountFactoryV7Test is Test {
         assertEq(acc.guardians(1), g2Wallet.addr);
         assertEq(acc.guardians(2), address(0)); // empty slot must be zero
     }
+
+    // ─── Codex audit: LOW — factory default config validation ────────
+
+    /// @dev Invalid default token config (tier1 > tier2) should revert at factory deploy time,
+    ///      not silently succeed and fail on every createAccountWithDefaults call.
+    function test_invalidDefaultConfig_tier1GtTier2_reverts() public {
+        address mockToken = address(0xBEEF);
+        address[] memory tokens = new address[](1);
+        tokens[0] = mockToken;
+        AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1);
+        configs[0] = AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 1000e6, // tier1 > tier2 — invalid
+            tier2Limit: 100e6,
+            dailyLimit: 5000e6
+        });
+        vm.expectRevert("Invalid default token config");
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+    }
+
+    /// @dev Tier limits set but dailyLimit=0 should revert (guard requires dailyLimit > 0
+    ///      for cumulative tracking to work).
+    function test_invalidDefaultConfig_noDaily_reverts() public {
+        address mockToken = address(0xBEEF);
+        address[] memory tokens = new address[](1);
+        tokens[0] = mockToken;
+        AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1);
+        configs[0] = AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100e6,
+            tier2Limit: 1000e6,
+            dailyLimit: 0    // tier limits set but no daily — invalid
+        });
+        vm.expectRevert("Invalid default token config");
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+    }
+
+    // ─── Codex audit: MEDIUM — guardian acceptance domain separation ──
+
+    /// @dev A guardian sig produced for a DIFFERENT chainId must be rejected.
+    ///      Prevents replay of acceptance signatures across chains.
+    function test_guardian_wrongChainId_reverts() public {
+        uint256 wrongChain = block.chainid + 1;
+        // Sign for wrong chainId manually
+        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", wrongChain, address(factory), ownerA, uint256(0)));
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(g1Wallet.privateKey, ethHash);
+        bytes memory badSig = abi.encodePacked(r, s, v);
+
+        bytes memory correctSig2 = _guardianSig(g2Wallet, ownerA, 0);
+
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, g1Wallet.addr));
+        factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, badSig, g2Wallet.addr, correctSig2, TEST_DAILY_LIMIT);
+    }
+
+    /// @dev A guardian sig produced for a DIFFERENT factory address must be rejected.
+    ///      Prevents replay across factories on the same chain with same owner+salt.
+    function test_guardian_wrongFactory_reverts() public {
+        // Deploy a second factory, sign acceptance for it
+        address[] memory noTokens = new address[](0);
+        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        AAStarAirAccountFactoryV7 otherFactory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs);
+
+        // Sign for otherFactory address
+        bytes memory sigForOtherFactory = _guardianSigFor(g1Wallet, address(otherFactory), ownerA, 0);
+        bytes memory correctSig2 = _guardianSig(g2Wallet, ownerA, 0);
+
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, g1Wallet.addr));
+        factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sigForOtherFactory, g2Wallet.addr, correctSig2, TEST_DAILY_LIMIT);
+    }
 }
