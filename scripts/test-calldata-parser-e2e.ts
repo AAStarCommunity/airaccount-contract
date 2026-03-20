@@ -167,22 +167,18 @@ async function main() {
   let parserAddr: Address;
 
   try {
-    const [regTx, parserTx] = await Promise.all([
-      ownerClient.deployContract({ abi: REGISTRY_ABI, bytecode: REGISTRY_BYTECODE }),
-      ownerClient.deployContract({ abi: PARSER_ABI, bytecode: UNISWAP_PARSER_BYTECODE }),
-    ]);
-
-    const [regReceipt, parserReceipt] = await Promise.all([
-      publicClient.waitForTransactionReceipt({ hash: regTx }),
-      publicClient.waitForTransactionReceipt({ hash: parserTx }),
-    ]);
-
+    // Sequential deploys to avoid nonce collision on the same account
+    const regTx = await ownerClient.deployContract({ abi: REGISTRY_ABI, bytecode: REGISTRY_BYTECODE });
+    const regReceipt = await publicClient.waitForTransactionReceipt({ hash: regTx });
     registryAddr = regReceipt.contractAddress as Address;
-    parserAddr   = parserReceipt.contractAddress as Address;
-
     console.log(`  PASS: Registry deployed:    ${registryAddr}`);
+    passed++;
+
+    const parserTx = await ownerClient.deployContract({ abi: PARSER_ABI, bytecode: UNISWAP_PARSER_BYTECODE });
+    const parserReceipt = await publicClient.waitForTransactionReceipt({ hash: parserTx });
+    parserAddr = parserReceipt.contractAddress as Address;
     console.log(`  PASS: UniswapV3Parser deployed: ${parserAddr}`);
-    passed += 2;
+    passed++;
   } catch (e: any) {
     console.log(`  FAIL: Deploy failed: ${e.message?.slice(0, 150)}`);
     process.exit(1);

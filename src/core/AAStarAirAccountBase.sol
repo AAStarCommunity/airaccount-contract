@@ -510,6 +510,13 @@ abstract contract AAStarAirAccountBase is Initializable {
         // P256 session layout: [algId(1)][account(20)][keyX(32)][keyY(32)][r(32)][s(32)] = 149 bytes total
         //   → keyX at [21:53], keyY at [53:85], tag = 0x02
         if (firstByte == ALG_SESSION_KEY) {
+            // Security: reject cross-account session key abuse.
+            // sig[1:21] = account embedded in the session key signature.
+            // Must equal address(this) — the account currently being validated.
+            // Without this check an attacker can use account A's session key to
+            // authorize UserOps on account B (audit HIGH finding 2026-03-20).
+            if (signature.length < 21 || address(bytes20(signature[1:21])) != address(this)) return 1;
+
             if (signature.length == 106) {
                 address ecdsaKey = address(bytes20(signature[21:41]));
                 _storeSessionKey(bytes32(uint256(0x01) << 248 | uint256(uint160(ecdsaKey))));
@@ -1050,13 +1057,18 @@ abstract contract AAStarAirAccountBase is Initializable {
             bool tokenHandled = false;
 
             // M6.6b: DeFi parser registry check (runs first, more specific)
+            // try/catch: a buggy/malicious parser must not block execution (LOW audit finding 2026-03-20).
+            // On parser revert we fall through to the native ERC20 fallback below.
             if (parserRegistry != address(0)) {
                 address parser = ICalldataParserRegistry(parserRegistry).getParser(dest);
                 if (parser != address(0)) {
-                    (address tok, uint256 amt) = ICalldataParser(parser).parseTokenTransfer(func);
-                    if (tok != address(0) && amt > 0) {
-                        guard.checkTokenTransaction(tok, amt, algId);
-                        tokenHandled = true;
+                    try ICalldataParser(parser).parseTokenTransfer(func) returns (address tok, uint256 amt) {
+                        if (tok != address(0) && amt > 0) {
+                            guard.checkTokenTransaction(tok, amt, algId);
+                            tokenHandled = true;
+                        }
+                    } catch {
+                        // Parser failed — fall through to native ERC20 fallback
                     }
                 }
             }
