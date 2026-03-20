@@ -181,14 +181,16 @@ contract AAStarAirAccountFactoryV7 {
         address guardian2,
         uint256 dailyLimit
     ) internal view returns (AAStarAirAccountBase.InitConfig memory) {
-        // Default approved algorithms: ECDSA, BLS, P256, Cumulative T2, Cumulative T3, Combined T1
-        uint8[] memory algIds = new uint8[](6);
+        // Default approved algorithms: ECDSA, BLS, P256, Cumulative T2, Cumulative T3, Combined T1, Weighted, SessionKey
+        uint8[] memory algIds = new uint8[](8);
         algIds[0] = 0x02; // ALG_ECDSA
         algIds[1] = 0x01; // ALG_BLS
         algIds[2] = 0x03; // ALG_P256
         algIds[3] = 0x04; // ALG_CUMULATIVE_T2 (P256 + BLS)
         algIds[4] = 0x05; // ALG_CUMULATIVE_T3 (P256 + BLS + Guardian)
         algIds[5] = 0x06; // ALG_COMBINED_T1 (P256 + ECDSA zero-trust)
+        algIds[6] = 0x07; // ALG_WEIGHTED (resolves to 0x02/0x04/0x05 based on weight)
+        algIds[7] = 0x08; // ALG_SESSION_KEY (time-limited session key)
 
         // minDailyLimit = 10% of dailyLimit — stolen ECDSA key cannot reduce limit below this floor
         uint256 minLimit = dailyLimit / 10;
