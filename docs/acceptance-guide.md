@@ -586,3 +586,61 @@ forge test --summary    # 精简输出
 | Parser | 只增不减注册，优雅 fallback，parser 只能收紧不能绕过 guard |
 | 测试覆盖 | 434 单元测试 + 50 E2E 测试，覆盖所有关键路径 |
 | 开放项 | Fuzz 测试，形式化验证，主网审计（计划中） |
+
+---
+
+## 13. 多链部署指南
+
+### 13.1 当前部署状态
+
+| 网络 | 状态 | Factory | 备注 |
+|------|------|---------|------|
+| Sepolia | ✅ 已部署 M6 r2 | `AIRACCOUNT_M6_R2_FACTORY` (.env.sepolia) | 441 单元测试 + 全量 E2E 验证 |
+| OP Mainnet | 🔲 脚本就绪，待部署 | — | EIP-7212 ✓ Fjord upgrade |
+| Base Mainnet | 🔲 脚本就绪（token-presets.json 已配置） | — | 同 OP 步骤 |
+| Arbitrum One | 🔲 规划中 | — | M7 目标 |
+
+### 13.2 OP Mainnet 部署步骤
+
+```bash
+# 1. 填写 .env.optimism
+#    PRIVATE_KEY=0x...
+#    PRIVATE_KEY_BOB=0x...
+#    PRIVATE_KEY_JACK=0x...
+#    (OPT_MAINNET_RPC 已填写，使用 Alchemy OP key)
+
+# 2. 确保 out/ 有最新 artifacts
+forge build
+
+# 3. 部署工厂（~0.001–0.003 ETH，OP gas 极便宜）
+pnpm tsx scripts/deploy-op-mainnet.ts
+
+# 4. 将输出的地址填入 .env.optimism
+#    AIRACCOUNT_OP_FACTORY=0x...
+#    FACTORY_ADDRESS=0x...
+
+# 5. 运行 E2E 验证（向 deployer 地址充少量 OP ETH 后）
+pnpm tsx scripts/test-op-e2e.ts
+```
+
+### 13.3 OP Mainnet 关键合约地址
+
+| 合约 | OP Mainnet 地址 | 说明 |
+|------|----------------|------|
+| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | ERC-4337 v0.7（同 Sepolia） |
+| USDC (native) | `0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85` | Circle native USDC on OP |
+| USDT | `0x94b008aA00579c1307B0EF2c499aD98a8ce58e58` | Tether on OP |
+| WETH | `0x4200000000000000000000000000000000000006` | OP 系统合约 WETH |
+| WBTC | `0x68f180fcCe6836688e9084f035309E29Bf0A2095` | Wrapped BTC on OP |
+| EIP-7212 P256 precompile | `0x0000000000000000000000000000000000000100` | Fjord upgrade (Jun 2024) ✓ |
+
+### 13.4 OP Gas 经济学
+
+| 操作 | Gas 单位 | USD 成本（@0.005 gwei, ETH=$3500） |
+|------|---------|----------------------------------|
+| 账户创建（含 guard） | ~2,947,710 | ~$0.052 |
+| ECDSA UserOp | ~140,352 | ~$0.0025 |
+| T2 Weighted UserOp | ~168,731 | ~$0.003 |
+| 社交恢复完整流程 | ~555,000 | ~$0.010 |
+
+> L2 sub-cent 成本：OP 链上 Gas 赞助（SuperPaymaster）每月 100 万笔交易约 $2,500 — 完全商业可行。
