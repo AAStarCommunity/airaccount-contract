@@ -90,6 +90,10 @@ abstract contract AAStarAirAccountBase {
     /// @dev Transient storage slot base for algId (slot = ALG_ID_SLOT_BASE + nonce)
     uint256 internal constant ALG_ID_SLOT_BASE = 0x0A1600;
 
+    /// @dev Transient storage slot base for session key address (parallel queue to ALG_ID_SLOT_BASE)
+    ///      Only populated when algId == ALG_SESSION_KEY. Consumed in _enforceGuard for scope check.
+    uint256 internal constant SESSION_KEY_SLOT_BASE = 0x0A1700;
+
     // ── P256 Passkey ──
 
     /// @notice P256 public key x-coordinate
@@ -172,6 +176,7 @@ abstract contract AAStarAirAccountBase {
     error InvalidNewOwner();
     error Reentrancy();
     error InvalidGuardianSignature();
+    error SessionScopeViolation();
     error InvalidTierConfig();
 
     // ─── Events ───────────────────────────────────────────────────────
@@ -428,6 +433,11 @@ abstract contract AAStarAirAccountBase {
         // All other → delegate to external validator router
         if (address(validator) == address(0)) return 1;
         _storeValidatedAlgId(firstByte);
+        // SESSION_KEY: save session key address so _enforceGuard can verify contractScope/selectorScope.
+        // Signature layout: [algId(1)][account(20)][sessionKey(20)][ECDSASig(65)] — sessionKey at [21:41]
+        if (firstByte == ALG_SESSION_KEY && signature.length >= 41) {
+            _storeSessionKey(address(bytes20(signature[21:41])));
+        }
         return validator.validateSignature(userOpHash, signature);
     }
 
@@ -878,6 +888,32 @@ abstract contract AAStarAirAccountBase {
                 }
             }
         }
+
+        // SESSION KEY scope enforcement (M6.4 fix): verify contractScope and selectorScope
+        // against the live calldata. The session key address was stored during validateUserOp
+        // via _storeSessionKey(). We read scope fields from SessionKeyValidator.sessions().
+        if (algId == ALG_SESSION_KEY && address(validator) != address(0)) {
+            address skValidator = IAAStarValidator(address(validator)).getAlgorithm(ALG_SESSION_KEY);
+            if (skValidator != address(0)) {
+                address sessionKey = _consumeSessionKey();
+                if (sessionKey != address(0)) {
+                    (bool ok, bytes memory data) = skValidator.staticcall(
+                        abi.encodeWithSignature("sessions(address,address)", address(this), sessionKey)
+                    );
+                    if (ok && data.length >= 128) {
+                        // ABI decode: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
+                        (, address contractScope, bytes4 selectorScope,) =
+                            abi.decode(data, (uint48, address, bytes4, bool));
+                        if (contractScope != address(0) && dest != contractScope) {
+                            revert SessionScopeViolation();
+                        }
+                        if (selectorScope != bytes4(0) && func.length >= 4 && bytes4(func[:4]) != selectorScope) {
+                            revert SessionScopeViolation();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ─── Transient Storage AlgId Queue ────────────────────────────────
@@ -899,6 +935,26 @@ abstract contract AAStarAirAccountBase {
             let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
             algId := tload(add(add(ALG_ID_SLOT_BASE, 2), readIdx))
             tstore(add(ALG_ID_SLOT_BASE, 1), add(readIdx, 1))
+        }
+    }
+
+    /// @dev Push session key address to transient storage queue (parallel to algId queue).
+    ///      Only called when algId == ALG_SESSION_KEY during validateUserOp.
+    function _storeSessionKey(address key) internal {
+        assembly {
+            let writeIdx := tload(SESSION_KEY_SLOT_BASE)
+            tstore(add(add(SESSION_KEY_SLOT_BASE, 2), writeIdx), key)
+            tstore(SESSION_KEY_SLOT_BASE, add(writeIdx, 1))
+        }
+    }
+
+    /// @dev Pop session key address from transient storage queue.
+    ///      Called during _enforceGuard when algId == ALG_SESSION_KEY.
+    function _consumeSessionKey() internal returns (address key) {
+        assembly {
+            let readIdx := tload(add(SESSION_KEY_SLOT_BASE, 1))
+            key := tload(add(add(SESSION_KEY_SLOT_BASE, 2), readIdx))
+            tstore(add(SESSION_KEY_SLOT_BASE, 1), add(readIdx, 1))
         }
     }
 

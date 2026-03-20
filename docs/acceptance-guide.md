@@ -176,6 +176,11 @@ Per-token spending limits enforced by `AAStarGlobalGuard`:
 Grant a DApp limited signing power without exposing the owner key:
 - `sessionKeyValidator.grantSession(account, sessionKey, expiry, contractScope, selectorScope, ownerSig)`
 - DApp signs UserOps with the session key; validator checks expiry + signature
+- **Maximum session duration: 30 days** — prevents permanent session key delegation
+- **contractScope / selectorScope enforced on-chain** in `_enforceGuard` (execution phase):
+  - Session key address passed via transient storage from validation to execution
+  - `_enforceGuard` calls `SessionKeyValidator.sessions(account, key)` and validates `dest` / `func[0:4]`
+  - `address(0)` scope = no restriction; specific address/selector = strict enforcement
 - Tier 1 limits apply (same as ECDSA); owner can revoke instantly
 - algId `0x08` — register `SessionKeyValidator` in the Validator Router
 
@@ -186,6 +191,19 @@ Privacy isolation: each DApp sees a different on-chain address:
 - `getOrCreateAccount(dapp, clients...)` — deploys or returns existing account
 - All OAPD accounts share the same owner key, guardian pair, and social recovery path
 - Zero Solidity changes — pure TypeScript feature using existing CREATE2 factory
+
+### 4.8a EIP-7702 AirAccountDelegate (M6.8)
+
+Allows an EOA to delegate execution to AirAccount logic without deploying a new contract:
+- `AirAccountDelegate.sol` — standalone implementation contract; EOA sets it as code via EIP-7702
+- `owner() = address(this)` — the delegating EOA is its own owner
+- **ERC-7201 namespaced storage** — prevents slot collisions when multiple EOAs delegate to same impl
+- **Guardian Rescue** (instead of key rotation): 2-of-3 guardian approval → execute asset transfer
+  - `initiateRescue(to)` — any guardian, blocked if rescue already pending (prevents DoS override)
+  - `approveRescue()` — 2nd or 3rd guardian, after timelock → `executeRescue()` transfers assets
+  - `cancelRescue()` — requires 2-of-3 guardian votes (stolen key cannot cancel)
+- **EIP-7702 limitation**: private key cannot be revoked — rescue protects assets, not key invalidation
+- **ERC-7579 minimal shim**: `accountId`, `supportsModule`, `isModuleInstalled`, `isValidSignature`
 
 ### 4.8 Pluggable Calldata Parser (M6.6b)
 
@@ -478,7 +496,7 @@ BLS nodes are registered in `AAStarBLSAlgorithm`:
 
 | Script | Tests | Command |
 |--------|-------|---------|
-| Foundry unit tests | 345 tests | `forge test -vv` |
+| Foundry unit tests | 395 tests | `forge test -vv` |
 | Tiered signature E2E | 5 tests | `pnpm tsx scripts/test-tiered-e2e.ts` |
 | Social recovery E2E | 5 tests | `pnpm tsx scripts/test-social-recovery-e2e.ts` |
 | Gasless E2E | 1 test | `pnpm tsx scripts/test-gasless-complete-e2e.ts` |
@@ -510,7 +528,7 @@ pnpm tsx scripts/test-gasless-complete-e2e.ts
 
 ### 9.4 Test Results Summary
 
-**Foundry**: 345/345 passed
+**Foundry**: 395/395 passed
 
 **Sepolia E2E**: 32/32 passed
 
@@ -564,7 +582,7 @@ pnpm dev    # Opens at http://localhost:5173
 2. **Chain compatibility**: P256 precompile (EIP-7212) and BLS precompiles (EIP-2537) only available on chains with Pectra/Prague upgrades.
 3. **Non-upgradable**: Bug fixes require new Factory deployment + user migration.
 4. ~~**Single bundle same-sender**~~: Fixed — uses transient storage queue to prevent cross-UserOp algId contamination.
-5. **Session key scope enforcement**: `contractScope` and `selectorScope` are stored but not enforced in `validate()` — enforcement is intended for the guard layer. Full enforcement requires additional guard integration in a future milestone.
+5. ~~**Session key scope enforcement**~~: Enforced on-chain in `_enforceGuard` (M6.4 fix). Session key address passed via transient storage; scope checked against live calldata before execution.
 
 ---
 
@@ -578,5 +596,5 @@ See `docs/security-review.md` and `docs/audit_report_2026_03_19_comprehensive.md
 - **Session Key**: Expiry enforced on-chain, instant revocation by owner, Tier 1 spending limits
 - **OAPD**: Cross-DApp address isolation via deterministic salt, no Solidity changes
 - **Parser**: Only-add registry, graceful fallback, no parser can bypass guard
-- **345 unit tests** + 32 E2E tests covering all critical paths
-- **Open items**: Session key scope enforcement (guard layer integration), fuzz testing, formal verification, mainnet audit
+- **395 unit tests** + 32 E2E tests covering all critical paths
+- **Open items**: M6.1 weighted signature (algId 0x07), fuzz testing, formal verification, mainnet audit
