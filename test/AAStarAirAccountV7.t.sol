@@ -275,4 +275,60 @@ contract AAStarAirAccountV7Test is Test {
         assertEq(account.entryPoint(), entryPointAddr, "EntryPoint should match");
         assertEq(account.owner(), ownerWallet.addr, "Owner should match");
     }
+
+    // ─── ERC-7579 Minimum Compatibility Shim (M6) ────────────────────
+
+    function test_erc7579_accountId() public view {
+        string memory id = account.accountId();
+        assertEq(id, "airaccount.v7@0.15.0");
+    }
+
+    function test_erc7579_supportsModule_validator() public view {
+        assertTrue(account.supportsModule(1));  // MODULE_TYPE_VALIDATOR
+    }
+
+    function test_erc7579_supportsModule_executor() public view {
+        assertTrue(account.supportsModule(2));  // MODULE_TYPE_EXECUTOR
+    }
+
+    function test_erc7579_supportsModule_hook_false() public view {
+        assertFalse(account.supportsModule(3)); // MODULE_TYPE_HOOK — M7
+    }
+
+    function test_erc7579_isModuleInstalled_noValidator_false() public view {
+        // No validator set in empty config
+        assertFalse(account.isModuleInstalled(1, address(0x1234), ""));
+    }
+
+    function test_erc7579_isModuleInstalled_executor_false() public view {
+        // Executors: always false in M6 shim
+        assertFalse(account.isModuleInstalled(2, address(0x1234), ""));
+    }
+
+    function test_erc7579_isValidSignature_validOwnerSig_returnsMagic() public view {
+        bytes32 hash = keccak256("some message");
+        // Sign with owner key
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerWallet, hash);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        bytes4 result = account.isValidSignature(hash, sig);
+        assertEq(result, bytes4(0x1626ba7e)); // ERC-1271 magic value
+    }
+
+    function test_erc7579_isValidSignature_wrongSigner_returnsInvalid() public view {
+        bytes32 hash = keccak256("some message");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(randomWallet, hash);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        bytes4 result = account.isValidSignature(hash, sig);
+        assertEq(result, bytes4(0xffffffff));
+    }
+
+    function test_erc165_supportsInterface_erc165() public view {
+        assertTrue(account.supportsInterface(0x01ffc9a7)); // ERC-165 itself
+    }
+
+    function test_erc165_supportsInterface_erc1271() public view {
+        assertTrue(account.supportsInterface(0x1626ba7e)); // ERC-1271
+    }
 }
