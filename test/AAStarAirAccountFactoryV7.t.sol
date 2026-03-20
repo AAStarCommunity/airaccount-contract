@@ -105,8 +105,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         bytes memory sig2a = _guardianSig(g2Wallet, ownerA, 0);
         address a1 = factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sig1a, g2Wallet.addr, sig2a, 0.1 ether);
 
-        // Different limit → different config → different address (different initcode hash)
-        // Need different salt since we're using the same owner and guardians
+        // With clone pattern: address depends on owner+salt only (not config).
+        
         bytes memory sig1b = _guardianSig(g1Wallet, ownerA, 1);
         bytes memory sig2b = _guardianSig(g2Wallet, ownerA, 1);
         address a2 = factory.createAccountWithDefaults(ownerA, 1, g1Wallet.addr, sig1b, g2Wallet.addr, sig2b, 1 ether);

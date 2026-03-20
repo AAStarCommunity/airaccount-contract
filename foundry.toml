@@ -9,7 +9,7 @@ solc_version = "0.8.33"
 evm_version = "cancun"
 via_ir = true
 optimizer = true
-optimizer_runs = 200  # 1000 runs exceeded EIP-170 24KB for AAStarAirAccountFactoryV7; 200 gives +1.3KB margin
+optimizer_runs = 1    # minimize deploy-time bytecode size (account 26KB+ needs EIP-170 headroom after clone refactor)
 
 remappings = [
     "@account-abstraction/=lib/account-abstraction/contracts/",

@@ -49,7 +49,9 @@ contract AAStarAirAccountV7Test is Test {
         mockEntryPoint = new MockEntryPoint();
         entryPointAddr = address(mockEntryPoint);
 
-        account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, _emptyConfig());
+        account = new AAStarAirAccountV7();
+        account.initialize(entryPointAddr, ownerWallet.addr, _emptyConfig());
+
 
         // Fund the account with 10 ETH
         vm.deal(address(account), 10 ether);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.33;
 
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
@@ -31,7 +32,7 @@ interface ICalldataParserRegistry {
  *      - Monotonic config: daily limit can only decrease, algorithms can only be added
  *      - Tier + guard checks enforced in execute/executeBatch before every _call
  */
-abstract contract AAStarAirAccountBase {
+abstract contract AAStarAirAccountBase is Initializable {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
@@ -57,10 +58,10 @@ abstract contract AAStarAirAccountBase {
     /// @dev Recovery threshold: 2 out of 3 guardians
     uint256 internal constant RECOVERY_THRESHOLD = 2;
 
-    // ─── Immutable State ──────────────────────────────────────────────
+    // ─── State ────────────────────────────────────────────────────────
 
-    /// @notice The ERC-4337 EntryPoint contract
-    address public immutable entryPoint;
+    /// @notice The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility)
+    address public entryPoint;
 
     // ─── Mutable State ───────────────────────────────────────────────
 
@@ -287,18 +288,30 @@ abstract contract AAStarAirAccountBase {
         }
     }
 
-    // ─── Constructor ──────────────────────────────────────────────────
+    // ─── Initialization ───────────────────────────────────────────────
 
+    /// @dev Internal initializer — called by AAStarAirAccountV7.initialize() via the initializer modifier.
+    ///      Guard must be pre-deployed by the factory (or test helper) before calling this.
+    ///      Keeping guard deployment in this function would embed AAStarGlobalGuard's creation code
+    ///      (~4,595 bytes) in the account's runtime, pushing it over EIP-170's 24,576-byte limit.
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _owner Initial account owner (ECDSA signer)
-    /// @param _config Initialization config: guardians, guard daily limit, approved algorithms
-    constructor(address _entryPoint, address _owner, InitConfig memory _config) {
+    /// @param _guardians Three guardian slots (address(0) = unused)
+    /// @param _minDailyLimit Floor for guardDecreaseDailyLimit (0 = no floor)
+    /// @param _guardAddr Pre-deployed AAStarGlobalGuard address, or address(0) for no guard
+    function _initAccount(
+        address _entryPoint,
+        address _owner,
+        address[3] memory _guardians,
+        uint256 _minDailyLimit,
+        address _guardAddr
+    ) internal {
         entryPoint = _entryPoint;
         owner = _owner;
 
         // Initialize guardians (skip address(0) slots)
         for (uint8 i = 0; i < 3; i++) {
-            address g = _config.guardians[i];
+            address g = _guardians[i];
             if (g != address(0)) {
                 if (g == _owner) revert InvalidGuardian();
                 // Check no duplicates with previously added guardians
@@ -311,17 +324,10 @@ abstract contract AAStarAirAccountBase {
             }
         }
 
-        // Initialize guard atomically (no unprotected window)
-        if (_config.approvedAlgIds.length > 0 || _config.dailyLimit > 0) {
-            guard = new AAStarGlobalGuard(
-                address(this),
-                _config.dailyLimit,
-                _config.approvedAlgIds,
-                _config.minDailyLimit,
-                _config.initialTokens,
-                _config.initialTokenConfigs
-            );
-            emit GuardInitialized(address(guard), _config.dailyLimit);
+        // Accept pre-deployed guard (no guard creation here — keeps account runtime under EIP-170)
+        if (_guardAddr != address(0)) {
+            guard = AAStarGlobalGuard(_guardAddr);
+            emit GuardInitialized(_guardAddr, guard.dailyLimit());
         }
     }
 

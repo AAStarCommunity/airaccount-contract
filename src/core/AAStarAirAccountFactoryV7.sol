@@ -4,17 +4,23 @@ pragma solidity ^0.8.33;
 import {AAStarAirAccountV7} from "./AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "./AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
-import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
-/// @title AAStarAirAccountFactoryV7 - CREATE2 factory for V7 accounts
-/// @notice Deploys account + guard + guardians atomically. No unprotected window.
+/// @title AAStarAirAccountFactoryV7 - EIP-1167 clone factory for V7 accounts
+/// @notice Deploys minimal proxy clones pointing to a shared implementation, then calls initialize().
+///         This keeps factory bytecode well under EIP-170's 24,576-byte limit.
+///         Account address = Clones.predictDeterministicAddress(implementation, keccak256(owner ++ salt))
 /// @dev Provides both full-config and convenience (default guardian) creation methods.
 ///      No default daily limit — user must specify their own limit during creation.
 contract AAStarAirAccountFactoryV7 {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
+
+    /// @dev Shared implementation contract — all user accounts are clones of this address.
+    ///      Deployed atomically in the factory constructor. Never call initialize() on this address directly.
+    address public immutable implementation;
 
     /// @dev The EntryPoint address used for all created accounts
     address public immutable entryPoint;
@@ -42,6 +48,8 @@ contract AAStarAirAccountFactoryV7 {
         AAStarGlobalGuard.TokenConfig[] memory defaultConfigs
     ) {
         require(defaultTokens.length == defaultConfigs.length, "Token/config length mismatch");
+        // Deploy shared implementation. All user accounts are EIP-1167 clones of this address.
+        implementation = address(new AAStarAirAccountV7());
         entryPoint = _entryPoint;
         defaultCommunityGuardian = _communityGuardian;
         for (uint256 i = 0; i < defaultTokens.length; i++) {
@@ -75,35 +83,39 @@ contract AAStarAirAccountFactoryV7 {
         uint256 salt,
         AAStarAirAccountBase.InitConfig memory config
     ) external returns (address account) {
-        address predicted = getAddress(owner, salt, config);
-        if (predicted.code.length > 0) {
-            return predicted;
+        bytes32 cloneSalt = _getSalt(owner, salt);
+        account = Clones.predictDeterministicAddress(implementation, cloneSalt);
+        if (account.code.length > 0) {
+            return account;
         }
-
-        bytes memory bytecode = abi.encodePacked(
-            type(AAStarAirAccountV7).creationCode,
-            abi.encode(entryPoint, owner, config)
-        );
-
-        account = Create2.deploy(0, _getSalt(owner, salt), bytecode);
+        // Pre-deploy guard bound to the predicted account address.
+        // Guard must be deployed BEFORE the clone so it can reference the account address.
+        // guard creation code stays in factory runtime, not in account runtime — avoids EIP-170 overflow.
+        address guardAddr = address(0);
+        if (config.dailyLimit > 0) {
+            guardAddr = address(new AAStarGlobalGuard(
+                account,
+                config.dailyLimit,
+                config.approvedAlgIds,
+                config.minDailyLimit,
+                config.initialTokens,
+                config.initialTokenConfigs
+            ));
+        }
+        account = Clones.cloneDeterministic(implementation, cloneSalt);
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
         emit AccountCreated(account, owner, salt);
     }
 
     /// @notice Predict the counterfactual address for a full-config account.
+    /// @dev With the clone pattern, the address depends only on implementation + salt (not config).
+    ///      The config parameter is retained for interface compatibility.
     function getAddress(
         address owner,
         uint256 salt,
-        AAStarAirAccountBase.InitConfig memory config
+        AAStarAirAccountBase.InitConfig memory /* config */
     ) public view returns (address) {
-        bytes memory bytecode = abi.encodePacked(
-            type(AAStarAirAccountV7).creationCode,
-            abi.encode(entryPoint, owner, config)
-        );
-
-        return Create2.computeAddress(
-            _getSalt(owner, salt),
-            keccak256(bytecode)
-        );
+        return Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt));
     }
 
     // ─── Convenience: Default Guardian Setup ────────────────────────
@@ -143,35 +155,39 @@ contract AAStarAirAccountFactoryV7 {
         (address recovered2,,) = acceptHash.tryRecover(guardian2Sig);
         if (recovered2 != guardian2) revert GuardianDidNotAccept(guardian2);
 
+        bytes32 cloneSalt = _getSalt(owner, salt);
+        account = Clones.predictDeterministicAddress(implementation, cloneSalt);
+        if (account.code.length > 0) {
+            return account;
+        }
+
         AAStarAirAccountBase.InitConfig memory config = _buildDefaultConfig(
             guardian1, guardian2, dailyLimit
         );
-        address predicted = getAddress(owner, salt, config);
-        if (predicted.code.length > 0) {
-            return predicted;
-        }
-
-        bytes memory bytecode = abi.encodePacked(
-            type(AAStarAirAccountV7).creationCode,
-            abi.encode(entryPoint, owner, config)
-        );
-
-        account = Create2.deploy(0, _getSalt(owner, salt), bytecode);
+        // Pre-deploy guard bound to the predicted account address before cloning.
+        address guardAddr = address(new AAStarGlobalGuard(
+            account,
+            config.dailyLimit,
+            config.approvedAlgIds,
+            config.minDailyLimit,
+            config.initialTokens,
+            config.initialTokenConfigs
+        ));
+        account = Clones.cloneDeterministic(implementation, cloneSalt);
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
         emit AccountCreated(account, owner, salt);
     }
 
     /// @notice Predict address for a default-config account.
+    /// @dev With the clone pattern, the address depends only on implementation + salt (not guardian config).
     function getAddressWithDefaults(
         address owner,
         uint256 salt,
-        address guardian1,
-        address guardian2,
-        uint256 dailyLimit
+        address /* guardian1 */,
+        address /* guardian2 */,
+        uint256 /* dailyLimit */
     ) public view returns (address) {
-        AAStarAirAccountBase.InitConfig memory config = _buildDefaultConfig(
-            guardian1, guardian2, dailyLimit
-        );
-        return getAddress(owner, salt, config);
+        return Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt));
     }
 
     // ─── Internal ───────────────────────────────────────────────────
