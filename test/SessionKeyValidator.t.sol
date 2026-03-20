@@ -73,6 +73,26 @@ contract SessionKeyValidatorTest is Test {
         validator.grantSessionDirect(account, sessionKey, 0, address(0), bytes4(0));
     }
 
+    function test_grantSessionDirect_expiryBeyond30Days_reverts() public {
+        vm.prank(owner);
+        vm.expectRevert(SessionKeyValidator.ExpiryTooFar.selector);
+        validator.grantSessionDirect(
+            account, sessionKey,
+            uint48(block.timestamp + 31 days),
+            address(0), bytes4(0)
+        );
+    }
+
+    function test_grantSessionDirect_exactly30Days_succeeds() public {
+        vm.prank(owner);
+        validator.grantSessionDirect(
+            account, sessionKey,
+            uint48(block.timestamp + 30 days),
+            address(0), bytes4(0)
+        );
+        assertTrue(validator.isSessionActive(account, sessionKey));
+    }
+
     function test_grantSessionDirect_duplicate_active_reverts() public {
         vm.prank(owner);
         validator.grantSessionDirect(account, sessionKey, uint48(block.timestamp + 1 hours), address(0), bytes4(0));

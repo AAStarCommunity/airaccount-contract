@@ -109,6 +109,8 @@ contract UniswapV3Parser is ICalldataParser {
         // path is a dynamic bytes field. Its offset from the start of the tuple data (offset 4)
         // is stored at data[4:36]. Add 4 (selector) to get absolute offset of path length word.
         uint256 pathOffset = uint256(bytes32(data[4:36]));
+        // Guard against overflow: pathOffset must fit within data bounds before adding 4
+        if (pathOffset > data.length - 4) return (address(0), 0);
         uint256 pathLenOffset = 4 + pathOffset;           // absolute offset of path.length word
         if (data.length < pathLenOffset + 32) return (address(0), 0);
 

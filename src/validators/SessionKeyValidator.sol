@@ -34,6 +34,12 @@ import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
 ///       selectorScope
 ///   )).toEthSignedMessageHash()
 ///
+/// @dev Scope enforcement limitation: validate() only receives the userOpHash — it cannot
+///      inspect the actual calldata target or selector. contractScope and selectorScope are
+///      included in the grant hash (replay protection) but are NOT enforced on-chain during
+///      validation. Enforcement is done off-chain by bundler/DVT policy nodes.
+///      M7 will add _enforceGuard integration to check scope against live calldata.
+///
 /// @dev Spend cap limitation: validate() is a view function (ERC-4337 constraint),
 ///      so on-chain spend tracking is impossible here. Spend caps are enforced
 ///      off-chain by bundler/DVT nodes. M7 will add execution-phase spend recording.
@@ -72,6 +78,11 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     error SessionAlreadyExists();
     error ExpiryInPast();
     error InvalidExpiry();
+    error ExpiryTooFar();
+
+    /// @dev Maximum session duration: 30 days. Prevents permanent session keys
+    ///      that would be indistinguishable from full owner delegation.
+    uint48 internal constant MAX_SESSION_DURATION = 30 days;
 
     // ─── IAAStarAlgorithm ────────────────────────────────────────────
 
@@ -219,6 +230,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     function _checkExpiry(uint48 expiry) internal view {
         if (expiry == 0) revert InvalidExpiry();
         if (block.timestamp >= expiry) revert ExpiryInPast();
+        if (expiry > block.timestamp + MAX_SESSION_DURATION) revert ExpiryTooFar();
     }
 
     function _checkNotExists(address account, address sessionKey) internal view {
