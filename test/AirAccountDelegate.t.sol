@@ -417,6 +417,138 @@ contract AirAccountDelegateTest is Test {
         delegate.approveRescue();
     }
 
+    // ─── 6b. ExecuteBatch edge cases ──────────────────────────────────────────
+
+    function test_executeBatch_arrayMismatch_reverts() public {
+        _initialize(5 ether);
+        address[] memory dests  = new address[](2);
+        uint256[] memory values = new uint256[](3); // mismatch
+        bytes[]   memory data   = new bytes[](2);
+        vm.prank(eoa);
+        vm.expectRevert(AirAccountDelegate.InvalidAddress.selector);
+        delegate.executeBatch(dests, values, data);
+    }
+
+    function test_executeBatch_dataMismatch_reverts() public {
+        _initialize(5 ether);
+        address[] memory dests  = new address[](2);
+        uint256[] memory values = new uint256[](2);
+        bytes[]   memory data   = new bytes[](3); // mismatch
+        vm.prank(eoa);
+        vm.expectRevert(AirAccountDelegate.InvalidAddress.selector);
+        delegate.executeBatch(dests, values, data);
+    }
+
+    // ─── 6c. Rescue completeness ─────────────────────────────────────────────
+
+    /// @notice executeRescue should actually transfer ETH to rescueTo
+    function test_rescue_executeTransfersETH() public {
+        _initialize(1 ether);
+        address rescueDest = makeAddr("safeWallet");
+
+        vm.prank(guardian1);
+        delegate.initiateRescue(rescueDest);
+        vm.prank(guardian2);
+        delegate.approveRescue();
+
+        vm.warp(block.timestamp + 2 days + 1);
+
+        uint256 eoaBalBefore  = address(eoa).balance;
+        uint256 destBalBefore = rescueDest.balance;
+
+        delegate.executeRescue(); // anyone can call after timelock
+
+        assertEq(address(eoa).balance, 0,                                  "EOA should be drained");
+        assertEq(rescueDest.balance,   destBalBefore + eoaBalBefore,        "rescueDest should receive all ETH");
+    }
+
+    /// @notice executeRescue with zero balance completes without revert
+    function test_rescue_executeWithZeroBalance() public {
+        _initialize(1 ether);
+        address rescueDest = makeAddr("safeWallet");
+
+        vm.prank(guardian1);
+        delegate.initiateRescue(rescueDest);
+        vm.prank(guardian2);
+        delegate.approveRescue();
+        vm.warp(block.timestamp + 2 days + 1);
+
+        // Drain EOA first (simulate attacker taking ETH via direct call)
+        vm.deal(eoa, 0);
+
+        delegate.executeRescue(); // should not revert even with 0 balance
+        assertEq(rescueDest.balance, 0);
+    }
+
+    /// @notice cancelRescue after approval clears all state (not just timestamp)
+    function test_rescue_cancelAfterApproval_clearsState() public {
+        _initialize(1 ether);
+        address rescueDest = makeAddr("safeWallet");
+
+        vm.prank(guardian1);
+        delegate.initiateRescue(rescueDest);
+        vm.prank(guardian2);
+        delegate.approveRescue(); // now approved
+
+        (, uint256 ts, uint8 approvals, bool approved) = delegate.getRescueState();
+        assertTrue(approved, "should be approved before cancel");
+
+        vm.prank(eoa); // EOA self-cancels
+        delegate.cancelRescue();
+
+        (address to2, uint256 ts2, uint8 ap2, bool appr2) = delegate.getRescueState();
+        assertEq(to2,   address(0), "rescueTo cleared");
+        assertEq(ts2,   0,          "timestamp cleared");
+        assertEq(ap2,   0,          "approvals cleared");
+        assertFalse(appr2,          "approved flag cleared");
+    }
+
+    /// @notice After cancel, executeRescue should revert
+    function test_rescue_executeAfterCancel_reverts() public {
+        _initialize(1 ether);
+        address rescueDest = makeAddr("safeWallet");
+
+        vm.prank(guardian1);
+        delegate.initiateRescue(rescueDest);
+        vm.prank(guardian2);
+        delegate.approveRescue();
+
+        vm.prank(eoa);
+        delegate.cancelRescue();
+
+        vm.expectRevert(AirAccountDelegate.NoRescuePending.selector);
+        delegate.executeRescue();
+    }
+
+    /// @notice Guardian can override a pending rescue with a different destination
+    ///         (resets timer and approvals — design decision)
+    function test_rescue_overrideWithDifferentDestination() public {
+        _initialize(1 ether);
+        address dest1 = makeAddr("dest1");
+        address dest2 = makeAddr("dest2");
+
+        vm.prank(guardian1);
+        delegate.initiateRescue(dest1);
+
+        // guardian1 changes their mind
+        vm.prank(guardian1);
+        delegate.initiateRescue(dest2);
+
+        (address to,, uint8 approvals,) = delegate.getRescueState();
+        assertEq(to, dest2, "destination should be updated");
+        // approvals reset to initiator's vote only (bit0 = 1)
+        assertEq(approvals, 1, "approvals reset to initiator only");
+    }
+
+    // ─── 6d. WithdrawDepositTo access control ────────────────────────────────
+
+    function test_withdrawDepositTo_notSelf_reverts() public {
+        _initialize(1 ether);
+        vm.prank(other);
+        vm.expectRevert(AirAccountDelegate.OnlySelf.selector);
+        delegate.withdrawDepositTo(payable(other), 0);
+    }
+
     // ─── 7. Deposit management ────────────────────────────────────────────────
 
     function test_addDeposit_forwardsToEntryPoint() public {
