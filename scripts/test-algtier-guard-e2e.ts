@@ -173,7 +173,7 @@ const GUARD_ABI = [
     outputs: [{ name: "", type: "address" }],
   },
   {
-    name: "isAlgorithmApproved",
+    name: "approvedAlgorithms",
     type: "function",
     stateMutability: "view",
     inputs: [{ name: "algId", type: "uint8" }],
@@ -317,7 +317,7 @@ async function main() {
 
   for (let i = 0; i < algIds.length; i++) {
     const isApproved = await publicClient.readContract({
-      address: guardAddr as Address, abi: GUARD_ABI, functionName: "isAlgorithmApproved",
+      address: guardAddr as Address, abi: GUARD_ABI, functionName: "approvedAlgorithms",
       args: [algIds[i]],
     });
     if (!isApproved) {
@@ -341,7 +341,7 @@ async function main() {
 
   try {
     const isFFApproved = await publicClient.readContract({
-      address: guardAddr as Address, abi: GUARD_ABI, functionName: "isAlgorithmApproved",
+      address: guardAddr as Address, abi: GUARD_ABI, functionName: "approvedAlgorithms",
       args: [0xFF],
     });
     if (!isFFApproved) {
