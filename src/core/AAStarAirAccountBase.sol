@@ -44,6 +44,7 @@ abstract contract AAStarAirAccountBase {
     uint8 internal constant ALG_CUMULATIVE_T3 = 0x05; // P256 + BLS + Guardian ECDSA
     uint8 internal constant ALG_COMBINED_T1 = 0x06;   // P256 AND ECDSA simultaneously (zero-trust Tier 1)
     uint8 internal constant ALG_SESSION_KEY = 0x08;   // Time-limited session key (ephemeral ECDSA, Tier 1)
+    uint8 internal constant ALG_WEIGHTED    = 0x07;   // Weighted multi-signature (configurable per-source weights)
 
     uint256 internal constant G2_POINT_LENGTH = 256;
 
@@ -97,6 +98,10 @@ abstract contract AAStarAirAccountBase {
     ///        0x02 → P256 session:  remaining 31 bytes are the low 31 bytes of keccak256(keyX||keyY)
     uint256 internal constant SESSION_KEY_SLOT_BASE = 0x0A1700;
 
+    /// @dev Transient storage slot base for accumulated signature weight (parallel queue to ALG_ID_SLOT_BASE).
+    ///      Only populated when algId == ALG_WEIGHTED. Consumed in execute/executeBatch to resolve tier.
+    uint256 internal constant WEIGHT_SLOT_BASE = 0x0A1800;
+
     // ── P256 Passkey ──
 
     /// @notice P256 public key x-coordinate
@@ -121,15 +126,51 @@ abstract contract AAStarAirAccountBase {
     address private _guardian1;
     address private _guardian2;
 
-    /// @notice Active recovery proposal
-    RecoveryProposal public activeRecovery;
-
     struct RecoveryProposal {
         address newOwner;
         uint256 proposedAt;
         uint256 approvalBitmap;      // bit 0 = guardian[0], bit 1 = guardian[1], bit 2 = guardian[2]
         uint256 cancellationBitmap;  // same layout, for 2-of-3 cancel threshold
     }
+
+    /// @notice Active recovery proposal
+    RecoveryProposal public activeRecovery;
+
+    // ── Weighted Multi-Signature (algId 0x07, M6.1) ──
+
+    /// @notice Weighted signature configuration: per-source weights and per-tier thresholds.
+    ///         All 10 meaningful bytes pack into one storage slot.
+    struct WeightConfig {
+        uint8 passkeyWeight;   // P256 passkey signature weight (default: 3)
+        uint8 ecdsaWeight;     // Owner ECDSA signature weight  (default: 2)
+        uint8 blsWeight;       // DVT BLS aggregate weight      (default: 2)
+        uint8 guardian0Weight; // Guardian[0] ECDSA weight      (default: 1)
+        uint8 guardian1Weight; // Guardian[1] ECDSA weight      (default: 1)
+        uint8 guardian2Weight; // Guardian[2] ECDSA weight      (default: 1)
+        uint8 _padding;        // Reserved for future weight source
+        uint8 tier1Threshold;  // Min weight for Tier 1 ops (default: 3; 0 = config uninitialized)
+        uint8 tier2Threshold;  // Min weight for Tier 2 ops (default: 5)
+        uint8 tier3Threshold;  // Min weight for Tier 3 ops (default: 6)
+    }
+
+    /// @notice Current weight config. tier1Threshold == 0 means uninitialised → ALG_WEIGHTED fails.
+    WeightConfig public weightConfig;
+
+    /// @notice Pending weight-change proposal (M6.2). proposedAt == 0 means none pending.
+    struct WeightChangeProposal {
+        WeightConfig proposed;
+        uint256 proposedAt;
+        uint256 approvalBitmap; // bit i = guardian[i] approved
+    }
+
+    WeightChangeProposal public pendingWeightChange;
+
+    /// @dev Timelock for weakening weight-change proposals (M6.2)
+    uint256 internal constant WEIGHT_CHANGE_TIMELOCK  = 2 days;
+    /// @dev 2-of-3 guardians required to approve a weakening change
+    uint256 internal constant WEIGHT_CHANGE_THRESHOLD = 2;
+    /// @dev Proposals expire after 30 days if never executed
+    uint256 internal constant WEIGHT_CHANGE_EXPIRY    = 30 days;
 
     /// @notice Read-only snapshot of the account's current configuration
     struct AccountConfig {
@@ -181,6 +222,16 @@ abstract contract AAStarAirAccountBase {
     error InvalidGuardianSignature();
     error SessionScopeViolation();
     error InvalidTierConfig();
+    // M6.1 / M6.2
+    error WeightConfigNotInitialized();
+    error InsecureWeightConfig();
+    error InsufficientWeight(uint8 tier, uint8 provided, uint8 required);
+    error WeakeningRequiresProposal();
+    error WeightChangePending();
+    error WeightChangeTimelockNotExpired();
+    error WeightChangeNotApproved();
+    error NoWeightChangeProposal();
+    error WeightChangeAlreadyApproved();
 
     // ─── Events ───────────────────────────────────────────────────────
 
@@ -198,6 +249,11 @@ abstract contract AAStarAirAccountBase {
     event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount);
     event RecoveryCancelled();
     event OwnerChanged(address indexed oldOwner, address indexed newOwner);
+    event WeightConfigUpdated(WeightConfig config);
+    event WeightChangeProposed(WeightConfig proposed, address indexed proposedBy);
+    event WeightChangeApproved(address indexed approvedBy, uint256 approvalCount);
+    event WeightChangeExecuted(WeightConfig oldConfig, WeightConfig newConfig);
+    event WeightChangeCancelled();
 
     // ─── Modifiers ────────────────────────────────────────────────────
 
@@ -427,6 +483,12 @@ abstract contract AAStarAirAccountBase {
             return 1; // Wrong length
         }
 
+        // ALG_WEIGHTED (0x07): Weighted multi-signature — bitmap-driven variable-length
+        if (firstByte == ALG_WEIGHTED) {
+            _storeValidatedAlgId(ALG_WEIGHTED);
+            return _validateWeightedSignature(userOpHash, signature[1:]);
+        }
+
         // Raw ECDSA: 65-byte sig without algId prefix (backwards compat with M1)
         if (signature.length == 65) {
             _storeValidatedAlgId(ALG_ECDSA);
@@ -640,6 +702,101 @@ abstract contract AAStarAirAccountBase {
     }
 
     /**
+     * @dev Validate weighted multi-signature (algId 0x07).
+     *
+     * Signature format (after algId byte stripped):
+     *   [sourceBitmap(1)][P256?(64)][ECDSA?(65)][BLS_block?(variable)][guardian0?(65)][guardian1?(65)][guardian2?(65)]
+     *
+     * sourceBitmap bits: 0=P256, 1=ECDSA, 2=BLS, 3=guardian[0], 4=guardian[1], 5=guardian[2], 6-7=reserved(0)
+     *
+     * BLS block format: [nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][messagePoint(256)][messagePointSig(65)]
+     *
+     * On success: stores accumulated weight in WEIGHT_SLOT_BASE queue and returns 0.
+     * Returns 1 if any component signature is invalid, or if weight < tier1Threshold.
+     */
+    function _validateWeightedSignature(
+        bytes32 userOpHash,
+        bytes calldata sigData
+    ) internal returns (uint256) {
+        WeightConfig memory wc = weightConfig;
+        if (wc.tier1Threshold == 0) revert WeightConfigNotInitialized();
+        if (sigData.length < 1) return 1;
+
+        uint8 bitmap = uint8(sigData[0]);
+        if (bitmap & 0xC0 != 0) return 1; // bits 6-7 must be zero
+
+        uint256 cursor = 1;
+        uint8 accumulated = 0;
+
+        // bit 0: P256 passkey (64 bytes: r, s)
+        if (bitmap & 0x01 != 0) {
+            if (sigData.length < cursor + 64) return 1;
+            if (_validateP256(userOpHash, sigData[cursor:cursor + 64]) != 0) return 1;
+            accumulated += wc.passkeyWeight;
+            cursor += 64;
+        }
+
+        // bit 1: Owner ECDSA (65 bytes)
+        if (bitmap & 0x02 != 0) {
+            if (sigData.length < cursor + 65) return 1;
+            if (_validateECDSA(userOpHash, sigData[cursor:cursor + 65]) != 0) return 1;
+            accumulated += wc.ecdsaWeight;
+            cursor += 65;
+        }
+
+        // bit 2: BLS aggregate (variable-length block)
+        if (bitmap & 0x04 != 0) {
+            if (address(validator) == address(0)) return 1;
+            if (sigData.length < cursor + 32) return 1;
+            uint256 nodeIdsLength = uint256(bytes32(sigData[cursor:cursor + 32]));
+            if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
+            uint256 blsBlockLen = 32 + nodeIdsLength * 32 + 256 + 256 + 65;
+            if (sigData.length < cursor + blsBlockLen) return 1;
+            bytes calldata blsPayload = sigData[cursor:cursor + blsBlockLen];
+
+            // Verify messagePoint signature binding (same as _validateCumulativeTier2)
+            uint256 baseOffset = 32 + nodeIdsLength * 32;
+            bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
+            bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
+            bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
+            if (mpHash.recover(messagePointSignature) != owner) return 1;
+
+            address blsAlg = validator.getAlgorithm(ALG_BLS);
+            if (blsAlg == address(0)) return 1;
+            // Pass BLS payload without nodeIdsLength prefix (same format as standalone BLS)
+            bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
+            try IAAStarAlgorithm(blsAlg).validate(userOpHash, blsVerifyData) returns (uint256 r) {
+                if (r != 0) return 1;
+            } catch {
+                return 1;
+            }
+            accumulated += wc.blsWeight;
+            cursor += blsBlockLen;
+        }
+
+        // bits 3-5: Guardian[0..2] ECDSA (65 bytes each)
+        bytes32 guardianHash = userOpHash.toEthSignedMessageHash();
+        for (uint8 gi = 0; gi < 3; gi++) {
+            if (bitmap & (uint8(1) << (3 + gi)) != 0) {
+                if (gi >= _guardianCount) return 1;
+                if (sigData.length < cursor + 65) return 1;
+                address recovered = guardianHash.recover(sigData[cursor:cursor + 65]);
+                if (recovered != _getGuardian(gi)) return 1;
+                if (gi == 0) accumulated += wc.guardian0Weight;
+                else if (gi == 1) accumulated += wc.guardian1Weight;
+                else accumulated += wc.guardian2Weight;
+                cursor += 65;
+            }
+        }
+
+        // Reject if accumulated weight is insufficient for even Tier 1
+        if (accumulated < wc.tier1Threshold) return 1;
+
+        _storeValidatedWeight(accumulated);
+        return 0;
+    }
+
+    /**
      * @dev Validate cumulative tier 2 signature: P256 passkey + BLS aggregate.
      *
      * Signature format (after algId byte stripped):
@@ -809,6 +966,7 @@ abstract contract AAStarAirAccountBase {
         if (algId == ALG_P256) return 1;              // bare P256 passkey (single-factor)
         if (algId == ALG_COMBINED_T1) return 1;       // zero-trust combined (P256 + ECDSA)
         if (algId == ALG_SESSION_KEY) return 1;       // session key (ephemeral, time-limited, Tier 1)
+        if (algId == ALG_WEIGHTED) return 0;          // weighted: tier resolved from accumulated weight in execute()
         return 0;                                      // unknown algId — fails all tier enforcement
     }
 
@@ -821,6 +979,9 @@ abstract contract AAStarAirAccountBase {
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
+        if (algId == ALG_WEIGHTED) {
+            algId = _resolveWeightedAlgId(_consumeValidatedWeight());
+        }
         _enforceGuard(value, algId, dest, func);
         _call(dest, value, func);
     }
@@ -835,6 +996,9 @@ abstract contract AAStarAirAccountBase {
             revert ArrayLengthMismatch();
         }
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
+        if (algId == ALG_WEIGHTED) {
+            algId = _resolveWeightedAlgId(_consumeValidatedWeight());
+        }
         for (uint256 i = 0; i < dest.length; i++) {
             _enforceGuard(value[i], algId, dest[i], func[i]);
             _call(dest[i], value[i], func[i]);
@@ -979,6 +1143,24 @@ abstract contract AAStarAirAccountBase {
             let readIdx := tload(add(SESSION_KEY_SLOT_BASE, 1))
             taggedId := tload(add(add(SESSION_KEY_SLOT_BASE, 2), readIdx))
             tstore(add(SESSION_KEY_SLOT_BASE, 1), add(readIdx, 1))
+        }
+    }
+
+    /// @dev Push accumulated signature weight to transient storage queue (one entry per UserOp).
+    function _storeValidatedWeight(uint8 weight) internal {
+        assembly {
+            let writeIdx := tload(WEIGHT_SLOT_BASE)
+            tstore(add(add(WEIGHT_SLOT_BASE, 2), writeIdx), weight)
+            tstore(WEIGHT_SLOT_BASE, add(writeIdx, 1))
+        }
+    }
+
+    /// @dev Pop accumulated signature weight from transient storage queue (one entry per UserOp).
+    function _consumeValidatedWeight() internal returns (uint8 weight) {
+        assembly {
+            let readIdx := tload(add(WEIGHT_SLOT_BASE, 1))
+            weight := tload(add(add(WEIGHT_SLOT_BASE, 2), readIdx))
+            tstore(add(WEIGHT_SLOT_BASE, 1), add(readIdx, 1))
         }
     }
 
@@ -1155,6 +1337,121 @@ abstract contract AAStarAirAccountBase {
                 revert(add(result, 32), mload(result))
             }
         }
+    }
+
+    // ─── Weighted Signature Management (M6.1 + M6.2) ─────────────────
+
+    /// @notice Set the weight configuration for algId 0x07.
+    ///         First-time setup: direct owner call.
+    ///         Subsequent calls that weaken the config require guardian proposal (M6.2).
+    ///         A change is weakening if any weight decreases or any threshold decreases.
+    /// @dev InsecureWeightConfig: any single source weight >= tier1Threshold (single point of failure).
+    function setWeightConfig(WeightConfig calldata config) external onlyOwner {
+        if (config.tier1Threshold == 0) revert InsecureWeightConfig();
+        // Single-source must not reach threshold alone (prevents single-point-of-failure)
+        if (config.passkeyWeight   >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.ecdsaWeight     >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.blsWeight       >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.guardian0Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.guardian1Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.guardian2Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+
+        WeightConfig memory current = weightConfig;
+        if (current.tier1Threshold != 0 && _isWeakening(current, config)) {
+            revert WeakeningRequiresProposal();
+        }
+        // Block if a weakening proposal is already pending
+        if (pendingWeightChange.proposedAt != 0) revert WeightChangePending();
+
+        weightConfig = config;
+        emit WeightConfigUpdated(config);
+    }
+
+    /// @notice Propose a weakening weight-config change (guardian-gated, M6.2).
+    ///         Owner initiates; guardians approve; executes after WEIGHT_CHANGE_TIMELOCK.
+    function proposeWeightChange(WeightConfig calldata proposed) external onlyOwner {
+        if (proposed.tier1Threshold == 0) revert InsecureWeightConfig();
+        if (proposed.passkeyWeight   >= proposed.tier1Threshold) revert InsecureWeightConfig();
+        if (proposed.ecdsaWeight     >= proposed.tier1Threshold) revert InsecureWeightConfig();
+        if (proposed.blsWeight       >= proposed.tier1Threshold) revert InsecureWeightConfig();
+        if (proposed.guardian0Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
+        if (proposed.guardian1Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
+        if (proposed.guardian2Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
+        if (!_isWeakening(weightConfig, proposed)) revert WeakeningRequiresProposal(); // use setWeightConfig instead
+        if (pendingWeightChange.proposedAt != 0) revert WeightChangePending();
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+
+        pendingWeightChange = WeightChangeProposal({
+            proposed: proposed,
+            proposedAt: block.timestamp,
+            approvalBitmap: 0
+        });
+        emit WeightChangeProposed(proposed, msg.sender);
+    }
+
+    /// @notice Guardian approves the pending weight-change proposal.
+    function approveWeightChange() external {
+        if (pendingWeightChange.proposedAt == 0) revert NoWeightChangeProposal();
+        // Reject approvals on expired proposals (no delete — revert would undo it; let owner cancel)
+        if (block.timestamp > pendingWeightChange.proposedAt + WEIGHT_CHANGE_EXPIRY) revert NoWeightChangeProposal();
+
+        uint8 guardianIndex = _guardianIndex(msg.sender);
+        uint256 bit = uint256(1) << guardianIndex;
+        if (pendingWeightChange.approvalBitmap & bit != 0) revert WeightChangeAlreadyApproved();
+
+        pendingWeightChange.approvalBitmap |= bit;
+        uint256 count = _popcount(pendingWeightChange.approvalBitmap);
+        emit WeightChangeApproved(msg.sender, count);
+    }
+
+    /// @notice Execute an approved weight-change after timelock and threshold are met.
+    function executeWeightChange() external {
+        WeightChangeProposal memory p = pendingWeightChange;
+        if (p.proposedAt == 0) revert NoWeightChangeProposal();
+        if (block.timestamp > p.proposedAt + WEIGHT_CHANGE_EXPIRY) revert NoWeightChangeProposal(); // expired
+        if (_popcount(p.approvalBitmap) < WEIGHT_CHANGE_THRESHOLD) revert WeightChangeNotApproved();
+        if (block.timestamp < p.proposedAt + WEIGHT_CHANGE_TIMELOCK) revert WeightChangeTimelockNotExpired();
+
+        WeightConfig memory oldConfig = weightConfig;
+        weightConfig = p.proposed;
+        delete pendingWeightChange;
+        emit WeightChangeExecuted(oldConfig, p.proposed);
+        emit WeightConfigUpdated(p.proposed);
+    }
+
+    /// @notice Cancel a pending weight-change proposal. Owner or any guardian can cancel.
+    function cancelWeightChange() external {
+        if (pendingWeightChange.proposedAt == 0) revert NoWeightChangeProposal();
+        if (msg.sender != owner) {
+            _guardianIndex(msg.sender); // reverts NotGuardian if not a guardian
+        }
+        delete pendingWeightChange;
+        emit WeightChangeCancelled();
+    }
+
+    /// @dev Map accumulated weight to the highest satisfied tier's representative algId.
+    ///      Used in execute/executeBatch to translate ALG_WEIGHTED into a normal algId.
+    function _resolveWeightedAlgId(uint8 weight) internal view returns (uint8) {
+        WeightConfig memory wc = weightConfig;
+        if (wc.tier3Threshold > 0 && weight >= wc.tier3Threshold) return ALG_CUMULATIVE_T3;
+        if (wc.tier2Threshold > 0 && weight >= wc.tier2Threshold) return ALG_CUMULATIVE_T2;
+        if (wc.tier1Threshold > 0 && weight >= wc.tier1Threshold) return ALG_ECDSA;
+        return 0; // below tier1 — fails all tier and guard checks
+    }
+
+    /// @dev Returns true if proposed config is a weakening of current config.
+    ///      Weakening: any weight decrease, or any threshold decrease (lower bar = weaker).
+    function _isWeakening(WeightConfig memory current, WeightConfig memory proposed) internal pure returns (bool) {
+        if (proposed.passkeyWeight   < current.passkeyWeight)   return true;
+        if (proposed.ecdsaWeight     < current.ecdsaWeight)     return true;
+        if (proposed.blsWeight       < current.blsWeight)       return true;
+        if (proposed.guardian0Weight < current.guardian0Weight) return true;
+        if (proposed.guardian1Weight < current.guardian1Weight) return true;
+        if (proposed.guardian2Weight < current.guardian2Weight) return true;
+        if (proposed.tier1Threshold  < current.tier1Threshold)  return true;
+        if (proposed.tier2Threshold  < current.tier2Threshold)  return true;
+        if (proposed.tier3Threshold  < current.tier3Threshold)  return true;
+        return false;
     }
 
     receive() external payable {}

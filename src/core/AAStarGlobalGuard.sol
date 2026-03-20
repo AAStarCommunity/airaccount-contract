@@ -276,6 +276,7 @@ contract AAStarGlobalGuard {
         if (algId == 0x05 || algId == 0x01) return 3;                  // ALG_CUMULATIVE_T3, ALG_BLS legacy triple
         if (algId == 0x04) return 2;                                    // CUMULATIVE_T2 (P256 + BLS dual-factor)
         if (algId == 0x02 || algId == 0x03 || algId == 0x06 || algId == 0x08) return 1; // ECDSA, P256, COMBINED_T1, SESSION_KEY
+        // ALG_WEIGHTED (0x07) is resolved to a concrete algId before reaching the guard
         return 0;
     }
 }
