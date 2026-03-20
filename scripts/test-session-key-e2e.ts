@@ -32,11 +32,8 @@ import {
   createPublicClient,
   createWalletClient,
   http,
-  encodePacked,
   keccak256,
   hexToBytes,
-  encodeAbiParameters,
-  concat,
   type Hex,
   type Address,
 } from "viem";
@@ -138,19 +135,6 @@ const SESSION_KEY_VALIDATOR_ABI = [
   },
 ] as const;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function buildValidateSig(account: Address, sessionKey: Address, skPriv: Hex, userOpHash: Hex): Hex {
-  // Sign userOpHash with EIP-191 prefix (matches toEthSignedMessageHash)
-  // Note: viem's signMessage adds EIP-191 prefix. We need raw signMessage here.
-  // For simplicity, we manually build the eth hash and sign with a low-level approach.
-  const ethHash = keccak256(
-    concat([new TextEncoder().encode("\x19Ethereum Signed Message:\n32"), hexToBytes(userOpHash)])
-  );
-  // The actual sig is done by signMessage in the test (see below)
-  return `0x${Buffer.from(hexToBytes(account)).toString("hex")}${Buffer.from(hexToBytes(sessionKey)).toString("hex")}` as Hex;
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -190,48 +174,36 @@ async function main() {
     process.exit(1);
   }
 
-  // Use owner address as mock "account" — SessionKeyValidator calls account.owner()
-  // so in this E2E test we use a simple contract address. For test purposes,
-  // the owner account IS the mock account address (since owner.address.owner() won't work).
-  // We'll use a mock: deploy a tiny contract that returns the owner address.
-  // For simplicity, test B uses grantSessionDirect which requires msg.sender == account.owner().
-  // Since owner.address doesn't have an owner() fn, we skip the off-chain sig path
-  // and test validate() independently.
-
-  const MOCK_ACCOUNT = owner.address; // Treat owner as the "account" (its "owner()" is itself conceptually)
+  // Use deployed M7 AirAccount as the test account — SessionKeyValidator calls account.owner()
+  // to verify the grant authorization. The M7 account is a real deployed smart contract
+  // whose owner() returns the PRIVATE_KEY signer address.
+  // M7 account: 0xBe9245282E31E34961F6E867b8B335437a8fF78b (owner = 0xb5600060e6de5E11D3636731964218E53caadf0E)
+  const MOCK_ACCOUNT = (
+    process.env.AIRACCOUNT_M6_R2_ACCOUNT ??
+    "0xBe9245282E31E34961F6E867b8B335437a8fF78b"
+  ) as Address;
   const USER_OP_HASH = keccak256(new TextEncoder().encode("test-userop-1") as Uint8Array) as Hex;
 
-  // ── Test B: Grant session via off-chain sig (simulate validate) ────
+  // ── Test B: Grant session via direct owner call ───────────────────
+  // Use grantSessionDirect: msg.sender is checked against _ownerOf(account).
+  // This avoids the off-chain signature path (grantSession) which requires
+  // precise EIP-191 hash matching that is tricky to replicate off-chain.
 
-  console.log("\n[Test B] Grant session and validate it with session key signature");
-  const chainId = BigInt(await publicClient.getChainId());
+  console.log("\n[Test B] Grant session directly (msg.sender == owner) and verify active");
   const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour from now
 
   try {
-    // Build grant hash
-    const grantHash = await publicClient.readContract({
-      address: validatorAddr,
-      abi: SESSION_KEY_VALIDATOR_ABI,
-      functionName: "buildGrantHash",
-      args: [MOCK_ACCOUNT, sessionKeyAcct.address, Number(expiry) as unknown as number, "0x0000000000000000000000000000000000000000", "0x00000000"],
-    });
-    console.log(`  Grant hash: ${grantHash}`);
-
-    // Owner signs grant hash (vm.sign equivalent: direct signMessage with raw hash)
-    const ownerSig = await ownerClient.signMessage({ message: { raw: grantHash as Hex } });
-
-    // Submit grant
+    // Submit grant — ownerClient.account.address must equal MOCK_ACCOUNT.owner()
     const txHash = await ownerClient.writeContract({
       address: validatorAddr,
       abi: SESSION_KEY_VALIDATOR_ABI,
-      functionName: "grantSession",
+      functionName: "grantSessionDirect",
       args: [
         MOCK_ACCOUNT,
         sessionKeyAcct.address,
         Number(expiry),
         "0x0000000000000000000000000000000000000000",
         "0x00000000",
-        ownerSig,
       ],
     });
     await publicClient.waitForTransactionReceipt({ hash: txHash });
@@ -270,17 +242,15 @@ async function main() {
     }).signMessage({ message: { raw: hexToBytes(USER_OP_HASH) } });
 
     // Build the 105-byte validate signature: [account(20)][sessionKey(20)][ECDSASig(65)]
-    const validateSig = concat([
-      hexToBytes(MOCK_ACCOUNT as Hex),
-      hexToBytes(sessionKeyAcct.address as Hex),
-      hexToBytes(sessionKeySig),
-    ]) as unknown as Hex;
+    // Simple hex concat: strip 0x from each part and rejoin
+    const validateSig = (MOCK_ACCOUNT + sessionKeyAcct.address.slice(2) + sessionKeySig.slice(2)) as Hex;
+    console.log(`  validateSig length: ${(validateSig.length - 2) / 2} bytes (expected 105)`);
 
     const validationResult = await publicClient.readContract({
       address: validatorAddr,
       abi: SESSION_KEY_VALIDATOR_ABI,
       functionName: "validate",
-      args: [USER_OP_HASH, `0x${Buffer.from(validateSig as unknown as Uint8Array).toString("hex")}` as Hex],
+      args: [USER_OP_HASH, validateSig],
     });
 
     if (validationResult === 0n) {

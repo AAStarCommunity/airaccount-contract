@@ -151,8 +151,8 @@ PRIVATE_KEY_BOB=<Guardian 1 私钥>
 PRIVATE_KEY_JACK=<Guardian 2 私钥>
 
 # 已部署地址
-AIRACCOUNT_M7_FACTORY=0xa3f03e9f6cde536a1b776162a9f0e462f2adbbbf
-AIRACCOUNT_M7_IMPL=0x3C866080C6AA37697AeA43106956369071d26600
+AIRACCOUNT_M6_R2_FACTORY=0xa3f03e9f6cde536a1b776162a9f0e462f2adbbbf
+AIRACCOUNT_M6_R2_IMPL=0x3C866080C6AA37697AeA43106956369071d26600
 FACTORY_ADDRESS=0xa3f03e9f6cde536a1b776162a9f0e462f2adbbbf
 ENTRYPOINT_ADDRESS=0x0000000071727De22E5E9d8BAf0edAc6f37da032
 ```
@@ -161,7 +161,7 @@ ENTRYPOINT_ADDRESS=0x0000000071727De22E5E9d8BAf0edAc6f37da032
 
 ```bash
 forge build
-pnpm tsx scripts/deploy-m7.ts
+pnpm tsx scripts/deploy-m6-r2.ts
 # Forge 在 macOS 有 transport 问题，统一用 TypeScript + viem 部署
 ```
 
@@ -528,7 +528,7 @@ forge test --summary    # 精简输出
 
 | 脚本 | 测试数 | 命令 |
 |------|:------:|------|
-| M7 E2E（clone factory + guard） | 12 | `pnpm tsx scripts/test-m7-e2e.ts` |
+| M6 r2 E2E（clone factory + guard） | 12 | `pnpm tsx scripts/test-m6-r2-e2e.ts` |
 | M6 Weighted + Guardian Consent | 5 | `pnpm tsx scripts/test-m6-weighted-e2e.ts` |
 | 分级签名 | 5 | `pnpm tsx scripts/test-tiered-e2e.ts` |
 | 社交恢复 | 5 | `pnpm tsx scripts/test-social-recovery-e2e.ts` |

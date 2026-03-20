@@ -83,11 +83,11 @@ contract SessionKeyValidatorTest is Test {
         );
     }
 
-    function test_grantSessionDirect_exactly30Days_succeeds() public {
+    function test_grantSessionDirect_exactly24Hours_succeeds() public {
         vm.prank(owner);
         validator.grantSessionDirect(
             account, sessionKey,
-            uint48(block.timestamp + 30 days),
+            uint48(block.timestamp + 24 hours),
             address(0), bytes4(0)
         );
         assertTrue(validator.isSessionActive(account, sessionKey));
@@ -103,19 +103,18 @@ contract SessionKeyValidatorTest is Test {
     }
 
     function test_grantSessionDirect_afterExpiry_canRegrant() public {
-        // Use explicit absolute timestamps to avoid block.timestamp evaluation ordering issues
+        // t=1_000_000: grant session expiring at t=1_003_600 (+1h, within 24h limit)
         vm.warp(1_000_000);
-        uint48 firstExpiry = 2_000_000; // expires at t=2M
         vm.prank(owner);
-        validator.grantSessionDirect(account, sessionKey, firstExpiry, address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, 1_003_600, address(0), bytes4(0));
 
         // Warp past first expiry
-        vm.warp(2_000_001);
+        vm.warp(1_003_601);
         assertFalse(validator.isSessionActive(account, sessionKey));
 
-        // Re-grant same session key after expiry — should succeed
+        // Re-grant same session key after expiry — new 1h session from t=1_003_601
         vm.prank(owner);
-        validator.grantSessionDirect(account, sessionKey, 3_000_000, address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, 1_007_201, address(0), bytes4(0));
         assertTrue(validator.isSessionActive(account, sessionKey));
     }
 
