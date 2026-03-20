@@ -1,0 +1,170 @@
+# AirAccount Smart Contract
+
+A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
+
+> **Current milestone**: M6 complete — 443/443 tests pass, Sepolia E2E verified.
+> **Next step**: `./deploy-factory.sh sepolia` to deploy M6 r3 factory, then integration tests.
+
+---
+
+## Quick Start
+
+```bash
+forge build
+forge test --summary          # 443 tests
+./deploy-factory.sh sepolia   # deploy M6 factory (needs ../SuperPaymaster/.env.sepolia)
+./deploy-factory.sh op-mainnet  # deploy to OP Mainnet (cast wallet)
+```
+
+---
+
+## Architecture Overview
+
+| Layer | Contract | Role |
+|-------|----------|------|
+| Account | `AAStarAirAccountV7` | Non-upgradable ERC-4337 account, 20,900B |
+| Factory | `AAStarAirAccountFactoryV7` | EIP-1167 clone factory, 9,527B |
+| Guard | `AAStarGlobalGuard` | Immutable spending limits + algo whitelist |
+| Validator | `AAStarValidator` | Algorithm router (ECDSA/BLS/P256/Weighted/SessionKey) |
+| Session | `SessionKeyValidator` | Time-limited scoped session keys (algId 0x08) |
+| Delegate | `AirAccountDelegate` | EIP-7702 EOA delegation support |
+| Parsers | `CalldataParserRegistry` | Pluggable DeFi calldata parsing (Uniswap V3) |
+
+**Signature algorithms**: ECDSA (0x02), BLS (0x03), P256/WebAuthn (0x04), Cumulative T2 (0x04), Cumulative T3 (0x05), Combined T1 (0x06), Weighted Multi-Sig (0x07), Session Key (0x08)
+
+---
+
+## Milestone Status
+
+| Milestone | Status | Factory (Sepolia) | Tests |
+|-----------|--------|-------------------|-------|
+| M1 — ECDSA | ✅ | `0x26Af93f34d6e3c3f08208d1e95811CE7FAcD7E7f` | — |
+| M2 — BLS Triple-Sig | ✅ | `0x5Ba18c50E0375Fb84d6D521366069FE9140Afe04` | — |
+| M3 — Security Hardening | ✅ | `0xce4231da69015273819b6aab78d840d62cf206c1` | — |
+| M4 — Cumulative Sigs + Social Recovery | ✅ | `0x914db0a849f55e68a726c72fd02b7114b1176d88` | — |
+| M5 — ERC20 Guard + Guardian Accept | ✅ | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` | 298 |
+| M6 — Session Key + Weighted MultiSig + EIP-7702 | ✅ code | pending deploy | 443 |
+| M7 — Agent Economy + x402 + ERC-8004 | 🔲 planned | — | — |
+
+---
+
+## Deployed Contracts (Sepolia)
+
+| Contract | Address |
+|----------|---------|
+| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
+| M5 Factory (current live) | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` |
+| M6 E2E Account (salt=701) | `0xfab5b2cf392c862b455dcfafac5a414d459b6dcc` |
+
+---
+
+## Documentation
+
+### Architecture & Design
+
+| Document | Description |
+|----------|-------------|
+| [docs/airaccount-unified-architecture.md](docs/airaccount-unified-architecture.md) | Full system architecture — ERC-4337 flow, contract interactions, guard model |
+| [docs/product_and_architecture_design.md](docs/product_and_architecture_design.md) | Product vision, UX goals, tiered security model |
+| [docs/contract-registry.md](docs/contract-registry.md) | Contract inventory — sizes, interfaces, test coverage mapping |
+| [docs/M6-design.md](docs/M6-design.md) | M6 technical design — weighted signatures, session keys, EIP-7702 delegate |
+| [docs/M6-decision.md](docs/M6-decision.md) | M6 scope decisions — what stays vs moves to M7 |
+
+### Milestone Plans & Status
+
+| Document | Description |
+|----------|-------------|
+| [docs/M6-status.md](docs/M6-status.md) | M6 feature completion table, Sepolia E2E results, known issues |
+| [docs/M6-plan.md](docs/M6-plan.md) | M6 feature spec — session keys, weighted multi-sig, OAPD, EIP-7702 |
+| [docs/M7-plan.md](docs/M7-plan.md) | M7 roadmap — agent economy (x402, ERC-8004, multi-agent orchestration), will execution, post-quantum stub |
+| [docs/M5-plan.md](docs/M5-plan.md) | M5 feature spec — ERC20 guard, guardian acceptance, zero-trust T1 |
+| [docs/M4-plan.md](docs/M4-plan.md) | M4 feature spec — cumulative signatures, tiered verification, social recovery |
+
+### Analysis & Reports (2026-03-20)
+
+| Document | Description |
+|----------|-------------|
+| [docs/airaccount-comprehensive-analysis.md](docs/airaccount-comprehensive-analysis.md) | **NEW** — M1–M7 feature table, gas evolution charts, security industry comparison (vs Safe/ZeroDev/Coinbase/Argent), competitive analysis, gap analysis, multi-chain roadmap |
+| [docs/2026-03-20-audit-report.md](docs/2026-03-20-audit-report.md) | Security audit report 2026-03-20 — HIGH/MEDIUM findings + fixes |
+| [docs/M6-security-review.md](docs/M6-security-review.md) | M6 internal security review — session key scoping, replay protection, guardian domain separation |
+| [docs/walletbeat-assessment.md](docs/walletbeat-assessment.md) | WalletBeat scoring — security posture vs industry benchmarks |
+
+### Deployment & Operations
+
+| Document | Description |
+|----------|-------------|
+| [docs/acceptance-guide.md](docs/acceptance-guide.md) | E2E acceptance testing guide — Sepolia scripts, multi-chain deploy (OP Mainnet, Base), step-by-step commands |
+| [docs/m5-deployment-record.md](docs/m5-deployment-record.md) | M5 Sepolia deployment record — tx hashes, gas costs, E2E verification |
+| [docs/contract-registry.md](docs/contract-registry.md) | All deployed addresses across M1–M6 milestones |
+
+### Gas & Performance
+
+| Document | Description |
+|----------|-------------|
+| [docs/gas-analysis.md](docs/gas-analysis.md) | Gas benchmarks by milestone — M1 through M6, comparison vs industry (Light Account, Kernel v3, Safe) |
+| [docs/gas-optimization-plan.md](docs/gas-optimization-plan.md) | Gas optimization strategies — storage packing, optimizer runs, EIP-170 compliance |
+
+### Research & Background
+
+| Document | Description |
+|----------|-------------|
+| [docs/M4.5-weighted-signature-research.md](docs/M4.5-weighted-signature-research.md) | Weighted signature design research — threshold schemes, bitmap encoding |
+| [docs/eip-8130-upgrade-plan.md](docs/eip-8130-upgrade-plan.md) | EIP-8130 upgrade path analysis — non-upgradable migration strategy |
+| [docs/validator-upgrade-pq-analysis.md](docs/validator-upgrade-pq-analysis.md) | Post-quantum validator analysis — CRYSTALS-Dilithium, EVM precompile timeline |
+
+---
+
+## Deploy to Sepolia (M6 r3)
+
+```bash
+# Requires ../SuperPaymaster/.env.sepolia with PRIVATE_KEY
+chmod +x deploy-factory.sh
+./deploy-factory.sh sepolia
+# → prints AIRACCOUNT_FACTORY=<addr> and AIRACCOUNT_IMPL=<addr>
+# → add AIRACCOUNT_M6_R3_FACTORY=<addr> to .env.sepolia
+```
+
+## Deploy to OP Mainnet
+
+```bash
+# Requires ../SuperPaymaster/.env.op-mainnet with DEPLOYER_ACCOUNT=optimism-deployer (cast wallet)
+./deploy-factory.sh op-mainnet
+# → runs: forge script script/DeployFactoryM6.s.sol --account optimism-deployer
+# After deploy:
+pnpm tsx scripts/test-op-e2e.ts
+```
+
+---
+
+## Integration Tests (after M6 factory deploy)
+
+```bash
+# Sepolia — full E2E weighted signatures + session keys
+pnpm tsx scripts/test-m6-weighted-e2e.ts
+pnpm tsx scripts/test-session-key-e2e.ts
+
+# OP Mainnet
+pnpm tsx scripts/test-op-e2e.ts
+```
+
+---
+
+## Build & Test
+
+```bash
+forge build                          # compile
+forge test                           # 443 unit tests
+forge test --match-path test/SessionKeyValidator.t.sol -v   # specific suite
+forge test --summary                 # per-suite breakdown
+```
+
+---
+
+## Security
+
+- **No upgradability** — no proxy patterns; new features require new contract + user migration
+- **Immutable guards** — spending limits can only be tightened, never loosened
+- **Guardian-threshold recovery** — 2-of-3 required; private key alone cannot bypass
+- **Session key revocation** — nonce-based, prior grant signatures invalidated on revoke
+- **EIP-7212 P256** — hardware-bound passkey authentication, available on OP Mainnet (Fjord)
+- **Audit reports** — see `docs/2026-03-*-audit-report.md`
