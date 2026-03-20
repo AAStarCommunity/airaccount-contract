@@ -342,3 +342,80 @@ The blockers for formal Stage 1 certification as a complete wallet are:
 - [ ] Chain verification (Helios integration in client)
 - [ ] ERC-7828/7831 when standard stabilizes
 - [ ] L2 deployment + force-exit mechanism
+
+---
+
+## Quick Reference: Contract Layer vs Frontend Layer
+
+**Conclusion**: AirAccount contract already provides ALL the on-chain primitives needed by a
+Stage 1/2 frontend app. Stage 1 is not blocked by contract limitations — it's blocked by the
+absence of a companion frontend app (and one professional audit).
+
+### Stage 1 — Contract Support Status
+
+| Criterion | Frontend Needs | Contract Provides |
+|-----------|---------------|-------------------|
+| Security Audit | Hire auditor | Contract code is auditable |
+| Hardware Wallet | Ledger/Trezor SDK, P256 signer | ✅ P256 key storage + `_validateP256` |
+| Chain Verification | Helios light client in client | ✅ Contract runs on-chain natively |
+| Private Transfers | Railgun SDK + ZK proof UI | ❌ Not in contract (M7+) |
+| Account Portability | Export guardian recovery flow | ✅ `proposeRecovery` / `executeRecovery` |
+| Own Node | RPC config UI | ✅ Contract is RPC-agnostic |
+| FOSS License | Publish source | ✅ GPL-3.0 |
+| ENS Resolution | ENS lookup before tx | ✅ `execute(address)` accepts any address |
+| Browser Integration | EIP-1193 provider wrapper | ✅ ERC-4337 `validateUserOp` + ERC-1271 |
+
+**Stage 1 blockers at contract level: 1 (private transfers). Everything else is frontend.**
+
+### Stage 2 — Contract Support Status
+
+| Criterion | Frontend Needs | Contract Provides |
+|-----------|---------------|-------------------|
+| Bug Bounty | Immunefi setup + funding | ✅ Contract code is testable |
+| Address Privacy | Per-DApp address UI | ✅ OAPD salt derivation (`keccak256(owner+dappId)`) |
+| Multi-Address Correlation | OAPD UI flow | ✅ Factory `createAccountWithDefaults(owner, salt)` |
+| TX Inclusion (L2→L1) | L2 deposit + force-exit UI | ❌ L1-only; future L2 deployment |
+| Chain Configurability | RPC config UI per chain | ✅ Contract deployable on any EVM chain |
+| Funding Transparency | FUNDING.md, website | ✅ Contract is open source |
+| Fee Transparency | Gas estimate + limit UI | ✅ `guard.todaySpent()`, `getDeposit()`, events |
+| Chain Address Resolution | ERC-7828 resolver | ❌ Not in contract |
+| Account Abstraction | Bundler integration, ERC-5792 | ✅ Full ERC-4337 v0.7 + 7579 + 7702 |
+| Transaction Batching | wallet_sendCalls | ✅ `executeBatch()` |
+
+**Stage 2 blockers at contract level: 2 (L2 force-exit, ERC-7828). Everything else is frontend.**
+
+---
+
+## Appendix: Guardian Rescue DoS — What Was Fixed (M6)
+
+This is specific to `AirAccountDelegate.sol` (the **EIP-7702** contract, not the main V7 account).
+
+**Context**: When an EOA delegates to AirAccountDelegate via EIP-7702, the account has no "owner
+rotation" capability (because the EOA address IS the owner and cannot change). Instead, if the
+private key is compromised, guardians can initiate a **rescue**: transfer all ETH to a new safe
+address within a 2-day timelock.
+
+**The DoS problem (before fix)**:
+```
+Guardian 1 (legitimate): initiateRescue(safe_wallet)   ← starts rescue, 2-day clock
+Guardian 2 (rogue):      initiateRescue(attacker_addr) ← OVERRIDES, resets clock + approvals
+Guardian 2 (rogue):      initiateRescue(other_addr)    ← repeat indefinitely → rescue never executes
+```
+Any guardian could perpetually reset a pending rescue by proposing a different destination,
+leaving the EOA owner permanently unprotected.
+
+**The fix**:
+```solidity
+// Before: only blocks same-destination re-initiation
+if (ds.rescueTimestamp != 0 && rescueTo == ds.rescueTo) revert RescueAlreadyPending();
+
+// After: blocks ANY initiation while one is pending
+if (ds.rescueTimestamp != 0) revert RescueAlreadyPending();
+```
+
+Once a rescue is initiated, it cannot be overridden until:
+- The EOA owner calls `cancelRescue()` (key still accessible), or
+- A guardian calls `executeRescue()` after timelock + threshold
+
+**This is only relevant to EIP-7702 users** (AirAccountDelegate). The main `AAStarAirAccountV7`
+social recovery uses a different (guardian-cancel-requiring) mechanism and was not affected.
