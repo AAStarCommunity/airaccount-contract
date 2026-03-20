@@ -520,9 +520,9 @@ contract AirAccountDelegateTest is Test {
         delegate.executeRescue();
     }
 
-    /// @notice Guardian can override a pending rescue with a different destination
-    ///         (resets timer and approvals — design decision)
-    function test_rescue_overrideWithDifferentDestination() public {
+    /// @notice No guardian can override a pending rescue — prevents DoS via competing initiations.
+    ///         EOA must cancel via cancelRescue() before a new rescue can be initiated.
+    function test_rescue_overrideBlocked_reverts() public {
         _initialize(1 ether);
         address dest1 = makeAddr("dest1");
         address dest2 = makeAddr("dest2");
@@ -530,14 +530,34 @@ contract AirAccountDelegateTest is Test {
         vm.prank(guardian1);
         delegate.initiateRescue(dest1);
 
-        // guardian1 changes their mind
+        // Any guardian attempting to initiate a new rescue (even with different dest) reverts
         vm.prank(guardian1);
+        vm.expectRevert(AirAccountDelegate.RescueAlreadyPending.selector);
         delegate.initiateRescue(dest2);
 
-        (address to,, uint8 approvals,) = delegate.getRescueState();
-        assertEq(to, dest2, "destination should be updated");
-        // approvals reset to initiator's vote only (bit0 = 1)
-        assertEq(approvals, 1, "approvals reset to initiator only");
+        vm.prank(guardian2);
+        vm.expectRevert(AirAccountDelegate.RescueAlreadyPending.selector);
+        delegate.initiateRescue(dest2);
+    }
+
+    /// @notice EOA can cancel a pending rescue; after cancel a new one can be initiated
+    function test_rescue_cancelThenReinitiate() public {
+        _initialize(1 ether);
+        address dest1 = makeAddr("dest1");
+        address dest2 = makeAddr("dest2");
+
+        vm.prank(guardian1);
+        delegate.initiateRescue(dest1);
+
+        vm.prank(eoa); // EOA cancels
+        delegate.cancelRescue();
+
+        // Now guardian can initiate to a different address
+        vm.prank(guardian2);
+        delegate.initiateRescue(dest2);
+
+        (address to,,,) = delegate.getRescueState();
+        assertEq(to, dest2, "new destination set after cancel");
     }
 
     // ─── 6d. WithdrawDepositTo access control ────────────────────────────────
