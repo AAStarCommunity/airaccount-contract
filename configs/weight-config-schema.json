@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airaccount.aastar.io/schemas/weight-config.json",
+  "title": "AirAccount WeightConfig",
+  "description": "Frontend schema for ALG_WEIGHTED (algId 0x07) configuration UI. Maps to AAStarAirAccountBase.WeightConfig on-chain struct.",
+
+  "type": "object",
+  "required": ["weights", "tiers"],
+  "properties": {
+
+    "weights": {
+      "description": "Per-source signature weights. Each value is uint8 (0–255). Stored on-chain as 7 × uint8 packed into one storage slot.",
+      "type": "object",
+      "required": ["ecdsa", "p256", "bls", "guardian0", "guardian1", "guardian2"],
+      "properties": {
+        "ecdsa":     { "type": "integer", "minimum": 0, "maximum": 255, "description": "Weight for ECDSA (algId 0x02) owner signature" },
+        "p256":      { "type": "integer", "minimum": 0, "maximum": 255, "description": "Weight for P256/WebAuthn (algId 0x03) owner key" },
+        "bls":       { "type": "integer", "minimum": 0, "maximum": 255, "description": "Weight for BLS DVT aggregate (algId 0x01)" },
+        "guardian0": { "type": "integer", "minimum": 0, "maximum": 255, "description": "Weight for guardian0 ECDSA signature" },
+        "guardian1": { "type": "integer", "minimum": 0, "maximum": 255, "description": "Weight for guardian1 ECDSA signature" },
+        "guardian2": { "type": "integer", "minimum": 0, "maximum": 255, "description": "Weight for guardian2 ECDSA signature (0 if slot unused)" }
+      },
+      "additionalProperties": false
+    },
+
+    "tiers": {
+      "description": "Accumulated weight thresholds per spending tier. Must satisfy tier1 ≤ tier2 ≤ tier3. tier3 should equal max achievable weight.",
+      "type": "object",
+      "required": ["tier1", "tier2", "tier3"],
+      "properties": {
+        "tier1": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Min weight for Tier 1 (small amounts, ~$0–$100 in guard)" },
+        "tier2": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Min weight for Tier 2 (medium amounts, ~$100–$1000)" },
+        "tier3": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Min weight for Tier 3 (large amounts, >$1000); equals max achievable" }
+      },
+      "additionalProperties": false
+    },
+
+    "metadata": {
+      "description": "Optional UI display info, not stored on-chain.",
+      "type": "object",
+      "properties": {
+        "presetName":  { "type": "string", "description": "Preset label shown in UI, e.g. 'Family 3-of-5', 'Personal High Security'" },
+        "description": { "type": "string", "description": "Human-readable explanation of the security model" },
+        "totalMaxWeight": {
+          "type": "integer",
+          "description": "Computed: sum of all non-zero source weights. UI helper to show coverage.",
+          "readOnly": true
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "$comment": "Personal: owner ECDSA=Tier1, owner P256=Tier2, ECDSA+P256 required for Tier3",
+      "metadata": {
+        "presetName": "Personal Standard",
+        "description": "Phone sign for small, Passkey required for medium, both for large."
+      },
+      "weights": {
+        "ecdsa":     2,
+        "p256":      3,
+        "bls":       0,
+        "guardian0": 0,
+        "guardian1": 0,
+        "guardian2": 0
+      },
+      "tiers": { "tier1": 2, "tier2": 3, "tier3": 5 }
+    },
+    {
+      "$comment": "Family multisig: any 2-of-3 family members for Tier1, all 3 for Tier3",
+      "metadata": {
+        "presetName": "Family 2-of-3",
+        "description": "Any two family members can approve small/medium. All three needed for large transfers."
+      },
+      "weights": {
+        "ecdsa":     0,
+        "p256":      0,
+        "bls":       0,
+        "guardian0": 2,
+        "guardian1": 2,
+        "guardian2": 2
+      },
+      "tiers": { "tier1": 2, "tier2": 4, "tier3": 6 }
+    },
+    {
+      "$comment": "High security: P256 + at least one guardian for any operation",
+      "metadata": {
+        "presetName": "High Security",
+        "description": "Passkey + one guardian required even for small amounts. All + BLS DVT for large."
+      },
+      "weights": {
+        "ecdsa":     0,
+        "p256":      3,
+        "bls":       2,
+        "guardian0": 2,
+        "guardian1": 2,
+        "guardian2": 0
+      },
+      "tiers": { "tier1": 5, "tier2": 7, "tier3": 9 }
+    },
+    {
+      "$comment": "DAO vote: BLS aggregate (DVT nodes) alone meets Tier1, guardian majority adds to Tier3",
+      "metadata": {
+        "presetName": "DAO / Org Treasury",
+        "description": "DVT BLS aggregate for routine ops. Guardian threshold for high-value."
+      },
+      "weights": {
+        "ecdsa":     1,
+        "p256":      1,
+        "bls":       4,
+        "guardian0": 3,
+        "guardian1": 3,
+        "guardian2": 3
+      },
+      "tiers": { "tier1": 4, "tier2": 7, "tier3": 11 }
+    }
+  ]
+}
