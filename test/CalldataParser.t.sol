@@ -307,6 +307,116 @@ contract CalldataParserTest is Test {
         acct.execute(UNI_ROUTER, 0, uniCalldata);
     }
 
+    function test_setParserRegistry_zero_disablesParser() public {
+        // Setting registry to address(0) disables DeFi parsing — ERC20 fallback still active
+        address accountOwner = address(this);
+        address guardianAddr  = address(0xBEEF01);
+        address guardianAddr2 = address(0xBEEF02);
+
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02;
+        address[] memory tokens = new address[](1);
+        tokens[0] = USDC;
+        AAStarGlobalGuard.TokenConfig[] memory tokenCfgs = new AAStarGlobalGuard.TokenConfig[](1);
+        tokenCfgs[0] = AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 500e6,
+            tier2Limit: 5000e6,
+            dailyLimit: 10000e6
+        });
+
+        address[3] memory guardians;
+        guardians[0] = guardianAddr;
+        guardians[1] = guardianAddr2;
+
+        AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
+            guardians: guardians,
+            dailyLimit: 10 ether,
+            approvedAlgIds: algIds,
+            minDailyLimit: 0,
+            initialTokens: tokens,
+            initialTokenConfigs: tokenCfgs
+        });
+
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0xEEEE), accountOwner, cfg);
+
+        // First set a registry
+        registry.registerParser(UNI_ROUTER, address(uniParser));
+        acct.setParserRegistry(address(registry));
+        assertEq(acct.parserRegistry(), address(registry));
+
+        // Now clear it — sets to address(0), disabling DeFi parser lookup
+        acct.setParserRegistry(address(0));
+        assertEq(acct.parserRegistry(), address(0));
+
+        // With no parser, a Uniswap call with value=0 is NOT caught by token tier check
+        // (parser returns nothing, ERC20 fallback doesn't recognise the Uniswap selector)
+        // So the execute call should NOT revert with InsufficientTokenTier
+        bytes memory uniCalldata = _buildExactInputSingle(
+            USDC, WETH, 3000, address(acct), block.timestamp, 1000e6, 0, 0
+        );
+        vm.prank(accountOwner);
+        acct.execute(UNI_ROUTER, 0, uniCalldata); // must NOT revert (guard bypassed)
+    }
+
+    function test_enforceGuard_parserReturnsZero_fallsBackToERC20() public {
+        // If parser returns (address(0), 0), guard should fall back to ERC20 native parsing
+        address accountOwner = address(this);
+
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02;
+        address[] memory tokens = new address[](1);
+        tokens[0] = USDC;
+        AAStarGlobalGuard.TokenConfig[] memory tokenCfgs = new AAStarGlobalGuard.TokenConfig[](1);
+        tokenCfgs[0] = AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100e6,   // 100 USDC tier1 max
+            tier2Limit: 1000e6,
+            dailyLimit: 5000e6
+        });
+
+        address[3] memory guardians;
+        guardians[0] = address(0xBEEF01);
+        guardians[1] = address(0xBEEF02);
+
+        AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
+            guardians: guardians,
+            dailyLimit: 10 ether,
+            approvedAlgIds: algIds,
+            minDailyLimit: 0,
+            initialTokens: tokens,
+            initialTokenConfigs: tokenCfgs
+        });
+
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0xEEEE), accountOwner, cfg);
+
+        // Register parser for a DIFFERENT dest — USDC itself has no parser
+        registry.registerParser(UNI_ROUTER, address(uniParser));
+        acct.setParserRegistry(address(registry));
+
+        // ERC20 transfer to USDC directly: 500 USDC > tier1 → InsufficientTokenTier via ERC20 fallback
+        bytes memory erc20Data = abi.encodeWithSelector(bytes4(0xa9059cbb), address(0xdead), 500e6);
+        vm.prank(accountOwner);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InsufficientTokenTier.selector, uint8(2), uint8(1)
+        ));
+        acct.execute(USDC, 0, erc20Data); // parser returns (address(0), 0) → ERC20 fallback catches it
+    }
+
+    function test_uniswapParser_exactInput_pathTooShort_returnsZero() public view {
+        // exactInput with path < 20 bytes cannot extract tokenIn
+        bytes memory shortPath = new bytes(10); // only 10 bytes, need >= 20 for a token address
+        bytes memory data = abi.encodeWithSelector(
+            EXACT_INPUT,
+            shortPath,          // too short
+            address(0xdead),    // recipient
+            uint256(9999),      // deadline
+            uint256(100e6),     // amountIn
+            uint256(0)          // amountOutMin
+        );
+        (address token, uint256 amount) = uniParser.parseTokenTransfer(data);
+        assertEq(token, address(0));
+        assertEq(amount, 0);
+    }
+
     function test_enforceGuard_fallsBackToERC20_whenNoParser() public {
         // Deploy account without parser registry
         address accountOwner = address(this);
