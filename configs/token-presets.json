@@ -83,6 +83,46 @@
         }
       }
     },
+    "10": {
+      "_name": "OP Mainnet (Optimism)",
+      "tokens": {
+        "USDC": {
+          "address": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        },
+        "USDT": {
+          "address": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        },
+        "WETH": {
+          "address": "0x4200000000000000000000000000000000000006",
+          "decimals": 18,
+          "conservative": { "tier1Limit": "100000000000000000",  "tier2Limit": "1000000000000000000", "dailyLimit": "5000000000000000000"  },
+          "standard":     { "tier1Limit": "500000000000000000",  "tier2Limit": "5000000000000000000", "dailyLimit": "10000000000000000000" },
+          "trader":       { "tier1Limit": "2000000000000000000", "tier2Limit": "10000000000000000000","dailyLimit": "50000000000000000000" }
+        },
+        "WBTC": {
+          "address": "0x68f180fcCe6836688e9084f035309E29Bf0A2095",
+          "decimals": 8,
+          "conservative": { "tier1Limit": "1000000",   "tier2Limit": "10000000",  "dailyLimit": "50000000"  },
+          "standard":     { "tier1Limit": "5000000",   "tier2Limit": "50000000",  "dailyLimit": "100000000" },
+          "trader":       { "tier1Limit": "20000000",  "tier2Limit": "200000000", "dailyLimit": "500000000" }
+        },
+        "aPNTs": {
+          "address": "TBD",
+          "decimals": 6,
+          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
+          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
+          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+        }
+      }
+    },
     "8453": {
       "_name": "Base Mainnet",
       "tokens": {
