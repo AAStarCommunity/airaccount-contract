@@ -52,7 +52,9 @@ contract AAStarAirAccountV7_M2Test is Test {
         entryPointMock = new MockEntryPointM2();
         entryPointAddr = address(entryPointMock);
 
-        account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, _emptyConfig());
+        account = new AAStarAirAccountV7();
+        account.initialize(entryPointAddr, ownerWallet.addr, _emptyConfig());
+
         router = new AAStarValidator();
         mockAlg = new MockSuccessAlgorithm();
 

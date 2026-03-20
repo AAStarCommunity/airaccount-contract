@@ -11,6 +11,13 @@ import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 
 /// @title CalldataParserTest — Unit tests for M6.6b CalldataParser + Registry
 contract CalldataParserTest is Test {
+    function _initWithGuard(AAStarAirAccountV7 acct, address ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
+        address g = address(0);
+        if (cfg.dailyLimit > 0) {
+            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
+        }
+        acct.initialize(ep, _owner, cfg, g);
+    }
     CalldataParserRegistry public registry;
     UniswapV3Parser         public uniParser;
 
@@ -209,7 +216,9 @@ contract CalldataParserTest is Test {
         });
 
         address accountOwner = address(this);
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7(entryPoint, accountOwner, cfg);
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        _initWithGuard(acct, entryPoint, accountOwner, cfg);
+
 
         // Initially no parser registry
         assertEq(acct.parserRegistry(), address(0));
@@ -246,7 +255,9 @@ contract CalldataParserTest is Test {
             initialTokenConfigs: emptyCfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0xEEEE), address(this), cfg);
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        _initWithGuard(acct, address(0xEEEE), address(this), cfg);
+
 
         vm.expectEmit(true, false, false, false);
         emit AAStarAirAccountBase.ParserRegistrySet(address(registry));
@@ -287,7 +298,9 @@ contract CalldataParserTest is Test {
             initialTokenConfigs: tokenCfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0xEEEE), accountOwner, cfg);
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        _initWithGuard(acct, address(0xEEEE), accountOwner, cfg);
+
 
         // Register the Uniswap parser
         registry.registerParser(UNI_ROUTER, address(uniParser));
@@ -337,7 +350,9 @@ contract CalldataParserTest is Test {
             initialTokenConfigs: tokenCfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0xEEEE), accountOwner, cfg);
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        _initWithGuard(acct, address(0xEEEE), accountOwner, cfg);
+
 
         // First set a registry
         registry.registerParser(UNI_ROUTER, address(uniParser));
@@ -386,7 +401,9 @@ contract CalldataParserTest is Test {
             initialTokenConfigs: tokenCfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0xEEEE), accountOwner, cfg);
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        _initWithGuard(acct, address(0xEEEE), accountOwner, cfg);
+
 
         // Register parser for a DIFFERENT dest — USDC itself has no parser
         registry.registerParser(UNI_ROUTER, address(uniParser));
@@ -448,7 +465,9 @@ contract CalldataParserTest is Test {
             initialTokenConfigs: tokenCfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0xEEEE), accountOwner, cfg);
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        _initWithGuard(acct, address(0xEEEE), accountOwner, cfg);
+
         // No parser registry set — should fall back to native ERC20 parsing
 
         // Build ERC20 transfer calldata for 500 USDC (exceeds tier1 = 100 USDC)

@@ -63,7 +63,11 @@ contract AAStarAirAccountM5_8Test is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
 
-        account = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, config);
+        account = new AAStarAirAccountV7();
+        // Guard has dailyLimit=0 but approves algorithm 0x06 — deploy it even with zero limit
+        address g = address(new AAStarGlobalGuard(address(account), config.dailyLimit, config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
+        account.initialize(entryPointAddr, ownerWallet.addr, config, g);
+
         vm.deal(address(account), 10 ether);
 
         // Set P256 key (non-zero)
@@ -193,7 +197,9 @@ contract AAStarAirAccountM5_8Test is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 noKeyAccount = new AAStarAirAccountV7(entryPointAddr, ownerWallet.addr, config);
+        AAStarAirAccountV7 noKeyAccount = new AAStarAirAccountV7();
+        noKeyAccount.initialize(entryPointAddr, ownerWallet.addr, config);
+
 
         PackedUserOperation memory userOp = _buildUserOp(address(noKeyAccount));
         bytes32 userOpHash = keccak256(abi.encode(userOp));

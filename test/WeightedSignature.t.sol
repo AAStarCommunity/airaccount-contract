@@ -41,6 +41,13 @@ contract MockP256FailW {
 
 /// @title WeightedSignatureTest — Unit tests for M6.1 (algId 0x07) + M6.2 (guardian weight governance)
 contract WeightedSignatureTest is Test {
+    function _initWithGuard(AAStarAirAccountV7 acct, address ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
+        address g = address(0);
+        if (cfg.dailyLimit > 0) {
+            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
+        }
+        acct.initialize(ep, _owner, cfg, g);
+    }
     using MessageHashUtils for bytes32;
     using ECDSA for bytes32;
 
@@ -79,7 +86,9 @@ contract WeightedSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7(address(ep), ownerW.addr, cfg);
+        account = new AAStarAirAccountV7();
+        account.initialize(address(ep), ownerW.addr, cfg);
+
 
         router = new AAStarValidator();
         blsMock = new MockBLSOk();
@@ -357,7 +366,9 @@ contract WeightedSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 acc1 = new AAStarAirAccountV7(address(ep), ownerW.addr, cfg);
+        AAStarAirAccountV7 acc1 = new AAStarAirAccountV7();
+        acc1.initialize(address(ep), ownerW.addr, cfg);
+
 
         vm.startPrank(ownerW.addr);
         acc1.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
@@ -412,7 +423,9 @@ contract WeightedSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7(address(ep), ownerW.addr, cfg);
+        AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7();
+        _initWithGuard(tieredAcc, address(ep), ownerW.addr, cfg);
+
         vm.deal(address(tieredAcc), 100 ether);
 
         vm.startPrank(ownerW.addr);
@@ -449,7 +462,9 @@ contract WeightedSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7(address(ep), ownerW.addr, cfg);
+        AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7();
+        _initWithGuard(tieredAcc, address(ep), ownerW.addr, cfg);
+
         vm.deal(address(tieredAcc), 100 ether);
 
         vm.startPrank(ownerW.addr);

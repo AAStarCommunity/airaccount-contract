@@ -152,7 +152,11 @@ contract M5ScenarioTests is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        return new AAStarAirAccountV7(address(entryPoint), owner, config);
+        AAStarAirAccountV7 _ret = new AAStarAirAccountV7();
+        address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
+        _ret.initialize(address(entryPoint), owner, config, g);
+        return _ret;
+
     }
 
     function _buildAccountWithTokenGuard(
@@ -181,7 +185,11 @@ contract M5ScenarioTests is Test {
             initialTokens: tokens,
             initialTokenConfigs: cfgs
         });
-        return new AAStarAirAccountV7(address(entryPoint), owner, config);
+        AAStarAirAccountV7 _ret = new AAStarAirAccountV7();
+        address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
+        _ret.initialize(address(entryPoint), owner, config, g);
+        return _ret;
+
     }
 
     function _guardianAcceptSig(Vm.Wallet memory w, address owner, uint256 salt)
@@ -689,7 +697,11 @@ contract M5ScenarioTests is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        return new AAStarAirAccountV7(address(entryPoint), owner, config);
+        AAStarAirAccountV7 _ret = new AAStarAirAccountV7();
+        address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
+        _ret.initialize(address(entryPoint), owner, config, g);
+        return _ret;
+
     }
 
     function _buildCombinedT1Sig(

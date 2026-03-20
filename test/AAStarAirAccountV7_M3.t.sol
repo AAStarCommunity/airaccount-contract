@@ -17,7 +17,9 @@ contract AAStarAirAccountV7M3Test is Test {
 
     function setUp() public {
         (ownerAddr, ownerKey) = makeAddrAndKey("owner");
-        account = new AAStarAirAccountV7(entryPoint, ownerAddr, _emptyConfig());
+        account = new AAStarAirAccountV7();
+        account.initialize(entryPoint, ownerAddr, _emptyConfig());
+
         vm.deal(address(account), 10 ether);
     }
 
@@ -31,6 +33,16 @@ contract AAStarAirAccountV7M3Test is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
+    }
+
+    // ─── Helper ───────────────────────────────────────────────────────
+
+    function _initWithGuard(AAStarAirAccountV7 acct, address ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
+        address g = address(0);
+        if (cfg.dailyLimit > 0) {
+            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
+        }
+        acct.initialize(ep, _owner, cfg, g);
     }
 
     // ─── P256 Key Management ─────────────────────────────────────────
@@ -157,7 +169,9 @@ contract AAStarAirAccountV7M3Test is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 guardedAccount = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
+        AAStarAirAccountV7 guardedAccount = new AAStarAirAccountV7();
+        _initWithGuard(guardedAccount, entryPoint, ownerAddr, config);
+
 
         assertTrue(address(guardedAccount.guard()) != address(0));
         AAStarGlobalGuard g = guardedAccount.guard();
@@ -184,7 +198,9 @@ contract AAStarAirAccountV7M3Test is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 ga = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
+        AAStarAirAccountV7 ga = new AAStarAirAccountV7();
+        _initWithGuard(ga, entryPoint, ownerAddr, config);
+
 
         vm.prank(ownerAddr);
         ga.guardApproveAlgorithm(0x03); // P256
@@ -247,7 +263,9 @@ contract AAStarAirAccountV7M3Test is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 ga = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
+        AAStarAirAccountV7 ga = new AAStarAirAccountV7();
+        _initWithGuard(ga, entryPoint, ownerAddr, config);
+
         vm.deal(address(ga), 10 ether);
 
         vm.prank(ownerAddr);
@@ -305,7 +323,9 @@ contract AAStarAirAccountV7M3Test is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 ga = new AAStarAirAccountV7(entryPoint, ownerAddr, config);
+        AAStarAirAccountV7 ga = new AAStarAirAccountV7();
+        _initWithGuard(ga, entryPoint, ownerAddr, config);
+
         vm.deal(address(ga), 10 ether);
 
         vm.prank(ownerAddr);

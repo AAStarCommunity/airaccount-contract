@@ -40,7 +40,9 @@ contract SocialRecoveryTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7(entryPointAddr, ownerAddr, config);
+        account = new AAStarAirAccountV7();
+        account.initialize(entryPointAddr, ownerAddr, config);
+
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────

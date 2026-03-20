@@ -8,6 +8,13 @@ import "../src/core/AAStarAirAccountBase.sol";
 
 /// @title AAStarGlobalGuardM5Test — M5.1 ERC20 token-aware guard tests
 contract AAStarGlobalGuardM5Test is Test {
+    function _initWithGuard(AAStarAirAccountV7 acct, address ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
+        address g = address(0);
+        if (cfg.dailyLimit > 0) {
+            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
+        }
+        acct.initialize(ep, _owner, cfg, g);
+    }
     // ─── Constants ────────────────────────────────────────────────────
 
     uint8 constant ALG_ECDSA = 0x02;
@@ -258,7 +265,9 @@ contract AAStarGlobalGuardM5Test is Test {
             initialTokenConfigs: cfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(this), owner, config);
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        _initWithGuard(acct, address(this), owner, config);
+
 
         // transfer(recipient, 200 USDC) — exceeds tier1 100 USDC → guard reverts before inner call
         bytes memory transferData = abi.encodeWithSelector(TRANSFER, address(0x9999), 200 * USDC_DEC);
@@ -295,7 +304,9 @@ contract AAStarGlobalGuardM5Test is Test {
             initialTokenConfigs: cfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(this), owner, config);
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        _initWithGuard(acct, address(this), owner, config);
+
 
         bytes memory transferData = abi.encodeWithSelector(TRANSFER, address(0x9999), 50 * USDC_DEC);
 
@@ -327,7 +338,9 @@ contract AAStarGlobalGuardM5Test is Test {
             initialTokenConfigs: cfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(this), owner, config);
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        _initWithGuard(acct, address(this), owner, config);
+
 
         // Unknown selector (not transfer/approve) → no token tier check → succeeds
         bytes memory unknownData = abi.encodeWithSelector(bytes4(0xdeadbeef));

@@ -36,8 +36,30 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @notice Contract version — updated on each release
     string public constant VERSION = "0.15.0";
 
-    constructor(address _entryPoint, address _owner, InitConfig memory _config)
-        AAStarAirAccountBase(_entryPoint, _owner, _config) {}
+    /// @dev Implementation constructor. Does NOT disable initializers so that direct `new` in tests works.
+    ///      The factory deploys one shared implementation and uses Clones for user accounts.
+    constructor() {}
+
+    /// @notice Initialize this account without a guard (called directly in tests or for no-guard accounts).
+    ///         The `initializer` modifier from OZ Initializable prevents re-initialization.
+    /// @param _entryPoint ERC-4337 EntryPoint address
+    /// @param _owner Initial account owner (ECDSA signer)
+    /// @param _config Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed)
+    function initialize(address _entryPoint, address _owner, InitConfig calldata _config) external initializer {
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, address(0));
+    }
+
+    /// @notice Initialize this account with a pre-deployed guard.
+    ///         Guard must be deployed by the caller (factory or test) before calling this.
+    ///         Keeping guard deployment outside the account removes ~4,595B of creation code
+    ///         from the account's runtime, keeping it under EIP-170's 24,576-byte limit.
+    /// @param _entryPoint ERC-4337 EntryPoint address
+    /// @param _owner Initial account owner (ECDSA signer)
+    /// @param _config Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr)
+    /// @param _guardAddr Pre-deployed AAStarGlobalGuard address bound to this account's address
+    function initialize(address _entryPoint, address _owner, InitConfig calldata _config, address _guardAddr) external initializer {
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
+    }
 
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────
 
