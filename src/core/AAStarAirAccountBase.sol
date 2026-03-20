@@ -90,8 +90,11 @@ abstract contract AAStarAirAccountBase {
     /// @dev Transient storage slot base for algId (slot = ALG_ID_SLOT_BASE + nonce)
     uint256 internal constant ALG_ID_SLOT_BASE = 0x0A1600;
 
-    /// @dev Transient storage slot base for session key address (parallel queue to ALG_ID_SLOT_BASE)
+    /// @dev Transient storage slot base for session key identifier (parallel queue to ALG_ID_SLOT_BASE).
     ///      Only populated when algId == ALG_SESSION_KEY. Consumed in _enforceGuard for scope check.
+    ///      Encodes session type in the top byte:
+    ///        0x01 → ECDSA session: remaining 20 bytes are the session key address
+    ///        0x02 → P256 session:  remaining 31 bytes are the low 31 bytes of keccak256(keyX||keyY)
     uint256 internal constant SESSION_KEY_SLOT_BASE = 0x0A1700;
 
     // ── P256 Passkey ──
@@ -433,10 +436,19 @@ abstract contract AAStarAirAccountBase {
         // All other → delegate to external validator router
         if (address(validator) == address(0)) return 1;
         _storeValidatedAlgId(firstByte);
-        // SESSION_KEY: save session key address so _enforceGuard can verify contractScope/selectorScope.
-        // Signature layout: [algId(1)][account(20)][sessionKey(20)][ECDSASig(65)] — sessionKey at [21:41]
-        if (firstByte == ALG_SESSION_KEY && signature.length >= 41) {
-            _storeSessionKey(address(bytes20(signature[21:41])));
+        // SESSION_KEY: save session key identifier so _enforceGuard can verify contractScope/selectorScope.
+        // ECDSA session layout: [algId(1)][account(20)][key(20)][ECDSASig(65)] = 106 bytes total
+        //   → key address at signature[21:41], tag = 0x01
+        // P256 session layout: [algId(1)][account(20)][keyX(32)][keyY(32)][r(32)][s(32)] = 149 bytes total
+        //   → keyX at [21:53], keyY at [53:85], tag = 0x02
+        if (firstByte == ALG_SESSION_KEY) {
+            if (signature.length == 106) {
+                address ecdsaKey = address(bytes20(signature[21:41]));
+                _storeSessionKey(bytes32(uint256(0x01) << 248 | uint256(uint160(ecdsaKey))));
+            } else if (signature.length == 149) {
+                bytes32 p256Hash = keccak256(abi.encodePacked(bytes32(signature[21:53]), bytes32(signature[53:85])));
+                _storeSessionKey(bytes32(uint256(0x02) << 248 | (uint256(p256Hash) & type(uint248).max)));
+            }
         }
         return validator.validateSignature(userOpHash, signature);
     }
@@ -889,19 +901,32 @@ abstract contract AAStarAirAccountBase {
             }
         }
 
-        // SESSION KEY scope enforcement (M6.4 fix): verify contractScope and selectorScope
-        // against the live calldata. The session key address was stored during validateUserOp
-        // via _storeSessionKey(). We read scope fields from SessionKeyValidator.sessions().
+        // SESSION KEY scope enforcement: verify contractScope and selectorScope against live calldata.
+        // Session key identifier (tagged bytes32) was stored during validateUserOp via _storeSessionKey().
+        // Top byte: 0x01 = ECDSA session (lookup by address), 0x02 = P256 session (lookup by keyHash).
         if (algId == ALG_SESSION_KEY && address(validator) != address(0)) {
             address skValidator = IAAStarValidator(address(validator)).getAlgorithm(ALG_SESSION_KEY);
             if (skValidator != address(0)) {
-                address sessionKey = _consumeSessionKey();
-                if (sessionKey != address(0)) {
-                    (bool ok, bytes memory data) = skValidator.staticcall(
-                        abi.encodeWithSignature("sessions(address,address)", address(this), sessionKey)
-                    );
+                bytes32 taggedId = _consumeSessionKey();
+                if (taggedId != bytes32(0)) {
+                    uint8 sessionType = uint8(uint256(taggedId) >> 248);
+                    bool ok;
+                    bytes memory data;
+                    if (sessionType == 0x01) {
+                        // ECDSA session: extract address from lower 20 bytes
+                        address ecdsaKey = address(uint160(uint256(taggedId)));
+                        (ok, data) = skValidator.staticcall(
+                            abi.encodeWithSignature("sessions(address,address)", address(this), ecdsaKey)
+                        );
+                    } else if (sessionType == 0x02) {
+                        // P256 session: extract key hash from lower 31 bytes
+                        bytes32 p256Hash = bytes32(uint256(taggedId) & type(uint248).max);
+                        (ok, data) = skValidator.staticcall(
+                            abi.encodeWithSignature("getP256Session(address,bytes32)", address(this), p256Hash)
+                        );
+                    }
                     if (ok && data.length >= 128) {
-                        // ABI decode: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
+                        // ABI decode Session: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
                         (, address contractScope, bytes4 selectorScope,) =
                             abi.decode(data, (uint48, address, bytes4, bool));
                         if (contractScope != address(0) && dest != contractScope) {
@@ -938,22 +963,21 @@ abstract contract AAStarAirAccountBase {
         }
     }
 
-    /// @dev Push session key address to transient storage queue (parallel to algId queue).
-    ///      Only called when algId == ALG_SESSION_KEY during validateUserOp.
-    function _storeSessionKey(address key) internal {
+    /// @dev Push tagged session key identifier to transient storage queue.
+    ///      Top byte = 0x01 (ECDSA) or 0x02 (P256). Only called for ALG_SESSION_KEY.
+    function _storeSessionKey(bytes32 taggedId) internal {
         assembly {
             let writeIdx := tload(SESSION_KEY_SLOT_BASE)
-            tstore(add(add(SESSION_KEY_SLOT_BASE, 2), writeIdx), key)
+            tstore(add(add(SESSION_KEY_SLOT_BASE, 2), writeIdx), taggedId)
             tstore(SESSION_KEY_SLOT_BASE, add(writeIdx, 1))
         }
     }
 
-    /// @dev Pop session key address from transient storage queue.
-    ///      Called during _enforceGuard when algId == ALG_SESSION_KEY.
-    function _consumeSessionKey() internal returns (address key) {
+    /// @dev Pop tagged session key identifier from transient storage queue.
+    function _consumeSessionKey() internal returns (bytes32 taggedId) {
         assembly {
             let readIdx := tload(add(SESSION_KEY_SLOT_BASE, 1))
-            key := tload(add(add(SESSION_KEY_SLOT_BASE, 2), readIdx))
+            taggedId := tload(add(add(SESSION_KEY_SLOT_BASE, 2), readIdx))
             tstore(add(SESSION_KEY_SLOT_BASE, 1), add(readIdx, 1))
         }
     }

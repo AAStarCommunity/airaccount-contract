@@ -173,15 +173,29 @@ Per-token spending limits enforced by `AAStarGlobalGuard`:
 
 ### 4.6 Session Key (M6.4)
 
-Grant a DApp limited signing power without exposing the owner key:
-- `sessionKeyValidator.grantSession(account, sessionKey, expiry, contractScope, selectorScope, ownerSig)`
-- DApp signs UserOps with the session key; validator checks expiry + signature
-- **Maximum session duration: 30 days** — prevents permanent session key delegation
+Grant a DApp limited signing power without exposing the owner key. Supports two session key types:
+
+**Type A — ECDSA session** (DApp server holds key, automation use case):
+- DApp generates a server-side ECDSA key, owner grants it a bounded scope
+- Signature: `[0x08][account(20)][key(20)][ECDSASig(65)]` = 106 bytes
+- `grantSession(account, key, expiry, contractScope, selectorScope, ownerSig)` — off-chain grant
+- `grantSessionDirect(...)` — direct owner call
+
+**Type B — P256 session** (user's own Passkey, user-controlled automation):
+- User's own hardware-bound P256 key (WebAuthn passkey) acts as the session key
+- Signature: `[0x08][account(20)][keyX(32)][keyY(32)][r(32)][s(32)]` = 149 bytes
+- `grantP256Session(account, keyX, keyY, expiry, contractScope, selectorScope, ownerSig)` — off-chain grant
+- `grantP256SessionDirect(...)` — direct owner call
+- Verification via EIP-7212 P256VERIFY precompile (0x100)
+
+**Common properties (both types):**
+- **Maximum 30 days** — prevents permanent delegation
 - **contractScope / selectorScope enforced on-chain** in `_enforceGuard` (execution phase):
-  - Session key address passed via transient storage from validation to execution
-  - `_enforceGuard` calls `SessionKeyValidator.sessions(account, key)` and validates `dest` / `func[0:4]`
-  - `address(0)` scope = no restriction; specific address/selector = strict enforcement
-- Tier 1 limits apply (same as ECDSA); owner can revoke instantly
+  - Session type + key identifier passed via tagged transient storage (top byte = 0x01/0x02)
+  - `_enforceGuard` reads scope from `SessionKeyValidator` and validates `dest` / `func[0:4]`
+  - `address(0)` / `bytes4(0)` = no restriction
+- **Tier 1 limits apply** — same daily/ETH limits as ECDSA
+- **Instant revocation** — `revokeSession()` / `revokeP256Session()` by owner or account itself
 - algId `0x08` — register `SessionKeyValidator` in the Validator Router
 
 ### 4.7 One Account Per DApp — OAPD (M6.6a)
@@ -194,16 +208,56 @@ Privacy isolation: each DApp sees a different on-chain address:
 
 ### 4.8a EIP-7702 AirAccountDelegate (M6.8)
 
-Allows an EOA to delegate execution to AirAccount logic without deploying a new contract:
-- `AirAccountDelegate.sol` — standalone implementation contract; EOA sets it as code via EIP-7702
-- `owner() = address(this)` — the delegating EOA is its own owner
-- **ERC-7201 namespaced storage** — prevents slot collisions when multiple EOAs delegate to same impl
-- **Guardian Rescue** (instead of key rotation): 2-of-3 guardian approval → execute asset transfer
-  - `initiateRescue(to)` — any guardian, blocked if rescue already pending (prevents DoS override)
-  - `approveRescue()` — 2nd or 3rd guardian, after timelock → `executeRescue()` transfers assets
-  - `cancelRescue()` — requires 2-of-3 guardian votes (stolen key cannot cancel)
-- **EIP-7702 limitation**: private key cannot be revoked — rescue protects assets, not key invalidation
-- **ERC-7579 minimal shim**: `accountId`, `supportsModule`, `isModuleInstalled`, `isValidSignature`
+Allows an **existing EOA** (MetaMask, hardware wallet address) to gain AirAccount features without changing its address. The EOA delegates its code to `AirAccountDelegate.sol` via EIP-7702.
+
+**User setup flow (one time):**
+```
+Step 1: Sign EIP-7702 authorization (Type 4 transaction)
+  → EOA signs: { chainId, address(AirAccountDelegate), nonce }
+  → Submit to network: EOA's code becomes 0xef0100 || AirAccountDelegateAddress
+
+Step 2: Initialize (Type 2 transaction, to own address)
+  → Call initialize([guardian1, guardian2, guardian3], dailyLimit)
+  → Guardians must each co-sign with their ECDSA key to consent
+  → Daily spending limit is set (e.g. 1 ETH/day)
+
+After setup:
+  → Same EOA address, now has: daily limits, guardian rescue, ERC-4337 UserOp support
+```
+
+**Daily use (user perspective):**
+- EOA continues to work with all existing DApps exactly as before
+- Daily ETH spending limit is silently enforced (large transfers need direct guardian consent)
+- Via ERC-4337 EntryPoint: can submit gasless UserOps using SuperPaymaster
+- `execute(dest, value, data)` — called from account itself or EntryPoint
+- `executeBatch(dests, values, datas)` — batch calls
+
+**Emergency rescue flow (if key is compromised):**
+```
+Guardian 1: initiateRescue(newSafeAddress)
+  → Starts 2-day timelock countdown
+  → If another rescue was pending, it BLOCKS (prevents guardian DoS override)
+
+Guardian 2: approveRescue()
+  → 2-of-3 threshold reached, rescue is approved
+
+After 2 days have elapsed: any address calls executeRescue()
+  → ALL ETH in the compromised EOA is transferred to newSafeAddress
+  → ERC-20 tokens: owner calls rescueERC20(token, newSafeAddress) separately
+
+If guardians want to cancel (false alarm):
+  → Two guardians call cancelRescue() (2-of-3 threshold required)
+  → Stolen private key CANNOT cancel rescue
+```
+
+**Critical limitation to communicate to users:**
+> EIP-7702 does NOT revoke the private key. After a rescue, the attacker still has the private key and can re-delegate or make new EOA transactions. AirAccountDelegate protects ASSETS (via rescue), not the key itself. For highest security, move to a native AirAccountV7 (CREATE2 deployed, key-less recovery) after a compromise event.
+
+**Technical details:**
+- `owner() = address(this)` — the EOA IS the account, no separate owner
+- ERC-7201 namespaced storage (`0x3251...720a00`) — no slot collisions with prior EOA state
+- ERC-7579 minimal shim: `accountId`, `supportsModule`, `isModuleInstalled`, `isValidSignature`
+- 38 unit tests: all passing
 
 ### 4.8 Pluggable Calldata Parser (M6.6b)
 
