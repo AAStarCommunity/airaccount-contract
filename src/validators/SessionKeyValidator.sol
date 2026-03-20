@@ -55,6 +55,13 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     ///         Allows user's own Passkey (WebAuthn P256) to act as a scoped session key.
     mapping(address => mapping(bytes32 => Session)) public sessions_p256;
 
+    /// @notice Revocation nonce: incremented on each revokeSession call.
+    ///         Included in the grant hash so prior grant signatures become invalid after revocation.
+    mapping(address => mapping(address => uint256)) public grantNonces;
+
+    /// @notice Revocation nonce for P256 sessions.
+    mapping(address => mapping(bytes32 => uint256)) public grantNonces_p256;
+
     // ─── Events ──────────────────────────────────────────────────────
 
     event SessionGranted(
@@ -135,11 +142,13 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     }
 
     /// @notice Revoke an ECDSA session before its expiry.
+    /// @dev Increments grantNonces so any prior ownerSig for this sessionKey becomes invalid.
     function revokeSession(address account, address sessionKey) external {
         if (msg.sender != _ownerOf(account) && msg.sender != account) {
             revert NotAccountOwner();
         }
         sessions[account][sessionKey].revoked = true;
+        grantNonces[account][sessionKey]++;
         emit SessionRevoked(account, sessionKey);
     }
 
@@ -150,6 +159,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     }
 
     /// @notice Build the off-chain signing hash for an ECDSA session grant.
+    /// @dev The hash includes the current grantNonce so the owner must re-sign after revocation.
     function buildGrantHash(
         address account,
         address sessionKey,
@@ -205,12 +215,14 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     }
 
     /// @notice Revoke a P256 session before its expiry.
+    /// @dev Increments grantNonces_p256 so any prior ownerSig for this key becomes invalid.
     function revokeP256Session(address account, bytes32 p256KeyX, bytes32 p256KeyY) external {
         if (msg.sender != _ownerOf(account) && msg.sender != account) {
             revert NotAccountOwner();
         }
         bytes32 keyHash = keccak256(abi.encodePacked(p256KeyX, p256KeyY));
         sessions_p256[account][keyHash].revoked = true;
+        grantNonces_p256[account][keyHash]++;
         emit P256SessionRevoked(account, keyHash);
     }
 
@@ -263,6 +275,8 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         address contractScope,
         bytes4  selectorScope
     ) internal view returns (bytes32) {
+        // grantNonces[account][sessionKey] is included so that revoking a session
+        // invalidates all prior grant signatures for the same key.
         bytes32 inner = keccak256(abi.encodePacked(
             "GRANT_SESSION",
             block.chainid,
@@ -271,7 +285,8 @@ contract SessionKeyValidator is IAAStarAlgorithm {
             sessionKey,
             expiry,
             contractScope,
-            selectorScope
+            selectorScope,
+            grantNonces[account][sessionKey]
         ));
         return inner.toEthSignedMessageHash();
     }
@@ -332,6 +347,8 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         address contractScope,
         bytes4  selectorScope
     ) internal view returns (bytes32) {
+        bytes32 keyHash = keccak256(abi.encodePacked(p256KeyX, p256KeyY));
+        // grantNonces_p256 included so revoking invalidates all prior grant signatures.
         bytes32 inner = keccak256(abi.encodePacked(
             "GRANT_P256_SESSION",
             block.chainid,
@@ -341,7 +358,8 @@ contract SessionKeyValidator is IAAStarAlgorithm {
             p256KeyY,
             expiry,
             contractScope,
-            selectorScope
+            selectorScope,
+            grantNonces_p256[account][keyHash]
         ));
         return inner.toEthSignedMessageHash();
     }

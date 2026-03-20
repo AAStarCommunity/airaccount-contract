@@ -231,6 +231,52 @@ contract SessionKeyValidatorTest is Test {
         validator.revokeSession(account, sessionKey);
     }
 
+    // ─── 4b. grantNonce replay protection ────────────────────────────
+
+    /// @notice Security regression: revoking a session must invalidate any prior ownerSig.
+    ///         Before the fix, an attacker could replay the original grantSession calldata
+    ///         after revocation to resurrect the session.
+    function test_revokeSession_preventsGrantReplay() public {
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+
+        // Owner signs a grant message (nonce=0 at this point)
+        bytes memory sig = _ownerGrantSig(account, sessionKey, expiry, address(0), bytes4(0));
+
+        // Grant session using the signed message
+        validator.grantSession(account, sessionKey, expiry, address(0), bytes4(0), sig);
+        assertTrue(validator.isSessionActive(account, sessionKey));
+
+        // Owner revokes — this increments the grant nonce to 1
+        vm.prank(owner);
+        validator.revokeSession(account, sessionKey);
+        assertFalse(validator.isSessionActive(account, sessionKey));
+        assertEq(validator.grantNonces(account, sessionKey), 1);
+
+        // Attacker replays the original sig (which was signed over nonce=0)
+        // _checkNotExists allows re-grant because session is revoked
+        // But the hash no longer matches since nonce is now 1 → NotAccountOwner revert
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        validator.grantSession(account, sessionKey, expiry, address(0), bytes4(0), sig);
+    }
+
+    /// @notice After revocation, owner can re-grant with a fresh signature (new nonce).
+    function test_revokeSession_ownerCanRegrantWithNewSig() public {
+        uint48 expiry1 = uint48(block.timestamp + 1 hours);
+
+        bytes memory sig1 = _ownerGrantSig(account, sessionKey, expiry1, address(0), bytes4(0));
+        validator.grantSession(account, sessionKey, expiry1, address(0), bytes4(0), sig1);
+
+        vm.prank(owner);
+        validator.revokeSession(account, sessionKey);
+        assertFalse(validator.isSessionActive(account, sessionKey));
+
+        // Owner builds a new sig — this time with nonce=1 baked in via buildGrantHash
+        uint48 expiry2 = uint48(block.timestamp + 2 hours);
+        bytes memory sig2 = _ownerGrantSig(account, sessionKey, expiry2, address(0), bytes4(0));
+        validator.grantSession(account, sessionKey, expiry2, address(0), bytes4(0), sig2);
+        assertTrue(validator.isSessionActive(account, sessionKey));
+    }
+
     // ─── 5. isSessionActive edge cases ───────────────────────────────
 
     function test_isSessionActive_exactlyAtExpiry_inactive() public {
