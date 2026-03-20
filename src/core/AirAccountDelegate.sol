@@ -116,6 +116,12 @@ contract AirAccountDelegate {
      * @param guardian2  Second personal guardian address
      * @param g2Sig      Guardian2's acceptance signature over domain hash
      * @param dailyLimit ETH daily spending limit in wei (0 = unlimited)
+     *
+     * @dev ⚠️ GUARDIAN TRUST WARNING:
+     *      Two guardians acting together can initiate and approve a rescue transfer of all
+     *      ETH to any address — including their own. The 2-day timelock gives the EOA owner
+     *      a window to cancel, but ONLY if the private key is still accessible.
+     *      Choose guardians you trust as much as your private key.
      */
     function initialize(
         address guardian1,
@@ -267,6 +273,10 @@ contract AirAccountDelegate {
      *      Once initiated, other guardians call approveRescue(). After RESCUE_THRESHOLD
      *      approvals and a 2-day timelock, anyone calls executeRescue().
      *
+     *      Once a rescue is pending, it cannot be overridden by another guardian
+     *      (prevents DoS via competing initiations). Only the EOA owner can cancel
+     *      via cancelRescue() if the key is still accessible.
+     *
      * @param rescueTo Destination address to transfer all ETH to (must be non-zero)
      */
     function initiateRescue(address rescueTo) external {
@@ -276,16 +286,17 @@ contract AirAccountDelegate {
         (uint8 gIdx, bool isGuardian) = _guardianIndex(msg.sender, ds);
         if (!isGuardian) revert OnlyGuardian();
         if (rescueTo == address(0)) revert InvalidAddress();
-        if (ds.rescueTimestamp != 0 && rescueTo == ds.rescueTo) revert RescueAlreadyPending();
+        // Block any override once a rescue is pending — prevents DoS by rogue guardian.
+        // Cancel via cancelRescue() (EOA self only) if the destination needs to change.
+        if (ds.rescueTimestamp != 0) revert RescueAlreadyPending();
 
-        // Start fresh or override previous proposal
         ds.rescueTo = rescueTo;
         ds.rescueTimestamp = block.timestamp;
-        ds.rescueApprovals = uint8(1 << gIdx); // initiator's vote
+        ds.rescueApprovals = uint8(1) << gIdx; // initiator's vote
         ds.rescueApproved = (RESCUE_THRESHOLD == 1);
 
         emit RescueInitiated(address(this), rescueTo, msg.sender);
-        emit RescueApproved(address(this), msg.sender, uint8(1 << gIdx));
+        emit RescueApproved(address(this), msg.sender, uint8(1) << gIdx);
     }
 
     /**
@@ -299,7 +310,7 @@ contract AirAccountDelegate {
         (uint8 gIdx, bool isGuardian) = _guardianIndex(msg.sender, ds);
         if (!isGuardian) revert OnlyGuardian();
 
-        uint8 bit = uint8(1 << gIdx);
+        uint8 bit = uint8(1) << gIdx;
         if (ds.rescueApprovals & bit != 0) revert GuardianAlreadyApproved();
 
         ds.rescueApprovals |= bit;

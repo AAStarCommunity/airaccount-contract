@@ -952,7 +952,7 @@ abstract contract AAStarAirAccountBase {
         activeRecovery = RecoveryProposal({
             newOwner: _newOwner,
             proposedAt: block.timestamp,
-            approvalBitmap: 1 << guardianIndex,
+            approvalBitmap: uint256(1) << guardianIndex,
             cancellationBitmap: 0
         });
 
@@ -965,7 +965,7 @@ abstract contract AAStarAirAccountBase {
         if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
 
         uint8 guardianIndex = _guardianIndex(msg.sender);
-        uint256 bit = 1 << guardianIndex;
+        uint256 bit = uint256(1) << guardianIndex;
         if (activeRecovery.approvalBitmap & bit != 0) revert AlreadyApproved();
 
         activeRecovery.approvalBitmap |= bit;
@@ -1001,7 +1001,7 @@ abstract contract AAStarAirAccountBase {
         if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
 
         uint8 guardianIndex = _guardianIndex(msg.sender); // reverts if not guardian
-        uint256 bit = 1 << guardianIndex;
+        uint256 bit = uint256(1) << guardianIndex;
         if (activeRecovery.cancellationBitmap & bit != 0) revert AlreadyCancelVoted();
 
         activeRecovery.cancellationBitmap |= bit;
