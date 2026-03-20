@@ -1,9 +1,11 @@
 # AirAccount V7 — Product Acceptance Guide
 
-**Version**: v0.12.5 (M4)
-**Date**: 2026-03-11
+**Version**: v0.15.0 (M6)
+**Date**: 2026-03-20
 **Network**: Sepolia Testnet (Chain ID: 11155111)
 **Compiler**: Solidity 0.8.33, Cancun EVM, via-IR, 10k optimizer runs
+
+> For full contract inventory, algId table, and feature descriptions see [`docs/contract-registry.md`](contract-registry.md).
 
 ---
 
@@ -27,11 +29,14 @@ The cumulative signature model ensures higher-value transactions require MORE au
 
 | Contract | Address | Role |
 |----------|---------|------|
+| **M5 Factory r5 (current)** | [`0xd72a236d84be6c388a8bc7deb64afd54704ae385`](https://sepolia.etherscan.io/address/0xd72a236d84be6c388a8bc7deb64afd54704ae385) | M5 factory with guardian acceptance + token guard defaults |
 | **M4 Factory** | [`0x914db0a849f55e68a726c72fd02b7114b1176d88`](https://sepolia.etherscan.io/address/0x914db0a849f55e68a726c72fd02b7114b1176d88) | Creates AA accounts with cumulative sig support |
 | **M3 Factory** | [`0xce4231da69015273819b6aab78d840d62cf206c1`](https://sepolia.etherscan.io/address/0xce4231da69015273819b6aab78d840d62cf206c1) | Previous version factory |
 | EntryPoint (v0.7) | [`0x0000000071727De22E5E9d8BAf0edAc6f37da032`](https://sepolia.etherscan.io/address/0x0000000071727De22E5E9d8BAf0edAc6f37da032) | ERC-4337 singleton |
 | Validator Router | [`0x730a162Ce3202b94cC5B74181B75b11eBB3045B1`](https://sepolia.etherscan.io/address/0x730a162Ce3202b94cC5B74181B75b11eBB3045B1) | Routes signatures to algorithm contracts |
 | BLS Algorithm | [`0xc2096E8D04beb3C337bb388F5352710d62De0287`](https://sepolia.etherscan.io/address/0xc2096E8D04beb3C337bb388F5352710d62De0287) | BLS12-381 verification + node registry |
+
+> M6 contracts (SessionKeyValidator, CalldataParserRegistry, UniswapV3Parser) are deployed per-environment. See E2E scripts for deployment instructions.
 
 ### SuperPaymaster Ecosystem
 
@@ -106,7 +111,7 @@ BLS_ALGORITHM=0xc2096E8D04beb3C337bb388F5352710d62De0287
 forge build
 
 # Deploy via TypeScript (Foundry has macOS transport issues)
-pnpm tsx scripts/deploy-m4.ts
+pnpm tsx scripts/deploy-m5.ts
 ```
 
 The Factory constructor takes `(entryPoint, communityGuardian)`. For testing, pass `address(0)` as community guardian.
@@ -119,6 +124,8 @@ After deploying a Factory and creating an account, configure:
 2. **Set P256 Key**: `account.setP256Key(x, y)` — registers passkey public key
 3. **Set Tier Limits**: `account.setTierLimits(tier1Wei, tier2Wei)` — e.g., 0.1 ETH / 1 ETH
 4. **Fund EntryPoint Deposit**: `account.addDeposit{value: 0.1 ether}()` — for gas prefund
+5. **[M6.4]** Register `SessionKeyValidator` in the Validator Router for algId `0x08`
+6. **[M6.6b]** Deploy `CalldataParserRegistry`, register parsers, call `account.setParserRegistry(registryAddr)`
 
 ---
 
@@ -156,7 +163,39 @@ After deploying a Factory and creating an account, configure:
 - Price conversion via Chainlink ETH/USD oracle
 - User's ETH balance is UNCHANGED after transaction
 
-### 4.5 Config Templates
+### 4.5 ERC20 Token-Tier Guard (M5)
+
+Per-token spending limits enforced by `AAStarGlobalGuard`:
+- Configure with `TokenConfig{tier1Limit, tier2Limit, dailyLimit}` per token address
+- `transfer`/`approve` calldata parsed automatically — amount checked against tier limits
+- Daily cumulative spend tracked per UTC day; prevents batch-bypass attacks
+- Config is only-add, only-decrease (monotonic)
+
+### 4.6 Session Key (M6.4)
+
+Grant a DApp limited signing power without exposing the owner key:
+- `sessionKeyValidator.grantSession(account, sessionKey, expiry, contractScope, selectorScope, ownerSig)`
+- DApp signs UserOps with the session key; validator checks expiry + signature
+- Tier 1 limits apply (same as ECDSA); owner can revoke instantly
+- algId `0x08` — register `SessionKeyValidator` in the Validator Router
+
+### 4.7 One Account Per DApp — OAPD (M6.6a)
+
+Privacy isolation: each DApp sees a different on-chain address:
+- `OAPDManager.saltForDapp(dappId)` — deterministic salt from `keccak256(owner + dappId)`
+- `getOrCreateAccount(dapp, clients...)` — deploys or returns existing account
+- All OAPD accounts share the same owner key, guardian pair, and social recovery path
+- Zero Solidity changes — pure TypeScript feature using existing CREATE2 factory
+
+### 4.8 Pluggable Calldata Parser (M6.6b)
+
+Token tier enforcement for DeFi protocol calls (e.g., Uniswap swaps with `value=0`):
+- `CalldataParserRegistry` maps `dest address → ICalldataParser` (singleton, only-add)
+- `UniswapV3Parser` handles `exactInputSingle` and `exactInput` — returns `(tokenIn, amountIn)`
+- Account calls registry in `_enforceGuard` before native ERC20 parsing
+- Unknown destinations / unknown selectors fall back to ERC20 parsing silently
+
+### 4.9 Config Templates
 
 Three pre-built JSON configs in `configs/`:
 
@@ -166,7 +205,7 @@ Three pre-built JSON configs in `configs/`:
 | `high-security.json` | 0.5 ETH | 0.05 ETH | 0.5 ETH | High-value storage |
 | `developer-test.json` | 10 ETH | 1 ETH | 5 ETH | Development/testing |
 
-### 4.6 Config Introspection
+### 4.10 Config Introspection
 
 Call `getConfigDescription()` (view function) to get a complete snapshot:
 
@@ -400,13 +439,15 @@ Step 4: Verification
 
 The Validator Router (`AAStarValidator`) maps `algId` (first byte of signature) to algorithm contract addresses:
 
-| algId | Algorithm | Contract | Status |
-|-------|-----------|----------|--------|
-| `0x01` | BLS12-381 aggregate | `0xc2096E8D04beb3C337bb388F5352710d62De0287` | Registered |
-| `0x02` | ECDSA | (inline in account) | N/A |
-| `0x03` | P256 | (inline in account) | N/A |
-| `0x04` | Cumulative T2 | (inline in account) | N/A |
-| `0x05` | Cumulative T3 | (inline in account) | N/A |
+| algId | Algorithm | Contract | Tier | Status |
+|-------|-----------|----------|------|--------|
+| `0x01` | BLS12-381 aggregate | `0xc2096E8D04beb3C337bb388F5352710d62De0287` | 3 | Registered |
+| `0x02` | ECDSA | (inline in account) | 1 | Native |
+| `0x03` | P256 (Passkey/WebAuthn) | (inline in account) | 1 | Native |
+| `0x04` | Cumulative T2 (P256 + BLS) | (inline in account) | 2 | Native |
+| `0x05` | Cumulative T3 (P256 + BLS + Guardian) | (inline in account) | 3 | Native |
+| `0x06` | Combined T1 (ECDSA + P256) | (inline in account) | 1 | Native |
+| `0x08` | Session Key (M6.4) | `SessionKeyValidator` | 1 | Register in router |
 
 - **Only-add registry**: algorithms can be registered but never removed or replaced
 - **Timelock**: `proposeAlgorithm` → 7-day wait → `executeProposal` (for future additions)
@@ -437,10 +478,14 @@ BLS nodes are registered in `AAStarBLSAlgorithm`:
 
 | Script | Tests | Command |
 |--------|-------|---------|
-| Foundry unit tests | 200 tests | `forge test -vv` |
-| Tiered signature E2E | 5 tests (3 positive + 2 negative) | `pnpm tsx scripts/test-tiered-e2e.ts` |
+| Foundry unit tests | 345 tests | `forge test -vv` |
+| Tiered signature E2E | 5 tests | `pnpm tsx scripts/test-tiered-e2e.ts` |
 | Social recovery E2E | 5 tests | `pnpm tsx scripts/test-social-recovery-e2e.ts` |
 | Gasless E2E | 1 test | `pnpm tsx scripts/test-gasless-complete-e2e.ts` |
+| Factory validation E2E | 5 tests | `pnpm tsx scripts/test-factory-validation-e2e.ts` |
+| Session Key E2E | 5 tests | `pnpm tsx scripts/test-session-key-e2e.ts` |
+| OAPD E2E | 6 tests | `pnpm tsx scripts/test-oapd-e2e.ts` |
+| Calldata Parser E2E | 5 tests | `pnpm tsx scripts/test-calldata-parser-e2e.ts` |
 
 ### 9.2 Onboarding Scripts (Demo Flow)
 
@@ -465,9 +510,9 @@ pnpm tsx scripts/test-gasless-complete-e2e.ts
 
 ### 9.4 Test Results Summary
 
-**Foundry**: 200/200 passed
+**Foundry**: 345/345 passed
 
-**Sepolia E2E**: 15/15 passed
+**Sepolia E2E**: 32/32 passed
 
 | Suite | Test | Result | Gas |
 |-------|------|--------|-----|
@@ -482,6 +527,14 @@ pnpm tsx scripts/test-gasless-complete-e2e.ts
 | Recovery | Stolen key cannot block recovery | PASS | — |
 | Recovery | Guardian P256 passkey independence | PASS | — |
 | Gasless | Self-transfer via SuperPaymaster | PASS | 181,067 |
+| Factory | Guardian acceptance + token config validation | PASS | — |
+| Session Key | Deploy + grant + validate + revoke | PASS | — |
+| Session Key | Expired session rejected | PASS | — |
+| OAPD | 3 DApps → 3 different addresses | PASS | — |
+| OAPD | Same dapp → same address (idempotent) | PASS | — |
+| Calldata Parser | Deploy registry + register Uniswap parser | PASS | — |
+| Calldata Parser | Parse exactInputSingle (1000 USDC) | PASS | — |
+| Calldata Parser | Unknown selector → (address(0), 0) | PASS | — |
 
 ---
 
@@ -507,19 +560,23 @@ pnpm dev    # Opens at http://localhost:5173
 
 ## 11. Known Limitations
 
-1. **ERC20 value not tracked**: Tier enforcement only checks `msg.value` (ETH). ERC20 transfers with `value=0` fall to Tier 1 regardless of token amount.
+1. ~~**ERC20 value not tracked**~~: Fixed in M5 (native `transfer`/`approve` parsing) + M6.6b (pluggable parser for DeFi protocols).
 2. **Chain compatibility**: P256 precompile (EIP-7212) and BLS precompiles (EIP-2537) only available on chains with Pectra/Prague upgrades.
 3. **Non-upgradable**: Bug fixes require new Factory deployment + user migration.
 4. ~~**Single bundle same-sender**~~: Fixed — uses transient storage queue to prevent cross-UserOp algId contamination.
+5. **Session key scope enforcement**: `contractScope` and `selectorScope` are stored but not enforced in `validate()` — enforcement is intended for the guard layer. Full enforcement requires additional guard integration in a future milestone.
 
 ---
 
 ## 12. Security Summary
 
-See `docs/security-review.md` for the full review. Key points:
+See `docs/security-review.md` and `docs/audit_report_2026_03_19_comprehensive.md` for full reviews. Key points:
 
 - **Architecture**: Non-upgradable, atomic deployment, monotonic security
-- **Guard**: Immutable binding, only-tighten config, daily reset
+- **Guard**: Immutable binding, only-tighten config, daily reset, ERC20 + DeFi tier enforcement
 - **Recovery**: 2-of-3 threshold, 2-day timelock, owner cannot cancel
-- **200 unit tests** + 15 E2E tests covering all critical paths
-- **Open items**: Fuzz testing, formal verification, mainnet audit
+- **Session Key**: Expiry enforced on-chain, instant revocation by owner, Tier 1 spending limits
+- **OAPD**: Cross-DApp address isolation via deterministic salt, no Solidity changes
+- **Parser**: Only-add registry, graceful fallback, no parser can bypass guard
+- **345 unit tests** + 32 E2E tests covering all critical paths
+- **Open items**: Session key scope enforcement (guard layer integration), fuzz testing, formal verification, mainnet audit

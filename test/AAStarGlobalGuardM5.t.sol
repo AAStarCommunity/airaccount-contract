@@ -538,6 +538,61 @@ contract AAStarGlobalGuardM5Test is Test {
         guard.checkTokenTransaction(mockToken, 1 * USDC_DEC, unknownAlg);
     }
 
+    // ─── 12. M6.4 Session Key algId 0x08 tier mapping ─────────────────
+
+    uint8 constant ALG_SESSION_KEY = 0x08;
+
+    function test_sessionKey_algTier_is1() public {
+        // algId 0x08 (Session Key) must map to Tier 1 in guard (same as ECDSA)
+        vm.prank(account);
+        guard.approveAlgorithm(ALG_SESSION_KEY);
+
+        // 50 USDC < tier1 (100 USDC) — Tier 1 is sufficient → must NOT revert
+        vm.prank(account);
+        bool ok = guard.checkTokenTransaction(mockToken, 50 * USDC_DEC, ALG_SESSION_KEY);
+        assertTrue(ok);
+    }
+
+    function test_sessionKey_withinTier1Limit_passes() public {
+        // Session key (Tier 1) + amount within tier1 limit → guard passes
+        vm.prank(account);
+        guard.approveAlgorithm(ALG_SESSION_KEY);
+
+        vm.prank(account);
+        bool ok = guard.checkTokenTransaction(mockToken, 100 * USDC_DEC, ALG_SESSION_KEY);
+        assertTrue(ok); // exactly at tier1 limit
+    }
+
+    function test_sessionKey_aboveTier1Limit_reverts() public {
+        // Session key (Tier 1) + amount > tier1 limit → InsufficientTokenTier(2, 1)
+        vm.prank(account);
+        guard.approveAlgorithm(ALG_SESSION_KEY);
+
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InsufficientTokenTier.selector, uint8(2), uint8(1)
+        ));
+        guard.checkTokenTransaction(mockToken, 500 * USDC_DEC, ALG_SESSION_KEY);
+    }
+
+    function test_sessionKey_sameTierAsECDSA() public {
+        // algId 0x08 and 0x02 must have identical tier enforcement (both Tier 1).
+        // Use 40 USDC each so cumulative (80 USDC) stays within tier1 (100 USDC).
+        vm.prank(account);
+        guard.approveAlgorithm(ALG_SESSION_KEY);
+
+        uint256 tier1Amount = 40 * USDC_DEC; // 40+40=80 <= tier1(100)
+
+        vm.prank(account);
+        bool okECDSA = guard.checkTokenTransaction(mockToken, tier1Amount, ALG_ECDSA);
+
+        vm.prank(account);
+        bool okSession = guard.checkTokenTransaction(mockToken, tier1Amount, ALG_SESSION_KEY);
+
+        assertTrue(okECDSA);
+        assertTrue(okSession);
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────
 
     function _getConfig(address token) internal view returns (uint256 t1, uint256 t2, uint256 daily) {
