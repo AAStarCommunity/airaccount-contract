@@ -425,31 +425,31 @@ async function main() {
 
   const publicClient = createPublicClient({
     chain: sepolia,
-    transport: http(RPC_URL),
+    transport: http(RPC_URL, { retryCount: 5, retryDelay: 2000 }),
   });
 
   const deployerWallet = createWalletClient({
     account: deployer,
     chain: sepolia,
-    transport: http(RPC_URL),
+    transport: http(RPC_URL, { retryCount: 5, retryDelay: 2000 }),
   });
 
   const anniWallet = createWalletClient({
     account: anni,
     chain: sepolia,
-    transport: http(RPC_URL),
+    transport: http(RPC_URL, { retryCount: 5, retryDelay: 2000 }),
   });
 
   const bobWallet = createWalletClient({
     account: bob,
     chain: sepolia,
-    transport: http(RPC_URL),
+    transport: http(RPC_URL, { retryCount: 5, retryDelay: 2000 }),
   });
 
   const charlieWallet = createWalletClient({
     account: charlie,
     chain: sepolia,
-    transport: http(RPC_URL),
+    transport: http(RPC_URL, { retryCount: 5, retryDelay: 2000 }),
   });
 
   const guardianAddresses: [Address, Address, Address] = [
