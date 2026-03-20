@@ -1,7 +1,7 @@
 # M7 Design & Planning Document — AirAccount v0.16.0
 
-**Target**: Ecosystem compatibility, future-proofing, and enterprise readiness
-**Philosophy**: M7 is NOT a core-feature milestone. Every item here is "better to have" — it makes AirAccount easier to integrate, auditable, and positioned for the broader EVM ecosystem. None of it changes the security model or signature tiers from M6.
+**Target**: Ecosystem compatibility, privacy support, and enterprise readiness
+**Philosophy**: M7 is NOT a core-feature milestone. Focus: (1) prove interop with privacy protocols (Railgun/Kohaku), (2) standard compliance testing, (3) L2 readiness. Items moved to M6: M7.8 (PQ placeholder), M7.9 (ERC-165 audit), M7.10 (already done), M7.4 (chainId helper). None of M7 changes the core security model from M6.
 
 ---
 
@@ -16,9 +16,12 @@
 | M7.5 | L2 Deployment + Force-Exit Mechanism | Interop | Medium | — | Base, Arbitrum, OP Stack; canonical bridge force-exit |
 | M7.6 | Professional Security Audit | Security | — | M6 complete | Immunefi or Code4rena + public report |
 | M7.7 | Bug Bounty Program (Immunefi) | Security | Low | M7.6 | Live program after audit |
-| M7.8 | Post-Quantum Signature Interface (placeholder) | Future | Low | EVM precompile (2028+) | algId 0x10 reserved; interface only |
-| M7.9 | ERC-165 / ERC-1271 Full Compliance Audit | Compat | Low | — | Verify all interface IDs are correct |
-| M7.10 | AirAccountDelegate ArrayLengthMismatch Error | Quality | Trivial | — | Replace require() with custom error in executeBatch |
+| M7.8 | ~~Post-Quantum Signature Interface (placeholder)~~ | — | **Moved to M6** | — | algId 0x10 reserved; 2-line comment |
+| M7.9 | ~~ERC-165 / ERC-1271 Full Compliance Audit~~ | — | **Moved to M6** | — | Review pass, no code change |
+| M7.10 | ~~AirAccountDelegate ArrayLengthMismatch~~ | — | **Already done** | — | executeBatch already has custom error |
+| M7.11 | **Railgun Privacy Pool Integration** | Privacy | Medium | — | RailgunParser + CalldataParserRegistry; prove deposit/withdraw works with guard |
+| M7.12 | **Kohaku Relay Compatibility** | Privacy | Low | M7.11 | Kohaku is a relay layer over Railgun; validate transaction format compatibility |
+| M7.13 | **ERC-5564 Stealth Address Support** | Privacy | Medium | — | `announceForStealth()` + stealth address derivation helper |
 
 ---
 
@@ -128,6 +131,43 @@ WillExecutor.sol
 **Scope exclusions**: Known accepted risks (EIP-7702 private key permanence, guardian self-dealing after trust is established).
 
 ---
+
+### M7.11 — Railgun Privacy Pool Integration
+
+**What**: Railgun uses shielded ERC-20 pools. Users "shield" tokens (deposit into Railgun) and later "unshield" (withdraw). From AirAccount's perspective, a deposit to Railgun is a token transfer to the Railgun proxy contract with a specific selector.
+
+**Interop requirements**:
+1. `RailgunParser` — `ICalldataParser` implementation that parses Railgun deposit calldata to extract `(tokenIn, amountIn)` for guard tier enforcement
+2. `CalldataParserRegistry.registerParser(railgunProxy, RailgunParser)` — one-time setup
+3. Guard tier applies normally: large Railgun deposits require Tier 3 (guardian co-sign)
+
+**What we need to test (just needs to run)**:
+- Deploy RailgunParser, register in registry
+- Submit a mock Railgun deposit UserOp, verify guard enforces the token amount
+- Withdraw direction: unshield returns tokens to AirAccount address — no parser needed
+
+**Why M7 not M6**: Railgun proxy address and calldata format must be verified against current mainnet deployment. No contract code dependency, just parser implementation.
+
+### M7.12 — Kohaku Relay Compatibility
+
+**What**: Kohaku is a transaction relay/middleware layer built on top of Railgun. It submits Railgun transactions on behalf of users with an off-chain relay fee.
+
+**Interop**: Kohaku relays already-signed Railgun transactions. Since the final transaction still calls the Railgun proxy, `RailgunParser` (M7.11) handles guard enforcement automatically. Kohaku-specific work:
+- Verify Kohaku relay format doesn't break AirAccount's UserOp structure
+- Test: Kohaku-relayed withdrawal flows through AirAccount without guard bypass
+
+**Effort**: Low — mostly integration testing once M7.11 is done.
+
+### M7.13 — ERC-5564 Stealth Address Support
+
+**What**: ERC-5564 defines a protocol for stealth addresses: sender derives a one-time address from recipient's public key, sends assets there, publishes an announcement. Recipient scans announcements to find funds.
+
+**Contract integration**:
+- `AirAccountDelegate.announceForStealth(address stealth, bytes ephemeralKey, bytes metadata)` — publishes announcement via `IERC5564Announcer`
+- Stealth address derivation is off-chain; contract just needs to call the announcer
+- Receiving on stealth addresses: just a regular ETH/token receive (no special handling needed)
+
+**Effort**: Low — ~50 lines. The main work is the off-chain TypeScript SDK for stealth address generation.
 
 ### M7.8 — Post-Quantum Signature Interface (Placeholder)
 
