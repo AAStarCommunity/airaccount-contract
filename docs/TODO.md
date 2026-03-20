@@ -108,6 +108,30 @@ favors keeping OZ until a bigger refactor pass is planned.
 
 ---
 
+### [M7+] EIP-2930 access list warmup — reduce clone DELEGATECALL from cold to warm (Option 1)
+**Savings**: ~2,500 gas per UserOp (2,600 cold → 100 warm for implementation address DELEGATECALL).
+**Root cause**: M7 clone proxy pays 2,600 gas (EIP-2929 cold address) on every DELEGATECALL to
+implementation. Option 3 (SLOAD pre-read) does NOT work — SLOAD warms storage slots, not addresses;
+only CALL/DELEGATECALL/EXTCODESIZE opcodes warm an address.
+**Option 1 — Bundler-level EIP-2930 access list (correct approach)**:
+- SDK hints bundler to include implementation address in `accessList` of the outer `handleOps` tx
+- Not a standard ERC-4337 field; requires bundler protocol extension (non-standard metadata hint)
+- Short-term free path: batch packing — when a `handleOps` tx contains multiple UserOps for
+  clone accounts sharing the same implementation, the 1st UserOp pays cold (2,600 gas),
+  all subsequent ones pay warm (100 gas). Bundler automatically benefits with no SDK change.
+**SDK work required (for explicit EIP-2930 path)**:
+- When calling `eth_sendUserOperation`, include hint in metadata:
+  `{"implementationAddress": "0x3C866080C6AA37697AeA43106956369071d26600"}`
+- Bundler must support this extension to build `accessList` entry before broadcasting `handleOps`
+- Without bundler support: rely on natural batch warmup (no SDK change needed, ~2500 gas saved
+  when ≥2 accounts in same bundle share the implementation)
+**Why deferred**: Requires bundler-protocol coordination. Natural batch warmup already provides
+the benefit in production (most bundlers pack multiple UserOps per tx). Explicit access list
+support is a nice-to-have; coordinate with Pimlico/Alchemy bundler teams at mainnet prep.
+**Files**: SDK layer, no contract changes needed.
+
+---
+
 ### [M5.5] Batch UserOp aggregation (SDK/backend integration)
 **Savings**: ~40% gas reduction per UserOp when multiple ops share the same BLS node set.
 **Current state**: `AAStarBLSAggregator` contract is fully implemented and deployed.
@@ -229,5 +253,5 @@ probability). Acting before Hegota EIP selection is confirmed = wasted migration
 
 ---
 
-*Last updated: 2026-03-15*
+*Last updated: 2026-03-20*
 *Source analysis: `docs/gas-analysis.md` — Potential Future Optimizations*
