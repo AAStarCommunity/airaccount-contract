@@ -210,6 +210,177 @@ Trivial cleanup. Already noted in M6 security review (I-2).
 
 ---
 
+---
+
+## M7 Agentic Economy Features
+
+These features position AirAccount as the native wallet layer for AI agents and the emerging agentic economy. Research basis: EIP-8004 (deployed Jan 2026), x402 HTTP payment protocol (Coinbase, Feb 2026), ERC-7715/7710 delegation standards.
+
+**Design principle**: AirAccount owner retains custody. Agents receive *scoped, revocable session keys* — not independent wallets. This matches the "user-owned account + agent delegation" pattern recommended across all major agent frameworks (LangChain, AutoGPT, Eliza, etc.).
+
+---
+
+### M7.14 — Agent Session Key Module (ERC-7579 Validator)
+
+**What**: Extend `SessionKeyValidator` with agent-specific constraints:
+- `velocityLimit`: max N calls per time window (prevents runaway agents)
+- `callTargetAllowlist`: agent can only call pre-approved contracts (prompt injection defense)
+- `tokenSpendCap`: per-session token spend limit (in addition to global tier limits)
+- `permissionId`: maps to ERC-7715 `wallet_grantPermissions` for wallet interop
+
+**Why**: Current session keys grant time-limited ECDSA signing with no per-call constraints. An agent compromised by prompt injection can drain allowance in one block. Per-session caps + allowlists add a second line of defense.
+
+**Interface sketch**:
+```solidity
+struct AgentSessionConfig {
+    address sessionKey;       // Agent's EOA
+    uint48  expiry;           // Unix timestamp
+    uint16  velocityLimit;    // Max calls per window
+    uint32  velocityWindow;   // Window in seconds
+    address[] callTargets;    // Allowlisted contracts (empty = all)
+    address spendToken;       // ERC-20 address (address(0) = ETH)
+    uint256 spendCap;         // Max cumulative spend for this session
+    bytes4  requiredSelector; // Optional: restrict to one function
+}
+
+function grantAgentSession(address account, AgentSessionConfig calldata cfg) external;
+```
+
+**Maps to**: ERC-7715 `wallet_grantPermissions`, ERC-7710 Delegation.
+
+**Effort**: Medium — extends SessionKeyValidator (~150 lines). New storage slot per session key per account.
+
+---
+
+### M7.15 — x402 Native Payment Support
+
+**What**: First-class support for the HTTP 402 payment protocol (Coinbase, Feb 2026). Enables AirAccount to pay AI API endpoints, autonomous agent services, and content APIs without manual approval.
+
+**Background**: x402 uses EIP-3009 `transferWithAuthorization` for USDC. A client calls an HTTP endpoint → receives `402 Payment Required` with payment details → signs a USDC transfer authorization → retries with `X-PAYMENT` header. No on-chain transaction per call; settlement is deferred to a facilitator.
+
+**Contract integration**:
+1. **`x402Signer` helper** — TypeScript SDK integration: `@x402/core` + `@x402/express`. AirAccount session key signs EIP-3009 authorization off-chain. No new contract needed for basic x402.
+2. **`X402Paymaster.sol`** (optional) — Paymaster that covers gas by accepting x402 payment proofs. Paymasters already have a hook point; x402 verification happens in `validatePaymasterUserOp`.
+3. **`setX402Budget(address token, uint256 dailyBudget)` on account** — owner sets per-token daily budget for autonomous x402 spending. Guard enforces limit.
+
+**SDK integration**:
+```typescript
+// Agent pays x402 endpoint using AirAccount session key
+import { createX402Client } from "@x402/core";
+const client = createX402Client({
+  signer: sessionKeyAccount,   // viem LocalAccount
+  token: USDC_SEPOLIA,
+  maxAmount: parseUnits("1", 6), // $1 cap
+});
+const response = await client.fetch("https://api.example.com/v1/chat");
+```
+
+**Effort**: Low for SDK integration (no new contract). Medium for optional `X402Paymaster`.
+
+---
+
+### M7.16 — ERC-8004 Agent Identity Integration
+
+**What**: ERC-8004 "Trustless Agents" defines three on-chain registries for AI agents:
+- **Identity Registry** (ERC-721 NFT): each agent gets a unique ID with metadata (description, capabilities, version)
+- **Reputation Registry**: on-chain feedback scoring — callers rate agents after interactions
+- **Validation Registry**: pluggable verifiers for agent behavior proofs
+
+**Deployed on Sepolia**: `0x8004A818BFB912233c491871b3d84c89A494BD9e` (Identity Registry, Jan 29, 2026).
+
+**AirAccount integration**:
+1. **`setAgentWallet(uint256 agentId, address wallet)`** — owner links an ERC-8004 agent NFT to a session key address. Creates a verified binding: "agent #42 uses this session key for account 0xABC".
+2. **Factory extension**: `createAccountForAgent(agentId, cfg)` — deploy AirAccount with ERC-8004 identity pre-registered. Session key = agent wallet.
+3. **Reputation hook** (optional): after each agent-signed execute(), emit event for reputation indexers.
+
+**Interface sketch**:
+```solidity
+interface IERC8004IdentityRegistry {
+    function registerAgent(address wallet, bytes calldata metadata) external returns (uint256 agentId);
+    function getAgentWallet(uint256 agentId) external view returns (address);
+}
+
+// In AAStarAirAccountBase:
+function setAgentWallet(uint256 agentId, address agentWallet, address erc8004Registry) external onlyOwner;
+```
+
+**Effort**: Low (~50 lines). Mainly storage + event. Registry calls are view/write to existing deployed contract.
+
+---
+
+### M7.17 — Multi-Agent Orchestration (Hierarchical Delegation)
+
+**What**: AirAccount owner grants a *primary agent* (orchestrator) a session key. The orchestrator sub-delegates scoped permissions to *sub-agents* (tools). Matches the architecture of LangChain, AutoGPT, Eliza, and OpenAI Swarm.
+
+**Design**:
+```
+Owner (AirAccount)
+  └─ Orchestrator session key (full-scope, expiry T)
+       ├─ Sub-agent A session key (callTarget: DEX only, spendCap: $100, expiry T/2)
+       └─ Sub-agent B session key (callTarget: NFT marketplace only, no spend, expiry T/2)
+```
+
+**Contract mechanism**: Extend `SessionKeyValidator` so a session key holder can issue sub-session-keys with equal or narrower scope (cannot escalate beyond their own grants). The chain of delegation is verifiable on-chain.
+
+**EIP alignment**: ERC-7710 Delegation (draft). AirAccount session keys become ERC-7710 delegation receipts.
+
+**Effort**: Medium-Hard. Requires recursive scope validation in SessionKeyValidator. New `delegateSession(address subKey, AgentSessionConfig calldata subCfg)` function callable only by an existing valid session key holder.
+
+---
+
+### M7.18 — Prompt Injection Defense (Execution-Layer Allowlist)
+
+**What**: Protect against prompt injection attacks where a malicious response tricks an agent into calling unintended contracts. Defense at execution layer: session key's `callTargetAllowlist` (from M7.14) is enforced on-chain, even if the agent's reasoning layer is compromised.
+
+**Additional measures**:
+1. **Selector allowlist per callTarget**: agent can only call specific functions on approved contracts (e.g., `transfer(address,uint256)` on USDC, nothing else).
+2. **Value cap**: agent cannot transfer native ETH above a per-call cap (default: 0 if not explicitly set).
+3. **Revert on unknown selector**: if calldata selector is not in allowlist, revert with `AgentCallForbidden(target, selector)` — agent cannot accidentally call `selfdestruct` or admin functions.
+
+**Why this matters**: Prompt injection is currently the #1 attack vector on AI agents with wallet access (Wiz Research, 2026). The contract layer is the last line of defense after reasoning-layer mitigations.
+
+**Effort**: Low — extends M7.14 AgentSessionConfig with `bytes4[] selectorAllowlist` per callTarget. Enforcement is a few extra lines in session key validation.
+
+---
+
+## Agentic Economy Research Summary (2026-03-20)
+
+### EIP-8004 Status
+- Deployed on Sepolia: `0x8004A818BFB912233c491871b3d84c89A494BD9e`
+- Three registries: Identity (ERC-721), Reputation (feedback), Validation (pluggable verifiers)
+- Philosophy: agents as first-class on-chain citizens with verifiable identity and reputation
+
+### x402 Protocol Status
+- GitHub: `coinbase/x402` (Feb 2026)
+- Production-ready for USDC on Base; Sepolia support available
+- EIP-3009 `transferWithAuthorization` — off-chain signature, no per-call gas
+- TypeScript SDK: `@x402/core`, `@x402/express`, `@x402/next`
+- ERC-4337 integration: agent session key signs EIP-3009 authorization inside UserOp
+
+### Agentic Framework Landscape (Top Picks for AirAccount Integration)
+
+| Framework | Wallet Support | Notes |
+|-----------|---------------|-------|
+| **ElizaOS** | Plugin-based, EVM plugins exist | Most active Web3-native agent framework |
+| **LangChain** | `langchain-community` EVM tools | Widest ecosystem; Python + JS |
+| **Coinbase AgentKit** | Native USDC/Base/x402 | Best x402 integration; wallet = MPC |
+| **AutoGPT** | Forge plugin system | Less Web3-focused |
+| **OpenAI Swarm** | No native wallet | Research framework, lightweight |
+
+**Key insight**: All frameworks use the same pattern — agent has a wallet address + signs transactions. AirAccount fits naturally as the wallet with added tier/guard protection. The missing piece is a standard SDK adapter: `airaccount-agentkit` TypeScript package wrapping viem + session key management.
+
+### Recommended M7 Agentic Stack
+```
+AirAccount (custody)
+  └─ AgentSessionKey Module (M7.14) ← per-agent scoped permissions
+       └─ x402 Signer (M7.15) ← automatic micropayment signing
+            └─ ERC-8004 Identity (M7.16) ← verifiable agent identity
+```
+
+This stack enables: agent pays API → API charges USDC → agent identity is verifiable → all spend is capped by owner-set limits.
+
+---
+
 ## M7 Non-Goals
 
 These are explicitly OUT of M7 scope:
@@ -220,6 +391,8 @@ These are explicitly OUT of M7 scope:
 | ERC-4337 v0.7 migration | v0.6 EntryPoint is stable; v0.7 migration is a breaking change requiring full re-audit |
 | MushroomDAO governance | Community/DAO scope, not contract scope |
 | Social graph / HyperCapital on-chain | Research phase, not implementation ready |
+| Full x402 facilitator | Server-side component; out of scope for contract layer |
+| On-chain AI inference | Requires dedicated compute layer (EigenLayer AVS or similar) |
 
 ---
 
@@ -230,7 +403,10 @@ These are explicitly OUT of M7 scope:
 - [ ] M7.7 bug bounty live on Immunefi
 - [ ] M7.2 ERC-7579 full compliance: `installModule` + `executeFromExecutor` with tests
 - [ ] M7.3 proxy factory deployed on mainnet + all target L2s (M7.5)
-- [ ] All tests passing: target 450+ tests
+- [ ] M7.14 Agent Session Key Module: `grantAgentSession` + velocity/allowlist enforcement with tests
+- [ ] M7.15 x402 TypeScript SDK integration: session key signs EIP-3009 off-chain
+- [ ] M7.16 ERC-8004 `setAgentWallet` binding: verified agent → session key linkage
+- [ ] All tests passing: target 500+ tests
 - [ ] `docs/audit-report-v1.md` published
 
 ---
@@ -242,6 +418,8 @@ These are explicitly OUT of M7 scope:
 | M6 completion | M6.1, M6.2 | Prerequisite for audit |
 | M7 prep | M7.10, M7.9, M7.8 | Low-effort items, can batch with M6 |
 | M7 core | M7.2, M7.3, M7.4 | 4–6 weeks implementation |
+| M7 agentic | M7.14, M7.15, M7.16 | 3–4 weeks; M7.14 first (foundation) |
+| M7 advanced | M7.17, M7.18 | Optional; adds 2–3 weeks |
 | Audit | M7.6 | 2–4 weeks depending on firm |
 | Launch | M7.5, M7.7 | Post-audit deployment + bug bounty |
-| Long-term | M7.1, M7.8 | DVT-dependent; no hard deadline |
+| Long-term | M7.1, M7.8, M7.11–M7.13 | DVT-dependent or privacy-dependent |
