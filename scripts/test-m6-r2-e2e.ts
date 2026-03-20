@@ -193,10 +193,12 @@ async function main() {
   console.log(`Guardian0: ${guardian0.address}`);
   console.log(`Guardian1: ${guardian1.address}\n`);
 
-  const publicClient = createPublicClient({ chain: sepolia, transport: http(RPC_URL) });
-  const walletClient = createWalletClient({ account: owner, chain: sepolia, transport: http(RPC_URL) });
-  const g0Client = createWalletClient({ account: guardian0, chain: sepolia, transport: http(RPC_URL) });
-  const g1Client = createWalletClient({ account: guardian1, chain: sepolia, transport: http(RPC_URL) });
+  // pollingInterval: 3s avoids Alchemy "in-flight limit" errors on free tier
+  const transport = http(RPC_URL, { retryCount: 3, retryDelay: 1500 });
+  const publicClient = createPublicClient({ chain: sepolia, transport, pollingInterval: 3_000 });
+  const walletClient = createWalletClient({ account: owner, chain: sepolia, transport });
+  const g0Client = createWalletClient({ account: guardian0, chain: sepolia, transport });
+  const g1Client = createWalletClient({ account: guardian1, chain: sepolia, transport });
 
   // ── Test A: Deploy account via factory ────────────────────────────────────
 
