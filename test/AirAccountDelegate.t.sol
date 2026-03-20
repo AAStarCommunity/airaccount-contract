@@ -324,7 +324,7 @@ contract AirAccountDelegateTest is Test {
         vm.prank(guardian1);
         delegate.initiateRescue(rescueTo);
 
-        (address to, uint256 ts,, ) = delegate.getRescueState();
+        (address to, uint256 ts,,,) = delegate.getRescueState();
         assertEq(to, rescueTo);
         assertGt(ts, 0);
     }
@@ -346,7 +346,7 @@ contract AirAccountDelegateTest is Test {
         vm.prank(guardian2);
         delegate.approveRescue();
 
-        (,,, bool approved) = delegate.getRescueState();
+        (,,, bool approved,) = delegate.getRescueState();
         assertTrue(approved);
     }
 
@@ -385,26 +385,58 @@ contract AirAccountDelegateTest is Test {
         delegate.executeRescue();
     }
 
-    function test_rescue_cancelBySelf() public {
+    /// @notice cancelRescue requires 2-of-3 guardian threshold (mirrors AAStarAirAccountBase.cancelRecovery)
+    function test_rescue_cancelByGuardianThreshold() public {
         _initialize(1 ether);
         vm.prank(guardian1);
         delegate.initiateRescue(makeAddr("new"));
 
-        vm.prank(eoa); // EOA still has key, can cancel
+        // One vote not enough
+        vm.prank(guardian1);
         delegate.cancelRescue();
+        (, uint256 ts,,,) = delegate.getRescueState();
+        assertGt(ts, 0, "rescue still pending after 1 cancel vote");
 
-        (, uint256 ts,,) = delegate.getRescueState();
-        assertEq(ts, 0);
+        // Second vote reaches threshold
+        vm.prank(guardian2);
+        delegate.cancelRescue();
+        (, uint256 ts2,,,) = delegate.getRescueState();
+        assertEq(ts2, 0, "rescue cleared after 2 cancel votes");
     }
 
+    /// @notice EOA private key holder (address(this)) CANNOT cancel — prevents stolen-key attack
+    function test_rescue_cancelByEOASelf_reverts() public {
+        _initialize(1 ether);
+        vm.prank(guardian1);
+        delegate.initiateRescue(makeAddr("new"));
+
+        vm.prank(eoa); // EOA (even the real owner) cannot cancel
+        vm.expectRevert(AirAccountDelegate.OnlyGuardian.selector);
+        delegate.cancelRescue();
+    }
+
+    /// @notice Non-guardian non-EOA also cannot cancel
     function test_rescue_cancelByOther_reverts() public {
         _initialize(1 ether);
         vm.prank(guardian1);
         delegate.initiateRescue(makeAddr("new"));
 
         vm.prank(other);
-        vm.expectRevert(AirAccountDelegate.OnlySelf.selector);
+        vm.expectRevert(AirAccountDelegate.OnlyGuardian.selector);
         delegate.cancelRescue();
+    }
+
+    /// @notice Same guardian cannot vote to cancel twice
+    function test_rescue_cancelDuplicateVote_reverts() public {
+        _initialize(1 ether);
+        vm.prank(guardian1);
+        delegate.initiateRescue(makeAddr("new"));
+
+        vm.prank(guardian1);
+        delegate.cancelRescue(); // first vote
+        vm.prank(guardian1);
+        vm.expectRevert(AirAccountDelegate.GuardianAlreadyCancelVoted.selector);
+        delegate.cancelRescue(); // duplicate
     }
 
     function test_rescue_duplicateApproval_reverts() public {
@@ -490,20 +522,23 @@ contract AirAccountDelegateTest is Test {
         vm.prank(guardian2);
         delegate.approveRescue(); // now approved
 
-        (, uint256 ts, uint8 approvals, bool approved) = delegate.getRescueState();
+        (,, , bool approved,) = delegate.getRescueState();
         assertTrue(approved, "should be approved before cancel");
 
-        vm.prank(eoa); // EOA self-cancels
+        // 2-of-3 guardians cancel (threshold required, not EOA)
+        vm.prank(guardian1);
+        delegate.cancelRescue();
+        vm.prank(guardian2);
         delegate.cancelRescue();
 
-        (address to2, uint256 ts2, uint8 ap2, bool appr2) = delegate.getRescueState();
+        (address to2, uint256 ts2, uint8 ap2, bool appr2,) = delegate.getRescueState();
         assertEq(to2,   address(0), "rescueTo cleared");
         assertEq(ts2,   0,          "timestamp cleared");
         assertEq(ap2,   0,          "approvals cleared");
         assertFalse(appr2,          "approved flag cleared");
     }
 
-    /// @notice After cancel, executeRescue should revert
+    /// @notice After guardian-threshold cancel, executeRescue should revert
     function test_rescue_executeAfterCancel_reverts() public {
         _initialize(1 ether);
         address rescueDest = makeAddr("safeWallet");
@@ -513,7 +548,9 @@ contract AirAccountDelegateTest is Test {
         vm.prank(guardian2);
         delegate.approveRescue();
 
-        vm.prank(eoa);
+        vm.prank(guardian1);
+        delegate.cancelRescue();
+        vm.prank(guardian2);
         delegate.cancelRescue();
 
         vm.expectRevert(AirAccountDelegate.NoRescuePending.selector);
@@ -540,7 +577,7 @@ contract AirAccountDelegateTest is Test {
         delegate.initiateRescue(dest2);
     }
 
-    /// @notice EOA can cancel a pending rescue; after cancel a new one can be initiated
+    /// @notice Guardians can cancel via threshold, then reinitiate a rescue to a different address
     function test_rescue_cancelThenReinitiate() public {
         _initialize(1 ether);
         address dest1 = makeAddr("dest1");
@@ -549,15 +586,18 @@ contract AirAccountDelegateTest is Test {
         vm.prank(guardian1);
         delegate.initiateRescue(dest1);
 
-        vm.prank(eoa); // EOA cancels
+        // Guardian threshold cancels
+        vm.prank(guardian1);
+        delegate.cancelRescue();
+        vm.prank(guardian2);
         delegate.cancelRescue();
 
         // Now guardian can initiate to a different address
         vm.prank(guardian2);
         delegate.initiateRescue(dest2);
 
-        (address to,,,) = delegate.getRescueState();
-        assertEq(to, dest2, "new destination set after cancel");
+        (address to,,,,) = delegate.getRescueState();
+        assertEq(to, dest2, "new destination set after guardian-cancel");
     }
 
     // ─── 6d. WithdrawDepositTo access control ────────────────────────────────

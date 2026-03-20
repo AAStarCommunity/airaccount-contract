@@ -50,10 +50,11 @@ contract AirAccountDelegate {
         address guard;             // AAStarGlobalGuard deployed for this EOA
         address[3] guardians;      // [personal1, personal2, community/address(0)]
         // Guardian rescue state (replaces "owner rotation" — EOA address can't change)
-        address  rescueTo;         // proposed rescue destination
-        uint256  rescueTimestamp;  // when rescue was initiated (0 = none pending)
-        uint8    rescueApprovals;  // bitmask: bit0=g1, bit1=g2, bit2=g3
-        bool     rescueApproved;   // reached threshold (2-of-3)
+        address  rescueTo;              // proposed rescue destination
+        uint256  rescueTimestamp;       // when rescue was initiated (0 = none pending)
+        uint8    rescueApprovals;       // bitmask: bit0=g1, bit1=g2, bit2=g3
+        bool     rescueApproved;        // reached approval threshold (2-of-3)
+        uint8    rescueCancellations;   // bitmask: same guardian indices, for cancel votes
     }
 
     function _ds() private pure returns (DelegateStorage storage ds) {
@@ -91,6 +92,7 @@ contract AirAccountDelegate {
     error RescueTimelockNotExpired();
     error RescueNotApproved();
     error GuardianAlreadyApproved();
+    error GuardianAlreadyCancelVoted();
     error RescueAlreadyPending();
     error InvalidAddress();
     error CallFailed(bytes reason);
@@ -294,6 +296,7 @@ contract AirAccountDelegate {
         ds.rescueTimestamp = block.timestamp;
         ds.rescueApprovals = uint8(1) << gIdx; // initiator's vote
         ds.rescueApproved = (RESCUE_THRESHOLD == 1);
+        ds.rescueCancellations = 0; // reset cancel votes on new rescue
 
         emit RescueInitiated(address(this), rescueTo, msg.sender);
         emit RescueApproved(address(this), msg.sender, uint8(1) << gIdx);
@@ -344,6 +347,7 @@ contract AirAccountDelegate {
         ds.rescueTimestamp = 0;
         ds.rescueApprovals = 0;
         ds.rescueApproved = false;
+        ds.rescueCancellations = 0;
 
         uint256 amount = address(this).balance;
         emit RescueExecuted(address(this), to, amount);
@@ -355,20 +359,42 @@ contract AirAccountDelegate {
     }
 
     /**
-     * @notice Cancel a pending rescue. Requires EOA itself (private key still accessible).
+     * @notice Vote to cancel a pending rescue. Requires RESCUE_THRESHOLD guardian votes.
+     *
+     * @dev Mirrors AAStarAirAccountBase.cancelRecovery() design rationale:
+     *      The EOA private key holder CANNOT cancel — if the key is stolen, the attacker
+     *      could cancel any rescue and prevent asset recovery. Only a guardian threshold
+     *      can cancel, giving guardians full control over the rescue lifecycle.
+     *
+     *      Each guardian votes independently. When threshold is reached the rescue is cancelled.
+     *      A guardian cannot vote to cancel after already voting to approve.
      */
     function cancelRescue() external {
-        if (msg.sender != address(this)) revert OnlySelf();
-
         DelegateStorage storage ds = _ds();
+        if (!ds.initialized) revert NotInitialized();
         if (ds.rescueTimestamp == 0) revert NoRescuePending();
 
-        ds.rescueTo = address(0);
-        ds.rescueTimestamp = 0;
-        ds.rescueApprovals = 0;
-        ds.rescueApproved = false;
+        (uint8 gIdx, bool isGuardian) = _guardianIndex(msg.sender, ds);
+        if (!isGuardian) revert OnlyGuardian();
 
-        emit RescueCancelled(address(this));
+        uint8 bit = uint8(1) << gIdx;
+        if (ds.rescueCancellations & bit != 0) revert GuardianAlreadyCancelVoted();
+
+        ds.rescueCancellations |= bit;
+
+        // Count cancel votes
+        uint8 count = 0;
+        uint8 c = ds.rescueCancellations;
+        while (c != 0) { count += c & 1; c >>= 1; }
+
+        if (count >= RESCUE_THRESHOLD) {
+            ds.rescueTo = address(0);
+            ds.rescueTimestamp = 0;
+            ds.rescueApprovals = 0;
+            ds.rescueApproved = false;
+            ds.rescueCancellations = 0;
+            emit RescueCancelled(address(this));
+        }
     }
 
     // ─── EntryPoint Deposit Management ────────────────────────────────────────
@@ -413,10 +439,11 @@ contract AirAccountDelegate {
         address rescueTo,
         uint256 rescueTimestamp,
         uint8 rescueApprovals,
-        bool approved
+        bool approved,
+        uint8 cancellations
     ) {
         DelegateStorage storage ds = _ds();
-        return (ds.rescueTo, ds.rescueTimestamp, ds.rescueApprovals, ds.rescueApproved);
+        return (ds.rescueTo, ds.rescueTimestamp, ds.rescueApprovals, ds.rescueApproved, ds.rescueCancellations);
     }
 
     // ─── Receive ETH ──────────────────────────────────────────────────────────
