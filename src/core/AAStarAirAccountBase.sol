@@ -992,10 +992,14 @@ abstract contract AAStarAirAccountBase is Initializable {
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
+        uint8 guardAlgId = algId;   // preserve pre-resolution algId for guard whitelist check
         if (algId == ALG_WEIGHTED) {
             algId = _resolveWeightedAlgId(_consumeValidatedWeight());
         }
-        _enforceGuard(value, algId, dest, func);
+        // Consume session key once per execute invocation (mirrors algId consumption).
+        // Passed into _enforceGuard to prevent scope bypass in executeBatch.
+        bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
+        _enforceGuard(value, algId, guardAlgId, taggedSessionKey, dest, func);
         _call(dest, value, func);
     }
 
@@ -1009,11 +1013,16 @@ abstract contract AAStarAirAccountBase is Initializable {
             revert ArrayLengthMismatch();
         }
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
+        uint8 guardAlgId = algId;   // preserve pre-resolution algId for guard whitelist check
         if (algId == ALG_WEIGHTED) {
             algId = _resolveWeightedAlgId(_consumeValidatedWeight());
         }
+        // Consume session key ONCE for the entire batch — same as algId is consumed once.
+        // Fix: previously _consumeSessionKey() was called inside _enforceGuard (per-call),
+        // so calls 2+ in the batch got bytes32(0) and skipped scope enforcement entirely.
+        bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
         for (uint256 i = 0; i < dest.length; i++) {
-            _enforceGuard(value[i], algId, dest[i], func[i]);
+            _enforceGuard(value[i], algId, guardAlgId, taggedSessionKey, dest[i], func[i]);
             _call(dest[i], value[i], func[i]);
         }
     }
@@ -1034,10 +1043,20 @@ abstract contract AAStarAirAccountBase is Initializable {
     bytes4 internal constant ERC20_TRANSFER  = 0xa9059cbb;
     bytes4 internal constant ERC20_APPROVE   = 0x095ea7b3;
 
-    function _enforceGuard(uint256 value, uint8 algId, address dest, bytes calldata func) internal {
+    /// @param algId      Resolved algorithm id (post-weighted-resolution). Used for tier checks.
+    /// @param guardAlgId Pre-resolution algorithm id. Passed to guard whitelist check so that
+    ///                   approving ALG_WEIGHTED(0x07) covers its tier resolutions (0x02/0x04/0x05).
+    ///                   Equals algId for all non-weighted algorithms.
+    /// @param taggedSessionKey Pre-consumed session key identifier (bytes32(0) if not a session key op).
+    ///        Consumed ONCE by execute()/executeBatch() so every call in a batch shares the same
+    ///        scope restrictions — preventing scope bypass on calls 2+ in a batch.
+    function _enforceGuard(uint256 value, uint8 algId, uint8 guardAlgId, bytes32 taggedSessionKey, address dest, bytes calldata func) internal {
+        // Cache guard address: avoids 3 separate SLOADs (COLD ~2100 + 2×WARM ~100 = ~2300 gas total)
+        address guardAddr = address(guard);
+
         // ETH tier enforcement: cumulative daily spend prevents batch/multi-TX bypass
         if (tier1Limit > 0 || tier2Limit > 0) {
-            uint256 alreadySpent = address(guard) != address(0) ? guard.todaySpent() : 0;
+            uint256 alreadySpent = guardAddr != address(0) ? guard.todaySpent() : 0;
             uint8 required = requiredTier(alreadySpent + value);
             if (required > 0) {
                 uint8 provided = _algTier(algId);
@@ -1048,12 +1067,14 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
 
         // ETH daily limit + algorithm whitelist (writes dailySpent so next batch call sees updated value)
-        if (address(guard) != address(0)) {
-            guard.checkTransaction(value, algId);
+        // guardAlgId: pre-resolution algId so guard whitelist sees ALG_WEIGHTED(0x07) when that's what
+        // was approved — approving 0x07 should not require separately approving resolved 0x02/0x04/0x05.
+        if (guardAddr != address(0)) {
+            guard.checkTransaction(value, guardAlgId);
         }
 
         // ERC20/DeFi token tier + daily limit enforcement (M5.1 + M6.6b)
-        if (func.length >= 4 && address(guard) != address(0)) {
+        if (func.length >= 4 && guardAddr != address(0)) {
             bool tokenHandled = false;
 
             // M6.6b: DeFi parser registry check (runs first, more specific)
@@ -1064,7 +1085,7 @@ abstract contract AAStarAirAccountBase is Initializable {
                 if (parser != address(0)) {
                     try ICalldataParser(parser).parseTokenTransfer(func) returns (address tok, uint256 amt) {
                         if (tok != address(0) && amt > 0) {
-                            guard.checkTokenTransaction(tok, amt, algId);
+                            guard.checkTokenTransaction(tok, amt, guardAlgId);
                             tokenHandled = true;
                         }
                     } catch {
@@ -1078,45 +1099,43 @@ abstract contract AAStarAirAccountBase is Initializable {
                 bytes4 sel = bytes4(func[:4]);
                 if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
                     uint256 tokenAmount = abi.decode(func[36:68], (uint256));
-                    guard.checkTokenTransaction(dest, tokenAmount, algId);
+                    guard.checkTokenTransaction(dest, tokenAmount, guardAlgId);
                 }
             }
         }
 
         // SESSION KEY scope enforcement: verify contractScope and selectorScope against live calldata.
-        // Session key identifier (tagged bytes32) was stored during validateUserOp via _storeSessionKey().
+        // taggedSessionKey was consumed ONCE by the caller (execute/executeBatch), not per-call here.
+        // This ensures ALL calls in a batch are subject to the same contractScope/selectorScope.
         // Top byte: 0x01 = ECDSA session (lookup by address), 0x02 = P256 session (lookup by keyHash).
-        if (algId == ALG_SESSION_KEY && address(validator) != address(0)) {
+        if (algId == ALG_SESSION_KEY && taggedSessionKey != bytes32(0) && address(validator) != address(0)) {
             address skValidator = IAAStarValidator(address(validator)).getAlgorithm(ALG_SESSION_KEY);
             if (skValidator != address(0)) {
-                bytes32 taggedId = _consumeSessionKey();
-                if (taggedId != bytes32(0)) {
-                    uint8 sessionType = uint8(uint256(taggedId) >> 248);
-                    bool ok;
-                    bytes memory data;
-                    if (sessionType == 0x01) {
-                        // ECDSA session: extract address from lower 20 bytes
-                        address ecdsaKey = address(uint160(uint256(taggedId)));
-                        (ok, data) = skValidator.staticcall(
-                            abi.encodeWithSignature("sessions(address,address)", address(this), ecdsaKey)
-                        );
-                    } else if (sessionType == 0x02) {
-                        // P256 session: extract key hash from lower 31 bytes
-                        bytes32 p256Hash = bytes32(uint256(taggedId) & type(uint248).max);
-                        (ok, data) = skValidator.staticcall(
-                            abi.encodeWithSignature("getP256Session(address,bytes32)", address(this), p256Hash)
-                        );
+                uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
+                bool ok;
+                bytes memory data;
+                if (sessionType == 0x01) {
+                    // ECDSA session: extract address from lower 20 bytes
+                    address ecdsaKey = address(uint160(uint256(taggedSessionKey)));
+                    (ok, data) = skValidator.staticcall(
+                        abi.encodeWithSignature("sessions(address,address)", address(this), ecdsaKey)
+                    );
+                } else if (sessionType == 0x02) {
+                    // P256 session: extract key hash from lower 31 bytes
+                    bytes32 p256Hash = bytes32(uint256(taggedSessionKey) & type(uint248).max);
+                    (ok, data) = skValidator.staticcall(
+                        abi.encodeWithSignature("getP256Session(address,bytes32)", address(this), p256Hash)
+                    );
+                }
+                if (ok && data.length >= 128) {
+                    // ABI decode Session: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
+                    (, address contractScope, bytes4 selectorScope,) =
+                        abi.decode(data, (uint48, address, bytes4, bool));
+                    if (contractScope != address(0) && dest != contractScope) {
+                        revert SessionScopeViolation();
                     }
-                    if (ok && data.length >= 128) {
-                        // ABI decode Session: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
-                        (, address contractScope, bytes4 selectorScope,) =
-                            abi.decode(data, (uint48, address, bytes4, bool));
-                        if (contractScope != address(0) && dest != contractScope) {
-                            revert SessionScopeViolation();
-                        }
-                        if (selectorScope != bytes4(0) && func.length >= 4 && bytes4(func[:4]) != selectorScope) {
-                            revert SessionScopeViolation();
-                        }
+                    if (selectorScope != bytes4(0) && func.length >= 4 && bytes4(func[:4]) != selectorScope) {
+                        revert SessionScopeViolation();
                     }
                 }
             }
@@ -1365,14 +1384,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     ///         A change is weakening if any weight decreases or any threshold decreases.
     /// @dev InsecureWeightConfig: any single source weight >= tier1Threshold (single point of failure).
     function setWeightConfig(WeightConfig calldata config) external onlyOwner {
-        if (config.tier1Threshold == 0) revert InsecureWeightConfig();
-        // Single-source must not reach threshold alone (prevents single-point-of-failure)
-        if (config.passkeyWeight   >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.ecdsaWeight     >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.blsWeight       >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian0Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian1Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian2Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        _validateWeightConfig(config);
 
         WeightConfig memory current = weightConfig;
         if (current.tier1Threshold != 0 && _isWeakening(current, config)) {
@@ -1388,13 +1400,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     /// @notice Propose a weakening weight-config change (guardian-gated, M6.2).
     ///         Owner initiates; guardians approve; executes after WEIGHT_CHANGE_TIMELOCK.
     function proposeWeightChange(WeightConfig calldata proposed) external onlyOwner {
-        if (proposed.tier1Threshold == 0) revert InsecureWeightConfig();
-        if (proposed.passkeyWeight   >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.ecdsaWeight     >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.blsWeight       >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.guardian0Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.guardian1Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.guardian2Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
+        _validateWeightConfig(proposed);
         if (!_isWeakening(weightConfig, proposed)) revert WeakeningRequiresProposal(); // use setWeightConfig instead
         if (pendingWeightChange.proposedAt != 0) revert WeightChangePending();
         if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
@@ -1445,6 +1451,25 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
         delete pendingWeightChange;
         emit WeightChangeCancelled();
+    }
+
+    /// @dev Validate that a WeightConfig is internally consistent and secure.
+    ///      Called by both setWeightConfig and proposeWeightChange to avoid duplication.
+    function _validateWeightConfig(WeightConfig calldata config) internal pure {
+        if (config.tier1Threshold == 0) revert InsecureWeightConfig();
+        // Single-source must not reach threshold alone (prevents single-point-of-failure)
+        if (config.passkeyWeight   >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.ecdsaWeight     >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.blsWeight       >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.guardian0Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.guardian1Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.guardian2Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        // Thresholds must be non-decreasing: tier1 <= tier2 <= tier3 (when non-zero).
+        // Without this, _resolveWeightedAlgId (which checks tier3 first) could map a
+        // low-weight signature to Tier3 if tier3Threshold < tier1Threshold.
+        if (config.tier2Threshold != 0 && config.tier2Threshold < config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.tier3Threshold != 0 && config.tier3Threshold < config.tier2Threshold) revert InsecureWeightConfig();
+        if (config.tier3Threshold != 0 && config.tier2Threshold == 0) revert InsecureWeightConfig();
     }
 
     /// @dev Map accumulated weight to the highest satisfied tier's representative algId.
