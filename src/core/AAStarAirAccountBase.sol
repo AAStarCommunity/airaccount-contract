@@ -992,13 +992,14 @@ abstract contract AAStarAirAccountBase is Initializable {
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
+        uint8 guardAlgId = algId;   // preserve pre-resolution algId for guard whitelist check
         if (algId == ALG_WEIGHTED) {
             algId = _resolveWeightedAlgId(_consumeValidatedWeight());
         }
         // Consume session key once per execute invocation (mirrors algId consumption).
         // Passed into _enforceGuard to prevent scope bypass in executeBatch.
         bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
-        _enforceGuard(value, algId, taggedSessionKey, dest, func);
+        _enforceGuard(value, algId, guardAlgId, taggedSessionKey, dest, func);
         _call(dest, value, func);
     }
 
@@ -1012,6 +1013,7 @@ abstract contract AAStarAirAccountBase is Initializable {
             revert ArrayLengthMismatch();
         }
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
+        uint8 guardAlgId = algId;   // preserve pre-resolution algId for guard whitelist check
         if (algId == ALG_WEIGHTED) {
             algId = _resolveWeightedAlgId(_consumeValidatedWeight());
         }
@@ -1020,7 +1022,7 @@ abstract contract AAStarAirAccountBase is Initializable {
         // so calls 2+ in the batch got bytes32(0) and skipped scope enforcement entirely.
         bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
         for (uint256 i = 0; i < dest.length; i++) {
-            _enforceGuard(value[i], algId, taggedSessionKey, dest[i], func[i]);
+            _enforceGuard(value[i], algId, guardAlgId, taggedSessionKey, dest[i], func[i]);
             _call(dest[i], value[i], func[i]);
         }
     }
@@ -1041,10 +1043,14 @@ abstract contract AAStarAirAccountBase is Initializable {
     bytes4 internal constant ERC20_TRANSFER  = 0xa9059cbb;
     bytes4 internal constant ERC20_APPROVE   = 0x095ea7b3;
 
+    /// @param algId      Resolved algorithm id (post-weighted-resolution). Used for tier checks.
+    /// @param guardAlgId Pre-resolution algorithm id. Passed to guard whitelist check so that
+    ///                   approving ALG_WEIGHTED(0x07) covers its tier resolutions (0x02/0x04/0x05).
+    ///                   Equals algId for all non-weighted algorithms.
     /// @param taggedSessionKey Pre-consumed session key identifier (bytes32(0) if not a session key op).
     ///        Consumed ONCE by execute()/executeBatch() so every call in a batch shares the same
     ///        scope restrictions — preventing scope bypass on calls 2+ in a batch.
-    function _enforceGuard(uint256 value, uint8 algId, bytes32 taggedSessionKey, address dest, bytes calldata func) internal {
+    function _enforceGuard(uint256 value, uint8 algId, uint8 guardAlgId, bytes32 taggedSessionKey, address dest, bytes calldata func) internal {
         // Cache guard address: avoids 3 separate SLOADs (COLD ~2100 + 2×WARM ~100 = ~2300 gas total)
         address guardAddr = address(guard);
 
@@ -1061,8 +1067,10 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
 
         // ETH daily limit + algorithm whitelist (writes dailySpent so next batch call sees updated value)
+        // guardAlgId: pre-resolution algId so guard whitelist sees ALG_WEIGHTED(0x07) when that's what
+        // was approved — approving 0x07 should not require separately approving resolved 0x02/0x04/0x05.
         if (guardAddr != address(0)) {
-            guard.checkTransaction(value, algId);
+            guard.checkTransaction(value, guardAlgId);
         }
 
         // ERC20/DeFi token tier + daily limit enforcement (M5.1 + M6.6b)
@@ -1077,7 +1085,7 @@ abstract contract AAStarAirAccountBase is Initializable {
                 if (parser != address(0)) {
                     try ICalldataParser(parser).parseTokenTransfer(func) returns (address tok, uint256 amt) {
                         if (tok != address(0) && amt > 0) {
-                            guard.checkTokenTransaction(tok, amt, algId);
+                            guard.checkTokenTransaction(tok, amt, guardAlgId);
                             tokenHandled = true;
                         }
                     } catch {
@@ -1091,7 +1099,7 @@ abstract contract AAStarAirAccountBase is Initializable {
                 bytes4 sel = bytes4(func[:4]);
                 if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
                     uint256 tokenAmount = abi.decode(func[36:68], (uint256));
-                    guard.checkTokenTransaction(dest, tokenAmount, algId);
+                    guard.checkTokenTransaction(dest, tokenAmount, guardAlgId);
                 }
             }
         }

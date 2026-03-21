@@ -32,10 +32,10 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     /// @dev EIP-7212 P256 verification precompile
     address internal constant P256_VERIFIER = address(0x100);
 
-    /// @dev Maximum session duration: 24 hours. Balances UX and security.
-    ///      24h matches industry standard (Kernel v3, Biconomy). Beyond 24h a session
-    ///      key held by a DApp server is indistinguishable from full owner delegation.
-    uint48 internal constant MAX_SESSION_DURATION = 24 hours;
+    /// @dev Maximum session duration: 7 days. Limits blast radius if a session key is
+    ///      compromised while still allowing week-long DApp sessions and travel use cases.
+    ///      revokeSession can always cancel early; this constant caps accidental long grants.
+    uint48 internal constant MAX_SESSION_DURATION = 7 days;
 
     // ─── Structs ──────────────────────────────────────────────────────
 
