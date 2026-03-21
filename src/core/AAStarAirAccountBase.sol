@@ -995,7 +995,10 @@ abstract contract AAStarAirAccountBase is Initializable {
         if (algId == ALG_WEIGHTED) {
             algId = _resolveWeightedAlgId(_consumeValidatedWeight());
         }
-        _enforceGuard(value, algId, dest, func);
+        // Consume session key once per execute invocation (mirrors algId consumption).
+        // Passed into _enforceGuard to prevent scope bypass in executeBatch.
+        bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
+        _enforceGuard(value, algId, taggedSessionKey, dest, func);
         _call(dest, value, func);
     }
 
@@ -1012,8 +1015,12 @@ abstract contract AAStarAirAccountBase is Initializable {
         if (algId == ALG_WEIGHTED) {
             algId = _resolveWeightedAlgId(_consumeValidatedWeight());
         }
+        // Consume session key ONCE for the entire batch — same as algId is consumed once.
+        // Fix: previously _consumeSessionKey() was called inside _enforceGuard (per-call),
+        // so calls 2+ in the batch got bytes32(0) and skipped scope enforcement entirely.
+        bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
         for (uint256 i = 0; i < dest.length; i++) {
-            _enforceGuard(value[i], algId, dest[i], func[i]);
+            _enforceGuard(value[i], algId, taggedSessionKey, dest[i], func[i]);
             _call(dest[i], value[i], func[i]);
         }
     }
@@ -1034,7 +1041,10 @@ abstract contract AAStarAirAccountBase is Initializable {
     bytes4 internal constant ERC20_TRANSFER  = 0xa9059cbb;
     bytes4 internal constant ERC20_APPROVE   = 0x095ea7b3;
 
-    function _enforceGuard(uint256 value, uint8 algId, address dest, bytes calldata func) internal {
+    /// @param taggedSessionKey Pre-consumed session key identifier (bytes32(0) if not a session key op).
+    ///        Consumed ONCE by execute()/executeBatch() so every call in a batch shares the same
+    ///        scope restrictions — preventing scope bypass on calls 2+ in a batch.
+    function _enforceGuard(uint256 value, uint8 algId, bytes32 taggedSessionKey, address dest, bytes calldata func) internal {
         // ETH tier enforcement: cumulative daily spend prevents batch/multi-TX bypass
         if (tier1Limit > 0 || tier2Limit > 0) {
             uint256 alreadySpent = address(guard) != address(0) ? guard.todaySpent() : 0;
@@ -1084,39 +1094,37 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
 
         // SESSION KEY scope enforcement: verify contractScope and selectorScope against live calldata.
-        // Session key identifier (tagged bytes32) was stored during validateUserOp via _storeSessionKey().
+        // taggedSessionKey was consumed ONCE by the caller (execute/executeBatch), not per-call here.
+        // This ensures ALL calls in a batch are subject to the same contractScope/selectorScope.
         // Top byte: 0x01 = ECDSA session (lookup by address), 0x02 = P256 session (lookup by keyHash).
-        if (algId == ALG_SESSION_KEY && address(validator) != address(0)) {
+        if (algId == ALG_SESSION_KEY && taggedSessionKey != bytes32(0) && address(validator) != address(0)) {
             address skValidator = IAAStarValidator(address(validator)).getAlgorithm(ALG_SESSION_KEY);
             if (skValidator != address(0)) {
-                bytes32 taggedId = _consumeSessionKey();
-                if (taggedId != bytes32(0)) {
-                    uint8 sessionType = uint8(uint256(taggedId) >> 248);
-                    bool ok;
-                    bytes memory data;
-                    if (sessionType == 0x01) {
-                        // ECDSA session: extract address from lower 20 bytes
-                        address ecdsaKey = address(uint160(uint256(taggedId)));
-                        (ok, data) = skValidator.staticcall(
-                            abi.encodeWithSignature("sessions(address,address)", address(this), ecdsaKey)
-                        );
-                    } else if (sessionType == 0x02) {
-                        // P256 session: extract key hash from lower 31 bytes
-                        bytes32 p256Hash = bytes32(uint256(taggedId) & type(uint248).max);
-                        (ok, data) = skValidator.staticcall(
-                            abi.encodeWithSignature("getP256Session(address,bytes32)", address(this), p256Hash)
-                        );
+                uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
+                bool ok;
+                bytes memory data;
+                if (sessionType == 0x01) {
+                    // ECDSA session: extract address from lower 20 bytes
+                    address ecdsaKey = address(uint160(uint256(taggedSessionKey)));
+                    (ok, data) = skValidator.staticcall(
+                        abi.encodeWithSignature("sessions(address,address)", address(this), ecdsaKey)
+                    );
+                } else if (sessionType == 0x02) {
+                    // P256 session: extract key hash from lower 31 bytes
+                    bytes32 p256Hash = bytes32(uint256(taggedSessionKey) & type(uint248).max);
+                    (ok, data) = skValidator.staticcall(
+                        abi.encodeWithSignature("getP256Session(address,bytes32)", address(this), p256Hash)
+                    );
+                }
+                if (ok && data.length >= 128) {
+                    // ABI decode Session: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
+                    (, address contractScope, bytes4 selectorScope,) =
+                        abi.decode(data, (uint48, address, bytes4, bool));
+                    if (contractScope != address(0) && dest != contractScope) {
+                        revert SessionScopeViolation();
                     }
-                    if (ok && data.length >= 128) {
-                        // ABI decode Session: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
-                        (, address contractScope, bytes4 selectorScope,) =
-                            abi.decode(data, (uint48, address, bytes4, bool));
-                        if (contractScope != address(0) && dest != contractScope) {
-                            revert SessionScopeViolation();
-                        }
-                        if (selectorScope != bytes4(0) && func.length >= 4 && bytes4(func[:4]) != selectorScope) {
-                            revert SessionScopeViolation();
-                        }
+                    if (selectorScope != bytes4(0) && func.length >= 4 && bytes4(func[:4]) != selectorScope) {
+                        revert SessionScopeViolation();
                     }
                 }
             }
