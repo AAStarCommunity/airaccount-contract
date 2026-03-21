@@ -87,8 +87,7 @@ contract AAStarAirAccountFactoryV7 {
         // a front-runner cannot pre-deploy this address with a different (malicious) config.
         // Without this, anyone could call createAccount(victim, salt, maliciousConfig) and
         // seize control of the victim's counterfactual address via social recovery.
-        bytes32 configHash = keccak256(abi.encode(config.guardians, config.dailyLimit));
-        bytes32 cloneSalt = _getSalt(owner, salt, configHash);
+        bytes32 cloneSalt = _getSalt(owner, salt, _getConfigHash(config));
         account = Clones.predictDeterministicAddress(implementation, cloneSalt);
         if (account.code.length > 0) {
             return account;
@@ -120,8 +119,7 @@ contract AAStarAirAccountFactoryV7 {
         uint256 salt,
         AAStarAirAccountBase.InitConfig memory config
     ) public view returns (address) {
-        bytes32 configHash = keccak256(abi.encode(config.guardians, config.dailyLimit));
-        return Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt, configHash));
+        return Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt, _getConfigHash(config)));
     }
 
     // ─── Convenience: Default Guardian Setup ────────────────────────
@@ -234,6 +232,12 @@ contract AAStarAirAccountFactoryV7 {
             initialTokens: tokens,
             initialTokenConfigs: configs
         });
+    }
+
+    /// @dev Hash the security-critical fields of a config that determine account identity.
+    ///      guardians + dailyLimit are the fields an attacker would change in a front-run.
+    function _getConfigHash(AAStarAirAccountBase.InitConfig memory config) internal pure returns (bytes32) {
+        return keccak256(abi.encode(config.guardians, config.dailyLimit));
     }
 
     /// @dev Internal salt for createAccount/getAddress: binds address to owner + salt + configHash.
