@@ -1045,9 +1045,12 @@ abstract contract AAStarAirAccountBase is Initializable {
     ///        Consumed ONCE by execute()/executeBatch() so every call in a batch shares the same
     ///        scope restrictions — preventing scope bypass on calls 2+ in a batch.
     function _enforceGuard(uint256 value, uint8 algId, bytes32 taggedSessionKey, address dest, bytes calldata func) internal {
+        // Cache guard address: avoids 3 separate SLOADs (COLD ~2100 + 2×WARM ~100 = ~2300 gas total)
+        address guardAddr = address(guard);
+
         // ETH tier enforcement: cumulative daily spend prevents batch/multi-TX bypass
         if (tier1Limit > 0 || tier2Limit > 0) {
-            uint256 alreadySpent = address(guard) != address(0) ? guard.todaySpent() : 0;
+            uint256 alreadySpent = guardAddr != address(0) ? guard.todaySpent() : 0;
             uint8 required = requiredTier(alreadySpent + value);
             if (required > 0) {
                 uint8 provided = _algTier(algId);
@@ -1058,12 +1061,12 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
 
         // ETH daily limit + algorithm whitelist (writes dailySpent so next batch call sees updated value)
-        if (address(guard) != address(0)) {
+        if (guardAddr != address(0)) {
             guard.checkTransaction(value, algId);
         }
 
         // ERC20/DeFi token tier + daily limit enforcement (M5.1 + M6.6b)
-        if (func.length >= 4 && address(guard) != address(0)) {
+        if (func.length >= 4 && guardAddr != address(0)) {
             bool tokenHandled = false;
 
             // M6.6b: DeFi parser registry check (runs first, more specific)
