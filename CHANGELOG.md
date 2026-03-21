@@ -8,6 +8,54 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.15.0] - 2026-03-21 (M6 Complete — Session Keys + Weighted Multi-Sig + Security Hardening)
+
+### M6 Milestone Status: **COMPLETE** ✓
+- 446/446 unit tests passing (all 23 test suites)
+- M6 r4 Factory deployed to Sepolia: `0x34282bef82e14af3cc61fecaa60eab91d3a82d46`
+- SessionKeyValidator r2 (7-day max) deployed: `0xcaba5a18e46f728b5330ea33bd099693a1b76217`
+- All E2E tests verified on Sepolia (see table below)
+
+### AirAccount M6 r4 (Sepolia)
+- **Factory**: `0x34282bef82e14af3cc61fecaa60eab91d3a82d46`
+- **Implementation**: `0xBc7F28a1999E989744a7B2c4E2bB0fb34392Db80`
+- **SessionKeyValidator**: `0xcaba5a18e46f728b5330ea33bd099693a1b76217`
+- **CalldataParserRegistry**: `0x7099eb39fbab795e66dd71fbeaace150edf1b3c3`
+- **UniswapV3Parser**: `0x5671810ac8aa1857397870e60232579cfc519515`
+
+### E2E Verification (Sepolia, M6 r4)
+| Test | Scenarios | Result |
+|------|-----------|--------|
+| M6 Clone Factory + Guard Externalization | 12/12 | ✅ ALL PASS |
+| M6 ALG_WEIGHTED + Governance (M6.1+M6.2) | 5/5 | ✅ ALL PASS |
+| M6.4 Session Key (validate path) | 5/5 | ✅ ALL PASS |
+| M6.4 Session Key Full UserOp (EntryPoint) | 10/10 | ✅ ALL PASS |
+| Algorithm Tier Guard | 4/4 | ✅ ALL PASS |
+| Factory Constructor Validation | 5/5 | ✅ ALL PASS |
+| Tiered Signatures (T1/T2/T3) | 5/5 | ✅ ALL PASS |
+| Social Recovery | 10/10 | ✅ ALL PASS |
+
+### Added — M6 Features
+- **ALG_SESSION_KEY (0x08)**: Time-limited session keys with contractScope/selectorScope enforcement. ECDSA + P256 variants. `SessionKeyValidator` with `grantSession`/`grantSessionDirect`/`revokeSession`.
+- **ALG_WEIGHTED (0x07)**: Configurable per-source weights (passkey/ECDSA/BLS/guardians) with tiered thresholds. Guardian-gated weakening proposal with 7-day timelock (M6.2).
+- **EIP-7702 Delegate**: `AirAccountDelegate` for EOA → smart wallet delegation.
+- **CalldataParser**: Protocol-aware spending guard. `CalldataParserRegistry` + `UniswapV3Parser` (exactInputSingle + exactInput).
+- **EIP-1167 Clone Factory (r4)**: Deterministic clone pattern resolves EIP-170 size limit. Factory 9,527B (was 30,172B), account 20,900B (was 25,913B).
+
+### Security Fixes (M6)
+- **HIGH: Factory front-run protection** — `createAccount` address binds to `keccak256(guardians, dailyLimit)` via configHash in CREATE2 salt. Prevents attacker from pre-deploying victim's counterfactual address with malicious guardians.
+- **HIGH: Session key scope bypass in executeBatch** — `_consumeSessionKey()` was called per-call; calls 2+ skipped scope checks. Fixed: key consumed once at `executeBatch` level and passed as parameter to all `_enforceGuard` calls.
+- **MEDIUM: ALG_WEIGHTED guard whitelist semantic fix** — `guardAlgId` (pre-resolution) now passed separately to guard whitelist check. Approving ALG_WEIGHTED(0x07) correctly covers its tier resolutions (0x02/0x04/0x05).
+- **MEDIUM: Weight threshold monotonicity** — `tier1 ≤ tier2 ≤ tier3` enforced in both `setWeightConfig` and `proposeWeightChange` via extracted `_validateWeightConfig()` helper.
+- **Session max duration**: `MAX_SESSION_DURATION = 7 days` (was 24h — too restrictive for real use cases).
+
+### Refactoring
+- Extract `_validateWeightConfig()` — eliminates 9-line copy-paste between `setWeightConfig` and `proposeWeightChange`.
+- Extract `_getConfigHash()` — single definition of front-run protection hash.
+- Cache `address guardAddr = address(guard)` in `_enforceGuard` — saves ~200 gas/call (3 SLOADs → 1).
+
+---
+
 ## [v0.14.0] - 2026-03-13 (M5 Complete — Deploy Scripts + Security Hardening)
 
 ### M5 Milestone Status: **COMPLETE** ✓
