@@ -1381,6 +1381,12 @@ abstract contract AAStarAirAccountBase is Initializable {
         if (config.guardian0Weight >= config.tier1Threshold) revert InsecureWeightConfig();
         if (config.guardian1Weight >= config.tier1Threshold) revert InsecureWeightConfig();
         if (config.guardian2Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        // Thresholds must be non-decreasing: tier1 <= tier2 <= tier3 (when non-zero).
+        // Without this, _resolveWeightedAlgId (which checks tier3 first) could map a
+        // low-weight signature to Tier3 if tier3Threshold < tier1Threshold.
+        if (config.tier2Threshold != 0 && config.tier2Threshold < config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.tier3Threshold != 0 && config.tier3Threshold < config.tier2Threshold) revert InsecureWeightConfig();
+        if (config.tier3Threshold != 0 && config.tier2Threshold == 0) revert InsecureWeightConfig();
 
         WeightConfig memory current = weightConfig;
         if (current.tier1Threshold != 0 && _isWeakening(current, config)) {
@@ -1403,6 +1409,10 @@ abstract contract AAStarAirAccountBase is Initializable {
         if (proposed.guardian0Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
         if (proposed.guardian1Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
         if (proposed.guardian2Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
+        // Monotonic threshold enforcement (same as setWeightConfig)
+        if (proposed.tier2Threshold != 0 && proposed.tier2Threshold < proposed.tier1Threshold) revert InsecureWeightConfig();
+        if (proposed.tier3Threshold != 0 && proposed.tier3Threshold < proposed.tier2Threshold) revert InsecureWeightConfig();
+        if (proposed.tier3Threshold != 0 && proposed.tier2Threshold == 0) revert InsecureWeightConfig();
         if (!_isWeakening(weightConfig, proposed)) revert WeakeningRequiresProposal(); // use setWeightConfig instead
         if (pendingWeightChange.proposedAt != 0) revert WeightChangePending();
         if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();

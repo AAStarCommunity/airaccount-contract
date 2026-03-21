@@ -83,7 +83,12 @@ contract AAStarAirAccountFactoryV7 {
         uint256 salt,
         AAStarAirAccountBase.InitConfig memory config
     ) external returns (address account) {
-        bytes32 cloneSalt = _getSalt(owner, salt);
+        // Bind address to config: include guardians and dailyLimit in salt so that
+        // a front-runner cannot pre-deploy this address with a different (malicious) config.
+        // Without this, anyone could call createAccount(victim, salt, maliciousConfig) and
+        // seize control of the victim's counterfactual address via social recovery.
+        bytes32 configHash = keccak256(abi.encode(config.guardians, config.dailyLimit));
+        bytes32 cloneSalt = _getSalt(owner, salt, configHash);
         account = Clones.predictDeterministicAddress(implementation, cloneSalt);
         if (account.code.length > 0) {
             return account;
@@ -108,14 +113,15 @@ contract AAStarAirAccountFactoryV7 {
     }
 
     /// @notice Predict the counterfactual address for a full-config account.
-    /// @dev With the clone pattern, the address depends only on implementation + salt (not config).
-    ///      The config parameter is retained for interface compatibility.
+    /// @dev Address depends on owner + salt + keccak256(guardians, dailyLimit) to prevent
+    ///      front-running attacks where an attacker pre-deploys the account with malicious guardians.
     function getAddress(
         address owner,
         uint256 salt,
-        AAStarAirAccountBase.InitConfig memory /* config */
+        AAStarAirAccountBase.InitConfig memory config
     ) public view returns (address) {
-        return Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt));
+        bytes32 configHash = keccak256(abi.encode(config.guardians, config.dailyLimit));
+        return Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt, configHash));
     }
 
     // ─── Convenience: Default Guardian Setup ────────────────────────
@@ -155,7 +161,7 @@ contract AAStarAirAccountFactoryV7 {
         (address recovered2,,) = acceptHash.tryRecover(guardian2Sig);
         if (recovered2 != guardian2) revert GuardianDidNotAccept(guardian2);
 
-        bytes32 cloneSalt = _getSalt(owner, salt);
+        bytes32 cloneSalt = _getDefaultSalt(owner, salt);
         account = Clones.predictDeterministicAddress(implementation, cloneSalt);
         if (account.code.length > 0) {
             return account;
@@ -187,7 +193,7 @@ contract AAStarAirAccountFactoryV7 {
         address /* guardian2 */,
         uint256 /* dailyLimit */
     ) public view returns (address) {
-        return Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt));
+        return Clones.predictDeterministicAddress(implementation, _getDefaultSalt(owner, salt));
     }
 
     // ─── Internal ───────────────────────────────────────────────────
@@ -230,7 +236,14 @@ contract AAStarAirAccountFactoryV7 {
         });
     }
 
-    function _getSalt(address owner, uint256 salt) internal pure returns (bytes32) {
+    /// @dev Internal salt for createAccount/getAddress: binds address to owner + salt + configHash.
+    function _getSalt(address owner, uint256 salt, bytes32 configHash) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(owner, salt, configHash));
+    }
+
+    /// @dev Internal salt for createAccountWithDefaults/getAddressWithDefaults: binds to owner + salt only
+    ///      (guardian acceptance signatures already prevent front-running for this path).
+    function _getDefaultSalt(address owner, uint256 salt) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(owner, salt));
     }
 }
