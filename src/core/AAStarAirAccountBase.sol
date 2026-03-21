@@ -1373,20 +1373,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     ///         A change is weakening if any weight decreases or any threshold decreases.
     /// @dev InsecureWeightConfig: any single source weight >= tier1Threshold (single point of failure).
     function setWeightConfig(WeightConfig calldata config) external onlyOwner {
-        if (config.tier1Threshold == 0) revert InsecureWeightConfig();
-        // Single-source must not reach threshold alone (prevents single-point-of-failure)
-        if (config.passkeyWeight   >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.ecdsaWeight     >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.blsWeight       >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian0Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian1Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian2Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        // Thresholds must be non-decreasing: tier1 <= tier2 <= tier3 (when non-zero).
-        // Without this, _resolveWeightedAlgId (which checks tier3 first) could map a
-        // low-weight signature to Tier3 if tier3Threshold < tier1Threshold.
-        if (config.tier2Threshold != 0 && config.tier2Threshold < config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.tier3Threshold != 0 && config.tier3Threshold < config.tier2Threshold) revert InsecureWeightConfig();
-        if (config.tier3Threshold != 0 && config.tier2Threshold == 0) revert InsecureWeightConfig();
+        _validateWeightConfig(config);
 
         WeightConfig memory current = weightConfig;
         if (current.tier1Threshold != 0 && _isWeakening(current, config)) {
@@ -1402,17 +1389,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     /// @notice Propose a weakening weight-config change (guardian-gated, M6.2).
     ///         Owner initiates; guardians approve; executes after WEIGHT_CHANGE_TIMELOCK.
     function proposeWeightChange(WeightConfig calldata proposed) external onlyOwner {
-        if (proposed.tier1Threshold == 0) revert InsecureWeightConfig();
-        if (proposed.passkeyWeight   >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.ecdsaWeight     >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.blsWeight       >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.guardian0Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.guardian1Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.guardian2Weight >= proposed.tier1Threshold) revert InsecureWeightConfig();
-        // Monotonic threshold enforcement (same as setWeightConfig)
-        if (proposed.tier2Threshold != 0 && proposed.tier2Threshold < proposed.tier1Threshold) revert InsecureWeightConfig();
-        if (proposed.tier3Threshold != 0 && proposed.tier3Threshold < proposed.tier2Threshold) revert InsecureWeightConfig();
-        if (proposed.tier3Threshold != 0 && proposed.tier2Threshold == 0) revert InsecureWeightConfig();
+        _validateWeightConfig(proposed);
         if (!_isWeakening(weightConfig, proposed)) revert WeakeningRequiresProposal(); // use setWeightConfig instead
         if (pendingWeightChange.proposedAt != 0) revert WeightChangePending();
         if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
@@ -1463,6 +1440,25 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
         delete pendingWeightChange;
         emit WeightChangeCancelled();
+    }
+
+    /// @dev Validate that a WeightConfig is internally consistent and secure.
+    ///      Called by both setWeightConfig and proposeWeightChange to avoid duplication.
+    function _validateWeightConfig(WeightConfig calldata config) internal pure {
+        if (config.tier1Threshold == 0) revert InsecureWeightConfig();
+        // Single-source must not reach threshold alone (prevents single-point-of-failure)
+        if (config.passkeyWeight   >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.ecdsaWeight     >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.blsWeight       >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.guardian0Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.guardian1Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.guardian2Weight >= config.tier1Threshold) revert InsecureWeightConfig();
+        // Thresholds must be non-decreasing: tier1 <= tier2 <= tier3 (when non-zero).
+        // Without this, _resolveWeightedAlgId (which checks tier3 first) could map a
+        // low-weight signature to Tier3 if tier3Threshold < tier1Threshold.
+        if (config.tier2Threshold != 0 && config.tier2Threshold < config.tier1Threshold) revert InsecureWeightConfig();
+        if (config.tier3Threshold != 0 && config.tier3Threshold < config.tier2Threshold) revert InsecureWeightConfig();
+        if (config.tier3Threshold != 0 && config.tier2Threshold == 0) revert InsecureWeightConfig();
     }
 
     /// @dev Map accumulated weight to the highest satisfied tier's representative algId.
