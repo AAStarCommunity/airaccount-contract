@@ -293,3 +293,173 @@ contract ParserTryCatchTest is Test {
         return abi.encodePacked(uint8(ALG_ECDSA), r, s, v);
     }
 }
+
+// ─── executeBatch session key scope bypass regression ────────────────────────
+
+/// @dev Minimal ETH receiver used as "allowed" and "disallowed" batch targets.
+contract ETHSink { receive() external payable {} }
+
+/// @title SessionKeyBatchScopeTest
+/// @notice Regression for M6 security fix: session key contractScope must be
+///         enforced on EVERY call in executeBatch, not just the first.
+///
+///         Before fix: _consumeSessionKey() was called inside _enforceGuard()
+///         (per-call). Call 0 consumed the session key; calls 1+ got bytes32(0)
+///         and skipped scope checks entirely — allowing arbitrary targets.
+///
+///         After fix: session key is consumed ONCE by executeBatch() and passed
+///         to _enforceGuard() as a parameter. All calls in the batch are subject
+///         to the same contractScope/selectorScope restriction.
+contract SessionKeyBatchScopeTest is Test {
+    using MessageHashUtils for bytes32;
+
+    uint8 constant ALG_SESSION_KEY = 0x08;
+
+    MockEPSK       ep;
+    AAStarValidator validator;
+    SessionKeyValidator skValidator;
+    AAStarAirAccountV7  account;
+
+    address owner_;
+    uint256 ownerKey = 0xA11CE_C;
+
+    address sessionKey_;
+    uint256 sessionKeyPriv_ = 0x5E55_C;
+
+    ETHSink allowedTarget;
+    ETHSink disallowedTarget;
+
+    function setUp() public {
+        ep          = new MockEPSK();
+        owner_      = vm.addr(ownerKey);
+        sessionKey_ = vm.addr(sessionKeyPriv_);
+
+        validator   = new AAStarValidator();
+        skValidator = new SessionKeyValidator();
+        validator.registerAlgorithm(ALG_SESSION_KEY, address(skValidator));
+
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = ALG_SESSION_KEY;
+
+        AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
+            guardians:           [address(0), address(0), address(0)],
+            dailyLimit:          0,
+            approvedAlgIds:      algIds,
+            minDailyLimit:       0,
+            initialTokens:       new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+
+        account = new AAStarAirAccountV7();
+        address g = address(new AAStarGlobalGuard(
+            address(account), 0, algIds, 0,
+            new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
+        ));
+        account.initialize(address(ep), owner_, cfg, g);
+        vm.prank(owner_);
+        account.setValidator(address(validator));
+        vm.deal(address(account), 10 ether);
+
+        allowedTarget    = new ETHSink();
+        disallowedTarget = new ETHSink();
+
+        vm.warp(1_000_000);
+
+        // Grant session key scoped to allowedTarget only
+        vm.prank(owner_);
+        skValidator.grantSessionDirect(
+            address(account), sessionKey_,
+            uint48(block.timestamp + 1 hours),
+            address(allowedTarget), // contractScope = allowedTarget only
+            bytes4(0)
+        );
+    }
+
+    /// @notice executeBatch with 1 allowed call must succeed.
+    function test_executeBatch_singleScopedCall_passes() public {
+        address[] memory dests  = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[]   memory funcs  = new bytes[](1);
+        dests[0]  = address(allowedTarget);
+        values[0] = 0.001 ether;
+        funcs[0]  = "";
+
+        bytes memory callData = abi.encodeWithSelector(
+            AAStarAirAccountBase.executeBatch.selector, dests, values, funcs
+        );
+        PackedUserOperation memory uop = _buildUserOpFor(address(account));
+        uop.callData = callData;
+        bytes32 h = keccak256(abi.encode(uop));
+        uop.signature = _skSigBatch(address(account), sessionKey_, sessionKeyPriv_, h);
+
+        vm.prank(address(ep));
+        assertEq(account.validateUserOp(uop, h, 0), 0);
+
+        vm.prank(address(ep));
+        account.executeBatch(dests, values, funcs);
+    }
+
+    /// @notice executeBatch where call[1] targets a disallowed contract must revert.
+    ///         This is the regression: before the fix call[1] skipped scope check.
+    function test_executeBatch_secondCallOutOfScope_reverts() public {
+        address[] memory dests  = new address[](2);
+        uint256[] memory values = new uint256[](2);
+        bytes[]   memory funcs  = new bytes[](2);
+        dests[0]  = address(allowedTarget);
+        values[0] = 0.001 ether;
+        funcs[0]  = "";
+        dests[1]  = address(disallowedTarget); // outside scope
+        values[1] = 0.001 ether;
+        funcs[1]  = "";
+
+        bytes memory callData = abi.encodeWithSelector(
+            AAStarAirAccountBase.executeBatch.selector, dests, values, funcs
+        );
+        PackedUserOperation memory uop = _buildUserOpFor(address(account));
+        uop.callData = callData;
+        bytes32 h = keccak256(abi.encode(uop));
+        uop.signature = _skSigBatch(address(account), sessionKey_, sessionKeyPriv_, h);
+
+        vm.prank(address(ep));
+        assertEq(account.validateUserOp(uop, h, 0), 0);
+
+        // Must revert — disallowedTarget is outside contractScope
+        vm.prank(address(ep));
+        vm.expectRevert(AAStarAirAccountBase.SessionScopeViolation.selector);
+        account.executeBatch(dests, values, funcs);
+    }
+
+    /// @notice executeBatch with all calls to allowed target must succeed.
+    function test_executeBatch_allCallsInScope_passes() public {
+        address[] memory dests  = new address[](3);
+        uint256[] memory values = new uint256[](3);
+        bytes[]   memory funcs  = new bytes[](3);
+        for (uint i; i < 3; i++) {
+            dests[i]  = address(allowedTarget);
+            values[i] = 0.001 ether;
+            funcs[i]  = "";
+        }
+
+        bytes memory callData = abi.encodeWithSelector(
+            AAStarAirAccountBase.executeBatch.selector, dests, values, funcs
+        );
+        PackedUserOperation memory uop = _buildUserOpFor(address(account));
+        uop.callData = callData;
+        bytes32 h = keccak256(abi.encode(uop));
+        uop.signature = _skSigBatch(address(account), sessionKey_, sessionKeyPriv_, h);
+
+        vm.prank(address(ep));
+        assertEq(account.validateUserOp(uop, h, 0), 0);
+
+        vm.prank(address(ep));
+        account.executeBatch(dests, values, funcs);
+    }
+
+    function _skSigBatch(address acct_, address sk, uint256 skPriv, bytes32 uopHash)
+        internal pure returns (bytes memory)
+    {
+        bytes32 eth = uopHash.toEthSignedMessageHash();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(skPriv, eth);
+        return abi.encodePacked(uint8(ALG_SESSION_KEY), bytes20(acct_), bytes20(sk), r, s, v);
+    }
+}
