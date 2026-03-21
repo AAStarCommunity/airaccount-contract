@@ -56,7 +56,9 @@ contract DeployFactoryM6 is Script {
             entryPoint,
             guardian,
             noTokens,
-            noConfigs
+            noConfigs,
+            address(0), // defaultValidatorModule — set after deploying AirAccountCompositeValidator
+            address(0)  // defaultHookModule — set after deploying TierGuardHook
         );
 
         address impl = factory.implementation();

@@ -44,7 +44,9 @@ contract DeployFullSystem is Script {
             ENTRYPOINT,
             COMMUNITY_GUARDIAN,
             noTokens,
-            noConfigs
+            noConfigs,
+            address(0), // defaultValidatorModule
+            address(0)  // defaultHookModule
         );
         console.log("AAStarAirAccountFactoryV7:", address(factory));
 

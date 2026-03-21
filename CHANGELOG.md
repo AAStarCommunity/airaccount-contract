@@ -8,8 +8,41 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
-<<<<<<< HEAD
-=======
+## [v0.16.0] - 2026-03-21 (M7 In Progress — ERC-7579 Full Module Compliance + Agent Economy)
+
+### M7 Milestone Status: **IN PROGRESS** 🔄
+- 614 unit tests (up from 446 in M6)
+- Scope: ERC-7579 installModule/uninstallModule/executeFromExecutor, TierGuardHook, CompositeValidator, AgentSessionKey, Railgun parser, ERC-7828, ERC-5564, ERC-8004, ForceExitModule
+- Sepolia deployment: pending (C10/C12/C18 in progress)
+
+### Added
+- ERC-7579 full module compliance: installModule(), uninstallModule(), executeFromExecutor() (C1-C3)
+- TierGuardHook — ERC-7579 Hook wrapping existing tier/guard enforcement (C4)
+- AirAccountCompositeValidator — ERC-7579 Validator for weighted/cumulative signatures (C6)
+- AgentSessionKeyValidator — AI agent session keys with velocity limiting, call allowlists, spend caps (C16)
+- AgentSessionKeyValidator.delegateSession() — hierarchical sub-agent delegation with scope narrowing (C18)
+- ForceExitModule — L2→L1 guardian-gated withdrawal for OP Stack and Arbitrum (C10)
+- Factory pre-install default modules via new initialize() overload (C8)
+- ERC-7828 getChainQualifiedAddress() for cross-chain address disambiguation (C9)
+- ERC-5564 announceForStealth() in AirAccountDelegate (C15)
+- ERC-8004 setAgentWallet() in AAStarAirAccountBase (C17)
+- RailgunParser — ICalldataParser for Railgun V3 transact/shield selectors (C11)
+- IERC7579Module interface (src/interfaces/IERC7579Module.sol)
+- docs/audit-scope.md and docs/known-issues.md for CodeHawks audit prep (C12)
+- deploy-multichain.ts script for Base/Arbitrum/OP Stack deployment (C10)
+- scripts/test-m7-e2e.ts — post-deployment E2E test suite for M7 features
+
+### Changed
+- AAStarAirAccountFactoryV7: constructor +2 params (defaultValidatorModule, defaultHookModule)
+- AAStarAirAccountV7.VERSION: "0.15.0" → "0.16.0", accountId: "airaccount.v7@0.16.0"
+- AAStarAirAccountV7: validateUserOp() now routes by nonce-key to installed validator modules (C7)
+- AAStarAirAccountBase: _guardianCount visibility private → internal (needed by uninstallModule)
+
+### Tests
+- 614 total (up from 446 in M6): +168 new tests across M7 features
+
+---
+
 ## [v0.15.0] - 2026-03-21 (M6 Complete — Session Keys + Weighted Multi-Sig + Security Hardening)
 
 ### M6 Milestone Status: **COMPLETE** ✓
@@ -58,7 +91,6 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
->>>>>>> main
 ## [v0.14.0] - 2026-03-13 (M5 Complete — Deploy Scripts + Security Hardening)
 
 ### M5 Milestone Status: **COMPLETE** ✓

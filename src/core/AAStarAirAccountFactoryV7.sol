@@ -33,6 +33,14 @@ contract AAStarAirAccountFactoryV7 {
     /// @dev Default token spending configs aligned with _defaultTokenAddresses
     AAStarGlobalGuard.TokenConfig[] private _defaultTokenConfigs;
 
+    /// @dev Default validator module pre-installed on every new account (address(0) = disabled)
+    ///      Typically AirAccountCompositeValidator to enable weighted/cumulative sigs out-of-box.
+    address public immutable defaultValidatorModule;
+
+    /// @dev Default hook module pre-installed on every new account (address(0) = disabled)
+    ///      Typically TierGuardHook to enforce tier-based spending limits via ERC-7579 hooks.
+    address public immutable defaultHookModule;
+
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
 
     error GuardianDidNotAccept(address guardian);
@@ -41,12 +49,18 @@ contract AAStarAirAccountFactoryV7 {
     /// @param _communityGuardian Default community Safe multisig guardian address
     /// @param defaultTokens Token addresses to pre-configure for all new accounts (empty = no defaults)
     /// @param defaultConfigs Spending limits aligned with defaultTokens
+    /// @param _defaultValidatorModule AirAccountCompositeValidator to pre-install (address(0) = none)
+    /// @param _defaultHookModule TierGuardHook to pre-install (address(0) = none)
     constructor(
         address _entryPoint,
         address _communityGuardian,
         address[] memory defaultTokens,
-        AAStarGlobalGuard.TokenConfig[] memory defaultConfigs
+        AAStarGlobalGuard.TokenConfig[] memory defaultConfigs,
+        address _defaultValidatorModule,
+        address _defaultHookModule
     ) {
+        defaultValidatorModule = _defaultValidatorModule;
+        defaultHookModule = _defaultHookModule;
         require(defaultTokens.length == defaultConfigs.length, "Token/config length mismatch");
         // Deploy shared implementation. All user accounts are EIP-1167 clones of this address.
         implementation = address(new AAStarAirAccountV7());
@@ -107,7 +121,8 @@ contract AAStarAirAccountFactoryV7 {
             ));
         }
         account = Clones.cloneDeterministic(implementation, cloneSalt);
-        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
+        (uint256[] memory mTypeIds, address[] memory mAddrs, bytes[] memory mDatas) = _buildDefaultModules();
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr, mTypeIds, mAddrs, mDatas);
         emit AccountCreated(account, owner, salt);
     }
 
@@ -178,7 +193,8 @@ contract AAStarAirAccountFactoryV7 {
             config.initialTokenConfigs
         ));
         account = Clones.cloneDeterministic(implementation, cloneSalt);
-        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
+        (uint256[] memory mTypeIds, address[] memory mAddrs, bytes[] memory mDatas) = _buildDefaultModules();
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr, mTypeIds, mAddrs, mDatas);
         emit AccountCreated(account, owner, salt);
     }
 
@@ -195,6 +211,36 @@ contract AAStarAirAccountFactoryV7 {
     }
 
     // ─── Internal ───────────────────────────────────────────────────
+
+    /// @dev Build parallel arrays for default module pre-installation.
+    ///      Includes validator (type 1) and/or hook (type 3) if set in constructor.
+    ///      Empty initData: modules configure themselves from account state when first used.
+    function _buildDefaultModules() internal view returns (
+        uint256[] memory moduleTypeIds,
+        address[] memory modules,
+        bytes[] memory initDatas
+    ) {
+        uint256 count = 0;
+        if (defaultValidatorModule != address(0)) count++;
+        if (defaultHookModule != address(0)) count++;
+
+        moduleTypeIds = new uint256[](count);
+        modules = new address[](count);
+        initDatas = new bytes[](count);
+
+        uint256 idx = 0;
+        if (defaultValidatorModule != address(0)) {
+            moduleTypeIds[idx] = 1; // MODULE_TYPE_VALIDATOR
+            modules[idx] = defaultValidatorModule;
+            initDatas[idx] = "";
+            idx++;
+        }
+        if (defaultHookModule != address(0)) {
+            moduleTypeIds[idx] = 3; // MODULE_TYPE_HOOK
+            modules[idx] = defaultHookModule;
+            initDatas[idx] = "";
+        }
+    }
 
     function _buildDefaultConfig(
         address guardian1,
@@ -249,5 +295,29 @@ contract AAStarAirAccountFactoryV7 {
     ///      (guardian acceptance signatures already prevent front-running for this path).
     function _getDefaultSalt(address owner, uint256 salt) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(owner, salt));
+    }
+
+    // ─── ERC-7828 Chain-Specific Address (M7.4) ─────────────────────
+
+    /// @notice ERC-7828: Returns a chain-qualified address identifier.
+    ///         Enables cross-chain address disambiguation for accounts deployed at the same address
+    ///         on multiple L2s via CREATE2 with the same salt.
+    /// @dev keccak256(account ++ chainId) — unique per (address, chain) pair.
+    ///      Use for canonical cross-chain account references.
+    /// @param account The account address to qualify
+    /// @return Chain-qualified address bytes32 identifier
+    function getChainQualifiedAddress(address account) external view returns (bytes32) {
+        return keccak256(abi.encodePacked(account, block.chainid));
+    }
+
+    /// @notice Predict account address AND its chain-qualified identifier in one call.
+    /// @dev Convenience function for frontends building cross-chain address registries.
+    function getAddressWithChainId(
+        address owner,
+        uint256 salt,
+        AAStarAirAccountBase.InitConfig memory config
+    ) external view returns (address account, bytes32 chainQualified) {
+        account = Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt, _getConfigHash(config)));
+        chainQualified = keccak256(abi.encodePacked(account, block.chainid));
     }
 }

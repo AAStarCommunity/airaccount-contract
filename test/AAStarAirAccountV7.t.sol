@@ -282,7 +282,7 @@ contract AAStarAirAccountV7Test is Test {
 
     function test_erc7579_accountId() public view {
         string memory id = account.accountId();
-        assertEq(id, "airaccount.v7@0.15.0");
+        assertEq(id, "airaccount.v7@0.16.0");
     }
 
     function test_erc7579_supportsModule_validator() public view {
@@ -293,8 +293,8 @@ contract AAStarAirAccountV7Test is Test {
         assertTrue(account.supportsModule(2));  // MODULE_TYPE_EXECUTOR
     }
 
-    function test_erc7579_supportsModule_hook_false() public view {
-        assertFalse(account.supportsModule(3)); // MODULE_TYPE_HOOK — M7
+    function test_erc7579_supportsModule_hook_true() public view {
+        assertTrue(account.supportsModule(3)); // MODULE_TYPE_HOOK — now M7
     }
 
     function test_erc7579_isModuleInstalled_noValidator_false() public view {

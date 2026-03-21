@@ -46,6 +46,8 @@ abstract contract AAStarAirAccountBase is Initializable {
     uint8 internal constant ALG_COMBINED_T1 = 0x06;   // P256 AND ECDSA simultaneously (zero-trust Tier 1)
     uint8 internal constant ALG_SESSION_KEY = 0x08;   // Time-limited session key (ephemeral ECDSA, Tier 1)
     uint8 internal constant ALG_WEIGHTED    = 0x07;   // Weighted multi-signature (configurable per-source weights)
+    // algId 0x10: Reserved for post-quantum signature scheme (ML-DSA/Dilithium).
+    // Requires EVM precompile (EIP-TBD). Implementation deferred until precompile availability (~2027-2029).
 
     uint256 internal constant G2_POINT_LENGTH = 256;
 
@@ -103,6 +105,21 @@ abstract contract AAStarAirAccountBase is Initializable {
     ///      Only populated when algId == ALG_WEIGHTED. Consumed in execute/executeBatch to resolve tier.
     uint256 internal constant WEIGHT_SLOT_BASE = 0x0A1800;
 
+    // ── ERC-7579 Module Registry (M7.2) ──
+
+    /// @dev Installed validator modules (moduleTypeId=1). External validators beyond the built-in router.
+    mapping(address => bool) internal _installedValidators;
+
+    /// @dev Installed executor modules (moduleTypeId=2). Execute calls on behalf of this account.
+    mapping(address => bool) internal _installedExecutors;
+
+    /// @dev Installed hook modules (moduleTypeId=3). Pre/post execution hooks beyond built-in guard.
+    mapping(address => bool) internal _installedHooks;
+
+    /// @dev installModule permission threshold. 40=owner-only, 70=owner+1guardian(default), 100=owner+2guardians.
+    ///      0 means uninitialized → defaults to 70 at runtime.
+    uint8 internal _installModuleThreshold;
+
     // ── P256 Passkey ──
 
     /// @notice P256 public key x-coordinate
@@ -123,7 +140,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     // Packed storage: _guardian0 (20 bytes) + _guardianCount (1 byte) = 21 bytes — fits in one slot.
     // Saves 1 SLOAD (~2,100 gas) on every guardian check (proposeRecovery, approveRecovery, cancelRecovery).
     address private _guardian0;
-    uint8 private _guardianCount;  // packed with _guardian0 in same 32-byte slot
+    uint8 internal _guardianCount;  // packed with _guardian0 in same 32-byte slot
     address private _guardian1;
     address private _guardian2;
 
@@ -223,6 +240,13 @@ abstract contract AAStarAirAccountBase is Initializable {
     error InvalidGuardianSignature();
     error SessionScopeViolation();
     error InvalidTierConfig();
+    // M7.2 ERC-7579 Module Management
+    error ModuleAlreadyInstalled();
+    error ModuleNotInstalled();
+    error InvalidModuleType();
+    error ModuleInvalid();
+    error InstallModuleUnauthorized();
+
     // M6.1 / M6.2
     error WeightConfigNotInitialized();
     error InsecureWeightConfig();
@@ -255,6 +279,9 @@ abstract contract AAStarAirAccountBase is Initializable {
     event WeightChangeApproved(address indexed approvedBy, uint256 approvalCount);
     event WeightChangeExecuted(WeightConfig oldConfig, WeightConfig newConfig);
     event WeightChangeCancelled();
+    event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
+    event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
+    event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet);
 
     // ─── Modifiers ────────────────────────────────────────────────────
 
@@ -329,6 +356,27 @@ abstract contract AAStarAirAccountBase is Initializable {
             guard = AAStarGlobalGuard(_guardAddr);
             emit GuardInitialized(_guardAddr, guard.dailyLimit());
         }
+    }
+
+    /// @dev Force-install a module during account initialization (no guardian sig required).
+    ///      Only call from initialize() overloads. Best-effort: onInstall failure doesn't abort creation.
+    function _preInstallModule(uint256 moduleTypeId, address module, bytes memory initData) internal {
+        if (module == address(0) || module.code.length == 0) return;
+        if (moduleTypeId == 1) { // MODULE_TYPE_VALIDATOR
+            if (_installedValidators[module]) return;
+            _installedValidators[module] = true;
+        } else if (moduleTypeId == 2) { // MODULE_TYPE_EXECUTOR
+            if (_installedExecutors[module]) return;
+            _installedExecutors[module] = true;
+        } else if (moduleTypeId == 3) { // MODULE_TYPE_HOOK
+            if (_installedHooks[module]) return;
+            _installedHooks[module] = true;
+        } else {
+            return;
+        }
+        // Best-effort onInstall() call — module init failure doesn't abort account creation.
+        module.call(abi.encodeWithSignature("onInstall(bytes)", initData));
+        emit ModuleInstalled(moduleTypeId, module);
     }
 
     // ─── Configuration (owner only) ─────────────────────────────────
@@ -1495,6 +1543,30 @@ abstract contract AAStarAirAccountBase is Initializable {
         if (proposed.tier2Threshold  < current.tier2Threshold)  return true;
         if (proposed.tier3Threshold  < current.tier3Threshold)  return true;
         return false;
+    }
+
+    // ─── ERC-8004 Agent Identity Binding (M7.16) ─────────────────────────
+
+    /// @notice Link an ERC-8004 agent NFT to a session key address on this account.
+    /// @param agentId ERC-8004 agent NFT token ID
+    /// @param agentWallet Session key address that this agent uses for transactions
+    /// @param erc8004Registry ERC-8004 Identity Registry contract address
+    /// @dev Only owner can set agent wallet bindings. This is a metadata operation —
+    ///      the actual spending limits are still enforced by session key scopes.
+    function setAgentWallet(
+        uint256 agentId,
+        address agentWallet,
+        address erc8004Registry
+    ) external onlyOwner {
+        require(agentWallet != address(0), "Invalid agent wallet");
+        require(erc8004Registry != address(0), "Invalid registry");
+        // Register the agent wallet with the ERC-8004 registry
+        // setAgentWallet(agentId, wallet) — best-effort, non-blocking
+        (bool ok,) = erc8004Registry.call(
+            abi.encodeWithSignature("setAgentWallet(uint256,address)", agentId, agentWallet)
+        );
+        (ok); // silence unused variable warning
+        emit AgentWalletSet(agentId, agentWallet);
     }
 
     receive() external payable {}
