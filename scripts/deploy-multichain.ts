@@ -170,7 +170,7 @@ async function deployViaCreate2(
   const txHash = await walletClient.sendTransaction({
     to: CREATE2_FACTORY,
     data: callData,
-    gas: 5_000_000n,
+    gas: 10_000_000n,
   });
 
   const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
@@ -312,23 +312,10 @@ async function deployToChain(
     );
 
     // ── 4. AAStarAirAccountV7 (implementation) ────────────────────────────
-    // The implementation is deployed without initialization; clones call initialize()
-    const implInitCode = encodeDeployData({
-      abi: accountArtifact.abi,
-      bytecode: accountArtifact.bytecode,
-      args: [
-        cfg.entryPoint,
-        ZERO_ADDR,  // owner=0 (implementation is never used directly)
-        {           // minimal InitConfig
-          guardians: [ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
-          dailyLimit: 0n,
-          approvedAlgIds: [],
-          minDailyLimit: 0n,
-          initialTokens: [],
-          initialTokenConfigs: [],
-        },
-      ],
-    });
+    // AAStarAirAccountV7 has a no-arg constructor; clones call initialize() post-deploy.
+    // Note: the factory also deploys its own implementation internally via `new AAStarAirAccountV7()`.
+    // This separate CREATE2 deployment provides a stable reference address.
+    const implInitCode = accountArtifact.bytecode;
     const implSalt = makeSalt(signer.address, "airaccount-v7-impl-v1", cfg.chainId);
     const { address: implAddr } = await deployViaCreate2(
       publicClient,

@@ -45,6 +45,7 @@ import {
   http,
   parseEther,
   encodeFunctionData,
+  encodePacked,
   toHex,
   hexToBytes,
   bytesToHex,
@@ -68,12 +69,13 @@ const required = (k: string): string => {
   return v;
 };
 
-const PRIVATE_KEY    = required("PRIVATE_KEY") as Hex;
-const GUARDIAN1_KEY  = (process.env.PRIVATE_KEY_BOB  ?? "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d") as Hex;
-const GUARDIAN2_KEY  = (process.env.PRIVATE_KEY_JACK ?? "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a") as Hex;
-const RPC_URL        = process.env.SEPOLIA_RPC ?? process.env.SEPOLIA_RPC_URL ?? required("SEPOLIA_RPC_URL");
-const ENTRYPOINT     = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
-const DEAD           = "0x000000000000000000000000000000000000dEaD" as Address;
+const PRIVATE_KEY        = required("PRIVATE_KEY") as Hex;
+const GUARDIAN1_KEY      = (process.env.PRIVATE_KEY_BOB  ?? "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d") as Hex;
+const GUARDIAN2_KEY      = (process.env.PRIVATE_KEY_JACK ?? "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a") as Hex;
+const RPC_URL            = process.env.SEPOLIA_RPC ?? process.env.SEPOLIA_RPC_URL ?? required("SEPOLIA_RPC_URL");
+const FACTORY_ADDRESS    = (process.env.AIRACCOUNT_M7_FACTORY ?? "0x9D0735E3096C02eC63356F21d6ef79586280289f") as Address;
+const ENTRYPOINT         = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
+const DEAD               = "0x000000000000000000000000000000000000dEaD" as Address;
 
 // ─── Artifact Loader ─────────────────────────────────────────────────────────
 
@@ -165,50 +167,54 @@ const ENTRYPOINT_ABI = [
     ], outputs: [{ name: "nonce", type: "uint256" }] },
 ] as const;
 
+// AgentSessionConfig tuple components (shared between grantAgentSession and delegateSession)
+const SESSION_CFG_COMPONENTS = [
+  { name: "expiry",            type: "uint48"    },
+  { name: "velocityLimit",     type: "uint16"    },
+  { name: "velocityWindow",    type: "uint32"    },
+  { name: "spendToken",        type: "address"   },
+  { name: "spendCap",          type: "uint256"   },
+  { name: "revoked",           type: "bool"      },
+  { name: "callTargets",       type: "address[]" },
+  { name: "selectorAllowlist", type: "bytes4[]"  },
+] as const;
+
 const AGENT_VALIDATOR_ABI = [
+  // grantAgentSession(sessionKey, cfg) — msg.sender = account
   { name: "grantAgentSession", type: "function", stateMutability: "nonpayable",
     inputs: [
-      { name: "account",          type: "address" },
-      { name: "sessionKey",       type: "address" },
-      { name: "expiry",           type: "uint48"  },
-      { name: "velocityLimit",    type: "uint16"  },
-      { name: "velocityWindow",   type: "uint32"  },
-      { name: "spendToken",       type: "address" },
-      { name: "spendCap",         type: "uint256" },
-      { name: "callTargets",      type: "address[]" },
-      { name: "selectorAllowlist", type: "bytes4[]" },
+      { name: "sessionKey", type: "address" },
+      { name: "cfg",        type: "tuple",   components: SESSION_CFG_COMPONENTS },
     ], outputs: [] },
+  // delegateSession(subKey, subCfg) — msg.sender = parentSessionKey
   { name: "delegateSession", type: "function", stateMutability: "nonpayable",
     inputs: [
-      { name: "account",    type: "address" },
-      { name: "subKey",     type: "address" },
-      { name: "expiry",     type: "uint48"  },
-      { name: "spendCap",   type: "uint256" },
+      { name: "subKey",  type: "address" },
+      { name: "subCfg",  type: "tuple",   components: SESSION_CFG_COMPONENTS },
     ], outputs: [] },
+  // revokeAgentSession(sessionKey) — msg.sender = account
   { name: "revokeAgentSession", type: "function", stateMutability: "nonpayable",
-    inputs: [
-      { name: "account",    type: "address" },
-      { name: "sessionKey", type: "address" },
-    ], outputs: [] },
+    inputs: [{ name: "sessionKey", type: "address" }], outputs: [] },
+  // agentSessions(account, sessionKey) — Solidity getter omits array fields
   { name: "agentSessions", type: "function", stateMutability: "view",
     inputs: [
       { name: "account",    type: "address" },
       { name: "sessionKey", type: "address" },
     ], outputs: [
-      { name: "expiry",           type: "uint48"  },
-      { name: "velocityLimit",    type: "uint16"  },
-      { name: "velocityWindow",   type: "uint32"  },
-      { name: "spendToken",       type: "address" },
-      { name: "spendCap",         type: "uint256" },
-      { name: "revoked",          type: "bool"    },
+      { name: "expiry",        type: "uint48"  },
+      { name: "velocityLimit", type: "uint16"  },
+      { name: "velocityWindow", type: "uint32" },
+      { name: "spendToken",    type: "address" },
+      { name: "spendCap",      type: "uint256" },
+      { name: "revoked",       type: "bool"    },
     ] },
   { name: "sessionKeyOwner", type: "function", stateMutability: "view",
     inputs: [{ name: "sessionKey", type: "address" }],
     outputs: [{ name: "parentAccount", type: "address" }] },
   { name: "delegatedBy", type: "function", stateMutability: "view",
     inputs: [
-      { name: "account",  type: "address" },
-      { name: "subKey",   type: "address" },
+      { name: "account", type: "address" },
+      { name: "subKey",  type: "address" },
     ], outputs: [{ name: "parentKey", type: "address" }] },
   { name: "sessionStates", type: "function", stateMutability: "view",
     inputs: [
@@ -367,6 +373,29 @@ async function buildInstallSig(
   return payload;
 }
 
+/** Build the 65-byte guardian initData required by installModule.
+ *  installModule checks: keccak256(abi.encodePacked("INSTALL_MODULE", chainId, account, moduleTypeId, module)).toEthSignedMessageHash()
+ *  Signed by a guardian (must be in the account's guardian list).
+ */
+async function buildGuardianInstallInitData(
+  guardianAccount: ReturnType<typeof privateKeyToAccount>,
+  accountAddr: Address,
+  moduleTypeId: bigint,
+  moduleAddr: Address,
+  chainId: bigint = 11155111n, // Sepolia
+): Promise<Hex> {
+  const preimage = encodePacked(
+    ["string", "uint256", "address", "uint256", "address"],
+    ["INSTALL_MODULE", chainId, accountAddr, moduleTypeId, moduleAddr],
+  );
+  const installHash = keccak256(preimage);
+  const ethSignedHash = keccak256(concat([
+    "0x19457468657265756d205369676e6564204d6573736167653a0a3332",
+    installHash,
+  ]));
+  return guardianAccount.sign({ hash: ethSignedHash });
+}
+
 /** Build an agent session key signature for a UserOp.
  *  Format: [0x09 algId][sessionKey address (20 bytes)][ECDSA sig (65 bytes)]
  */
@@ -473,19 +502,18 @@ async function main() {
 
   if (compositeValidatorAddr !== "0x0000000000000000000000000000000000000000") {
     try {
-      const nonce = await publicClient.readContract({
-        address: ENTRYPOINT, abi: ENTRYPOINT_ABI, functionName: "getNonce",
-        args: [accountAddr, 0n],
-      });
-      const installCallData = encodeFunctionData({
-        abi: ACCOUNT_ABI, functionName: "installModule",
-        args: [1n, compositeValidatorAddr, "0x" as Hex],
-      });
-      const opHash = await getUserOpHash(publicClient, accountAddr, installCallData, nonce);
-      const sig = await buildInstallSig(ownerAccount, guardian1Account, opHash);
-      const txHash = await sendUserOp(
-        publicClient, walletClient, ownerAddr, accountAddr, installCallData, nonce, sig
+      // Build guardian sig for initData (required by installModule threshold=70 → 1 sig)
+      const guardianInitData = await buildGuardianInstallInitData(
+        guardian1Account, accountAddr, 1n, compositeValidatorAddr,
       );
+      // Call installModule directly from owner (onlyOwnerOrEntryPoint allows owner EOA)
+      // This avoids UserOp silent-revert ambiguity and directly tests guardian sig validity
+      const txHash = await walletClient.writeContract({
+        address:      accountAddr,
+        abi:          ACCOUNT_ABI,
+        functionName: "installModule",
+        args:         [1n, compositeValidatorAddr, guardianInitData],
+      });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
 
       const installed = await publicClient.readContract({
@@ -524,27 +552,16 @@ async function main() {
 
   if (tierGuardHookAddr !== "0x0000000000000000000000000000000000000000") {
     try {
-      // initData for TierGuardHook: encode (guardAddress, tier1Limit, tier2Limit)
-      const guardAddr = process.env.AIRACCOUNT_M7_GUARD as Address
-        ?? "0x0000000000000000000000000000000000000000" as Address;
-      const initData = encodeAbiParameters(
-        parseAbiParameters("address guardAddr, uint256 tier1, uint256 tier2"),
-        [guardAddr, parseEther("0.01"), parseEther("0.1")]
+      // Build guardian sig for initData (1 guardian sig required, threshold=70)
+      const guardianInitData = await buildGuardianInstallInitData(
+        guardian1Account, accountAddr, 3n, tierGuardHookAddr,
       );
-
-      const nonce = await publicClient.readContract({
-        address: ENTRYPOINT, abi: ENTRYPOINT_ABI, functionName: "getNonce",
-        args: [accountAddr, 0n],
+      const txHash = await walletClient.writeContract({
+        address:      accountAddr,
+        abi:          ACCOUNT_ABI,
+        functionName: "installModule",
+        args:         [3n, tierGuardHookAddr, guardianInitData],
       });
-      const installCallData = encodeFunctionData({
-        abi: ACCOUNT_ABI, functionName: "installModule",
-        args: [3n, tierGuardHookAddr, initData],
-      });
-      const opHash = await getUserOpHash(publicClient, accountAddr, installCallData, nonce);
-      const sig = await buildInstallSig(ownerAccount, guardian1Account, opHash);
-      const txHash = await sendUserOp(
-        publicClient, walletClient, ownerAddr, accountAddr, installCallData, nonce, sig
-      );
       await publicClient.waitForTransactionReceipt({ hash: txHash });
 
       const installed = await publicClient.readContract({
@@ -583,20 +600,16 @@ async function main() {
 
   if (agentValidatorAddr !== "0x0000000000000000000000000000000000000000") {
     try {
-      // Install as executor module (typeId=2)
-      const nonce = await publicClient.readContract({
-        address: ENTRYPOINT, abi: ENTRYPOINT_ABI, functionName: "getNonce",
-        args: [accountAddr, 0n],
-      });
-      const installCallData = encodeFunctionData({
-        abi: ACCOUNT_ABI, functionName: "installModule",
-        args: [2n, agentValidatorAddr, "0x" as Hex],
-      });
-      const opHash = await getUserOpHash(publicClient, accountAddr, installCallData, nonce);
-      const sig = await buildInstallSig(ownerAccount, guardian1Account, opHash);
-      const txHash = await sendUserOp(
-        publicClient, walletClient, ownerAddr, accountAddr, installCallData, nonce, sig
+      // Install as executor module (typeId=2), direct owner call
+      const guardianInitData2 = await buildGuardianInstallInitData(
+        guardian1Account, accountAddr, 2n, agentValidatorAddr,
       );
+      const txHash = await walletClient.writeContract({
+        address:      accountAddr,
+        abi:          ACCOUNT_ABI,
+        functionName: "installModule",
+        args:         [2n, agentValidatorAddr, guardianInitData2],
+      });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
       console.log(`  AgentSessionKeyValidator installed as executor (tx: ${txHash.slice(0, 18)}...)`);
 
@@ -713,21 +726,32 @@ async function main() {
   if (agentValidatorAddr !== "0x0000000000000000000000000000000000000000") {
     try {
       const expiryTs = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour from now
-      const grantTx = await walletClient.writeContract({
-        address:      agentValidatorAddr,
+
+      // grantAgentSession(sessionKey, cfg) — msg.sender must be the ACCOUNT
+      // Call account.execute directly from owner (owner satisfies onlyOwnerOrEntryPoint)
+      // The account then calls agentValidator.grantAgentSession with msg.sender = account
+      const grantCalldata = encodeFunctionData({
         abi:          AGENT_VALIDATOR_ABI,
         functionName: "grantAgentSession",
         args: [
-          accountAddr,          // account
-          agentAccount.address, // sessionKey
-          Number(expiryTs),     // expiry (uint48)
-          2,                    // velocityLimit: max 2 calls per window
-          60,                   // velocityWindow: 60 seconds
-          "0x0000000000000000000000000000000000000000" as Address, // spendToken (ETH)
-          parseEther("0.01"),   // spendCap
-          [],                   // callTargets (empty = all)
-          [],                   // selectorAllowlist (empty = all)
+          agentAccount.address,
+          {
+            expiry:            Number(expiryTs),
+            velocityLimit:     2,
+            velocityWindow:    60,
+            spendToken:        "0x0000000000000000000000000000000000000000" as Address,
+            spendCap:          parseEther("0.01"),
+            revoked:           false,
+            callTargets:       [] as Address[],
+            selectorAllowlist: [] as `0x${string}`[],
+          },
         ],
+      });
+      const grantTx = await walletClient.writeContract({
+        address:      accountAddr,
+        abi:          ACCOUNT_ABI,
+        functionName: "execute",
+        args:         [agentValidatorAddr, 0n, grantCalldata],
       });
       await publicClient.waitForTransactionReceipt({ hash: grantTx });
 
@@ -885,20 +909,33 @@ async function main() {
 
   if (agentValidatorAddr !== "0x0000000000000000000000000000000000000000" && results["B1"]?.startsWith("PASS")) {
     try {
-      const subExpiry = BigInt(Math.floor(Date.now() / 1000) + 1800); // 30 min
-      // The agent (not the account owner) calls delegateSession
+      const subExpiry = BigInt(Math.floor(Date.now() / 1000) + 1800); // 30 min (< parent 1hr)
+      // delegateSession(subKey, subCfg) — msg.sender = parentSessionKey (agent)
       const agentWalletClient = createWalletClient({
         account: agentAccount, chain: sepolia, transport: http(RPC_URL),
       });
+      // Fund the ephemeral agent wallet with a tiny amount of ETH to pay gas
+      const fundTx = await walletClient.sendTransaction({
+        to:    agentAccount.address,
+        value: parseEther("0.001"),
+      });
+      await publicClient.waitForTransactionReceipt({ hash: fundTx });
       const delegateTx = await agentWalletClient.writeContract({
         address:      agentValidatorAddr,
         abi:          AGENT_VALIDATOR_ABI,
         functionName: "delegateSession",
         args: [
-          accountAddr,
           subAgentAccount.address,
-          Number(subExpiry),
-          parseEther("0.005"), // spendCap for sub-agent
+          {
+            expiry:            Number(subExpiry),
+            velocityLimit:     1,      // <= parent limit of 2
+            velocityWindow:    60,
+            spendToken:        "0x0000000000000000000000000000000000000000" as Address,
+            spendCap:          parseEther("0.005"),
+            revoked:           false,
+            callTargets:       [] as Address[],
+            selectorAllowlist: [] as `0x${string}`[],
+          },
         ],
       });
       await publicClient.waitForTransactionReceipt({ hash: delegateTx });
@@ -936,16 +973,18 @@ async function main() {
   console.log("[C1] getChainQualifiedAddress(account) → keccak256(account || chainId)");
 
   try {
+    // getChainQualifiedAddress is on the FACTORY, not on the account
     const qualifiedAddr = await publicClient.readContract({
-      address:      accountAddr,
+      address:      FACTORY_ADDRESS,
       abi:          ACCOUNT_ABI,
       functionName: "getChainQualifiedAddress",
       args:         [accountAddr],
     });
 
     // Expected: keccak256(abi.encodePacked(accountAddr, chainId=11155111))
-    const expected = keccak256(encodeAbiParameters(
-      parseAbiParameters("address addr, uint256 chainId"),
+    // Must use encodePacked (not encodeAbiParameters) to match Solidity's abi.encodePacked
+    const expected = keccak256(encodePacked(
+      ["address", "uint256"],
       [accountAddr, 11155111n],
     ));
 
@@ -994,11 +1033,15 @@ async function main() {
 
   console.log("[D1] AirAccountDelegate.announceForStealth() → ERC5564Announcement event");
 
-  // Check if this account is an AirAccountDelegate (EIP-7702 delegated) or if we have a delegate addr
+  // announceForStealth is only available on AirAccountDelegate (EIP-7702 delegate).
+  // Skip this test if AIRACCOUNT_M7_DELEGATE is not set.
   const delegateAddr = process.env.AIRACCOUNT_M7_DELEGATE as Address | undefined;
-  const targetForStealth = delegateAddr ?? accountAddr;
 
-  try {
+  if (!delegateAddr) {
+    results["D1"] = "SKIP: Set AIRACCOUNT_M7_DELEGATE to an EIP-7702 delegated EOA address";
+    console.log("  SKIP [D1]: Set AIRACCOUNT_M7_DELEGATE to an EIP-7702 delegated EOA with AirAccountDelegate code");
+  } else try {
+    const targetForStealth = delegateAddr;
     // Stealth announcement params (synthetic test values)
     const schemeId       = 1n;
     const stealthAddress = "0x1234567890123456789012345678901234567890" as Address;
