@@ -135,12 +135,6 @@ contract AAStarAirAccountV7_M7Test is Test {
         account.installModule(typeId, module, sig);
     }
 
-    // ─── VERSION ─────────────────────────────────────────────────────────────
-
-    function test_version_is_0_16_0() public view {
-        assertEq(account.VERSION(), "0.16.0");
-    }
-
     function test_accountId_is_0_16_0() public view {
         assertEq(account.accountId(), "airaccount.v7@0.16.0");
     }
@@ -629,10 +623,8 @@ contract AAStarAirAccountV7_M7Test is Test {
 
         vm.prank(address(ep));
         uint256 result = account.validateUserOp(userOp, keccak256("hash"), 0);
-        // The account calls the module via abi.encodeWithSignature — the signature string in V7 has a typo
-        // (missing closing paren), so the call will fail and return 1.
-        // This test documents the current behavior.
-        assertTrue(result == 0 || result == 1, "Result should be 0 (success) or 1 (failed call)");
+        // mockModule.setValidateResult(0) = success, account should route and return 0
+        assertEq(result, 0, "Installed validator should return success");
     }
 
     function test_validateUserOp_fromNonEntryPoint_reverts() public {

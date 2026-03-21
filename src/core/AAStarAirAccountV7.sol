@@ -33,9 +33,6 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
-    /// @notice Contract version — updated on each release
-    string public constant VERSION = "0.16.0";
-
     /// @dev Implementation constructor. Does NOT disable initializers so that direct `new` in tests works.
     ///      The factory deploys one shared implementation and uses Clones for user accounts.
     constructor() {}
@@ -59,32 +56,6 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @param _guardAddr Pre-deployed AAStarGlobalGuard address bound to this account's address
     function initialize(address _entryPoint, address _owner, InitConfig calldata _config, address _guardAddr) external initializer {
         _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
-    }
-
-    /// @notice Initialize with guard AND a list of default modules to pre-install.
-    ///         Called by factory when deploying accounts with default TierGuardHook/CompositeValidator.
-    ///         Modules are installed without guardian signatures (factory is the trusted deployer).
-    /// @param _entryPoint ERC-4337 EntryPoint address
-    /// @param _owner Initial account owner
-    /// @param _config Initialization config
-    /// @param _guardAddr Pre-deployed AAStarGlobalGuard address (address(0) = no guard)
-    /// @param moduleTypeIds Module type IDs for pre-installation (1=Validator, 2=Executor, 3=Hook)
-    /// @param modules Module addresses to pre-install (parallel array with moduleTypeIds)
-    /// @param moduleInitDatas Init data for each module (passed to module.onInstall())
-    function initialize(
-        address _entryPoint,
-        address _owner,
-        InitConfig calldata _config,
-        address _guardAddr,
-        uint256[] calldata moduleTypeIds,
-        address[] calldata modules,
-        bytes[] calldata moduleInitDatas
-    ) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
-        uint256 n = modules.length;
-        for (uint256 i = 0; i < n; i++) {
-            _preInstallModule(moduleTypeIds[i], modules[i], i < moduleInitDatas.length ? moduleInitDatas[i] : bytes(""));
-        }
     }
 
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────
@@ -152,11 +123,6 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     // ─── Core ─────────────────────────────────────────────────────────
 
-    /// @notice Returns the contract version string
-    function version() external pure returns (string memory) {
-        return VERSION;
-    }
-
     /// @inheritdoc IAccount
     function validateUserOp(
         PackedUserOperation calldata userOp,
@@ -171,12 +137,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
             if (!_installedValidators[validatorModule]) {
                 validationData = 1; // SIG_VALIDATION_FAILED — module not installed
             } else {
+                // selector = keccak256("validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)")
                 (bool ok, bytes memory ret) = validatorModule.call(
-                    abi.encodeWithSignature(
-                        "validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32",
-                        userOp,
-                        userOpHash
-                    )
+                    abi.encodeWithSelector(0x97003203, userOp, userOpHash)
                 );
                 validationData = (ok && ret.length >= 32) ? abi.decode(ret, (uint256)) : 1;
             }

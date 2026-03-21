@@ -121,8 +121,7 @@ contract AAStarAirAccountFactoryV7 {
             ));
         }
         account = Clones.cloneDeterministic(implementation, cloneSalt);
-        (uint256[] memory mTypeIds, address[] memory mAddrs, bytes[] memory mDatas) = _buildDefaultModules();
-        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr, mTypeIds, mAddrs, mDatas);
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
         emit AccountCreated(account, owner, salt);
     }
 
@@ -193,8 +192,7 @@ contract AAStarAirAccountFactoryV7 {
             config.initialTokenConfigs
         ));
         account = Clones.cloneDeterministic(implementation, cloneSalt);
-        (uint256[] memory mTypeIds, address[] memory mAddrs, bytes[] memory mDatas) = _buildDefaultModules();
-        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr, mTypeIds, mAddrs, mDatas);
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
         emit AccountCreated(account, owner, salt);
     }
 
@@ -211,36 +209,6 @@ contract AAStarAirAccountFactoryV7 {
     }
 
     // ─── Internal ───────────────────────────────────────────────────
-
-    /// @dev Build parallel arrays for default module pre-installation.
-    ///      Includes validator (type 1) and/or hook (type 3) if set in constructor.
-    ///      Empty initData: modules configure themselves from account state when first used.
-    function _buildDefaultModules() internal view returns (
-        uint256[] memory moduleTypeIds,
-        address[] memory modules,
-        bytes[] memory initDatas
-    ) {
-        uint256 count = 0;
-        if (defaultValidatorModule != address(0)) count++;
-        if (defaultHookModule != address(0)) count++;
-
-        moduleTypeIds = new uint256[](count);
-        modules = new address[](count);
-        initDatas = new bytes[](count);
-
-        uint256 idx = 0;
-        if (defaultValidatorModule != address(0)) {
-            moduleTypeIds[idx] = 1; // MODULE_TYPE_VALIDATOR
-            modules[idx] = defaultValidatorModule;
-            initDatas[idx] = "";
-            idx++;
-        }
-        if (defaultHookModule != address(0)) {
-            moduleTypeIds[idx] = 3; // MODULE_TYPE_HOOK
-            modules[idx] = defaultHookModule;
-            initDatas[idx] = "";
-        }
-    }
 
     function _buildDefaultConfig(
         address guardian1,

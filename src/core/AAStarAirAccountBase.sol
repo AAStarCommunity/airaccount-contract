@@ -358,27 +358,6 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
     }
 
-    /// @dev Force-install a module during account initialization (no guardian sig required).
-    ///      Only call from initialize() overloads. Best-effort: onInstall failure doesn't abort creation.
-    function _preInstallModule(uint256 moduleTypeId, address module, bytes memory initData) internal {
-        if (module == address(0) || module.code.length == 0) return;
-        if (moduleTypeId == 1) { // MODULE_TYPE_VALIDATOR
-            if (_installedValidators[module]) return;
-            _installedValidators[module] = true;
-        } else if (moduleTypeId == 2) { // MODULE_TYPE_EXECUTOR
-            if (_installedExecutors[module]) return;
-            _installedExecutors[module] = true;
-        } else if (moduleTypeId == 3) { // MODULE_TYPE_HOOK
-            if (_installedHooks[module]) return;
-            _installedHooks[module] = true;
-        } else {
-            return;
-        }
-        // Best-effort onInstall() call — module init failure doesn't abort account creation.
-        module.call(abi.encodeWithSignature("onInstall(bytes)", initData));
-        emit ModuleInstalled(moduleTypeId, module);
-    }
-
     // ─── Configuration (owner only) ─────────────────────────────────
 
     function setValidator(address _validator) external onlyOwner {
@@ -1558,8 +1537,7 @@ abstract contract AAStarAirAccountBase is Initializable {
         address agentWallet,
         address erc8004Registry
     ) external onlyOwner {
-        require(agentWallet != address(0), "Invalid agent wallet");
-        require(erc8004Registry != address(0), "Invalid registry");
+        if (agentWallet == address(0) || erc8004Registry == address(0)) revert InvalidGuardian();
         // Register the agent wallet with the ERC-8004 registry
         // setAgentWallet(agentId, wallet) — best-effort, non-blocking
         (bool ok,) = erc8004Registry.call(
