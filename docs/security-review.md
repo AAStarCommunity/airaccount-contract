@@ -5,7 +5,7 @@
 **Scope**: `src/core/AAStarAirAccountBase.sol`, `AAStarGlobalGuard.sol`, `AAStarAirAccountFactoryV7.sol`, `AAStarAirAccountV7.sol`, and all validator/algorithm contracts
 **Solidity**: 0.8.33, Cancun EVM, via-IR, 10k optimizer runs
 
-## Fix Status Summary (updated 2026-03-13)
+## Fix Status Summary (updated 2026-03-22)
 
 | Finding | Status | Resolution |
 |---------|--------|------------|
@@ -17,6 +17,14 @@
 | H-3: messagePoint binding | ❌ Open → M5 F55 | Bind userOpHash into messagePoint hash |
 | M-1: Daily limit batch bypass | ✅ FIXED | `todaySpent()` cumulative check in `_enforceGuard` |
 | M-2: removeGuardian cancels recovery | ✅ By design | Intentional safety behavior |
+| M-7: removeGuardian owner-only (compromised key strips guardians) | ✅ FIXED M7.3 | Now requires guardian consensus — same level as social recovery |
+| M-8: ForceExit guardian snapshot not invalidated on guardian change | ✅ FIXED M7.3 | guardianVersion counter; approve/execute revert on mismatch |
+| L-4: uninstallModule checks module existence after sig recovery | ✅ FIXED M7.3 | Existence check moved before sig recovery (fail-fast, ~6k gas saved) |
+| H-4: uninstallModule missing onlyOwner (guardian collusion bypass) | ✅ FIXED M7.4 | Added onlyOwnerOrEntryPoint; uninstall now requires owner + 2 guardian sigs |
+| M-9: parserRegistry.getParser() not in try/catch (DoS via malicious registry) | ✅ FIXED M7.4 | Outer getParser() call wrapped in try/catch; malicious registry falls through to ERC20 fallback |
+| H-5: CompositeValidator calls isValidSignature (ECDSA-only), T2/T3/Weighted validation fails | ✅ FIXED M7.4 | Added validateCompositeSignature() callback; CompositeValidator now calls full _validateSignature logic |
+| H-6: nonce-key routing omits _storeValidatedAlgId, Guard gets algId=0 and rejects all module-path txs | ✅ FIXED M7.4 | validateUserOp stores sig[0] as algId after module succeeds; SKIP_ALGID_STORE_SLOT prevents double-store |
+| M-10: installModule never calls onInstall/onUninstall — all modules installed but uninitialized | ✅ FIXED M7.4 | installModule calls onInstall(moduleInitData) after sigs; uninstallModule calls onUninstall("") best-effort |
 | M-3: No config validation for algIds | ✅ FIXED | Factory `_buildDefaultConfig` includes 0x04/0x05 |
 | M-4: `_popcount` gas cost | ✅ Acceptable | Negligible for 3-bit bitmaps |
 | M-5: BLS payload slice bug | ✅ FIXED | `blsPayload[32:]` skips nodeIdsLength prefix |

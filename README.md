@@ -2,8 +2,7 @@
 
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-> **Current milestone**: M6 complete — 443/443 tests pass, Sepolia E2E verified.
-> **Next step**: `./deploy-factory.sh sepolia` to deploy M6 r3 factory, then integration tests.
+> **Current milestone**: M7 ✅ Complete — 622/622 tests pass, Sepolia + OP Sepolia deployed.
 
 ---
 
@@ -11,9 +10,10 @@ A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments
 
 ```bash
 forge build
-forge test --summary          # 443 tests
-./deploy-factory.sh sepolia   # deploy M6 factory (needs ../SuperPaymaster/.env.sepolia)
-./deploy-factory.sh op-mainnet  # deploy to OP Mainnet (cast wallet)
+forge test --summary          # 622 tests
+pnpm tsx scripts/test-m7-e2e.ts          # M7 full E2E (Sepolia)
+pnpm tsx scripts/test-force-exit-e2e.ts  # M7.5 ForceExit E2E (OP Sepolia)
+pnpm tsx scripts/test-railgun-parser-e2e.ts  # M7.11 Railgun E2E (Sepolia)
 ```
 
 ---
@@ -29,6 +29,7 @@ forge test --summary          # 443 tests
 | Session | `SessionKeyValidator` | Time-limited scoped session keys (algId 0x08) |
 | Delegate | `AirAccountDelegate` | EIP-7702 EOA delegation support |
 | Parsers | `CalldataParserRegistry` | Pluggable DeFi calldata parsing (Uniswap V3) |
+| Exit | `ForceExitModule` | Guardian-gated L2→L1 exit (OP Stack / Arbitrum) |
 
 **Signature algorithms**: ECDSA (0x02), BLS (0x03), P256/WebAuthn (0x04), Cumulative T2 (0x04), Cumulative T3 (0x05), Combined T1 (0x06), Weighted Multi-Sig (0x07), Session Key (0x08)
 
@@ -43,8 +44,39 @@ forge test --summary          # 443 tests
 | M3 — Security Hardening | ✅ | `0xce4231da69015273819b6aab78d840d62cf206c1` | — |
 | M4 — Cumulative Sigs + Social Recovery | ✅ | `0x914db0a849f55e68a726c72fd02b7114b1176d88` | — |
 | M5 — ERC20 Guard + Guardian Accept | ✅ | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` | 298 |
-| M6 — Session Key + Weighted MultiSig + EIP-7702 | ✅ code | pending deploy | 443 |
-| M7 — Agent Economy + x402 + ERC-8004 | 🔲 planned | — | — |
+| M6 — Session Key + Weighted MultiSig + EIP-7702 | ✅ | `0x34282bef82e14af3cc61fecaa60eab91d3a82d46` | 446 |
+| M7 — ERC-7579 + Agent Economy + WalletBeat + L2 ForceExit + Railgun | ✅ | `0x9D0735E3096C02eC63356F21d6ef79586280289f` | 622 |
+
+---
+
+## WalletBeat Stage Assessment (M7 — 2026-03-22)
+
+WalletBeat evaluates wallets across Stage 0, 1, 2. AirAccount is a **smart contract account layer** — criteria marked 🆗 CLIENT are frontend/SDK responsibilities, not contract blockers.
+
+| Stage | # | Criterion | Contract Status | Notes |
+|-------|---|-----------|-----------------|-------|
+| **0** | — | Source code publicly visible | ✅ PASS | GitHub: AAStarCommunity/airaccount-contract (GPL-3.0) |
+| **1** | 1 | Security audit (last 12 months) | ⚠️ PARTIAL | Internal AI audit; paid external audit (Code4rena) planned pre-mainnet |
+| **1** | 2 | Hardware wallet support (≥3 makers) | 🆗 CLIENT | P256/WebAuthn at contract layer; Ledger/Trezor SDK is frontend work |
+| **1** | 3 | Chain verification (L1 light client) | 🆗 CLIENT | Frontend RPC provider choice (Helios integration is client work) |
+| **1** | 4 | Private transfers (by default) | ⚠️ PARTIAL | Railgun calldata parser (M7.11) + OAPD address isolation; not shielded by default |
+| **1** | 5 | Account portability | ✅ PASS | Social recovery (2-of-3 guardian), no platform lock-in, CREATE2 versioned migration |
+| **1** | 6 | Own node support (custom RPC) | 🆗 CLIENT | Frontend/SDK responsibility |
+| **1** | 7 | Free and open source (GPL-3.0) | ✅ PASS | All contracts, tests, scripts open source |
+| **1** | 8 | Address resolution (ENS) | 🆗 CLIENT | No ENS at contract layer; frontend handles human-readable names |
+| **1** | 9 | Browser integration (EIP-1193) | 🆗 CLIENT | Provider API is frontend/SDK responsibility |
+| **2** | 1 | Bug bounty program | ❌ TODO | Framework designed (M7.7); no live Immunefi program yet |
+| **2** | 2 | Address privacy | ⚠️ PARTIAL | OAPD reduces cross-DApp correlation; tx amounts remain visible on-chain |
+| **2** | 3 | Multi-address correlation prevention | ✅ PASS | OAPD: deterministic per-DApp accounts via CREATE2 salt — different addresses per app |
+| **2** | 4 | Transaction inclusion (L2→L1 force-exit) | ✅ PASS (M7.5) | ForceExitModule: guardian 2-of-3 gated OP Stack + Arbitrum withdrawal; E2E verified OP Sepolia |
+| **2** | 5 | Chain configurability | 🆗 CLIENT | Multi-chain deployed (Sepolia, OP Sepolia); chain selection is frontend work |
+| **2** | 6 | Funding transparency | ❔ UNKNOWN | AAStarCommunity DAO governance in progress |
+| **2** | 7 | Fee transparency | ⚠️ PARTIAL | Gas costs verifiable on-chain; bundler/paymaster fees are off-chain |
+| **2** | 8 | Chain-specific address (ERC-7828) | ✅ PASS (M7.4) | `getChainQualifiedAddress()` + `getAddressWithChainId()` in factory |
+| **2** | 9 | Account abstraction (ERC-4337) | ✅ EXCEEDS | Full ERC-4337 + ERC-7579 modules + 7+ signature algorithms (ECDSA/BLS/P256/Weighted/Session/Agent) |
+| **2** | 10 | Transaction batching | ✅ PASS | `executeBatch()` with per-call guard enforcement |
+
+**Current position**: Stage 0 ✅ achieved. Stage 1 blocked by: (a) paid external security audit, (b) private-by-default transfers. Stage 2 blocked by: (a) live bug bounty, (b) items above are mostly frontend scope. See [docs/walletbeat-assessment.md](docs/walletbeat-assessment.md) for full analysis.
 
 ---
 
@@ -65,6 +97,7 @@ forge test --summary          # 443 tests
 | Document | Description |
 |----------|-------------|
 | [docs/airaccount-unified-architecture.md](docs/airaccount-unified-architecture.md) | Full system architecture — ERC-4337 flow, contract interactions, guard model |
+| [docs/architecture-7579-evolution.md](docs/architecture-7579-evolution.md) | **NEW** — ERC-7579 module taxonomy, AirAccount→7579 mapping, algId signal flow, evolution roadmap (Mermaid diagrams) |
 | [docs/product_and_architecture_design.md](docs/product_and_architecture_design.md) | Product vision, UX goals, tiered security model |
 | [docs/contract-registry.md](docs/contract-registry.md) | Contract inventory — sizes, interfaces, test coverage mapping |
 | [docs/M6-design.md](docs/M6-design.md) | M6 technical design — weighted signatures, session keys, EIP-7702 delegate |
@@ -76,9 +109,13 @@ forge test --summary          # 443 tests
 |----------|-------------|
 | [docs/M6-status.md](docs/M6-status.md) | M6 feature completion table, Sepolia E2E results, known issues |
 | [docs/M6-plan.md](docs/M6-plan.md) | M6 feature spec — session keys, weighted multi-sig, OAPD, EIP-7702 |
-| [docs/M7-plan.md](docs/M7-plan.md) | M7 roadmap — agent economy (x402, ERC-8004, multi-agent orchestration), will execution, post-quantum stub |
+| [docs/M7-plan.md](docs/M7-plan.md) | M7 roadmap — ERC-7579 modules, agent economy (x402, ERC-8004), WalletBeat Stage 1/2 integration, frontend SDK guides, audit pricing |
+| [docs/M7-TODO.md](docs/M7-TODO.md) | **NEW** — M7 developer TODO: 26 items across contract/frontend layers, execution order, WalletBeat stage mapping |
 | [docs/M5-plan.md](docs/M5-plan.md) | M5 feature spec — ERC20 guard, guardian acceptance, zero-trust T1 |
 | [docs/M4-plan.md](docs/M4-plan.md) | M4 feature spec — cumulative signatures, tiered verification, social recovery |
+| [docs/audit-scope.md](docs/audit-scope.md) | C12 audit scope document for CodeHawks — in-scope contracts, interfaces, deployment scripts |
+| [docs/known-issues.md](docs/known-issues.md) | Accepted risks and known limitations (EIP-7702 permanence, guardian self-dealing) |
+| [docs/multichain-deployment.md](docs/multichain-deployment.md) | Multi-chain deployment addresses — Base, Arbitrum, OP Stack |
 
 ### Analysis & Reports (2026-03-20)
 
@@ -87,7 +124,7 @@ forge test --summary          # 443 tests
 | [docs/airaccount-comprehensive-analysis.md](docs/airaccount-comprehensive-analysis.md) | **NEW** — M1–M7 feature table, gas evolution charts, security industry comparison (vs Safe/ZeroDev/Coinbase/Argent), competitive analysis, gap analysis, multi-chain roadmap |
 | [docs/2026-03-20-audit-report.md](docs/2026-03-20-audit-report.md) | Security audit report 2026-03-20 — HIGH/MEDIUM findings + fixes |
 | [docs/M6-security-review.md](docs/M6-security-review.md) | M6 internal security review — session key scoping, replay protection, guardian domain separation |
-| [docs/walletbeat-assessment.md](docs/walletbeat-assessment.md) | WalletBeat scoring — security posture vs industry benchmarks |
+| [docs/walletbeat-assessment.md](docs/walletbeat-assessment.md) | WalletBeat Stage 0/1/2 assessment — contract layer status, Stage 1 blockers (audit + private transfers), Stage 2 items |
 
 ### Deployment & Operations
 
@@ -153,7 +190,7 @@ pnpm tsx scripts/test-op-e2e.ts
 
 ```bash
 forge build                          # compile
-forge test                           # 443 unit tests
+forge test                           # 622 unit tests
 forge test --match-path test/SessionKeyValidator.t.sol -v   # specific suite
 forge test --summary                 # per-suite breakdown
 ```

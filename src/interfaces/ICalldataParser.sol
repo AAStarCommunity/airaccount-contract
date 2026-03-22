@@ -18,6 +18,14 @@ pragma solidity ^0.8.33;
 ///      Example: Uniswap V3 exactInputSingle(ExactInputSingleParams)
 ///        tokenIn at offset 4, amountIn at offset 164
 ///        → returns (tokenIn, amountIn)
+/// @title ICalldataParserRegistry — Registry mapping protocol contracts to their calldata parsers
+interface ICalldataParserRegistry {
+    /// @notice Get the calldata parser for a given protocol contract address.
+    /// @param  token Protocol/contract address (e.g., Uniswap router)
+    /// @return Parser contract address, or address(0) if not registered
+    function getParser(address token) external view returns (address);
+}
+
 interface ICalldataParser {
     /// @notice Parse calldata to extract the effective token address and spend amount.
     /// @param  data Full calldata of the external call (includes 4-byte selector)

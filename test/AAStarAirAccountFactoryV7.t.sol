@@ -29,7 +29,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
 
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs);
+        factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs, address(0), address(0));
     }
 
     /// @dev Sign the domain-separated guardian acceptance message for setUp factory + owner + salt.
@@ -246,7 +246,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         });
 
         AAStarAirAccountFactoryV7 tokenFactory = new AAStarAirAccountFactoryV7(
-            entryPoint, communityGuardian, tokens, configs
+            entryPoint, communityGuardian, tokens, configs, address(0), address(0)
         );
 
         bytes memory sig1 = _guardianSigFor(g1Wallet, address(tokenFactory), ownerA, 0);
@@ -317,7 +317,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
             dailyLimit: 5000e6
         });
         vm.expectRevert("Invalid default token config");
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs, address(0), address(0));
     }
 
     /// @dev Tier limits set but dailyLimit=0 should revert (guard requires dailyLimit > 0
@@ -333,7 +333,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
             dailyLimit: 0    // tier limits set but no daily — invalid
         });
         vm.expectRevert("Invalid default token config");
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs, address(0), address(0));
     }
 
     // ─── Codex audit: MEDIUM — guardian acceptance domain separation ──
@@ -360,7 +360,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         // Deploy a second factory, sign acceptance for it
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        AAStarAirAccountFactoryV7 otherFactory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs);
+        AAStarAirAccountFactoryV7 otherFactory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs, address(0), address(0));
 
         // Sign for otherFactory address
         bytes memory sigForOtherFactory = _guardianSigFor(g1Wallet, address(otherFactory), ownerA, 0);
@@ -379,7 +379,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1);
         configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         vm.expectRevert("Default token address zero");
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs, address(0), address(0));
     }
 
     /// @dev Duplicate token address in default config should revert at factory deploy time.
@@ -392,6 +392,88 @@ contract AAStarAirAccountFactoryV7Test is Test {
         configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         configs[1] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         vm.expectRevert("Duplicate default token");
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs, address(0), address(0));
+    }
+
+    // ─── ERC-7828 Chain-Specific Address (M7.4) ──────────────────────────────
+
+    function test_getChainQualifiedAddress_deterministicHash() public {
+        address account = makeAddr("account");
+        bytes32 cqa = factory.getChainQualifiedAddress(account);
+        bytes32 expected = keccak256(abi.encodePacked(account, block.chainid));
+        assertEq(cqa, expected);
+    }
+
+    function test_getChainQualifiedAddress_differentAddresses_differ() public {
+        address a1 = makeAddr("a1");
+        address a2 = makeAddr("a2");
+        assertNotEq(factory.getChainQualifiedAddress(a1), factory.getChainQualifiedAddress(a2));
+    }
+
+    function test_getAddressWithChainId_matchesPredictedAddress() public {
+        address owner = makeAddr("owner");
+        uint256 salt = 42;
+        AAStarAirAccountBase.InitConfig memory config = _minimalConfig();
+
+        (address predicted, bytes32 chainQual) = factory.getAddressWithChainId(owner, salt, config);
+        address expected = factory.getAddress(owner, salt, config);
+        bytes32 expectedCq = factory.getChainQualifiedAddress(expected);
+
+        assertEq(predicted, expected);
+        assertEq(chainQual, expectedCq);
+    }
+
+    function test_getChainQualifiedAddress_differentChains_differ() public {
+        address account = makeAddr("account");
+        bytes32 cq1 = factory.getChainQualifiedAddress(account);
+        vm.chainId(999);
+        bytes32 cq2 = factory.getChainQualifiedAddress(account);
+        assertNotEq(cq1, cq2);
+    }
+
+    function test_getChainQualifiedAddress_sameAddressSameChain_sameResult() public {
+        address account = makeAddr("account");
+        bytes32 cq1 = factory.getChainQualifiedAddress(account);
+        bytes32 cq2 = factory.getChainQualifiedAddress(account);
+        assertEq(cq1, cq2);
+    }
+
+    // ─── C8: Factory Pre-Install Default Modules (M7.2) ───────────────────
+
+    /// @notice Factory with no default modules stores address(0) for both
+    function test_factory_noDefaultModules_storesZero() public view {
+        assertEq(factory.defaultValidatorModule(), address(0));
+        assertEq(factory.defaultHookModule(), address(0));
+    }
+
+    /// @notice Factory stores default validator module address
+    function test_factory_defaultValidatorModule_stored() public {
+        address mockValidator = makeAddr("mockValidator");
+        address[] memory noTokens = new address[](0);
+        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        AAStarAirAccountFactoryV7 f = new AAStarAirAccountFactoryV7(
+            entryPoint, communityGuardian, noTokens, noConfigs, mockValidator, address(0)
+        );
+        assertEq(f.defaultValidatorModule(), mockValidator);
+        assertEq(f.defaultHookModule(), address(0));
+    }
+
+    /// @notice Factory stores default hook module address
+    function test_factory_defaultHookModule_stored() public {
+        address mockHook = makeAddr("mockHook");
+        address[] memory noTokens = new address[](0);
+        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        AAStarAirAccountFactoryV7 f = new AAStarAirAccountFactoryV7(
+            entryPoint, communityGuardian, noTokens, noConfigs, address(0), mockHook
+        );
+        assertEq(f.defaultValidatorModule(), address(0));
+        assertEq(f.defaultHookModule(), mockHook);
+    }
+
+    /// @notice createAccount is idempotent — second call with same params returns same account without revert
+    function test_factory_createAccount_idempotent() public {
+        address account1 = factory.createAccount(ownerA, 42, _minimalConfig());
+        address account2 = factory.createAccount(ownerA, 42, _minimalConfig()); // same params = same address
+        assertEq(account1, account2);
     }
 }
