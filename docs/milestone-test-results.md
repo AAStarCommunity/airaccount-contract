@@ -451,3 +451,179 @@
 | Gasless (bundler) | ~200k | **230,496** | ERC20 guard overhead |
 
 **Reference**: `docs/m5-deployment-record.md`
+
+---
+
+## Milestone 6: Session Keys + Weighted Multi-Sig + EIP-7702 + Security Hardening
+
+**Branch**: `M6` → **PR #7 MERGED to main** (2026-03-21)
+**Date**: 2026-03-21
+**Status**: ✅ Complete
+
+### Features Completed
+
+| # | Feature | Status |
+|---|---------|--------|
+| F80-F84 | ALG_SESSION_KEY (0x08): time-limited session keys with contractScope/selectorScope | ✅ |
+| F85-F89 | ALG_WEIGHTED (0x07): weighted multi-sig with tiered thresholds + guardian-gated weakening | ✅ |
+| F90 | EIP-7702 Delegate: `AirAccountDelegate` for EOA → smart wallet | ✅ |
+| F91-F93 | CalldataParserRegistry + UniswapV3Parser: protocol-aware spending guard | ✅ |
+| F94-F96 | EIP-1167 Clone Factory: Factory 9,527B (was 30,172B), account 20,900B | ✅ |
+| SEC-1 | Factory front-run: configHash in CREATE2 salt | ✅ HIGH fixed |
+| SEC-2 | Session key scope bypass in executeBatch | ✅ HIGH fixed |
+| SEC-3 | ALG_WEIGHTED guard whitelist confusion (guardAlgId pre-resolution) | ✅ MEDIUM fixed |
+| SEC-4 | Weight threshold monotonicity invariant check | ✅ MEDIUM fixed |
+
+### Unit Test Results
+
+**Command**: `forge test --summary`
+**Result**: **446/446 passed**, 0 failed, 0 skipped (23 suites)
+
+### E2E Test Results (Sepolia, r4 factory — 2026-03-20/21)
+
+| Test Script | Tests | Result |
+|-------------|-------|--------|
+| `test-m6-r2-e2e.ts` (clone factory + guard) | 12/12 | ✅ ALL PASS |
+| `test-m6-weighted-e2e.ts` (ALG_WEIGHTED + governance) | 5/5 | ✅ ALL PASS |
+| `test-session-key-e2e.ts` (session key validate path) | 5/5 | ✅ ALL PASS |
+| `test-session-key-userop-e2e.ts` (full EntryPoint path, algId=0x08) | 10/10 | ✅ ALL PASS |
+| `test-algtier-guard-e2e.ts` (algorithm tier guard) | 4/4 | ✅ ALL PASS |
+| `test-factory-validation-e2e.ts` (factory constructor validation) | 5/5 | ✅ ALL PASS |
+| `test-tiered-e2e.ts` (T1/T2/T3 tiers) | 5/5 | ✅ ALL PASS |
+| `test-social-recovery-e2e.ts` (2-of-3 guardian timelock) | 10/10 | ✅ ALL PASS |
+
+**Total E2E: 56/56 passed**
+
+### Deployed Addresses (Sepolia, r4 — canonical)
+
+| Contract | Address |
+|----------|---------|
+| Factory r4 | `0x34282bef82e14af3cc61fecaa60eab91d3a82d46` |
+| Implementation r4 | `0xBc7F28a1999E989744a7B2c4E2bB0fb34392Db80` |
+| SessionKeyValidator r2 | `0xcaba5a18e46f728b5330ea33bd099693a1b76217` |
+| CalldataParserRegistry | `0x6b2372a82afca221839f2def81fc8f64f6466397` |
+| UniswapV3Parser | `0x7464d5ec6891099d299e434ba1727a0a3f07b907` |
+| M6 Account (E2E) | `0xfab5b2cf392c862b455dcfafac5a414d459b6dcc` |
+
+---
+
+## Milestone 7: ERC-7579 Modules + Agent Economy + WalletBeat
+
+**Branch**: `M7` → **PR #8 open** (2026-03-22)
+**Date**: 2026-03-21/22
+**Status**: ✅ Contract layer complete (C1–C18), F1–F7 frontend out of scope
+
+### Features Completed (C1–C18)
+
+| # | Feature | WalletBeat | Status |
+|---|---------|-----------|--------|
+| C1–C4 | ERC-7579: installModule / uninstallModule / executeFromExecutor / isModuleInstalled | — | ✅ |
+| C5 | TierGuardHook (ERC-7579 Hook, replaces inline guard) | — | ✅ |
+| C6 | ForceExitModule: Guardian 2-of-3 gated L2→L1 force withdrawal | S2-4 | ✅ |
+| C7 | IForceExitAdapter: OP Stack + Arbitrum adapters | S2-4 | ✅ |
+| C8 | AirAccountCompositeValidator (ERC-7579 Validator module) | — | ✅ |
+| C9 | ERC-7828 getChainQualifiedAddress | S1-8 | ✅ |
+| C10 | L2 deployment + ForceExit E2E (OP Sepolia) | S2-4 | ✅ |
+| C11 | RailgunParser: calldata parser for shielded ops | — | ✅ |
+| C12 | Audit prep: scope doc + 2 audit reports | S1-1 | ✅ |
+| C13 | Bug bounty framework | S2-1 | ✅ |
+| C14 | Key rotation: guardian-gated updateOwner | S1-4 | ✅ |
+| C15 | Social recovery WalletBeat mapping | S2-2/S2-3 | ✅ |
+| C16 | AgentSessionKeyValidator (algId=0x09): velocityLimit + bitmap revoke | — | ✅ |
+| C17 | ERC-8004 agent identity binding | — | ✅ |
+| C18 | Hierarchical delegation: delegateSession sub-agent chain | — | ✅ |
+
+### Unit Test Results
+
+**Command**: `forge test --summary`
+**Result**: **622/622 passed**, 0 failed, 0 skipped (29 suites)
+
+| Suite | Tests | Suite | Tests |
+|-------|-------|-------|-------|
+| ForceExitModuleTest | 29 | WeightedSignatureTest | 39 |
+| SocialRecoveryTest | 37 | SessionKeyValidatorTest | 25 |
+| CalldataParserTest | 20 | TierGuardHookTest | 14 |
+| CumulativeSignatureTest | 8 | M5ScenarioTests | 22 |
+| RailgunParserTest | 7 | + 20 prior suites | 421 |
+
+### E2E Test Results (Sepolia — 2026-03-22)
+
+**Script**: `test-m7-e2e.ts`
+
+| Test | Description | Result | Tx |
+|------|-------------|--------|----|
+| A1 | installModule(1, CompositeValidator, ownerSig+g1Sig) | ✅ PASS | `0x6cce7a0f...` |
+| A2 | installModule(3, TierGuardHook, guardSig) | ✅ PASS | `0x8eb1f0dd...` |
+| A3 | executeFromExecutor: only installed executor can call | ✅ PASS | `0x7a555a6c...` |
+| A4 | uninstallModule: owner-only rejected (threshold=70) | ✅ PASS | — |
+| B1 | grantAgentSession: session state populated | ✅ PASS | `0x200eec95...` |
+| B2 | UserOp algId=0x09 agent session key accepted | ✅ PASS | `0xb59a9189...` |
+| B3 | velocityLimit: 3rd call in 60s window rejected | ✅ PASS | — |
+| B4 | delegateSession: sub-agent delegatedBy verified | ✅ PASS | — |
+| C1 | getChainQualifiedAddress = keccak256(addr ∥ chainId) | ✅ PASS | — |
+| C2 | Different chainIds → different qualified addresses | ✅ PASS | — |
+| D1 | announceForStealth ERC-5564 event | ✅ PASS | `0xacfdf50f...` (block 10495245) |
+
+**Total: 11/11 passed (D1 now verified via `test-7702-stealth-e2e.ts`)**
+
+#### EIP-7702 Stealth E2E (2026-03-22) — `test-7702-stealth-e2e.ts`
+
+| Test | Description | Result | Tx |
+|------|-------------|--------|----|
+| A | Deploy AirAccountDelegate singleton | ✅ PASS | `0x8b8814bb...` |
+| B | BOB signs EIP-7702 auth + Type 4 delegation tx | ✅ PASS | `0x7a5a4174...` |
+| C | Verify BOB code = `0xef0100 \|\| AirAccountDelegate` | ✅ PASS | — |
+| B2 | BOB calls `initialize()` with ANNI + JACK guardian sigs | ✅ PASS | `0x5eb997d6...` |
+| D | BOB calls `execute → announceForStealth` → ERC5564Announcement event | ✅ PASS | `0xacfdf50f...` |
+
+- BOB EOA (delegated): `0xF7Bf79AcB7F3702b9DbD397d8140ac9DE6Ce642C`
+- AirAccountDelegate: `0x5804b6119d12ad403a430fd3cff12a8ff6e4064b`
+
+### Deployed Addresses (Sepolia — canonical M7)
+
+| Contract | Address | Size |
+|----------|---------|------|
+| Factory | `0x9D0735E3096C02eC63356F21d6ef79586280289f` | 9,527B |
+| Implementation | `0xf01e3Dd359DfF8e578Ee8760266E3fB9530F07A0` | 24,497B |
+| Account (salt=700, E2E) | `0xCD1eE31b1D887FE7dC086b023Db162C84B499158` | — |
+| Account (salt=2000, guardian accept) | `0xb185C9634dCBC43F71bE7de15001A438eDC50DEb` | — |
+| AirAccountDelegate (EIP-7702) | `0x5804b6119d12ad403a430fd3cff12a8ff6e4064b` | — |
+
+> Modules (CompositeValidator, TierGuardHook, AgentSessionKeyValidator) are deployed on-demand per account during `installModule`. Addresses from E2E run: CompositeValidator `0xef9247b1...`, TierGuardHook `0xcaaa70fd...`, AgentSessionKeyValidator `0x9299ad50...`
+
+#### M7.11 Railgun Parser E2E (2026-03-22) — `test-railgun-parser-e2e.ts`
+
+| Test | Description | Result |
+|------|-------------|--------|
+| A | Deploy RailgunParser + verify module type | ✅ PASS |
+| B | Register RailgunParser in CalldataParserRegistry | ✅ PASS |
+| C | buildTransactCalldata: selector + padding + token + amount | ✅ PASS |
+| D | buildShieldCalldata: selector + extended padding | ✅ PASS |
+| E | parse(transact calldata) → (token, amount) | ✅ PASS |
+| F | parse(shield calldata) → (token, amount) | ✅ PASS |
+| G | parse unknown selector → (0, 0) | ✅ PASS |
+| H | parse calldata too short → (0, 0) | ✅ PASS |
+| I | CalldataParserRegistry lookup for Railgun proxy | ✅ PASS |
+
+- Railgun Proxy: `0x4025EE6512Dbf386f9CF30C7E9A0A37460B3d0b4`
+- RailgunParser: `0x5dace4425797f9ad0245d315e1d6a3ebb8f9c0ce` (Sepolia)
+
+#### M7.5 ForceExit E2E (OP Sepolia — 2026-03-22) — `test-force-exit-e2e.ts`
+
+| Test | Description | Result | Tx / Block |
+|------|-------------|--------|------------|
+| A | Deploy / reuse ForceExitModule | ✅ PASS | `0x5966d58d...` |
+| B | Create M7 account on OP Sepolia (salt=7002) | ✅ PASS | `0xa053b94c...` |
+| C | installModule(2, ForceExitModule) + onInstall l2Type=OP | ✅ PASS | — |
+| D | proposeForceExit(l1Target=Jason EOA, 0, 0x) | ✅ PASS | — |
+| E | Guardian1 (BOB) approveForceExit ECDSA sig | ✅ PASS | `0x21c1eb71...` |
+| F | Guardian2 (JACK) approveForceExit ECDSA sig | ✅ PASS | `0x440235a0...` |
+| G | executeForceExit → L2ToL1MessagePasser emitted | ✅ PASS | `0x1878e9f0...` (block 41175702) |
+| H | Pending proposal cleared (proposedAt=0 after exec) | ✅ PASS | — |
+
+- OP Sepolia Factory: `0xc3545a1b9e2839c034da3fa28a83076cbd52a329`
+- OP Sepolia Impl: `0x8c6125372504b8d22eed601120604f4b85e2f575`
+- ForceExitModule: `0x5966d58d48c269ba59ea4fff4a139bd32edbb141`
+- Account (OP Sepolia, salt=7002): `0x8092d91f7318Bf210161b2f561011b7ceB921075`
+- L2ToL1MessagePasser: `0x4200000000000000000000000000000000000016`
+- Chain: OP Sepolia (chainId 11155420)

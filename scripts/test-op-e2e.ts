@@ -1,18 +1,17 @@
 /**
- * test-op-e2e.ts — AirAccount M6 E2E Tests on OP Mainnet (Optimism)
+ * test-op-e2e.ts — AirAccount M7 E2E Tests on Sepolia
  *
- * Validates that AirAccount factory deployed on OP Mainnet works correctly:
+ * Validates that AirAccount M7 factory deployed on Sepolia works correctly:
  *   A. Factory deployed and implementation readable
- *   B. Create account via createAccountWithDefaults (guardian accept pattern)
- *   C. Account is EIP-1167 clone proxy (20,900B implementation)
+ *   B. Predict counterfactual account address (createAccountWithDefaults)
+ *   C. Deploy account via createAccountWithDefaults (guardian accept pattern)
  *   D. Guard deployed and bound to account (dailyLimit, approved algIds)
- *   E. ECDSA UserOp validation (backward compat, Tier 1)
- *   F. EIP-7212 P256 precompile available (ALG_P256 usable)
+ *   E. EIP-7212 P256 precompile available (ALG_P256 usable)
+ *   F. EntryPoint v0.7 exists on Sepolia
  *
  * Prerequisites:
- *   - pnpm tsx scripts/deploy-op-mainnet.ts (set AIRACCOUNT_OP_FACTORY in .env.op)
- *   - .env.op: PRIVATE_KEY, PRIVATE_KEY_BOB, PRIVATE_KEY_JACK, OP_MAINNET_RPC_URL
- *   - Deployer + guardians funded with small OP ETH (~0.001 ETH each)
+ *   - AIRACCOUNT_M7_FACTORY in .env.sepolia
+ *   - PRIVATE_KEY, PRIVATE_KEY_BOB, PRIVATE_KEY_JACK in .env.sepolia
  *
  * Run: pnpm tsx scripts/test-op-e2e.ts
  */
@@ -26,8 +25,7 @@ import {
   http,
   parseEther,
   formatEther,
-  encodeAbiParameters,
-  parseAbiParameters,
+  encodePacked,
   keccak256,
   concat,
   toHex,
@@ -36,9 +34,9 @@ import {
   type Address,
 } from "viem";
 import { privateKeyToAccount, signMessage } from "viem/accounts";
-import { optimism } from "viem/chains";
+import { sepolia } from "viem/chains";
 
-config({ path: resolve(import.meta.dirname, "../.env.optimism") });
+config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -51,12 +49,13 @@ const required = (k: string): string => {
 const PRIVATE_KEY   = required("PRIVATE_KEY") as Hex;
 const GUARDIAN0_KEY = (process.env.PRIVATE_KEY_BOB  ?? required("PRIVATE_KEY_BOB")) as Hex;
 const GUARDIAN1_KEY = (process.env.PRIVATE_KEY_JACK ?? required("PRIVATE_KEY_JACK")) as Hex;
-const RPC_URL       = process.env.OPT_MAINNET_RPC ?? process.env.OP_MAINNET_RPC ?? process.env.RPC_URL ?? "https://mainnet.optimism.io";
+const RPC_URL       = process.env.SEPOLIA_RPC_URL ?? process.env.SEPOLIA_RPC ?? required("SEPOLIA_RPC_URL");
 const ENTRYPOINT    = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
-const FACTORY_ADDR  = (process.env.AIRACCOUNT_OP_FACTORY ?? process.env.FACTORY_ADDRESS ?? required("AIRACCOUNT_OP_FACTORY")) as Address;
+const FACTORY_ADDR  = (process.env.AIRACCOUNT_M7_FACTORY ?? process.env.FACTORY_ADDRESS ?? required("AIRACCOUNT_M7_FACTORY")) as Address;
+const DAILY_LIMIT   = parseEther("0.01"); // 0.01 ETH default daily limit for test accounts
 
-const CHAIN_ID = optimism.id; // 10
-const SALT = 1000n; // OP testnet salt (different from Sepolia to avoid collision if same deployer)
+const CHAIN_ID = sepolia.id; // 11155111
+const SALT = 2000n; // Sepolia salt for test-op-e2e (avoids collision with other test scripts)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -76,8 +75,9 @@ async function buildGuardianAcceptSig(
   salt: bigint,
   chainId: number
 ): Promise<Hex> {
-  const packed = encodeAbiParameters(
-    parseAbiParameters("string, uint256, address, address, uint256"),
+  // Must match contract: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
+  const packed = encodePacked(
+    ["string", "uint256", "address", "address", "uint256"],
     ["ACCEPT_GUARDIAN", BigInt(chainId), factory, owner, salt]
   );
   const msgHash = keccak256(packed);
@@ -87,7 +87,7 @@ async function buildGuardianAcceptSig(
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log("\n=== AirAccount M6 E2E Tests on OP Mainnet ===\n");
+  console.log("\n=== AirAccount M7 E2E Tests on Sepolia ===\n");
   console.log(`Factory: ${FACTORY_ADDR}`);
   console.log(`RPC:     ${RPC_URL}\n`);
 
@@ -98,21 +98,21 @@ async function main() {
   const transport = http(RPC_URL, { retryCount: 3, retryDelay: 1500 });
 
   const publicClient = createPublicClient({
-    chain: optimism,
+    chain: sepolia,
     transport,
     pollingInterval: 3_000,
   });
 
   const ownerClient = createWalletClient({
     account: owner,
-    chain: optimism,
+    chain: sepolia,
     transport,
   });
 
   // Verify chain
   const chainId = await publicClient.getChainId();
-  if (chainId !== 10) {
-    console.error(`Wrong chain ${chainId}, expected OP Mainnet (10)`);
+  if (chainId !== 11155111) {
+    console.error(`Wrong chain ${chainId}, expected Sepolia (11155111)`);
     process.exit(1);
   }
 
@@ -155,8 +155,8 @@ async function main() {
     accountAddr = await publicClient.readContract({
       address: FACTORY_ADDR,
       abi: factoryAbi,
-      functionName: "getAddress",
-      args: [owner.address, SALT],
+      functionName: "getAddressWithDefaults",
+      args: [owner.address, SALT, guardian0.address, guardian1.address, DAILY_LIMIT],
     }) as Address;
     console.log(`  PASS: counterfactual address = ${accountAddr}`);
     passed++;
@@ -189,16 +189,17 @@ async function main() {
           owner.address,
           SALT,
           guardian0.address,
-          guardian1.address,
           guardian0Sig,
+          guardian1.address,
           guardian1Sig,
+          DAILY_LIMIT,
         ],
-        value: parseEther("0.0005"), // fund the new account with 0.0005 ETH
+        // no value: createAccountWithDefaults is not payable
       });
       console.log(`  TX: ${createTx}`);
       const receipt = await publicClient.waitForTransactionReceipt({ hash: createTx });
       console.log(`  PASS: Account created (gas: ${receipt.gasUsed})`);
-      console.log(`  Explorer: https://optimistic.etherscan.io/tx/${createTx}`);
+      console.log(`  Explorer: https://sepolia.etherscan.io/tx/${createTx}`);
       passed++;
     } catch (e: any) {
       console.log(`  FAIL: ${e.message?.slice(0, 200)}`);
@@ -279,16 +280,15 @@ async function main() {
 
   // ── Summary ───────────────────────────────────────────────────────
   console.log(`\n${"─".repeat(50)}`);
-  console.log(`Chain:   OP Mainnet (chainId=10)`);
+  console.log(`Chain:   Sepolia (chainId=11155111)`);
   console.log(`Factory: ${FACTORY_ADDR}`);
   console.log(`Account: ${accountAddr!}`);
   console.log(`Results: ${passed} passed, ${failed} failed`);
 
   if (failed === 0) {
-    console.log("\nALL PASS: AirAccount M6 is working on OP Mainnet.");
-    console.log("\nUpdate .env.op:");
-    console.log(`  AIRACCOUNT_OP_ACCOUNT=${accountAddr!}`);
-    console.log("\nUpdate docs/airaccount-comprehensive-analysis.md with OP addresses.");
+    console.log("\nALL PASS: AirAccount M7 is working on Sepolia.");
+    console.log("\nUpdate .env.sepolia:");
+    console.log(`  AIRACCOUNT_M7_ACCOUNT=${accountAddr!}`);
   } else {
     console.log("\nFAILURES DETECTED. Check logs above.");
     process.exit(1);
