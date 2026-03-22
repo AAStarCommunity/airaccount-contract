@@ -34,6 +34,7 @@ contract TierGuardHook is IERC7579Hook {
     uint8 internal constant ALG_P256           = 0x03;
     uint8 internal constant ALG_CUMULATIVE_T2  = 0x04;
     uint8 internal constant ALG_CUMULATIVE_T3  = 0x05;
+    uint8 internal constant ALG_WEIGHTED       = 0x07;
 
     // ─── IERC7579Module ─────────────────────────────────────────────
 
@@ -108,8 +109,15 @@ contract TierGuardHook is IERC7579Hook {
 
     // ─── Internal ────────────────────────────────────────────────────
 
-    /// @dev Try to read algId from account's getCurrentAlgId() helper.
-    ///      Falls back to ALG_ECDSA if not available.
+    /// @dev Read algId from account's getCurrentAlgId() helper (added in M7).
+    ///      getCurrentAlgId() peeks at the transient algId queue without consuming it,
+    ///      so the hook sees the same algId that execute() will consume after preCheck returns.
+    ///
+    ///      COMPATIBILITY: TierGuardHook requires AAStarAirAccountV7 (M7+).
+    ///      If installed on an older account without getCurrentAlgId(), the fallback is ALG_ECDSA
+    ///      (Tier 1 limits apply), which is PERMISSIVE — not a security failure, but limits are
+    ///      not enforced at the correct tier for Tier 2/3 operations.
+    ///      Recommendation: only install TierGuardHook on accounts that implement getCurrentAlgId().
     function _getAlgIdFromAccount(address account) internal view returns (uint8 algId) {
         (bool ok, bytes memory data) = account.staticcall(
             abi.encodeWithSignature("getCurrentAlgId()")
@@ -117,13 +125,13 @@ contract TierGuardHook is IERC7579Hook {
         if (ok && data.length >= 32) {
             algId = uint8(abi.decode(data, (uint256)));
         } else {
-            algId = ALG_ECDSA; // default fallback
+            algId = ALG_ECDSA; // fallback: Tier 1 limits — see compatibility note above
         }
     }
 
     function _algTier(uint8 algId) internal pure returns (uint8) {
         if (algId == ALG_CUMULATIVE_T3 || algId == 0x01) return 3;
-        if (algId == ALG_CUMULATIVE_T2) return 2;
+        if (algId == ALG_CUMULATIVE_T2 || algId == ALG_WEIGHTED) return 2; // weighted multisig = at least Tier 2
         if (algId == ALG_ECDSA || algId == ALG_P256 || algId == 0x06 || algId == 0x08) return 1;
         return 0;
     }

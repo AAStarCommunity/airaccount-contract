@@ -141,7 +141,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
                 // H-6: store sig[0] as algId so guard receives the correct tier.
                 // CompositeValidator may push a more-specific algId first via validateCompositeSignature;
                 // execute() reads that entry (pos 0) first, leaving this one unconsumed.
-                if (userOp.signature.length > 0) _storeValidatedAlgId(uint8(userOp.signature[0]));
+                // Only write algId on success (validationData==0) to avoid polluting the transient queue
+                // with garbage bytes from failed validations in batched UserOp bundles.
+                if (validationData == 0 && userOp.signature.length > 0) _storeValidatedAlgId(uint8(userOp.signature[0]));
             }
         } else {
             validationData = _validateSignature(userOpHash, userOp.signature);
@@ -244,7 +246,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         bytes calldata executionCalldata
     ) external nonReentrant returns (bytes[] memory returnData) {
         if (!_installedModules[MODULE_TYPE_EXECUTOR][msg.sender]) revert ModuleNotInstalled();
-        if (uint8(bytes1(mode)) != 0x00) revert InvalidModuleType(); // only single-call (M7)
+        // ERC-7579 ModeCode: only single-call (byte[0]=0x00) with no extra flags (bytes[1-31] must be zero).
+        // Reject batch mode (0x01) and any unknown execution type flags — strict compliance, no ambiguity.
+        if (mode != bytes32(0)) revert InvalidModuleType();
         if (executionCalldata.length < 52) revert ArrayLengthMismatch();
 
         address target = address(bytes20(executionCalldata[0:20]));
