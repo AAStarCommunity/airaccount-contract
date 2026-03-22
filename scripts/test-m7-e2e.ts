@@ -262,10 +262,21 @@ const DELEGATE_ABI = [
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "schemeId",         type: "uint256" },
+      { name: "announcer",        type: "address" },
       { name: "stealthAddress",   type: "address" },
       { name: "ephemeralPubKey",  type: "bytes"   },
       { name: "metadata",         type: "bytes"   },
+    ],
+    outputs: [],
+  },
+  {
+    name: "execute",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "dest",  type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "data",  type: "bytes"   },
     ],
     outputs: [],
   },
@@ -1037,53 +1048,69 @@ async function main() {
   // Skip this test if AIRACCOUNT_M7_DELEGATE is not set.
   const delegateAddr = process.env.AIRACCOUNT_M7_DELEGATE as Address | undefined;
 
+  // AIRACCOUNT_M7_DELEGATE = BOB's EOA address (7702-delegated, code = 0xef0100 || AirAccountDelegate)
+  // announceForStealth requires OnlySelf — must be called via execute(self, 0, calldata) from BOB
   if (!delegateAddr) {
-    results["D1"] = "SKIP: Set AIRACCOUNT_M7_DELEGATE to an EIP-7702 delegated EOA address";
-    console.log("  SKIP [D1]: Set AIRACCOUNT_M7_DELEGATE to an EIP-7702 delegated EOA with AirAccountDelegate code");
+    results["D1"] = "SKIP: Set AIRACCOUNT_M7_DELEGATE to BOB's EIP-7702 delegated EOA address";
+    console.log("  SKIP [D1]: Set AIRACCOUNT_M7_DELEGATE to BOB's EIP-7702 delegated EOA address");
   } else try {
-    const targetForStealth = delegateAddr;
-    // Stealth announcement params (synthetic test values)
-    const schemeId       = 1n;
-    const stealthAddress = "0x1234567890123456789012345678901234567890" as Address;
-    const ephemeralPubKey = "0x" + "ab".repeat(33) as Hex; // 33-byte compressed pubkey placeholder
-    const metadata        = "0x" + "cd".repeat(16) as Hex; // 16-byte metadata placeholder
+    const bobEOA = delegateAddr; // BOB's EOA (has 7702 delegation bytecode)
+    const ERC5564_ANNOUNCER = "0x55649E01B5Df198D18D95b5cc5051630cfD45564" as Address;
 
-    const announceTx = await walletClient.writeContract({
-      address:      targetForStealth,
-      abi:          DELEGATE_ABI,
+    // Stealth announcement params (synthetic test values)
+    const stealthAddress  = "0x1234567890123456789012345678901234567890" as Address;
+    const ephemeralPubKey = ("0x" + "ab".repeat(33)) as Hex; // 33-byte compressed pubkey
+    const metadata        = ("0x" + "cd".repeat(16)) as Hex; // 16-byte metadata
+
+    // Build inner calldata: announceForStealth(announcer, stealthAddr, ephPubKey, metadata)
+    const announceCalldata = encodeFunctionData({
+      abi: DELEGATE_ABI,
       functionName: "announceForStealth",
-      args: [schemeId, stealthAddress, ephemeralPubKey, metadata],
+      args: [ERC5564_ANNOUNCER, stealthAddress, ephemeralPubKey, metadata],
+    });
+
+    // Outer call: execute(self, 0, announceCalldata) — msg.sender == address(this) satisfies OnlySelf
+    const executeCalldata = encodeFunctionData({
+      abi: DELEGATE_ABI,
+      functionName: "execute",
+      args: [bobEOA, 0n, announceCalldata],
+    });
+
+    // BOB sends tx to himself — execute() checks msg.sender == address(this) ✓
+    const bobAccount7702 = privateKeyToAccount(process.env.PRIVATE_KEY_BOB as Hex);
+    const bobWalletClient = createWalletClient({
+      account: bobAccount7702, chain: sepolia, transport: http(RPC_URL),
+    });
+
+    console.log(`  BOB EOA (7702-delegated): ${bobEOA}`);
+    console.log(`  Calling execute(self, 0, announceForStealth(${ERC5564_ANNOUNCER}, ...)) ...`);
+
+    const announceTx = await bobWalletClient.sendTransaction({
+      to: bobEOA,
+      data: executeCalldata,
+      value: 0n,
     });
     const receipt = await publicClient.waitForTransactionReceipt({ hash: announceTx });
 
-    // ERC-5564 Announcement event signature: Announcement(uint256,address,address,bytes,bytes)
-    const ANNOUNCEMENT_TOPIC =
-      "0x555d0cf9b2f603fce9ed65f3de11b21c43aa0b9c56f7f6a40ccd3bd66fba7e6a" as Hex;
-    const hasEvent = receipt.logs.some(
-      (log) => log.topics[0]?.toLowerCase() === ANNOUNCEMENT_TOPIC.toLowerCase()
+    // Look for event from ERC5564 Announcer contract
+    const announcerLog = receipt.logs.find(
+      (log) => log.address.toLowerCase() === ERC5564_ANNOUNCER.toLowerCase()
     );
 
-    if (hasEvent) {
-      pass("D1", `ERC5564Announcement event emitted (tx: ${announceTx.slice(0, 18)}...)`);
-    } else {
-      // Event topic may differ if contract uses a different event signature — check any logs
-      if (receipt.logs.length > 0) {
-        console.log(`  Note: transaction emitted ${receipt.logs.length} log(s) but topic mismatch.`);
-        console.log(`  Emitted topic[0]: ${receipt.logs[0]?.topics[0]}`);
-        pass("D1", `announceForStealth tx succeeded, event emitted (topic mismatch — verify selector)`);
+    if (receipt.status === "success") {
+      if (announcerLog) {
+        pass("D1", `ERC5564Announcement event emitted at ${ERC5564_ANNOUNCER} (tx: ${announceTx.slice(0, 18)}...)`);
+      } else if (receipt.logs.length > 0) {
+        console.log(`  Note: tx emitted ${receipt.logs.length} log(s), first topic: ${receipt.logs[0]?.topics[0]}`);
+        pass("D1", `announceForStealth tx succeeded, event emitted (tx: ${announceTx.slice(0, 18)}...)`);
       } else {
-        fail("D1", "announceForStealth tx succeeded but no events emitted");
+        fail("D1", "tx succeeded but no events emitted");
       }
+    } else {
+      fail("D1", `tx reverted: ${announceTx}`);
     }
   } catch (e: any) {
-    // announceForStealth may not be available on a standard account (only on AirAccountDelegate).
-    // If the function selector is not found, that is expected for non-delegate accounts.
-    if (e.message?.includes("0x") && e.message?.includes("does not have fallback")) {
-      results["D1"] = "SKIP: target contract is not an AirAccountDelegate — set AIRACCOUNT_M7_DELEGATE";
-      console.log("  SKIP [D1]: Set AIRACCOUNT_M7_DELEGATE to an EIP-7702 delegated EOA address");
-    } else {
-      fail("D1", `announceForStealth failed: ${e.message?.slice(0, 150)}`);
-    }
+    fail("D1", `announceForStealth failed: ${e.message?.slice(0, 150)}`);
   }
 
   // ────────────────────────────────────────────────────────────────────────────
