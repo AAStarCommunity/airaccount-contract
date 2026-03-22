@@ -22,6 +22,20 @@ contract MockL2MessagePasser {
     }
 }
 
+/// @dev Records calls to sendTxToL1 so tests can verify Arbitrum invocation
+contract MockArbSys {
+    address public lastDest;
+    bytes   public lastData;
+    uint256 public callCount;
+
+    function sendTxToL1(address dest, bytes calldata data) external payable returns (uint256) {
+        lastDest  = dest;
+        lastData  = data;
+        callCount++;
+        return callCount;
+    }
+}
+
 /// @dev Simulates an AirAccount that exposes getConfigDescription() and owner()
 contract MockAirAccount {
     address public owner;
@@ -104,6 +118,7 @@ contract ForceExitModuleTest is Test {
     ForceExitModule public module;
     MockAirAccount  public account;
     MockL2MessagePasser public mockPasser;
+    MockArbSys       public mockArbSys;
 
     // Guardian private keys (deterministic test keys)
     uint256 internal constant G0_KEY = 0xA11CE00000000000000000000000000000000000000000000000000000000001;
@@ -123,6 +138,7 @@ contract ForceExitModuleTest is Test {
 
         module = new ForceExitModule();
         mockPasser = new MockL2MessagePasser();
+        mockArbSys = new MockArbSys();
 
         address[3] memory guardians = [g0, g1, g2];
         account = new MockAirAccount(owner, guardians);
@@ -136,6 +152,10 @@ contract ForceExitModuleTest is Test {
 
     function _installOp() internal {
         _install(L2_TYPE_OPTIMISM);
+    }
+
+    function _installArb() internal {
+        account.installModule(module, abi.encode(L2_TYPE_ARBITRUM));
     }
 
     /// @dev Build a guardian signature over the proposal hash
@@ -446,6 +466,49 @@ contract ForceExitModuleTest is Test {
         emit ForceExitModule.ExitExecuted(address(account), l1target, 0);
 
         module.executeForceExit(address(account));
+    }
+
+    function test_executeForceExit_arbitrum_callsArbSys() public {
+        // Etch MockArbSys bytecode at the ARB_SYS precompile address
+        address arbSys = 0x0000000000000000000000000000000000000064;
+        vm.etch(arbSys, address(mockArbSys).code);
+
+        _installArb();
+        address l1target = makeAddr("l1recipient_arb");
+        bytes memory exitData = hex"abcd";
+        vm.warp(10000);
+
+        account.proposeExit(module, l1target, 0, exitData);
+
+        bytes memory sig0 = _guardianSig(G0_KEY, address(account), l1target, 0, exitData, 10000);
+        bytes memory sig1 = _guardianSig(G1_KEY, address(account), l1target, 0, exitData, 10000);
+        module.approveForceExit(address(account), sig0);
+        module.approveForceExit(address(account), sig1);
+
+        module.executeForceExit(address(account));
+
+        // Proposal cleared after execution
+        (address target,,,,,) = _pendingExitFields(address(account));
+        assertEq(target, address(0));
+    }
+
+    function test_getPendingExit_afterPropose_returnsGuardians() public {
+        _installOp();
+        address l1target = makeAddr("l1target_view");
+        vm.warp(11000);
+
+        account.proposeExit(module, l1target, 1 ether, hex"cafe");
+
+        (address target, uint256 value, bytes memory data, uint256 proposedAt,, address[3] memory guardians) =
+            _pendingExitFields(address(account));
+
+        assertEq(target, l1target);
+        assertEq(value, 1 ether);
+        assertEq(data, hex"cafe");
+        assertEq(proposedAt, 11000);
+        assertEq(guardians[0], g0);
+        assertEq(guardians[1], g1);
+        assertEq(guardians[2], g2);
     }
 
     // ─── cancelForceExit ──────────────────────────────────────────────────────

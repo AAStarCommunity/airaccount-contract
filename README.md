@@ -2,7 +2,7 @@
 
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-> **Current milestone**: M7 in progress — 614/614 tests pass, Sepolia deployment pending.
+> **Current milestone**: M7 ✅ Complete — 622/622 tests pass, Sepolia + OP Sepolia deployed.
 
 ---
 
@@ -10,9 +10,10 @@ A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments
 
 ```bash
 forge build
-forge test --summary          # 443 tests
-./deploy-factory.sh sepolia   # deploy M6 factory (needs ../SuperPaymaster/.env.sepolia)
-./deploy-factory.sh op-mainnet  # deploy to OP Mainnet (cast wallet)
+forge test --summary          # 622 tests
+pnpm tsx scripts/test-m7-e2e.ts          # M7 full E2E (Sepolia)
+pnpm tsx scripts/test-force-exit-e2e.ts  # M7.5 ForceExit E2E (OP Sepolia)
+pnpm tsx scripts/test-railgun-parser-e2e.ts  # M7.11 Railgun E2E (Sepolia)
 ```
 
 ---
@@ -44,7 +45,38 @@ forge test --summary          # 443 tests
 | M4 — Cumulative Sigs + Social Recovery | ✅ | `0x914db0a849f55e68a726c72fd02b7114b1176d88` | — |
 | M5 — ERC20 Guard + Guardian Accept | ✅ | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` | 298 |
 | M6 — Session Key + Weighted MultiSig + EIP-7702 | ✅ | `0x34282bef82e14af3cc61fecaa60eab91d3a82d46` | 446 |
-| M7 — ERC-7579 Modules + Agent Economy + WalletBeat | 🔄 In Progress | TBD | 614 |
+| M7 — ERC-7579 + Agent Economy + WalletBeat + L2 ForceExit + Railgun | ✅ | `0x9D0735E3096C02eC63356F21d6ef79586280289f` | 622 |
+
+---
+
+## WalletBeat Stage Assessment (M7 — 2026-03-22)
+
+WalletBeat evaluates wallets across Stage 0, 1, 2. AirAccount is a **smart contract account layer** — criteria marked 🆗 CLIENT are frontend/SDK responsibilities, not contract blockers.
+
+| Stage | # | Criterion | Contract Status | Notes |
+|-------|---|-----------|-----------------|-------|
+| **0** | — | Source code publicly visible | ✅ PASS | GitHub: AAStarCommunity/airaccount-contract (GPL-3.0) |
+| **1** | 1 | Security audit (last 12 months) | ⚠️ PARTIAL | Internal AI audit; paid external audit (Code4rena) planned pre-mainnet |
+| **1** | 2 | Hardware wallet support (≥3 makers) | 🆗 CLIENT | P256/WebAuthn at contract layer; Ledger/Trezor SDK is frontend work |
+| **1** | 3 | Chain verification (L1 light client) | 🆗 CLIENT | Frontend RPC provider choice (Helios integration is client work) |
+| **1** | 4 | Private transfers (by default) | ⚠️ PARTIAL | Railgun calldata parser (M7.11) + OAPD address isolation; not shielded by default |
+| **1** | 5 | Account portability | ✅ PASS | Social recovery (2-of-3 guardian), no platform lock-in, CREATE2 versioned migration |
+| **1** | 6 | Own node support (custom RPC) | 🆗 CLIENT | Frontend/SDK responsibility |
+| **1** | 7 | Free and open source (GPL-3.0) | ✅ PASS | All contracts, tests, scripts open source |
+| **1** | 8 | Address resolution (ENS) | 🆗 CLIENT | No ENS at contract layer; frontend handles human-readable names |
+| **1** | 9 | Browser integration (EIP-1193) | 🆗 CLIENT | Provider API is frontend/SDK responsibility |
+| **2** | 1 | Bug bounty program | ❌ TODO | Framework designed (M7.7); no live Immunefi program yet |
+| **2** | 2 | Address privacy | ⚠️ PARTIAL | OAPD reduces cross-DApp correlation; tx amounts remain visible on-chain |
+| **2** | 3 | Multi-address correlation prevention | ✅ PASS | OAPD: deterministic per-DApp accounts via CREATE2 salt — different addresses per app |
+| **2** | 4 | Transaction inclusion (L2→L1 force-exit) | ✅ PASS (M7.5) | ForceExitModule: guardian 2-of-3 gated OP Stack + Arbitrum withdrawal; E2E verified OP Sepolia |
+| **2** | 5 | Chain configurability | 🆗 CLIENT | Multi-chain deployed (Sepolia, OP Sepolia); chain selection is frontend work |
+| **2** | 6 | Funding transparency | ❔ UNKNOWN | AAStarCommunity DAO governance in progress |
+| **2** | 7 | Fee transparency | ⚠️ PARTIAL | Gas costs verifiable on-chain; bundler/paymaster fees are off-chain |
+| **2** | 8 | Chain-specific address (ERC-7828) | ✅ PASS (M7.4) | `getChainQualifiedAddress()` + `getAddressWithChainId()` in factory |
+| **2** | 9 | Account abstraction (ERC-4337) | ✅ EXCEEDS | Full ERC-4337 + ERC-7579 modules + 7+ signature algorithms (ECDSA/BLS/P256/Weighted/Session/Agent) |
+| **2** | 10 | Transaction batching | ✅ PASS | `executeBatch()` with per-call guard enforcement |
+
+**Current position**: Stage 0 ✅ achieved. Stage 1 blocked by: (a) paid external security audit, (b) private-by-default transfers. Stage 2 blocked by: (a) live bug bounty, (b) items above are mostly frontend scope. See [docs/walletbeat-assessment.md](docs/walletbeat-assessment.md) for full analysis.
 
 ---
 
@@ -158,7 +190,7 @@ pnpm tsx scripts/test-op-e2e.ts
 
 ```bash
 forge build                          # compile
-forge test                           # 443 unit tests
+forge test                           # 622 unit tests
 forge test --match-path test/SessionKeyValidator.t.sol -v   # specific suite
 forge test --summary                 # per-suite breakdown
 ```

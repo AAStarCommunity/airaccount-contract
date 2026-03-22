@@ -141,4 +141,39 @@ contract RailgunParserTest is Test {
         assertEq(tok, address(0));
         assertEq(amt, 0);
     }
+
+    // ─── Test 8: transact selector but data too short (< 132 bytes) returns (0, 0) ──
+
+    function test_parseTokenTransfer_transactSelector_insufficientData_returnsZero() public view {
+        // 131 bytes total — one byte short of the 132-byte minimum for _parseTransact
+        bytes memory data = abi.encodePacked(RAILGUN_TRANSACT, new bytes(127));
+        (address tok, uint256 amt) = parser.parseTokenTransfer(data);
+        assertEq(tok, address(0));
+        assertEq(amt, 0);
+    }
+
+    // ─── Test 9: shield selector but data too short (< 228 bytes) returns (0, 0) ───
+
+    function test_parseTokenTransfer_shieldSelector_insufficientData_returnsZero() public view {
+        // 132 bytes total — enough for transact minimum (132) but NOT shield minimum (228)
+        bytes memory data = abi.encodePacked(
+            RAILGUN_SHIELD,
+            new bytes(64),
+            bytes32(uint256(uint160(TOKEN_A))),
+            bytes32(uint256(500e6))
+            // missing 96 bytes of shield padding
+        );
+        (address tok, uint256 amt) = parser.parseTokenTransfer(data);
+        assertEq(tok, address(0));
+        assertEq(amt, 0);
+    }
+
+    // ─── Test 10: shield selector with zero amount returns (0, 0) ────────────────
+
+    function test_parseTokenTransfer_shieldSelector_zeroAmount_returnsZero() public view {
+        bytes memory data = _buildShieldCalldata(TOKEN_B, 0);
+        (address tok, uint256 amt) = parser.parseTokenTransfer(data);
+        assertEq(tok, address(0));
+        assertEq(amt, 0);
+    }
 }
