@@ -208,7 +208,10 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
         if (_installedModules[moduleTypeId][module]) revert ModuleAlreadyInstalled();
         _installedModules[moduleTypeId][module] = true;
-        if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module; // track active hook for dispatch
+        // Only one active hook is tracked. Installing a second Hook module overwrites _activeHook,
+        // silently deactivating the previous hook's preCheck dispatch. Callers must uninstall the
+        // existing hook before installing a new one to avoid silent deactivation.
+        if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
 
         // Pass bytes after the guardian sigs as actual module initData.
         // Best-effort: ignore onInstall revert (backward-compatible with modules that don't need initData).

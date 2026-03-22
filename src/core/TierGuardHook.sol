@@ -114,9 +114,10 @@ contract TierGuardHook is IERC7579Hook {
     ///      so the hook sees the same algId that execute() will consume after preCheck returns.
     ///
     ///      COMPATIBILITY: TierGuardHook requires AAStarAirAccountV7 (M7+).
-    ///      If installed on an older account without getCurrentAlgId(), the fallback is ALG_ECDSA
-    ///      (Tier 1 limits apply), which is PERMISSIVE — not a security failure, but limits are
-    ///      not enforced at the correct tier for Tier 2/3 operations.
+    ///      If getCurrentAlgId() is unavailable, the fallback is ALG_ECDSA (Tier 1).
+    ///      RESTRICTIVE (fail-closed): any operation requiring Tier 2+ will revert with
+    ///      TierViolation because tier(ALG_ECDSA)=1 < required≥2.
+    ///      This is a security-safe default — Tier 2/3 ops are blocked, not bypassed.
     ///      Recommendation: only install TierGuardHook on accounts that implement getCurrentAlgId().
     function _getAlgIdFromAccount(address account) internal view returns (uint8 algId) {
         (bool ok, bytes memory data) = account.staticcall(

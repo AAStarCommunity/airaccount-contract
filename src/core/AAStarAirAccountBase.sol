@@ -1071,8 +1071,11 @@ abstract contract AAStarAirAccountBase is Initializable {
         // ETH daily limit + algorithm whitelist (writes dailySpent so next batch call sees updated value)
         // guardAlgId: pre-resolution algId so guard whitelist sees ALG_WEIGHTED(0x07) when that's what
         // was approved — approving 0x07 should not require separately approving resolved 0x02/0x04/0x05.
-        // Skip when hook is active: hook.preCheck() already called guard.checkTransaction to avoid
-        // double-counting daily limits.
+        //
+        // skipEthCheck=true when an ERC-7579 Hook is active (execute() passes hookActive as skipEthCheck).
+        // The hook's preCheck() is responsible for calling guard.checkTransaction() to enforce daily
+        // limits. Skipping here prevents double-counting (hook + inline guard both charging the same op).
+        // TierGuardHook fulfils this contract by calling guard.checkTransaction() in its preCheck().
         if (guardAddr != address(0) && !skipEthCheck) {
             guard.checkTransaction(value, guardAlgId);
         }
@@ -1086,41 +1089,57 @@ abstract contract AAStarAirAccountBase is Initializable {
         // taggedSessionKey was consumed ONCE by the caller (execute/executeBatch), not per-call here.
         // This ensures ALL calls in a batch are subject to the same contractScope/selectorScope.
         // Top byte: 0x01 = ECDSA session (lookup by address), 0x02 = P256 session (lookup by keyHash).
-        if (algId == ALG_SESSION_KEY && taggedSessionKey != bytes32(0) && address(validator) != address(0)) {
+        //
+        // Fail-closed: if ALG_SESSION_KEY is asserted but any prerequisite is missing (key not stored,
+        // validator not configured, session key validator not installed), the operation is blocked.
+        // This prevents a fail-open bypass where missing config silently skips scope enforcement.
+        if (algId == ALG_SESSION_KEY) {
+            if (taggedSessionKey == bytes32(0)) revert SessionScopeViolation();   // key not stored during validation
+            if (address(validator) == address(0)) revert SessionScopeViolation(); // no validator router
             address skValidator = IAAStarValidator(address(validator)).getAlgorithm(ALG_SESSION_KEY);
-            if (skValidator != address(0)) {
-                uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
-                bool ok;
-                bytes memory data;
-                if (sessionType == 0x01) {
-                    // ECDSA session: extract address from lower 20 bytes
-                    address ecdsaKey = address(uint160(uint256(taggedSessionKey)));
-                    (ok, data) = skValidator.staticcall(
-                        abi.encodeWithSignature("sessions(address,address)", address(this), ecdsaKey)
-                    );
-                } else if (sessionType == 0x02) {
-                    // P256 session: extract key hash from lower 31 bytes
-                    bytes32 p256Hash = bytes32(uint256(taggedSessionKey) & type(uint248).max);
-                    (ok, data) = skValidator.staticcall(
-                        abi.encodeWithSignature("getP256Session(address,bytes32)", address(this), p256Hash)
-                    );
+            if (skValidator == address(0)) revert SessionScopeViolation();         // session key validator not installed
+            uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
+            bool ok;
+            bytes memory data;
+            if (sessionType == 0x01) {
+                // ECDSA session: extract address from lower 20 bytes
+                address ecdsaKey = address(uint160(uint256(taggedSessionKey)));
+                (ok, data) = skValidator.staticcall(
+                    abi.encodeWithSignature("sessions(address,address)", address(this), ecdsaKey)
+                );
+            } else if (sessionType == 0x02) {
+                // P256 session: extract key hash from lower 31 bytes
+                bytes32 p256Hash = bytes32(uint256(taggedSessionKey) & type(uint248).max);
+                (ok, data) = skValidator.staticcall(
+                    abi.encodeWithSignature("getP256Session(address,bytes32)", address(this), p256Hash)
+                );
+            }
+            if (ok && data.length >= 128) {
+                // ABI decode Session: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
+                (, address contractScope, bytes4 selectorScope,) =
+                    abi.decode(data, (uint48, address, bytes4, bool));
+                if (contractScope != address(0) && dest != contractScope) {
+                    revert SessionScopeViolation();
                 }
-                if (ok && data.length >= 128) {
-                    // ABI decode Session: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
-                    (, address contractScope, bytes4 selectorScope,) =
-                        abi.decode(data, (uint48, address, bytes4, bool));
-                    if (contractScope != address(0) && dest != contractScope) {
-                        revert SessionScopeViolation();
-                    }
-                    if (selectorScope != bytes4(0) && func.length >= 4 && bytes4(func[:4]) != selectorScope) {
-                        revert SessionScopeViolation();
-                    }
+                if (selectorScope != bytes4(0) && func.length >= 4 && bytes4(func[:4]) != selectorScope) {
+                    revert SessionScopeViolation();
                 }
             }
         }
     }
 
     // ─── Transient Storage AlgId Queue ────────────────────────────────
+
+    /// @notice Peek at the next algId in the transient queue without consuming it.
+    ///         Called by TierGuardHook.preCheck() before execute() consumes the algId,
+    ///         so the hook can enforce tier limits using the same algId as the guard.
+    ///         Returns 0 (ALG_NONE) if the queue is empty (no validated algId yet).
+    function getCurrentAlgId() external view returns (uint256 algId) {
+        assembly {
+            let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
+            algId := tload(add(add(ALG_ID_SLOT_BASE, 2), readIdx))
+        }
+    }
 
     /// @dev Push validated algId to transient storage queue.
     ///      Called during validateUserOp (validation phase).
