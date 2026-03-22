@@ -844,6 +844,126 @@ contract AgentSessionKeyValidatorTest is Test {
         assertEq(recordedParent, sessionWallet.addr);
     }
 
+    // ─── G-extra: selectorAllowlist scope escalation (MEDIUM-2 fix) ───────────
+
+    /// @notice Sub cannot set empty selectorAllowlist (all selectors) when parent restricts to subset.
+    function test_delegateSession_selectorAllowlist_emptySubVsRestrictedParent_reverts() public {
+        uint48 parentExpiry = uint48(block.timestamp + 2 hours);
+        vm.prank(account);
+        validator.onInstall(bytes(""));
+
+        address[] memory targets = new address[](0);
+        bytes4 parentSel = bytes4(0xAABBCCDD);
+        bytes4[] memory parentSels = new bytes4[](1);
+        parentSels[0] = parentSel;
+
+        // Parent has restricted selectorAllowlist: [0xAABBCCDD]
+        AgentSessionKeyValidator.AgentSessionConfig memory parentCfg = AgentSessionKeyValidator.AgentSessionConfig({
+            expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
+            spendToken: address(0), spendCap: 0, revoked: false,
+            callTargets: targets, selectorAllowlist: parentSels
+        });
+        vm.prank(account);
+        validator.grantAgentSession(sessionWallet.addr, parentCfg);
+
+        Vm.Wallet memory subWallet = vm.createWallet("subSel1");
+        bytes4[] memory emptySels = new bytes4[](0); // sub wants all selectors — escalation
+        AgentSessionKeyValidator.AgentSessionConfig memory subCfg = AgentSessionKeyValidator.AgentSessionConfig({
+            expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
+            spendToken: address(0), spendCap: 0, revoked: false,
+            callTargets: targets, selectorAllowlist: emptySels
+        });
+
+        vm.prank(sessionWallet.addr);
+        vm.expectRevert(AgentSessionKeyValidator.ScopeEscalationDenied.selector);
+        validator.delegateSession(subWallet.addr, subCfg);
+    }
+
+    /// @notice Sub selector not in parent list → escalation denied.
+    function test_delegateSession_selectorAllowlist_unknownSubSelector_reverts() public {
+        uint48 parentExpiry = uint48(block.timestamp + 2 hours);
+        vm.prank(account);
+        validator.onInstall(bytes(""));
+
+        address[] memory targets = new address[](0);
+        bytes4[] memory parentSels = new bytes4[](1);
+        parentSels[0] = bytes4(0xAAAAAAAA);
+
+        AgentSessionKeyValidator.AgentSessionConfig memory parentCfg = AgentSessionKeyValidator.AgentSessionConfig({
+            expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
+            spendToken: address(0), spendCap: 0, revoked: false,
+            callTargets: targets, selectorAllowlist: parentSels
+        });
+        vm.prank(account);
+        validator.grantAgentSession(sessionWallet.addr, parentCfg);
+
+        Vm.Wallet memory subWallet = vm.createWallet("subSel2");
+        bytes4[] memory subSels = new bytes4[](1);
+        subSels[0] = bytes4(0xBBBBBBBB); // not in parent's list
+
+        AgentSessionKeyValidator.AgentSessionConfig memory subCfg = AgentSessionKeyValidator.AgentSessionConfig({
+            expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
+            spendToken: address(0), spendCap: 0, revoked: false,
+            callTargets: targets, selectorAllowlist: subSels
+        });
+
+        vm.prank(sessionWallet.addr);
+        vm.expectRevert(AgentSessionKeyValidator.ScopeEscalationDenied.selector);
+        validator.delegateSession(subWallet.addr, subCfg);
+    }
+
+    /// @notice Sub can delegate with a strict subset of parent's selectorAllowlist.
+    function test_delegateSession_selectorAllowlist_subset_allowed() public {
+        uint48 parentExpiry = uint48(block.timestamp + 2 hours);
+        vm.prank(account);
+        validator.onInstall(bytes(""));
+
+        address[] memory targets = new address[](0);
+        bytes4[] memory parentSels = new bytes4[](2);
+        parentSels[0] = bytes4(0xAAAAAAAA);
+        parentSels[1] = bytes4(0xBBBBBBBB);
+
+        AgentSessionKeyValidator.AgentSessionConfig memory parentCfg = AgentSessionKeyValidator.AgentSessionConfig({
+            expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
+            spendToken: address(0), spendCap: 0, revoked: false,
+            callTargets: targets, selectorAllowlist: parentSels
+        });
+        vm.prank(account);
+        validator.grantAgentSession(sessionWallet.addr, parentCfg);
+
+        Vm.Wallet memory subWallet = vm.createWallet("subSel3");
+        bytes4[] memory subSels = new bytes4[](1);
+        subSels[0] = bytes4(0xAAAAAAAA); // strict subset of parent
+
+        AgentSessionKeyValidator.AgentSessionConfig memory subCfg = AgentSessionKeyValidator.AgentSessionConfig({
+            expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
+            spendToken: address(0), spendCap: 0, revoked: false,
+            callTargets: targets, selectorAllowlist: subSels
+        });
+
+        // Should NOT revert — sub is a strict subset
+        vm.prank(sessionWallet.addr);
+        validator.delegateSession(subWallet.addr, subCfg);
+
+        (uint48 stored, , , , , , ,) = _readConfig(account, subWallet.addr);
+        assertEq(stored, parentExpiry);
+    }
+
+    /// @notice Both parent and sub have empty selectorAllowlist → both allow all → not escalation.
+    function test_delegateSession_selectorAllowlist_bothEmpty_allowed() public {
+        uint48 parentExpiry = uint48(block.timestamp + 2 hours);
+        _setupParentSession(parentExpiry); // both targets and selectors are empty
+
+        Vm.Wallet memory subWallet = vm.createWallet("subSel4");
+        AgentSessionKeyValidator.AgentSessionConfig memory subCfg = _defaultConfig(parentExpiry);
+
+        vm.prank(sessionWallet.addr);
+        validator.delegateSession(subWallet.addr, subCfg); // should not revert
+
+        (uint48 stored, , , , , , ,) = _readConfig(account, subWallet.addr);
+        assertEq(stored, parentExpiry);
+    }
+
     function test_delegateSession_parentRevoked_subsessionStillExists_butParentKeyFails() public {
         uint48 parentExpiry = uint48(block.timestamp + 2 hours);
         _setupParentSession(parentExpiry);

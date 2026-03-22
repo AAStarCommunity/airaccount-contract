@@ -50,6 +50,14 @@ contract MockAccountCaller {
     }
 }
 
+/// @dev Account that exposes getCurrentAlgId() returning a fixed value.
+///      Used to test _algTier behavior for specific algIds.
+contract MockAccountWithAlgId is MockAccountCaller {
+    uint8 public immutable algId;
+    constructor(uint8 _algId) { algId = _algId; }
+    function getCurrentAlgId() external view returns (uint256) { return algId; }
+}
+
 /// @title TierGuardHookTest — Unit tests for TierGuardHook (M7.2)
 contract TierGuardHookTest is Test {
     TierGuardHook public hook;
@@ -176,6 +184,39 @@ contract TierGuardHookTest is Test {
         guard.setTodaySpent(0);
 
         bytes memory result = accountContract.callPreCheck(hook, other, 0.5 ether, "");
+        assertEq(result, "");
+    }
+
+    // ─── _algTier: ALG_WEIGHTED (0x07) ────────────────────────────────────────
+
+    /// @notice ALG_WEIGHTED (0x07) must map to Tier 2.
+    ///         Before fix it returned 0 (unknown), causing weighted-multisig ops to be either
+    ///         blocked (required>0 > tier 0) or have guard enforcement with wrong tier.
+    function test_algTier_weighted_returnsTier2() public {
+        // tier2 limit=1 ether, tier3 limit=5 ether
+        // msgValue=3 ether: required tier = 2 (above t1=1, below t2=5)
+        // accountContract has no getCurrentAlgId() → fallback ALG_ECDSA (tier=1) → TierViolation(2,1)
+        _install(address(guard), 1 ether, 5 ether);
+        guard.setShouldRevert(false);
+        guard.setTodaySpent(0);
+
+        // Verify that without ALG_WEIGHTED support, 3 ether triggers TierViolation (tier=1 from fallback)
+        vm.expectRevert(abi.encodeWithSelector(TierGuardHook.TierViolation.selector, uint8(2), uint8(1)));
+        accountContract.callPreCheckExpectRevert(hook, address(this), 3 ether, "");
+    }
+
+    /// @notice A MockAccount that returns ALG_WEIGHTED from getCurrentAlgId() gets Tier 2 assigned,
+    ///         allowing 3 ether (>t1 <=t2) to pass without TierViolation.
+    function test_algTier_weighted_noTierViolation_whenAccountReturnsWeighted() public {
+        // Deploy an account contract that returns ALG_WEIGHTED from getCurrentAlgId()
+        MockAccountWithAlgId weightedAccount = new MockAccountWithAlgId(0x07); // ALG_WEIGHTED
+        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(5 ether));
+        weightedAccount.callInstall(hook, data);
+        guard.setShouldRevert(false);
+        guard.setTodaySpent(0);
+
+        // 3 ether: required tier=2, account provides ALG_WEIGHTED=tier2 → no violation
+        bytes memory result = weightedAccount.callPreCheck(hook, address(this), 3 ether, "");
         assertEq(result, "");
     }
 

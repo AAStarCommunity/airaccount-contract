@@ -526,7 +526,9 @@ contract SecurityFixes_M7_4Test is Test {
         );
     }
 
-    /// @notice onInstall is called (best-effort, empty data) and module is initialized
+    /// @notice Bytes after guardian sigs are passed as actual initData to onInstall.
+    ///         HIGH-2 fix: installModule now extracts sigsRequired*65 bytes as guardian sigs,
+    ///         then passes the remainder to onInstall(bytes).
     function test_M10_installModule_passesInitDataToOnInstall() public {
         bytes memory guardianSig = _installSig(g0Wallet, address(account), 1, address(trackingModule));
         bytes memory extraData = abi.encodePacked("extra-init-data-for-module");
@@ -535,10 +537,15 @@ contract SecurityFixes_M7_4Test is Test {
         vm.prank(ownerWallet.addr);
         account.installModule(1, address(trackingModule), fullInitData);
 
-        // Best-effort: onInstall is called (module initialized), data may be empty
+        // After HIGH-2 fix: onInstall is called with actual initData (bytes after guardian sig)
         assertTrue(
             trackingModule.isInitialized(address(account)),
             "module must be initialized after install (onInstall called)"
+        );
+        assertEq(
+            trackingModule.lastInitData(address(account)),
+            extraData,
+            "actual initData (beyond guardian sig) must be passed to onInstall"
         );
     }
 
@@ -625,9 +632,11 @@ contract SecurityFixes_M7_4Test is Test {
         vm.prank(ownerWallet.addr);
         account.installModule(3, address(trackingModule2), initData2);
 
-        // Best-effort: onInstall called with empty bytes (extra initData beyond guardian sig is ignored)
+        // After HIGH-2 fix: onInstall receives actual initData (bytes after guardian sigs)
         assertTrue(trackingModule.isInitialized(address(account)),  "module1 must be initialized");
         assertTrue(trackingModule2.isInitialized(address(account)), "module2 must be initialized");
+        assertEq(trackingModule.lastInitData(address(account)),  bytes("data-for-module1"), "module1 initData");
+        assertEq(trackingModule2.lastInitData(address(account)), bytes("data-for-module2"), "module2 initData");
     }
 
     // ─── Combined: install + validate + execute flow ──────────────────────────

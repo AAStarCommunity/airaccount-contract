@@ -155,7 +155,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     // ─── ERC-7579 Module Management (M7.2) ────────────────────────────
 
-    /// @dev Best-effort onInstall/onUninstall(bytes) call with empty data.
+    /// @dev Best-effort onUninstall(bytes) call with empty data.
     ///      Uses scratch memory (0x00) and ignores call result.
     function _callLifecycle(bytes4 sel, address module) private {
         assembly {
@@ -183,9 +183,10 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @notice ERC-7579: Install a module.
     /// @param moduleTypeId 1=Validator, 2=Executor, 3=Hook
     /// @param module Module contract address (must be deployed)
-    /// @param initData Guardian acceptance signature(s) prepended.
-    ///   Count: 0 if threshold<=40, 1 if threshold<=70, 2 if threshold=100.
+    /// @param initData Layout: guardian sig(s) prepended, then module init data.
+    ///   Guardian sig count: 0 if threshold<=40, 1 if threshold<=70, 2 if threshold=100.
     ///   Sig hash: keccak256("INSTALL_MODULE" || chainId || account || moduleTypeId || module).toEthSignedMessageHash()
+    ///   Bytes after the sig(s) are passed as initData to onInstall(bytes).
     function installModule(
         uint256 moduleTypeId,
         address module,
@@ -208,7 +209,13 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         if (_installedModules[moduleTypeId][module]) revert ModuleAlreadyInstalled();
         _installedModules[moduleTypeId][module] = true;
         if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module; // track active hook for dispatch
-        _callLifecycle(0x6d61fe70, module); // M-10: best-effort onInstall(bytes)
+
+        // Pass bytes after the guardian sigs as actual module initData.
+        // Best-effort: ignore onInstall revert (backward-compatible with modules that don't need initData).
+        bytes calldata moduleInitData = initData[uint256(sigsRequired) * 65:];
+        (bool _ok,) = module.call(abi.encodeWithSelector(0x6d61fe70, moduleInitData));
+        _ok; // best-effort
+
         emit ModuleInstalled(moduleTypeId, module);
     }
 

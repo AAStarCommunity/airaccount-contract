@@ -56,6 +56,9 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     /// @dev account → subKey → parentKey — tracks who delegated to the sub-agent for a given account
     mapping(address account => mapping(address subKey => address parentKey)) public delegatedBy;
 
+    /// @dev Maximum number of callTargets entries per session (gas-bomb prevention)
+    uint256 internal constant MAX_CALL_TARGETS = 20;
+
     // ─── Events ──────────────────────────────────────────────────────
 
     event AgentSessionGranted(address indexed account, address indexed sessionKey, uint48 expiry);
@@ -85,6 +88,8 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     error ScopeEscalationDenied();
     /// @dev Parent session is expired or revoked
     error ParentSessionExpired();
+    /// @dev callTargets list exceeds maximum allowed length
+    error MaxTargetsExceeded();
 
     // ─── IERC7579Module ─────────────────────────────────────────────
 
@@ -109,6 +114,7 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     /// @param cfg Session configuration (expiry, velocity, spend cap, allowlists)
     function grantAgentSession(address sessionKey, AgentSessionConfig calldata cfg) external {
         if (cfg.expiry <= block.timestamp) revert InvalidExpiry();
+        if (cfg.callTargets.length > MAX_CALL_TARGETS) revert MaxTargetsExceeded();
         agentSessions[msg.sender][sessionKey] = cfg;
         // Track which account owns this session key (last grant wins for cross-account reuse)
         sessionKeyOwner[sessionKey] = msg.sender;
@@ -156,13 +162,41 @@ contract AgentSessionKeyValidator is IERC7579Validator {
             }
         }
 
-        // Enforce scope: callTargets cannot add new entries beyond parent's allowlist
-        // If parent has a non-empty allowlist, sub cannot include any target not in parent's list
-        if (subCfg.callTargets.length > 0 && parentCfg.callTargets.length > 0) {
+        // Enforce scope: callTargets cannot expand beyond parent's allowlist.
+        // Empty callTargets = "all targets allowed" (widest scope), same as velocityLimit=0.
+        // sub=empty (all targets) is only valid if parent is also empty (all targets).
+        // sub=non-empty (restricted) is always a subset of any parent scope.
+        if (subCfg.callTargets.length > MAX_CALL_TARGETS) revert MaxTargetsExceeded();
+        if (subCfg.callTargets.length == 0) {
+            // sub requests all targets — only valid if parent also allows all
+            if (parentCfg.callTargets.length != 0) revert ScopeEscalationDenied();
+        } else if (parentCfg.callTargets.length > 0) {
+            // both have restricted lists — every sub target must appear in parent's list
             for (uint256 i = 0; i < subCfg.callTargets.length; i++) {
                 bool found = false;
                 for (uint256 j = 0; j < parentCfg.callTargets.length; j++) {
                     if (subCfg.callTargets[i] == parentCfg.callTargets[j]) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) revert ScopeEscalationDenied();
+            }
+        }
+
+        // Enforce scope: selectorAllowlist cannot expand beyond parent's allowlist.
+        // Empty selectorAllowlist = "all selectors allowed" (widest scope), same as callTargets=empty.
+        // sub=empty (all selectors) is only valid if parent is also empty (all selectors).
+        // sub=non-empty (restricted) is always a subset of any parent scope.
+        if (subCfg.selectorAllowlist.length == 0) {
+            // sub requests all selectors — only valid if parent also allows all
+            if (parentCfg.selectorAllowlist.length != 0) revert ScopeEscalationDenied();
+        } else if (parentCfg.selectorAllowlist.length > 0) {
+            // both have restricted lists — every sub selector must appear in parent's list
+            for (uint256 i = 0; i < subCfg.selectorAllowlist.length; i++) {
+                bool found = false;
+                for (uint256 j = 0; j < parentCfg.selectorAllowlist.length; j++) {
+                    if (subCfg.selectorAllowlist[i] == parentCfg.selectorAllowlist[j]) {
                         found = true;
                         break;
                     }
