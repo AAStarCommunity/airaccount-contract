@@ -68,8 +68,9 @@ const CHAIN_ID        = BigInt(optimismSepolia.id); // 11155420n
 // L2ToL1MessagePasser precompile — same address on all OP Stack chains
 const L2_TO_L1_MSG_PASSER = getAddress("0x4200000000000000000000000000000000000016");
 
-// Salt for E2E test account (avoids collision with Sepolia test accounts)
-const TEST_SALT = 7002n;
+// Salt for E2E test account — use current timestamp so each run gets a fresh account,
+// avoiding stale proposal / stale module-install state from previous runs.
+const TEST_SALT = BigInt(Math.floor(Date.now() / 1000)) % 100000n + 70000n;
 
 // ─── Load artifacts ───────────────────────────────────────────────────────────
 
@@ -219,21 +220,10 @@ async function main() {
   console.log(" Test A: ForceExitModule deployment");
   console.log("══════════════════════════════════════════\n");
 
-  let femAddr: Address;
-  const existingFEM = process.env.FORCE_EXIT_MODULE as Address | undefined;
-
-  if (existingFEM) {
-    const code = await publicClient.getBytecode({ address: existingFEM });
-    if (code && code.length > 2) {
-      femAddr = existingFEM;
-      console.log(`  Reusing: ${femAddr}`);
-      pass("A", `ForceExitModule reused at ${femAddr}`);
-    } else {
-      femAddr = await deployFEM();
-    }
-  } else {
-    femAddr = await deployFEM();
-  }
+  // Always deploy a fresh ForceExitModule so we test the current contract code,
+  // not a potentially stale on-chain version. This also avoids stale mapping state
+  // (accountL2Type, pendingExit) that could bleed over from previous test runs.
+  let femAddr: Address = await deployFEM();
 
   async function deployFEM(): Promise<Address> {
     const tx = await walletClient.deployContract({ abi: FORCE_EXIT_ABI, bytecode: loadBytecode("ForceExitModule") } as Parameters<typeof walletClient.deployContract>[0]);
@@ -249,21 +239,9 @@ async function main() {
   console.log(" Test B: Create M7 account on OP Sepolia");
   console.log("══════════════════════════════════════════\n");
 
-  let accountAddr: Address;
-  const existingAccount = process.env.OP_SEPOLIA_ACCOUNT as Address | undefined;
-
-  if (existingAccount) {
-    const code = await publicClient.getBytecode({ address: existingAccount });
-    if (code && code.length > 2) {
-      accountAddr = existingAccount;
-      console.log(`  Reusing account: ${accountAddr}`);
-      pass("B", `Account reused at ${accountAddr}`);
-    } else {
-      accountAddr = await createAccount();
-    }
-  } else {
-    accountAddr = await createAccount();
-  }
+  // Always create a fresh account (fresh salt per run) so no stale module-install
+  // or pending proposal state interferes with the test.
+  let accountAddr: Address = await createAccount();
 
   async function createAccount(): Promise<Address> {
     const g1Sig = await buildGuardianAcceptSig(guardian1Acct, ownerAccount.address, TEST_SALT, FACTORY_ADDR!);
@@ -300,68 +278,52 @@ async function main() {
   console.log(" Test C: installModule(2, ForceExitModule, l2Type=OP)");
   console.log("══════════════════════════════════════════\n");
 
-  // Check if already installed
-  const alreadyInstalled = await publicClient.readContract({
-    address: accountAddr, abi: ACCOUNT_ABI,
-    functionName: "isModuleInstalled",
-    args: [2n, femAddr, "0x" as Hex],
-  }) as boolean;
+  // Fresh account — install FEM in two steps:
+  //   Step 1: installModule with guardian sig (sets _installedModules[2][fem] = true)
+  //   Step 2: account.execute → fem.onInstall(abi.encode(uint8(1))) to set l2Type=OP Stack
+  // Two steps are used because the on-chain sig format may vary (viem sign may produce
+  // variable-length output depending on context), so we avoid splicing initData together
+  // and instead call onInstall explicitly via the account's execute() which is proven to work.
+  try {
+    const guardianSig = await buildInstallInitData(guardian1Acct, accountAddr, 2n, femAddr);
 
-  // Build onInstall calldata: account.execute(femAddr, 0, onInstall(abi.encode(uint8(1))))
-  // abi.encode(uint8(1)) = 0x0000...0001 (32 bytes, value=1 = OP Stack)
-  const l2TypeInitData = "0x0000000000000000000000000000000000000000000000000000000000000001" as Hex;
-  const onInstallCalldata = encodeFunctionData({
-    abi: [{ name: "onInstall", type: "function", inputs: [{ name: "data", type: "bytes" }], outputs: [] }],
-    functionName: "onInstall",
-    args: [l2TypeInitData],
-  });
+    const installTx = await walletClient.writeContract({
+      address: accountAddr, abi: ACCOUNT_ABI,
+      functionName: "installModule",
+      args: [2n, femAddr, guardianSig],
+    });
+    await publicClient.waitForTransactionReceipt({ hash: installTx });
+    console.log(`  installModule tx: ${installTx.slice(0, 20)}...`);
 
-  if (alreadyInstalled) {
-    console.log("  Already installed — ensuring l2Type is set...");
-    // Make sure onInstall was called (sets accountL2Type = OP)
-    const currentL2Type = await publicClient.readContract({
+    // Call onInstall via execute to set l2Type = OP Stack (1).
+    // abi.encode(uint8(1)) = 0x0000...0001 (32 bytes)
+    const l2TypeInitData = "0x0000000000000000000000000000000000000000000000000000000000000001" as Hex;
+    const onInstallCalldata = encodeFunctionData({
+      abi: [{ name: "onInstall", type: "function", inputs: [{ name: "data", type: "bytes" }], outputs: [] }],
+      functionName: "onInstall",
+      args: [l2TypeInitData],
+    });
+    const initTx = await walletClient.writeContract({
+      address: accountAddr, abi: ACCOUNT_ABI,
+      functionName: "execute",
+      args: [femAddr, 0n, onInstallCalldata],
+    });
+    await publicClient.waitForTransactionReceipt({ hash: initTx });
+    console.log(`  onInstall(l2Type=OP) tx: ${initTx.slice(0, 20)}...`);
+
+    // Verify l2Type was set
+    const l2Type = await publicClient.readContract({
       address: femAddr, abi: FORCE_EXIT_ABI as any[],
       functionName: "accountL2Type",
       args: [accountAddr],
     }) as number;
-    if (currentL2Type !== 1) {
-      console.log(`  l2Type=${currentL2Type}, calling onInstall to set OP Stack...`);
-      const tx = await walletClient.writeContract({
-        address: accountAddr, abi: ACCOUNT_ABI,
-        functionName: "execute",
-        args: [femAddr, 0n, onInstallCalldata],
-      });
-      await publicClient.waitForTransactionReceipt({ hash: tx });
-      console.log("  l2Type set to OP Stack (1)");
+    if (l2Type !== 1) {
+      fail("C", `l2Type=${l2Type}, expected 1`);
     } else {
-      console.log("  l2Type already set to OP Stack (1)");
+      pass("C", `ForceExitModule installed + l2Type=OP Stack confirmed`);
     }
-    pass("C", "ForceExitModule installed as executor with l2Type=OP");
-  } else {
-    try {
-      // installModule: initData = guardian sig (65 bytes) for authorization
-      // The account's installModule reads first sigsRequired*65 bytes as guardian sigs
-      const guardianSig = await buildInstallInitData(guardian1Acct, accountAddr, 2n, femAddr);
-
-      const tx = await walletClient.writeContract({
-        address: accountAddr, abi: ACCOUNT_ABI,
-        functionName: "installModule",
-        args: [2n, femAddr, guardianSig],
-      });
-      await publicClient.waitForTransactionReceipt({ hash: tx });
-      console.log(`  Module installed (tx: ${tx.slice(0, 20)}...)`);
-
-      // Call onInstall separately to set l2Type (account.installModule doesn't forward initData)
-      const tx2 = await walletClient.writeContract({
-        address: accountAddr, abi: ACCOUNT_ABI,
-        functionName: "execute",
-        args: [femAddr, 0n, onInstallCalldata],
-      });
-      await publicClient.waitForTransactionReceipt({ hash: tx2 });
-      pass("C", `ForceExitModule installed + l2Type=OP set (tx: ${tx.slice(0, 20)}...)`);
-    } catch (e: any) {
-      fail("C", `installModule failed: ${e.message?.slice(0, 200)}`);
-    }
+  } catch (e: any) {
+    fail("C", `installModule failed: ${e.message?.slice(0, 200)}`);
   }
 
   // ── Test D: Owner proposes force-exit ─────────────────────────────────────
@@ -392,21 +354,6 @@ async function main() {
   };
 
   try {
-    const pending = await readPendingExit();
-    proposedAt = pending.proposedAt;
-
-    // Cancel stale proposal (from previous test run) so we get a fresh one with new guardians snapshot
-    if (proposedAt > 0n) {
-      console.log(`  Cancelling stale proposal (proposedAt=${proposedAt})...`);
-      const cancelTx = await walletClient.writeContract({
-        address: femAddr, abi: FORCE_EXIT_ABI as any[],
-        functionName: "cancelForceExit",
-        args: [accountAddr],
-      });
-      await publicClient.waitForTransactionReceipt({ hash: cancelTx });
-      proposedAt = 0n;
-    }
-
     // proposeForceExit must be called FROM the account (msg.sender = account)
     const proposeCalldata = encodeFunctionData({
       abi: FORCE_EXIT_ABI as any[],

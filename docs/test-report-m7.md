@@ -65,14 +65,20 @@
 
 All pass (same as first run). RailgunParser: `0x5dace4425797f9ad0245d315e1d6a3ebb8f9c0ce`.
 
-#### test-force-exit-e2e.ts (OP Sepolia) — 7/8
+#### test-force-exit-e2e.ts (OP Sepolia) — 8/8 ✅
 
-| Test | Result | Note |
+| Test | Result | Tx / Detail |
 |---|---|---|
-| A–G (deploy, install, propose, approve ×2, execute) | ✅ 7/7 | executeForceExit block 41193369, tx 0x39a36a... |
-| H: pendingExit cleared after execute | ⚠️ 1 fail | `proposedAt` not zero — re-run state collision; G (actual exit) succeeded |
+| A: ForceExitModule deployed | ✅ | `0x35489e161dd12a751b3a5de45cb91095223696b2` |
+| B: Account created (fresh salt) | ✅ | `0x68577371a2A71d5632CC5515C8438fc0D1cBd0AC` |
+| C: installModule(2, FEM) + onInstall(l2Type=OP) | ✅ | l2Type=1 confirmed |
+| D: proposeForceExit | ✅ | proposedAt=1774190404 |
+| E: Guardian1 approveForceExit | ✅ | 0x8e01c6d7a6ab875f... |
+| F: Guardian2 approveForceExit | ✅ | 0x4a7c070d56211932... |
+| G: executeForceExit → L2ToL1MessagePasser | ✅ | block 41193942, tx 0xd5009a70060bd2f6... |
+| H: pendingExit cleared (proposedAt=0) | ✅ | no-replay confirmed |
 
-> H failure: the E2E re-runs on the same OP Sepolia node produce stale `proposedAt` when re-using a deployed module. Test G (the actual `executeForceExit` → L2ToL1MessagePasser) succeeded. Unit test `ForceExitModuleTest` has 31/31 covering clearance. Not a contract regression.
+> Fix applied: test now always deploys a fresh ForceExitModule and creates a fresh account (timestamp-based salt), eliminating stale mapping state from previous runs.
 
 #### Gas Analysis (on-chain, Sepolia second run)
 
@@ -95,7 +101,7 @@ All pass (same as first run). RailgunParser: `0x5dace4425797f9ad0245d315e1d6a3eb
 | Unit tests | **660/660** ✅ |
 | M7 E2E (ERC-7579 + Agent Economy) | **11/11** ✅ |
 | Railgun Parser E2E | **9/9** ✅ |
-| Force-Exit OP Sepolia | **7/8** (H: stale state, non-regression) |
+| Force-Exit OP Sepolia | **8/8** ✅ |
 | Security audit fixes (SecurityFixes_M7_4Test) | **25/25** ✅ |
 
 All critical features verified with real on-chain transactions. Etherscan:
