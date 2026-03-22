@@ -590,3 +590,40 @@
 | AirAccountDelegate (EIP-7702) | `0x5804b6119d12ad403a430fd3cff12a8ff6e4064b` | — |
 
 > Modules (CompositeValidator, TierGuardHook, AgentSessionKeyValidator) are deployed on-demand per account during `installModule`. Addresses from E2E run: CompositeValidator `0xef9247b1...`, TierGuardHook `0xcaaa70fd...`, AgentSessionKeyValidator `0x9299ad50...`
+
+#### M7.11 Railgun Parser E2E (2026-03-22) — `test-railgun-parser-e2e.ts`
+
+| Test | Description | Result |
+|------|-------------|--------|
+| A | Deploy RailgunParser + verify module type | ✅ PASS |
+| B | Register RailgunParser in CalldataParserRegistry | ✅ PASS |
+| C | buildTransactCalldata: selector + padding + token + amount | ✅ PASS |
+| D | buildShieldCalldata: selector + extended padding | ✅ PASS |
+| E | parse(transact calldata) → (token, amount) | ✅ PASS |
+| F | parse(shield calldata) → (token, amount) | ✅ PASS |
+| G | parse unknown selector → (0, 0) | ✅ PASS |
+| H | parse calldata too short → (0, 0) | ✅ PASS |
+| I | CalldataParserRegistry lookup for Railgun proxy | ✅ PASS |
+
+- Railgun Proxy: `0x4025EE6512Dbf386f9CF30C7E9A0A37460B3d0b4`
+- RailgunParser: `0x5dace4425797f9ad0245d315e1d6a3ebb8f9c0ce` (Sepolia)
+
+#### M7.5 ForceExit E2E (OP Sepolia — 2026-03-22) — `test-force-exit-e2e.ts`
+
+| Test | Description | Result | Tx / Block |
+|------|-------------|--------|------------|
+| A | Deploy / reuse ForceExitModule | ✅ PASS | `0x5966d58d...` |
+| B | Create M7 account on OP Sepolia (salt=7002) | ✅ PASS | `0xa053b94c...` |
+| C | installModule(2, ForceExitModule) + onInstall l2Type=OP | ✅ PASS | — |
+| D | proposeForceExit(l1Target=Jason EOA, 0, 0x) | ✅ PASS | — |
+| E | Guardian1 (BOB) approveForceExit ECDSA sig | ✅ PASS | `0x21c1eb71...` |
+| F | Guardian2 (JACK) approveForceExit ECDSA sig | ✅ PASS | `0x440235a0...` |
+| G | executeForceExit → L2ToL1MessagePasser emitted | ✅ PASS | `0x1878e9f0...` (block 41175702) |
+| H | Pending proposal cleared (proposedAt=0 after exec) | ✅ PASS | — |
+
+- OP Sepolia Factory: `0xc3545a1b9e2839c034da3fa28a83076cbd52a329`
+- OP Sepolia Impl: `0x8c6125372504b8d22eed601120604f4b85e2f575`
+- ForceExitModule: `0x5966d58d48c269ba59ea4fff4a139bd32edbb141`
+- Account (OP Sepolia, salt=7002): `0x8092d91f7318Bf210161b2f561011b7ceB921075`
+- L2ToL1MessagePasser: `0x4200000000000000000000000000000000000016`
+- Chain: OP Sepolia (chainId 11155420)
