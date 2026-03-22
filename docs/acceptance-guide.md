@@ -1,646 +1,1054 @@
-# AirAccount V7 — 产品验收指南
+# AirAccount v0.16.0 — 产品验收文档（M1–M7 完整版）
 
-**版本**: v0.15.0 (M7)
-**更新日期**: 2026-03-20
-**网络**: Sepolia 测试网 (Chain ID: 11155111)
-**编译器**: Solidity 0.8.33，Cancun EVM，via-IR，optimizer_runs=1（EIP-170 合规）
-
-> 合约完整清单、algId 表、功能说明详见 [`docs/contract-registry.md`](contract-registry.md)。
-
----
-
-## 1. 产品定位
-
-AirAccount 是面向大众用户的 **非可升级 ERC-4337 智能钱包**，核心价值主张：
-
-- **手机一键支付**（Passkey/WebAuthn）完成小额付款
-- **自动 DVT 联署**处理中等交易
-- **Guardian 审批**大额转账
-- **零 ETH**——通过 SuperPaymaster 用 aPNTs 代币支付 gas
-- **社交恢复**——2-of-3 Guardian 阈值 + 2 天时间锁
-
-### 1.1 两种账户类型
-
-| 类型 | 适用用户 | 地址 | 安全模型 |
-|------|---------|------|---------|
-| **AirAccountV7**（主路径） | 新用户 | 全新 CREATE2 地址 | EIP-1167 clone，无私钥依赖 |
-| **AirAccountDelegate**（入门路径） | 已有 MetaMask 等 EOA 的用户 | 原 EOA 地址不变 | EIP-7702 委托，私钥仍有效 |
-
-> ⚠️ AirAccountDelegate 是**入门路径**，功能是 AirAccountV7 的子集（约 30%）。高价值用户应迁移到 AirAccountV7。
+**版本**: v0.16.0（M7 正式版）
+**更新日期**: 2026-03-21
+**网络**: Sepolia 测试网（Chain ID: 11155111）
+**测试数**: 622 单元测试全部通过 ✅
+**编译器**: Solidity 0.8.33，Cancun EVM，via-IR，optimizer_runs=10,000
 
 ---
 
-## 2. 完整功能清单
+## 目录
 
-### 2.1 AirAccountV7 功能矩阵（主路径，M1–M7）
-
-| 功能 | 状态 | algId | 里程碑 | 说明 |
-|------|:----:|:-----:|:------:|------|
-| **签名与验证** | | | | |
-| ECDSA 验证 | ✅ | `0x02` | M1 | ecrecover，EIP-2 malleability 修复 |
-| P256/WebAuthn Passkey | ✅ | `0x03` | M2 | EIP-7212 预编译，硬件绑定 |
-| BLS12-381 聚合签名 | ✅ | `0x01` | M2 | EIP-2537 预编译，DVT 多节点 |
-| 累积 Tier 2（P256+BLS） | ✅ | `0x04` | M4 | 两因子叠加 |
-| 累积 Tier 3（P256+BLS+Guardian） | ✅ | `0x05` | M4 | 三因子叠加 |
-| Combined T1（ECDSA+P256） | ✅ | `0x06` | M5 | 零信任双因子 |
-| ALG_WEIGHTED 加权多签 | ✅ | `0x07` | M6.1 | 可配置权重+阈值，bitmap 驱动 |
-| Session Key ECDSA | ✅ | `0x08` | M6.4 | DApp 服务端密钥，作用域限制 |
-| Session Key P256 | ✅ | `0x08` | M6.4 | 用户 Passkey 授权，硬件绑定 |
-| **Guard（支出保护）** | | | | |
-| ETH 日限额 | ✅ | — | M3 | 每 UTC 日重置，不可绕过 |
-| ERC20 token tier 检查 | ✅ | — | M5 | transfer/approve 自动解析 |
-| DeFi 协议 Calldata 解析 | ✅ | — | M6.6b | UniswapV3 等协议的 swap 金额识别 |
-| 算法白名单 | ✅ | — | M3 | 仅批准算法可通过 guard |
-| 单调安全（只收紧不放松） | ✅ | — | M3 | 日限额只能降低，算法只能添加 |
-| **Guardian 与恢复** | | | | |
-| 社交恢复（2-of-3，2天时间锁） | ✅ | — | M4 | owner 不能取消（防私钥被盗） |
-| Guardian 接受签名验证 | ✅ | — | M5 | 部署时链上验证 guardian 同意 |
-| Guardian 轮换审批（governance） | ✅ | — | M6.2 | 降低安全设置需 guardian 投票+时间锁 |
-| **账户管理** | | | | |
-| 工厂 CREATE2 部署（EIP-1167 clone） | ✅ | — | M7 | 45 字节 proxy，EIP-170 合规 |
-| getAddress（部署前预测地址） | ✅ | — | M1 | 确定性地址 |
-| P256 Key 设置/更新 | ✅ | — | M2 | setP256Key(x, y) |
-| 加权配置 | ✅ | — | M6.1 | setWeightConfig(tuple) |
-| Parser Registry 绑定 | ✅ | — | M6.6b | setParserRegistry(addr) |
-| BLS Aggregator 绑定 | ✅ | — | M2 | setAggregator(addr) |
-| **其他** | | | | |
-| 无 gas 交易（SuperPaymaster） | ✅ | — | M3 | aPNTs 支付 gas |
-| OAPD（每 DApp 独立地址） | ✅ | — | M6.6a | 纯 TypeScript，零合约改动 |
-| ERC-7579 最小兼容 shim | ✅ | — | M6 | accountId/supportsModule |
-| EIP-7702 入门委托 | ✅ | — | M6.8 | AirAccountDelegate，见下节 |
-
-### 2.2 AirAccountDelegate 功能矩阵（入门路径，7702）
-
-| 功能 | 状态 | 与 AirAccountV7 的差异 |
-|------|:----:|----------------------|
-| ECDSA 验证 | ✅ | 仅 algId=0x02，无其他算法 |
-| ETH 日限额 | ✅ | 同 AirAccountV7 |
-| execute / executeBatch | ✅ | 同 AirAccountV7 |
-| 无 gas 交易（SuperPaymaster） | ✅ | 同 AirAccountV7 |
-| Guardian Rescue（资产转移） | ✅ | ⚠️ 不同：转移 ETH 资产，而非转移 owner 控制权 |
-| P256/BLS/加权签名 | ❌ | 不支持 |
-| ERC20 token tier 检查 | ❌ | execute() 只有 ETH guard，无 token 检查 |
-| DeFi Calldata 解析 | ❌ | 不支持 |
-| Session Key | ❌ | 不支持 |
-| OAPD | ❌ | 不支持 |
-| Guardian 添加/删除 | ❌ | 初始化固定 2 个，不可变更 |
+1. [产品定位与价值主张](#1-产品定位与价值主张)
+2. [M1–M7 里程碑 Feature 完整清单](#2-m1m7-里程碑-feature-完整清单)
+3. [用户旅程模拟（Product Manager 视角）](#3-用户旅程模拟)
+4. [前端集成指南（开发者视角）](#4-前端集成指南)
+5. [已部署合约地址（Sepolia）](#5-已部署合约地址)
+6. [Validator / Keeper / Bundler 集成依赖](#6-validator--keeper--bundler-集成依赖)
+7. [已知限制与风险分析](#7-已知限制与风险分析)
+8. [极端情况处理手册](#8-极端情况处理手册)
+9. [安全摘要](#9-安全摘要)
+10. [待办事项（TODO List）](#10-待办事项)
 
 ---
 
-## 3. 已部署合约（Sepolia）
+## 1. 产品定位与价值主张
 
-### 3.1 AirAccount 核心（当前版本）
+### 1.1 一句话描述
 
-| 合约 | 地址 | 角色 |
-|------|------|------|
-| **M7 Factory（当前）** | [`0xa3f03e9f6cde536a1b776162a9f0e462f2adbbbf`](https://sepolia.etherscan.io/address/0xa3f03e9f6cde536a1b776162a9f0e462f2adbbbf) | EIP-1167 clone 工厂，EIP-170 合规（9,527B） |
-| **M7 Implementation** | [`0x3C866080C6AA37697AeA43106956369071d26600`](https://sepolia.etherscan.io/address/0x3C866080C6AA37697AeA43106956369071d26600) | 所有 M7 clone 账户的共享实现（20,900B） |
-| M5 Factory r5 | [`0xd72a236d84be6c388a8bc7deb64afd54704ae385`](https://sepolia.etherscan.io/address/0xd72a236d84be6c388a8bc7deb64afd54704ae385) | M5 完整功能工厂（历史版本） |
-| M4 Factory | [`0x914db0a849f55e68a726c72fd02b7114b1176d88`](https://sepolia.etherscan.io/address/0x914db0a849f55e68a726c72fd02b7114b1176d88) | M4 累积签名版本 |
-| EntryPoint v0.7 | [`0x0000000071727De22E5E9d8BAf0edAc6f37da032`](https://sepolia.etherscan.io/address/0x0000000071727De22E5E9d8BAf0edAc6f37da032) | ERC-4337 单例 |
-| Validator Router | [`0x730a162Ce3202b94cC5B74181B75b11eBB3045B1`](https://sepolia.etherscan.io/address/0x730a162Ce3202b94cC5B74181B75b11eBB3045B1) | algId → 算法合约路由 |
-| BLS Algorithm | [`0xc2096E8D04beb3C337bb388F5352710d62De0287`](https://sepolia.etherscan.io/address/0xc2096E8D04beb3C337bb388F5352710d62De0287) | BLS12-381 验证 + 节点注册 |
+> AirAccount 是面向大众用户的**非可升级、隐私优先、多重签名 ERC-4337 智能钱包**——手机指纹完成小额付款，AI 代理自动执行 DeFi，Guardian 守护大额资产，零 ETH 余额即可使用。
 
-### 3.2 SuperPaymaster 生态
+### 1.2 核心差异点
 
-| 合约 | 地址 | 角色 |
-|------|------|------|
-| SuperPaymaster | [`0x16cE0c7d846f9446bbBeb9C5a84A4D140fAeD94A`](https://sepolia.etherscan.io/address/0x16cE0c7d846f9446bbBeb9C5a84A4D140fAeD94A) | aPNTs 换 ETH gas |
-| aPNTs Token | [`0xDf669834F04988BcEE0E3B6013B6b867Bd38778d`](https://sepolia.etherscan.io/address/0xDf669834F04988BcEE0E3B6013B6b867Bd38778d) | ERC-20 gas 代币 |
-| SBT（身份） | [`0x677423f5Dad98D19cAE8661c36F094289cb6171a`](https://sepolia.etherscan.io/address/0x677423f5Dad98D19cAE8661c36F094289cb6171a) | 灵魂绑定身份门控 |
-| Price Feed (Chainlink) | [`0x694AA1769357215DE4FAC081bf1f309aDC325306`](https://sepolia.etherscan.io/address/0x694AA1769357215DE4FAC081bf1f309aDC325306) | ETH/USD 预言机 |
+| 对比维度 | 传统 EOA（MetaMask） | Safe 多签 | AirAccount M7 |
+|---------|-------------------|---------|--------------|
+| 私钥丢失 | 资产永久丢失 | — | 社交恢复，2-of-3 Guardian + 2天时间锁 |
+| 签名复杂度 | 单一私钥 | N-of-M | **分级自动**：金额决定签名强度 |
+| Gas 费用 | 需要 ETH | 需要 ETH | **零 ETH**，aPNTs 代付 |
+| 手机友好 | 差（助记词） | 差 | **Passkey/FaceID 硬件级** |
+| DeFi 保护 | 无 | 无 | **智能限额**：Tier 1/2/3 + 日限额 |
+| AI 代理 | 不支持 | 不支持 | **AgentSessionKey** 速率/范围限制 |
+| 隐私 | 无 | 无 | **Railgun 集成** + Stealth Address |
+| 升级 | 随时 | 多签升级 | **非可升级**，代码即法律 |
 
-### 3.3 测试账户（EOA）
+### 1.3 两种账户类型
 
-| 角色 | 地址 |
-|------|------|
-| Owner / Operator / Bundler | `0xb5600060e6de5E11D3636731964218E53caadf0E` |
-| Guardian 1 (Bob) | `0xF7Bf79AcB7F3702b9DbD397d8140ac9DE6Ce642C` |
-| Guardian 2 (Jack) | `0x084b5F85A5149b03aDf9396C7C94D8B8F328FB36` |
-| Guardian 3 (Charlie) | `0x4F0b7d0EaD970f6573FEBaCFD0Cd1FaB3b64870D` |
+| 类型 | 入口 | 适用用户 | 地址变化 | 安全模型 |
+|------|------|---------|---------|---------|
+| **AirAccountV7**（主路径） | App 新建 Passkey | 新用户、高价值用户 | 全新 CREATE2 地址 | EIP-1167 clone，无私钥 |
+| **AirAccountDelegate**（过渡路径） | 已有 MetaMask 用户 | Web3 老用户 | 原 EOA 地址不变 | EIP-7702 委托，原私钥仍有效 |
 
-### 3.4 测试 AA 账户
-
-| 账户 | Salt | 工厂 | 用途 |
-|------|------|------|------|
-| `0xBe9245282E31E34961F6E867b8B335437a8fF78b` | 800 | M7 | M7 E2E（ECDSA + ALG_WEIGHTED） |
-| `0xfab5b2cf392c862b455dcfafac5a414d459b6dcc` | 701 | M5 | M6 E2E（ALG_WEIGHTED + Guardian Consent） |
-| `0x73A7d2Aa0E8F2655F3c580aeCd5F6fcC8C300e32` | — | M5 | M5 COMBINED_T1 测试 |
-| `0xdBF6F82cE4fc710D0d548A131aeD776B0Ab94BdC` | — | M5 | M5 ERC20_GUARD 测试 |
-| `0x117C702AC0660B9A8f4545c8EA9c92933E6925d7` | 400 | M4 | 分级签名测试（3 个 guardian） |
-| salt 200–203 | 200–203 | M4 | 社交恢复测试账户 |
+> ⚠️ AirAccountDelegate 是**过渡路径**，功能约为主路径的 30%。高价值用户最终应迁移到 AirAccountV7。
 
 ---
 
-## 4. 环境准备与部署
+## 2. M1–M7 里程碑 Feature 完整清单
 
-### 4.1 前置条件
+### 2.1 主路径（AirAccountV7）功能矩阵
 
-```bash
-pnpm install
-forge --version    # 需要 Solc 0.8.33
-forge build
+#### 签名与验证
+
+| Feature | algId | 里程碑 | 状态 | 说明 |
+|---------|:-----:|:------:|:----:|------|
+| ECDSA 单签 | `0x02` | M1 | ✅ | `ecrecover`，EIP-2 malleability 修复，65 字节 |
+| P256/WebAuthn Passkey | `0x03` | M2 | ✅ | EIP-7212 预编译（`0x100`），硬件绑定，无私钥 |
+| BLS12-381 DVT 聚合签名 | `0x01` | M2 | ✅ | EIP-2537 预编译（Prague+），多节点分布式验证 |
+| 累积 Tier 2（P256+BLS） | `0x04` | M4 | ✅ | P256 ∩ BLS 双因子叠加 |
+| 累积 Tier 3（P256+BLS+Guardian） | `0x05` | M4 | ✅ | 三因子叠加，大额必用 |
+| Combined T1（ECDSA+P256 零信任） | `0x06` | M5 | ✅ | 同时要求两类密钥，防单点妥协 |
+| ALG_WEIGHTED 加权多签 | `0x07` | M6.1 | ✅ | bitmap 驱动，可配置权重+阈值 |
+| Session Key（ECDSA / P256） | `0x08` | M6.4 | ✅ | DApp 服务端/Passkey 授权，作用域+时限限制 |
+| AgentSessionKey（AI 代理） | `0x08`扩展 | M7 | ✅ | 速率限制+调用目标白名单+支出上限 |
+| 子代理委托（delegateSession） | — | M7 | ✅ | Session Key 可向下委托，范围只能收窄 |
+
+#### Guard（支出保护）
+
+| Feature | 里程碑 | 状态 | 说明 |
+|---------|:------:|:----:|------|
+| ETH 日限额 | M3 | ✅ | 每 UTC 日自动重置，不可绕过 |
+| Tier 1/2/3 阈值检查 | M3 | ✅ | 金额决定签名强度，链上强制 |
+| 算法白名单 | M3 | ✅ | 只有批准的 algId 可通过 Guard |
+| 单调安全（只收紧） | M3 | ✅ | 日限额只降不升，算法只增不减 |
+| ERC20 Token tier 检查 | M5 | ✅ | `transfer`/`approve` 自动解析金额 |
+| DeFi Calldata 解析（Uniswap V3） | M6.6b | ✅ | swap 金额链上识别，防绕过 |
+| Railgun 隐私池限额检查 | M7 | ✅ | Railgun V3 deposit 解析，Guard 联动 |
+| TierGuardHook（ERC-7579 集成） | M7 | ✅ | Guard 逻辑提取为可安装 Hook 模块 |
+
+#### Guardian 与社交恢复
+
+| Feature | 里程碑 | 状态 | 说明 |
+|---------|:------:|:----:|------|
+| 社交恢复（2-of-3，2天时间锁） | M4 | ✅ | Owner 不能取消（防私钥被盗） |
+| Guardian 接受签名验证 | M5 | ✅ | 部署时链上验证 Guardian 同意（域隔离） |
+| Guardian 轮换治理 | M6.2 | ✅ | 降低安全设置需 Guardian 投票+时间锁 |
+| Packed Guardian Storage | M6 | ✅ | 3 个 Guardian 存于 1 个 bytes32 slot，节省 gas |
+
+#### ERC-7579 模块系统
+
+| Feature | 里程碑 | 状态 | 说明 |
+|---------|:------:|:----:|------|
+| `installModule` / `uninstallModule` | M7 | ✅ | Guardian 阈值门控，防单点妥协 |
+| `executeFromExecutor` | M7 | ✅ | 已安装的 Executor 模块可调用账户执行 |
+| TierGuardHook（Hook 模块） | M7 | ✅ | 工厂默认预装，不可单独卸载 |
+| AirAccountCompositeValidator | M7 | ✅ | 工厂默认预装，统一处理 Weighted/Cumulative |
+| AgentSessionKeyValidator | M7 | ✅ | AI 代理专用 Validator 模块 |
+| nonce key → Validator 路由 | M7 | ✅ | nonce 高 192 位指定 Validator 模块 |
+
+#### 账户管理与工厂
+
+| Feature | 里程碑 | 状态 | 说明 |
+|---------|:------:|:----:|------|
+| CREATE2 确定性地址 | M1 | ✅ | 部署前即知地址 |
+| EIP-1167 Clone 工厂 | M7 | ✅ | 45 字节 proxy，EIP-170 合规（9,527B 工厂） |
+| `createAccountWithDefaults`（Guardian 接受） | M5 | ✅ | 一键部署，Guardian 签名验证 |
+| `getAddressWithDefaults` | M5 | ✅ | 预测地址，无需链上调用 |
+| ERC-7828 链限定地址（跨链标识） | M7 | ✅ | `getChainQualifiedAddress(addr)` |
+| `setP256Key(x, y)` | M2 | ✅ | 设置/更新 Passkey 公钥 |
+| `setWeightConfig(tuple)` | M6.1 | ✅ | 配置加权签名权重和阈值 |
+| `setParserRegistry(addr)` | M6.6b | ✅ | 绑定 Calldata Parser 注册表 |
+| 默认 Token 配置（工厂级） | M7 | ✅ | 工厂部署时注入链特定 Token 限额 |
+
+#### 隐私与互操作
+
+| Feature | 里程碑 | 状态 | 说明 |
+|---------|:------:|:----:|------|
+| OAPD（每 DApp 独立地址） | M6.6a | ✅ | salt = keccak256(owner ++ dappId)，纯链下 |
+| Railgun 隐私池集成 | M7 | ✅ | `RailgunParser` + `CalldataParserRegistry` |
+| ERC-5564 隐身地址公告 | M7 | ✅ | `announceForStealth(addr, ephemeralKey, meta)` |
+| EIP-7702 EOA 委托 | M6.8 | ✅ | `AirAccountDelegate`，无需迁移 |
+
+#### ForceExit（L2 强制退出）
+
+| Feature | 里程碑 | 状态 | 说明 |
+|---------|:------:|:----:|------|
+| ForceExitModule（OP Stack） | M7 | ✅ | 2-of-3 Guardian 门控，`L2ToL1MessagePasser` |
+| ForceExitModule（Arbitrum） | M7 | ✅ | 2-of-3 Guardian 门控，`ArbSys.sendTxToL1` |
+
+#### 无 Gas 交易
+
+| Feature | 里程碑 | 状态 | 说明 |
+|---------|:------:|:----:|------|
+| SuperPaymaster（aPNTs 代 gas） | M3 | ✅ | SBT 门控，aPNTs 预锁定，postOp 精确扣减 |
+
+---
+
+## 3. 用户旅程模拟
+
+### 3.1 旅程 A：新用户首次开户（主路径）
+
+**用户背景**：小明，第一次接触 Web3，有 iPhone，没有 ETH。
+
+```
+[第 1 步] App 引导创建 Passkey
+  → 系统提示：请录入面部 ID 作为钱包密钥
+  → 底层：navigator.credentials.create()
+  → 生成 P256 公钥 (x, y)，私钥永远在 SEP 安全芯片，无法导出
+
+[第 2 步] 选择 Guardian（3 人守护）
+  → 推荐：Guardian1 = 备用设备/Passkey
+           Guardian2 = 信任的家人 EOA
+           Guardian3 = AAStar 社区默认 Guardian（工厂预设）
+  → 每位 Guardian 需在手机上确认（生成 ACCEPT_GUARDIAN 签名）
+
+[第 3 步] 设置日限额
+  → 小明选择：日限额 0.1 ETH（约 $350）
+  → 低于此额度：FaceID 一次即可
+  → 高于此额度：需要更多验证
+
+[第 4 步] 账户部署（App 后台完成）
+  → 调用 factory.createAccountWithDefaults(owner, salt, g1, g1sig, g2, g2sig, dailyLimit)
+  → 链上验证：g1sig 和 g2sig 证明 Guardian 同意
+  → 部署 EIP-1167 clone（45 字节 proxy）
+  → 部署 AAStarGlobalGuard（日限额绑定）
+  → 链上 Gas 由 AAStar 代付（首次部署 SuperPaymaster 赠送）
+
+[完成] 小明的账户地址：由 owner+salt 确定性生成
+  → 可收款：朋友直接向该地址转账
+  → 可发款：FaceID 确认即可（小额）
 ```
 
-### 4.2 环境变量（.env.sepolia）
+**前端关键调用**：
+```typescript
+// 预测地址（无需 gas）
+const address = await factory.read.getAddressWithDefaults([
+  ownerAddr, salt, guardian1Addr, guardian2Addr, dailyLimit
+]);
 
-```bash
-SEPOLIA_RPC_URL=<Alchemy/Infura RPC URL>
-PRIVATE_KEY=<部署者 EOA 私钥>
-PRIVATE_KEY_BOB=<Guardian 1 私钥>
-PRIVATE_KEY_JACK=<Guardian 2 私钥>
-
-# 已部署地址
-AIRACCOUNT_M6_R2_FACTORY=0xa3f03e9f6cde536a1b776162a9f0e462f2adbbbf
-AIRACCOUNT_M6_R2_IMPL=0x3C866080C6AA37697AeA43106956369071d26600
-FACTORY_ADDRESS=0xa3f03e9f6cde536a1b776162a9f0e462f2adbbbf
-ENTRYPOINT_ADDRESS=0x0000000071727De22E5E9d8BAf0edAc6f37da032
-```
-
-### 4.3 部署新工厂
-
-```bash
-forge build
-pnpm tsx scripts/deploy-m6-r2.ts
-# Forge 在 macOS 有 transport 问题，统一用 TypeScript + viem 部署
-```
-
-M7 工厂构造参数：`(entryPoint, communityGuardian, tokens[], tokenConfigs[])`。
-测试时 communityGuardian 传 `address(0)`，tokens 传空数组。
-
-### 4.4 账户初始化后配置
-
-```bash
-# 1. 设置 P256 公钥（Passkey 用户）
-account.setP256Key(x, y)
-
-# 2. 设置加权签名配置（ALG_WEIGHTED 用户）
-account.setWeightConfig({passkeyWeight, ecdsaWeight, ..., tier1Threshold, tier2Threshold, tier3Threshold})
-
-# 3. 设置 DeFi Parser Registry（可选，DeFi 用户）
-account.setParserRegistry(registryAddr)
-
-# 4. 充值 EntryPoint（自付 gas 用户）
-account.addDeposit{value: 0.1 ether}()
-
-# 5. 注册 SessionKeyValidator（Session Key 用户）
-validatorRouter.registerAlgorithm(0x08, sessionKeyValidatorAddr)
+// 部署（需要 gas，由 Paymaster 代付）
+await factory.write.createAccountWithDefaults([
+  ownerAddr, salt,
+  guardian1Addr, guardian1Sig,
+  guardian2Addr, guardian2Sig,
+  dailyLimit
+]);
 ```
 
 ---
 
-## 5. 标准 ERC-4337 交易流程
+### 3.2 旅程 B：小额转账（Tier 1，FaceID 一键完成）
 
-### 5.1 完整流程图
+**场景**：小明向朋友转 0.01 ETH（< 日限额 0.1 ETH，algId=0x02 ECDSA 即可）。
 
 ```
-  User                 SDK / Bundler        EntryPoint           AA Account          Guard
-  ────                 ─────────────        ──────────           ──────────          ─────
-   │                        │                    │                    │                 │
-   │ 1. 构建 UserOp          │                    │                    │                 │
-   │ 2. 签名（ECDSA/P256）   │                    │                    │                 │
-   │───────────────────────>│                    │                    │                 │
-   │                        │ 3. handleOps([op]) │                    │                 │
-   │                        │───────────────────>│                    │                 │
-   │                        │                    │ 4. validateUserOp  │                 │
-   │                        │                    │───────────────────>│                 │
-   │                        │                    │  _validateSignature│                 │
-   │                        │                    │  tstore(algId)     │                 │
-   │                        │                    │  payPrefund        │                 │
-   │                        │                    │<───────────────────│                 │
-   │                        │                    │ 5. execute(dest,val,data)            │
-   │                        │                    │───────────────────>│                 │
-   │                        │                    │                    │ 6. _enforceGuard│
-   │                        │                    │                    │────────────────>│
-   │                        │                    │                    │  tier check     │
-   │                        │                    │                    │  daily limit    │
-   │                        │                    │                    │  algo whitelist │
-   │                        │                    │                    │  token check    │
-   │                        │                    │                    │<────────────────│
-   │                        │                    │                    │ 7. _call(target)│
-   │                        │                    │<───────────────────│                 │
-   │                        │ 8. refund gas      │                    │                 │
-   │                        │<───────────────────│                    │                 │
+[用户操作] 输入金额 0.01 ETH + 收款地址 → 按"发送"
+
+[App 后台]
+  1. 构建 UserOp（callData = account.execute(to, amount, "0x")）
+  2. 从 EntryPoint 获取 nonce
+  3. 计算 userOpHash
+  4. 触发 FaceID（本质是请求签名 userOpHash 的 EIP-191 wrapped hash）
+  5. 构造签名：0x02 ++ ECDSA(65B) = 66 字节
+  6. 发送 UserOp 到 Bundler
+
+[链上执行]
+  EntryPoint.handleOps
+    → account.validateUserOp（ECDSA 验证，algId=0x02）
+    → account.execute → Guard.checkTransaction(0.01 ETH, 0x02)
+      Guard: 0.01 ETH < 0.1 ETH 日限额 ✓，algId=0x02 在白名单 ✓
+    → ETH 转账成功
+
+[Gas] 约 111,674 gas，由 aPNTs 代付
+[耗时] 用户感知约 2-3 秒
 ```
 
-### 5.2 构建 UserOp（TypeScript + viem）
+---
+
+### 3.3 旅程 C：大额转账（Tier 3，需 Guardian 联署）
+
+**场景**：小明向交易所转 2 ETH（> tier2Limit，需要 P256+BLS+Guardian 三因子，algId=0x05）。
+
+```
+[用户操作] 输入 2 ETH → App 提示"大额转账，需要 Guardian 确认"
+
+[App 后台]
+  1. 小明 FaceID（P256 签名 userOpHash）
+  2. 后台 DVT 节点对 userOpHash 进行 BLS 聚合签名（2 个节点，自动）
+  3. Push 通知发给 Guardian（家人手机）："有人请求转出 2 ETH，请确认"
+  4. Guardian 在 App 上刷脸确认（ECDSA 签名）
+
+[链上执行]
+  algId=0x05 签名 = 0x05 ++ P256(r,s) ++ BLSPayload(609B) ++ GuardianECDSA(65B)
+  Guard.checkTransaction(2 ETH, 0x05)：algId=0x05 对应 Tier 3 ✓
+
+[用户感知] 全程约 10-30 秒（等待 Guardian 确认）
+```
+
+---
+
+### 3.4 旅程 D：DApp 使用（Session Key 授权）
+
+**场景**：小明在某 DeFi App 上交换代币，授权 App 在 24 小时内代签。
+
+```
+[授权步骤]
+  1. App 生成临时 ECDSA 密钥对（sessionKey）
+  2. App 请求小明用 FaceID 授权：
+     "允许本 App 在 24 小时内，在 UniswapV3 上最多交换 500 USDC"
+  3. 小明 FaceID 确认 → 生成 grantSig（EIP-191 包装）
+  4. App 调用 sessionKeyValidator.grantSession(account, sessionKey, 24h, uniswapAddr, selector)
+
+[交换时]
+  App 自动构建 UserOp，用 sessionKey 签名（algId=0x08）
+  无需用户再次确认，在授权范围内自动执行
+
+[风险控制]
+  - 过期自动失效（不需要手动撤销）
+  - 超出 contractScope（uniswapAddr）的调用链上拒绝
+  - 超出 selectorScope 的调用链上拒绝
+  - 小明随时可调用 account.revokeSession() 即时撤销
+
+前端调用：
+  await sessionKeyValidator.write.grantSession([
+    account, sessionKey, expiry, contractAddr, selector, ownerSig
+  ]);
+```
+
+---
+
+### 3.5 旅程 E：AI 代理（AgentSessionKey）
+
+**场景**：小明授权 AI 助手在 1 周内自动执行 DeFi 策略，每天最多调用 10 次，累计支出不超过 1000 USDC。
+
+```
+[配置 AI 代理]
+  grantAgentSession(account, agentKey, {
+    expiry: now + 7 days,
+    velocityLimit: 10,           // 每窗口最多 10 次
+    velocityWindow: 24 * 3600,   // 窗口 = 24 小时
+    spendToken: USDC,
+    spendCap: 1000 USDC,
+    callTargets: [uniswap, aave, compound],
+    selectorAllowlist: [swap4b, supply4b, withdraw4b]
+  });
+
+[代理执行时]
+  AI 自动签名 UserOp → validateUserOp 检查：
+    ① agentKey 是否为该账户的 session key ✓
+    ② 是否过期 ✓
+    ③ 今日调用次数 < 10 ✓
+    ④ callTarget 在白名单 ✓
+    ⑤ 累计支出 < 1000 USDC ✓
+  全部通过 → 执行
+
+[子代理委托（M7 新增）]
+  AI 主代理可以向子 AI 委托，但范围只能更窄：
+  agentValidator.delegateSession(subAgentKey, {
+    expiry: 3 days,       // ≤ 父代理 7 days
+    spendCap: 200 USDC,   // ≤ 父代理 1000 USDC
+    velocityLimit: 3,     // ≤ 父代理 10
+    callTargets: [uniswap] // 子集
+  });
+```
+
+---
+
+### 3.6 旅程 F：私钥丢失 → 社交恢复
+
+**场景**：小明手机丢失，需要 Guardian 帮助恢复账户控制权。
+
+```
+[发起恢复]
+  Guardian 1（Bob）：account.proposeRecovery(newOwnerAddress)
+  Guardian 2（Jack）：account.approveRecovery()
+  — 等待 2 天时间锁 —
+
+[执行恢复]
+  任何人：account.executeRecovery()
+  → owner 变为 newOwnerAddress
+  → 原 owner 私钥失效（无法继续签名 UserOp）
+
+[重要限制]
+  - 只有 Guardian 才能发起/取消恢复，owner 不能（防攻击者阻止）
+  - 时间锁 2 天，让真实 owner 有机会发现并通过 Guardian 取消
+  - 取消恢复也需要 2-of-3 Guardian 投票
+```
+
+---
+
+### 3.7 旅程 G：老用户过渡（EIP-7702 入门路径）
+
+**场景**：老王有 MetaMask，不想换地址，但想要 Guard 保护。
+
+```
+[Step 1] 发送 EIP-7702 授权交易（Type 4 tx）
+  authorization_list = [{
+    chainId: 11155111,
+    address: AirAccountDelegate地址,
+    nonce: 当前 EOA nonce,
+    签名: 用 MetaMask 私钥签
+  }]
+  → 老王的 EOA 代码变为指向 AirAccountDelegate
+
+[Step 2] 初始化（目标是自己的 EOA 地址）
+  调用 initialize(guardian1, g1sig, guardian2, g2sig, dailyLimit)
+  → 部署绑定到该 EOA 的 Guard 合约
+
+[使用]
+  - 原 MetaMask 地址不变，朋友/交易所不需要更新
+  - FaceID 签名（如果手机有 App 配合）
+  - 或继续用 MetaMask 签名（ECDSA）
+
+[重大风险]
+  ⚠️ 私钥永远有效，EIP-7702 不撤销私钥
+  ⚠️ 如果私钥泄露，攻击者可以覆盖 EIP-7702 委托
+  建议：仅作过渡，高价值资产尽快迁移到原生 AirAccountV7
+```
+
+---
+
+### 3.8 旅程 H：隐私交易（Railgun + 隐身地址）
+
+**场景**：小明需要在链上进行一笔私密捐款，不想暴露资金来源。
+
+```
+[使用 Railgun 隐私池]
+  1. 小明调用 account.execute(railgunProxy, amount, depositCalldata)
+  2. CalldataParserRegistry 识别 railgunProxy，调用 RailgunParser
+  3. RailgunParser 解析 depositCalldata → (USDC, 500)
+  4. Guard.checkTokenTransaction(USDC, 500, algId) ← 限额检查仍然执行
+  5. Railgun 内部混淆资金流向
+
+[ERC-5564 隐身地址（接收端）]
+  发送方调用：
+  account.announceForStealth(stealthAddr, ephemeralPubKey, metadata)
+  → 接收方扫描 ERC5564Announcer 事件，发现属于自己的资金
+  → 用自己的私钥推导 stealthAddr 的私钥，取走资金
+  → 链上只见 stealthAddr，与接收方公钥不关联
+```
+
+---
+
+## 4. 前端集成指南
+
+### 4.1 核心合约 ABI 索引
 
 ```typescript
-import { encodeFunctionData, toHex, keccak256, concat } from 'viem';
+// 所有 ABI 从 out/ 目录加载（forge build 生成）
+import FactoryABI from '../out/AAStarAirAccountFactoryV7.sol/AAStarAirAccountFactoryV7.json'
+import AccountABI from '../out/AAStarAirAccountV7.sol/AAStarAirAccountV7.json'
+import GuardABI  from '../out/AAStarGlobalGuard.sol/AAStarGlobalGuard.json'
+import EntryPointABI from '../out/IEntryPoint.sol/IEntryPoint.json'
+import SessionKeyABI from '../out/SessionKeyValidator.sol/SessionKeyValidator.json'
+import AgentKeyABI  from '../out/AgentSessionKeyValidator.sol/AgentSessionKeyValidator.json'
+```
 
-// 1. 编码 callData
-const callData = encodeFunctionData({
-  abi: accountAbi,
-  functionName: 'execute',
-  args: [recipientAddress, amountInWei, '0x']
-});
+### 4.2 工厂接口
 
-// 2. 获取 nonce
-const nonce = await publicClient.readContract({
-  address: ENTRYPOINT, abi: entryPointAbi,
-  functionName: 'getNonce', args: [accountAddress, 0n]
-});
+```typescript
+// ── 1. 预测账户地址（无 gas，链下可算）──────────────────────────────
+// 方式 A：完整配置（createAccount 路径）
+factory.read.getAddress([owner, salt, initConfig])
+// 方式 B：简化配置（createAccountWithDefaults 路径）
+factory.read.getAddressWithDefaults([owner, salt, g1, g2, dailyLimit])
 
-// 3. 打包 gas 参数（v0.7 格式，两个 uint128 打包进 bytes32）
-const accountGasLimits = toHex(
-  (300_000n << 128n) | 100_000n,   // verificationGasLimit | callGasLimit
-  { size: 32 }
-);
-const gasFees = toHex(
-  (3_000_000_000n << 128n) | 2_000_000_000n,  // maxFeePerGas | maxPriorityFeePerGas
-  { size: 32 }
-);
+// ── 2. 部署账户 ───────────────────────────────────────────────────────
+// 方式 A：完整配置（开发/高级用户）
+factory.write.createAccount([owner, salt, {
+  guardians: [g1, g2, g3],           // address[3]，未用填 address(0)
+  dailyLimit: parseEther("0.1"),
+  approvedAlgIds: [0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+  minDailyLimit: parseEther("0.01"),  // 10% 下限
+  initialTokens: [USDC_ADDR],
+  initialTokenConfigs: [{ tier1Limit: 500n*1e6n, tier2Limit: 5000n*1e6n, dailyLimit: 10000n*1e6n }]
+}])
 
-// 4. 组装 UserOp
+// 方式 B：默认配置（推荐，用于 App 用户）
+// guardian1Sig = signMessage(keccak256(encodePacked("ACCEPT_GUARDIAN", chainId, factoryAddr, owner, salt)))
+factory.write.createAccountWithDefaults([
+  owner, salt, g1, guardian1Sig, g2, guardian2Sig, dailyLimit
+])
+
+// ── 3. 跨链地址标识（ERC-7828）────────────────────────────────────────
+factory.read.getChainQualifiedAddress([accountAddr])  // bytes32，跨链唯一
+```
+
+### 4.3 账户接口
+
+```typescript
+// ── 执行 ─────────────────────────────────────────────────────────────
+// 单笔调用（通过 UserOp）
+callData = encodeFunctionData({ abi: AccountABI, functionName: 'execute',
+  args: [targetAddr, valueInWei, calldata] })
+
+// 批量调用
+callData = encodeFunctionData({ abi: AccountABI, functionName: 'executeBatch',
+  args: [[target1, target2], [val1, val2], [data1, data2]] })
+
+// ── 账户配置 ──────────────────────────────────────────────────────────
+// P256 公钥（Passkey 开户后调用一次）
+account.write.setP256Key([pubKeyX, pubKeyY])
+
+// 加权签名配置（ALG_WEIGHTED 用户）
+account.write.setWeightConfig([{
+  passkeyWeight: 2, ecdsaWeight: 2,
+  guardianWeights: [1, 1, 1],
+  tier1Threshold: 2, tier2Threshold: 4, tier3Threshold: 6
+}])
+
+// DeFi Parser Registry（DeFi 用户）
+account.write.setParserRegistry([registryAddr])
+
+// BLS Aggregator（BLS 用户）
+account.write.setAggregator([aggregatorAddr])
+
+// ── ERC-7579 模块管理 ─────────────────────────────────────────────────
+// 安装 Validator 模块（需要 Guardian 阈值签名）
+account.write.installModule([1, validatorAddr, initData])   // type 1 = Validator
+account.write.installModule([2, executorAddr, initData])    // type 2 = Executor
+account.write.installModule([4, hookAddr, initData])        // type 4 = Hook
+
+// 卸载（需要 2-of-3 Guardian 投票）
+account.write.uninstallModule([1, validatorAddr, deInitData])
+
+// ── 查询 ──────────────────────────────────────────────────────────────
+account.read.owner()                    // 当前 owner
+account.read.guard()                    // Guard 合约地址
+account.read.guardians()                // [g1, g2, g3]
+account.read.isModuleInstalled([type, addr, ""])  // ERC-7579 查询
+account.read.getDeposit()               // EntryPoint 存款余额
+```
+
+### 4.4 Guard 接口（只读为主）
+
+```typescript
+guard.read.account()          // 绑定的账户地址（不可变）
+guard.read.dailyLimit()       // ETH 日限额（wei）
+guard.read.todaySpent()       // 今日已使用 ETH（wei）
+guard.read.tier1Limit()       // Tier 1 阈值
+guard.read.tier2Limit()       // Tier 2 阈值
+guard.read.minDailyLimit()    // 最低日限额下限
+guard.read.isAlgorithmApproved([algId])  // algId 是否在白名单
+guard.read.approvedAlgorithms()          // 白名单列表
+
+// 降低日限额（只能降不能升，需要当前 owner 签名的 UserOp）
+// 在 UserOp callData 中编码：
+callData = encodeFunctionData({ abi: AccountABI, functionName: 'execute',
+  args: [guardAddr, 0n, encodeFunctionData({ abi: GuardABI,
+    functionName: 'decreaseDailyLimit', args: [newLimit] })] })
+```
+
+### 4.5 Session Key 接口
+
+```typescript
+// ── SessionKeyValidator（algId=0x08，M6.4）────────────────────────────
+// 授权 Session Key（owner 签名）
+const grantHash = await sessionKeyValidator.read.buildGrantHash([
+  account, sessionKey, expiry, contractScope, selectorScope
+])
+const ownerSig = await account.signMessage({ message: { raw: grantHash } })
+await sessionKeyValidator.write.grantSession([
+  account, sessionKey, expiry, contractScope, selectorScope, ownerSig
+])
+
+// 撤销
+await sessionKeyValidator.write.revokeSession([account, sessionKey])
+
+// 签名格式（algId=0x08，ECDSA Session）：
+// [0x08][account(20)][sessionKey(20)][ECDSASig(65)] = 106 字节
+
+// ── AgentSessionKeyValidator（AI 代理，M7）───────────────────────────
+await agentValidator.write.grantAgentSession([account, agentKey, {
+  expiry: BigInt(Date.now()/1000 + 7*86400),
+  velocityLimit: 10,
+  velocityWindow: 86400,
+  spendToken: USDC_ADDR,
+  spendCap: 1000n * 10n**6n,
+  revoked: false,
+  callTargets: [UNISWAP_V3],
+  selectorAllowlist: ['0x04e45aaf']  // exactInputSingle
+}])
+
+// 子代理委托（M7，父 Session Key 调用）
+await agentValidator.write.delegateSession([subAgentKey, {
+  expiry: ...,  // <= 父代理 expiry
+  spendCap: ...,  // <= 父代理 spendCap
+  // ...
+}])
+
+// 撤销
+await agentValidator.write.revokeAgentSession([account, agentKey])
+```
+
+### 4.6 标准 UserOp 构建（ERC-4337 v0.7）
+
+```typescript
+import { toHex, encodeFunctionData, keccak256, hexToBytes } from 'viem'
+
+// 1. 组装 UserOp
 const userOp = {
-  sender: accountAddress,
-  nonce,
-  initCode: '0x',
+  sender: accountAddr,
+  nonce: await entryPoint.read.getNonce([accountAddr, 0n]),
+  initCode: '0x',                   // 账户已部署填 0x
   callData,
-  accountGasLimits,
+  accountGasLimits: toHex((500_000n << 128n) | 200_000n, { size: 32 }),
   preVerificationGas: 60_000n,
-  gasFees,
-  paymasterAndData: '0x',   // 自付 gas 为空；Paymaster 为 72 字节
+  gasFees: toHex((maxPriorityFee << 128n) | maxFee, { size: 32 }),
+  paymasterAndData: '0x',           // 自付 gas；Paymaster 见 §4.7
   signature: '0x'
-};
+}
 
-// 5. 获取 hash 并签名（algId=0x02 ECDSA）
-const userOpHash = await publicClient.readContract({
-  address: ENTRYPOINT, abi: entryPointAbi,
-  functionName: 'getUserOpHash', args: [userOp]
-});
-const ethHash = keccak256(concat([
-  toHex(Buffer.from('\x19Ethereum Signed Message:\n32')),
-  userOpHash
-]));
-const rawSig = await owner.sign({ hash: ethHash });
-userOp.signature = concat(['0x02', rawSig]);  // algId 前缀
+// 2. 获取 hash（直接从 EntryPoint 查询，最准确）
+const userOpHash = await entryPoint.read.getUserOpHash([userOp])
 
-// 6. 提交
+// 3. 签名（algId=0x02 ECDSA 示例）
+const ownerSig = await ownerAccount.signMessage({ message: { raw: userOpHash } })
+userOp.signature = ('0x02' + ownerSig.slice(2)) as `0x${string}`  // 66 字节
+
+// 3b. P256 签名（algId=0x03）
+// [0x03][r(32)][s(32)] = 65 字节，r/s 来自 WebAuthn authenticatorAssertionResponse
+
+// 3c. ALG_WEIGHTED 签名（algId=0x07）
+// [0x07][bitmap(1)][P256_r(32)][P256_s(32)][ECDSA_sig(65)] = 130 字节
+// bitmap: bit0=P256, bit1=ECDSA, bit2=BLS, bit3/4/5=guardian[0/1/2]
+
+// 4. 提交（直接走 Bundler）
 const txHash = await walletClient.writeContract({
   address: ENTRYPOINT, abi: entryPointAbi,
   functionName: 'handleOps',
-  args: [[userOp], bundlerAddress]
-});
+  args: [[userOp], bundlerAddr]
+})
 ```
 
-### 5.3 各算法签名格式
+### 4.7 Paymaster（无 Gas 交易）
 
-| algId | 算法 | 签名格式 | 总长度 |
-|:-----:|------|---------|:------:|
-| `0x02` | ECDSA | `[0x02][r(32)][s(32)][v(1)]` | 66B |
-| `0x03` | P256 Passkey | `[0x03][r(32)][s(32)]` | 65B |
-| `0x04` | 累积 T2（P256+BLS） | `[0x04][P256_r(32)][P256_s(32)][blsPayload]` | 可变 |
-| `0x05` | 累积 T3（+Guardian） | `[0x05][P256_r(32)][P256_s(32)][blsPayload][guardian_r(32)][s(32)][v(1)]` | 可变 |
-| `0x06` | Combined T1 | `[0x06][P256_r(32)][P256_s(32)][ECDSA_r(32)][s(32)][v(1)]` | 130B |
-| `0x07` | ALG_WEIGHTED | `[0x07][bitmap(1)][各分量按 bitmap 顺序]` | 可变 |
-| `0x08` | Session Key | `[0x08][account(20)][key(20)][ECDSASig(65)]` | 106B |
-
----
-
-## 6. 无 gas 交易流程（SuperPaymaster）
-
-### 6.1 用户视角
-
-1. **首次**：App 创建 Passkey → 部署 AA 账户 → 自动领取 SBT 和 aPNTs
-2. **转账前**：余额中有 aPNTs（gas 代币）
-3. **转账时**：点击"发送" → 指纹/面部确认 → 交易完成
-4. **gas 费**：0 ETH，aPNTs 余额略微减少
-
-### 6.2 底层流程
-
-```
-paymasterAndData = [SuperPaymaster(20B)][verifyGasLimit(16B)][postOpGasLimit(16B)][operator(20B)]
-
-EntryPoint.handleOps
-  → AA.validateUserOp（ECDSA 验证）
-  → SuperPaymaster.validatePaymasterUserOp
-      → 检查 SBT ✓
-      → 检查 aPNTs 余额 ✓
-      → 预锁定 aPNTs
-  → AA.execute（实际转账）
-  → SuperPaymaster.postOp
-      → 按实际 gas 用量扣减 aPNTs
-```
-
----
-
-## 7. Gas 成本分析
-
-### 7.1 实测数据（Sepolia，2026-03-20，ECDSA algId=0x02）
-
-| 账户版本 | 空调用 | ETH 转账 | ERC20 转账 | 架构特点 |
-|---------|-------:|---------:|----------:|---------|
-| M5 COMBINED_T1 | 71,397 | 105,591 | **117,181** | 无 token tier 限额 |
-| M5 ERC20_GUARD | 71,397 | 105,619 | **142,268** | token tier 全开 |
-| M6 | 71,601 | 106,289 | **120,277** | 同 M5 架构，增加 ALG_WEIGHTED |
-| M7 | 76,511 | 111,674 | **150,854** | EIP-1167 clone（+~4,000 gas 代理开销） |
-
-> M7 比 M5/M6 多约 5,000 gas：EIP-1167 proxy 每次调用增加一次 DELEGATECALL（冷地址 2,600 gas + 栈帧开销）。批量打包多个 M7 账户 UserOp 时，后续账户自动受益（同一实现地址变 warm，降至 ~100 gas）。
-
-### 7.2 各签名模式实测（M4，Sepolia）
-
-| 签名模式 | Gas | TX Hash |
-|---------|----:|---------|
-| ECDSA（Tier 1） | 140,352 | [`0x13d9ef...`](https://sepolia.etherscan.io/tx/0x13d9ef74a12eeb97ad880b5d72e0be9abe44906534a69b270fcc36fff8b214d4) |
-| P256+BLS（Tier 2） | 278,634 | [`0x28788d...`](https://sepolia.etherscan.io/tx/0x28788d7c03f96594e733224aedd14bd094036576683c3b8108264656ad76403d) |
-| P256+BLS+Guardian（Tier 3） | 288,351 | [`0xb59d86...`](https://sepolia.etherscan.io/tx/0xb59d86c7df12b604ff3099a8fa04ed41c47e1339fea0fd0d6275c31cb499d648) |
-| ALG_WEIGHTED P256+ECDSA（M7） | 94,712 | [`0x2f5d38...`](https://sepolia.etherscan.io/tx/0x2f5d384c76c740ed5b90cd3eb712d7eaf4e95c1c113e44b638bd1c2a060fbe91) |
-| 无 gas（SuperPaymaster） | 181,067 | [`0xbf8296...`](https://sepolia.etherscan.io/tx/0xbf8296da54b567b8d4cd8153482e24273d1011458bb4d38b2515a51cb023b175) |
-
-### 7.3 业界横向对比（ERC20 转账）
-
-| 钱包 | Gas | Guard | 社交恢复 | 分级验证 |
-|------|----:|:-----:|:-------:|:-------:|
-| LightAccount (Alchemy) | ~110,000 | ✗ | ✗ | ✗ |
-| SimpleAccount (Pimlico) | ~115,000 | ✗ | ✗ | ✗ |
-| **AirAccount M5 (COMBINED_T1)** | **117,181** | ✓ | ✓ | ✓ |
-| **AirAccount M6** | **120,277** | ✓ token | ✓ | ✓ |
-| **AirAccount M5 (ERC20_GUARD)** | **142,268** | ✓✓ token+tier | ✓ | ✓ |
-| Kernel (ZeroDev) | ~145,000 | 可选 | 可选 | ✗ |
-| **AirAccount M7** | **150,854** | ✓✓ token+tier | ✓ | ✓ |
-| Biconomy v2 | ~155,000 | ✗ | ✗ | ✗ |
-| Safe (4337 module) | ~175,000 | ✗ | ✓ | ✗ |
-
-### 7.4 部署成本（M7）
-
-| 合约 | Gas | 说明 |
-|------|----:|------|
-| M7 工厂（含 implementation 部署） | 7,193,152 | 一次性，所有用户共享 |
-| 账户创建（clone + guard + initialize） | ~1,542,000 | 每用户一次 |
-| Guard 合约部署（含于账户创建） | ~480,000 | 每账户一次 |
-
----
-
-## 8. 各核心功能详解
-
-### 8.1 分级签名（累积模型）
-
-| Tier | 适用金额 | 签名方式 | algId | 用户操作 |
-|------|---------|---------|:-----:|---------|
-| Tier 1 | ≤ tier1Limit（如 0.1 ETH） | ECDSA | `0x02` | 一键指纹 |
-| Tier 2 | ≤ tier2Limit（如 1 ETH） | P256 Passkey + BLS DVT | `0x04` | 一键 + 后台 DVT |
-| Tier 3 | > tier2Limit | P256 + BLS + Guardian 联署 | `0x05` | 一键 + DVT + Guardian 确认 |
-
-**累积设计**：更高的 Tier 包含更低 Tier 的所有签名。用户不"切换模式"，系统按金额自动叠加验证要求。
-
-### 8.2 ALG_WEIGHTED 加权多签（M6.1）
-
-```
-bitmap（1字节）：bit0=P256, bit1=ECDSA, bit2=BLS, bit3=guardian[0], bit4=guardian[1], bit5=guardian[2]
-
-示例配置：
-  passkeyWeight=2, ecdsaWeight=2, guardian*Weight=1
-  tier1Threshold=3, tier2Threshold=4, tier3Threshold=6
-
-  P256(2) + ECDSA(2) = 4 >= tier2Threshold → 等效 Tier 2
-  ECDSA(2) 单独      = 2 < tier1Threshold  → 拒绝
-```
-
-### 8.3 Guard 支出保护
-
-- `checkTransaction(value, algId)`：ETH 转账限额检查
-- `checkTokenTransaction(token, amount, algId)`：ERC20 + DeFi swap 限额检查
-- 单调安全：日限额只能降低，算法只能添加
-- guard.account 不可变，绕不过
-
-### 8.4 社交恢复
-
-```
-proposeRecovery(newOwner)  ← 任意 guardian 发起
-approveRecovery()          ← 其他 guardian 投票（需 2-of-3）
-                             2天时间锁等待
-executeRecovery()          ← 任何人执行，owner 改为 newOwner
-
-注意：owner 不能调用 cancelRecovery()（防私钥被盗后阻止恢复）
-     取消需要 2-of-3 guardian 投票
-```
-
-### 8.5 Session Key（M6.4）
-
-**ECDSA Session（DApp 服务端自动化）**：
 ```typescript
-// 链下签名授权
-const grantHash = await sessionKeyValidator.buildGrantHash(
-  account, sessionKeyAddress, expiry, contractScope, selectorScope
-);
-const ownerSig = await owner.sign({ hash: grantHash });
-await sessionKeyValidator.grantSession(account, sessionKey, expiry, scope, selector, ownerSig);
+// SuperPaymaster paymasterAndData 格式（72 字节）
+paymasterAndData = concat([
+  superPaymasterAddr,            // 20 字节
+  toHex(verifyGasLimit, { size: 16 }),   // 16 字节
+  toHex(postOpGasLimit, { size: 16 }),   // 16 字节
+  operatorAddr                   // 20 字节
+])
 
-// 执行时签名格式：[0x08][account(20)][key(20)][ECDSA(65)] = 106 bytes
+// 调用 Pimlico 或 Alchemy Bundler 时通过 pm_sponsorUserOperation 获取
+// 或直接使用 AAStar 官方 Bundler（Sepolia）
 ```
 
-**P256 Session（用户 Passkey 自动化）**：
-- 硬件绑定，无法导出私钥
-- 验证通过 EIP-7212 P256VERIFY 预编译（0x100）
-- 签名格式：`[0x08][account(20)][keyX(32)][keyY(32)][r(32)][s(32)]` = 149 bytes
+### 4.8 社交恢复前端流程
 
-两种 Session Key 共同约束：
-- 最长 30 天到期
-- contractScope + selectorScope 在执行阶段链上强制验证
-- Tier 1 日限额同样适用
-- owner 或账户本身可随时即时撤销
+```typescript
+// Step 1：Guardian 发起提案
+await account.write.proposeRecovery([newOwnerAddress])  // msg.sender = guardian
 
-### 8.6 DeFi Calldata Parser（M6.6b）
+// Step 2：另一 Guardian 投票
+await account.write.approveRecovery()  // msg.sender = 另一 guardian
 
-解决 Uniswap 等 DeFi 协议 swap（value=0 的 token 转移）绕过 guard 的问题：
+// Step 3：等待 2 天时间锁后执行
+await account.write.executeRecovery()  // 任何人可调用
 
+// 查询恢复状态
+const recovery = await account.read.activeRecovery()
+// { newOwner, initiatedAt, approvalCount }
+// 显示：距可执行还有 Math.max(0, initiatedAt + 2days - now) 秒
+
+// 取消恢复（需要 2-of-3 Guardian）
+await account.write.cancelRecovery()  // msg.sender = guardian，达到阈值时生效
 ```
-普通 ERC20：transfer(to, amount) → guard 原生识别
-Uniswap swap：exactInputSingle({tokenIn, amountIn, ...}) → value=0，原生 guard 看不懂
-
-CalldataParserRegistry[UniswapV3Router] = UniswapV3Parser
-  → parseTokenTransfer(calldata) → (tokenIn, amountIn)
-  → guard.checkTokenTransaction(tokenIn, amountIn, algId)
-```
-
-**信任假设**：Registry owner 在生产环境必须是 Gnosis Safe 多签（Phase 3）或 DAO（Phase 4），防止注册恶意 parser（返回小金额绕过限额）。
-
-**治理路线**：
-- Phase 1（当前）：单 EOA，开发/测试
-- Phase 2：Timelock（48h 延迟），主网早期
-- Phase 3：Gnosis Safe 3-of-5 + Timelock，成熟主网
-- Phase 4：DAO 治理投票 + Timelock，完全去中心化
-
-### 8.7 EIP-7702 AirAccountDelegate（M6.8，入门路径）
-
-适用场景：用户有 MetaMask/硬件钱包，不想换地址，但想获得 AirAccount 保护。
-
-**启用流程**：
-```
-Step 1: 发送 Type 4 tx（EIP-7702 授权）
-  authorization_list = [{ chainId, AirAccountDelegate地址, nonce, 签名 }]
-  → EOA code 变为 0xef0100 || AirAccountDelegate地址
-
-Step 2: 发送 Type 2 tx（初始化，目标是自己的地址）
-  调用 initialize(guardian1, g1sig, guardian2, g2sig, dailyLimit)
-  → 两个 guardian 需提前签名表示接受
-  → 部署 AAStarGlobalGuard 绑定到该 EOA
-```
-
-**紧急 Rescue 流程**（私钥泄露时）：
-```
-guardian1: initiateRescue(newSafeAddress)  → 2天时间锁开始
-guardian2: approveRescue()                 → 达到 2-of-3
-等待2天后任何人: executeRescue()            → 所有 ETH 转到 newSafeAddress
-```
-
-**重要限制**：
-> EIP-7702 不会使私钥失效。Rescue 后攻击者仍持有私钥，可发起新的 EOA 交易。AirAccountDelegate 保护的是资产，不是密钥本身。建议发生安全事件后迁移到原生 AirAccountV7。
 
 ---
 
-## 9. Validator 与 BLS 节点
+## 5. 已部署合约地址
 
-### 9.1 algId 路由表
+### 5.1 当前版本（M7，Sepolia）
 
-| algId | 算法 | 实现位置 | Tier |
-|:-----:|------|---------|:----:|
-| `0x01` | BLS12-381 聚合 | 外部合约（需注册） | 2/3 |
-| `0x02` | ECDSA | 账户内联 | 1 |
-| `0x03` | P256 Passkey | 账户内联 | 1 |
-| `0x04` | 累积 T2（P256+BLS） | 账户内联 | 2 |
-| `0x05` | 累积 T3（+Guardian） | 账户内联 | 3 |
-| `0x06` | Combined T1（ECDSA+P256） | 账户内联 | 1 |
-| `0x07` | ALG_WEIGHTED | 账户内联 | 可配置 |
-| `0x08` | Session Key | 外部 SessionKeyValidator | 1 |
+| 合约 | 地址 | 说明 |
+|------|------|------|
+| **M7 Factory（最新）** | `0x9D0735E3096C02eC63356F21d6ef79586280289f` | EIP-1167 clone 工厂 |
+| **M7 Implementation** | `0xf01e3Dd359DfF8e578Ee8760266E3fB9530F07A0` | 共享实现（24,497B） |
+| **M7 Account（salt=2000）** | `0xb185C9634dCBC43F71bE7de15001A438eDC50DEb` | Guardian accept 部署，E2E 验证 ✅ |
+| **M7 Account（salt=700）** | `0xCD1eE31b1D887FE7dC086b023Db162C84B499158` | createAccount 部署 |
+| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | ERC-4337 单例（官方） |
 
-### 9.2 预编译依赖
+### 5.2 历史版本（保留，仍可用）
 
-| 预编译 | 地址 | EIP | 需要哪些功能 | 可用链 |
-|--------|------|-----|------------|--------|
-| P256VERIFY | `0x100` | EIP-7212 | Tier 2/3，P256，Combined T1 | Sepolia Pectra+，部分 L2 |
-| BN_G1ADD | `0x0b` | EIP-2537 | BLS 聚合 | Sepolia Prague+ |
-| BN_PAIRING | `0x0f` | EIP-2537 | BLS 聚合 | Sepolia Prague+ |
+| 合约 | 地址 | 版本 | 说明 |
+|------|------|------|------|
+| M6 r4 Factory | `0x34282bef82e14af3cc61fecaa60eab91d3a82d46` | M6 | ALG_WEIGHTED，Session Key |
+| M6 r2 Factory | `0xa3f03e9f6cde536a1b776162a9f0e462f2adbbbf` | M6.2 | clone 工厂首版 |
+| M5 Factory r5 | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` | M5 | ERC20 Guard，BLS DVT |
+| M4 Factory | `0x914db0a849f55e68a726c72fd02b7114b1176d88` | M4 | 累积签名 |
+| BLS Algorithm | `0xc2096E8D04beb3C337bb388F5352710d62De0287` | M2 | BLS12-381 验证 |
+| Validator Router | `0x730a162Ce3202b94cC5B74181B75b11eBB3045B1` | M2 | algId 路由 |
 
----
+> ℹ️ 旧版本合约保留。M5/M6 E2E 测试脚本仍指向对应版本，用于回归验证。
 
-## 10. 测试套件
+### 5.3 SuperPaymaster 生态（Sepolia）
 
-### 10.1 单元测试（Foundry）
-
-```bash
-forge test -vv          # 434 个测试，全部通过
-forge test --summary    # 精简输出
-```
-
-### 10.2 Sepolia E2E 测试
-
-| 脚本 | 测试数 | 命令 |
-|------|:------:|------|
-| M6 r2 E2E（clone factory + guard） | 12 | `pnpm tsx scripts/test-m6-r2-e2e.ts` |
-| M6 Weighted + Guardian Consent | 5 | `pnpm tsx scripts/test-m6-weighted-e2e.ts` |
-| 分级签名 | 5 | `pnpm tsx scripts/test-tiered-e2e.ts` |
-| 社交恢复 | 5 | `pnpm tsx scripts/test-social-recovery-e2e.ts` |
-| 无 gas | 1 | `pnpm tsx scripts/test-gasless-complete-e2e.ts` |
-| 工厂验证 | 5 | `pnpm tsx scripts/test-factory-validation-e2e.ts` |
-| Session Key | 5 | `pnpm tsx scripts/test-session-key-e2e.ts` |
-| OAPD | 6 | `pnpm tsx scripts/test-oapd-e2e.ts` |
-| Calldata Parser | 5 | `pnpm tsx scripts/test-calldata-parser-e2e.ts` |
-| EIP-7702 Delegate | 1 | `pnpm tsx scripts/test-7702-delegate-e2e.ts` |
-| **Gas Benchmark** | 4账户×3测试 | `pnpm tsx scripts/gas-benchmark.ts` |
-
-### 10.3 测试结果汇总
-
-**Foundry 单元测试**: 434/434 通过
-
-**Sepolia E2E 关键结果**:
-
-| 测试 | 结果 | Gas |
-|------|:----:|----:|
-| M7 clone factory 部署 | ✅ | 1,541,979 |
-| M7 账户状态验证（owner/guard/guardian/limit/alg） | ✅ 8/8 | — |
-| M7 ECDSA UserOp | ✅ | 76,487 |
-| M7 ALG_WEIGHTED P256+ECDSA | ✅ | 94,712 |
-| M6 ALG_WEIGHTED P256+ECDSA（Tier 2） | ✅ | 168,731 |
-| Tier 1 ECDSA（0.005 ETH） | ✅ | 140,352 |
-| Tier 2 P256+BLS（0.05 ETH） | ✅ | 278,634 |
-| Tier 3 P256+BLS+Guardian（0.15 ETH） | ✅ | 288,351 |
-| 社交恢复完整流程 | ✅ | ~555,000 |
-| 无 gas（SuperPaymaster） | ✅ | 181,067 |
-
----
-
-## 11. 已知限制
-
-1. **非可升级**：Bug 修复需要新工厂部署 + 用户资产迁移。
-2. **链兼容性**：P256（EIP-7212）和 BLS（EIP-2537）仅在 Pectra/Prague 后的链上可用。
-3. **M7 clone 代理开销**：每次调用 +~4,000 gas（冷 DELEGATECALL），批量打包可降至 ~100 gas。
-4. **AirAccountDelegate 功能子集**：约为 AirAccountV7 的 30%，仅 ECDSA + ETH guard + Guardian Rescue。
-5. **7702 私钥风险**：EIP-7702 不撤销私钥，高价值用户最终应迁移到原生 AirAccountV7。
-6. **CalldataParser 信任假设**：主网上线前 Registry owner 必须移交给 Gnosis Safe 多签。
-
----
-
-## 12. 安全摘要
-
-完整报告见 `docs/security-review.md` 和 `docs/audit_report_2026_03_19_comprehensive.md`。
-
-| 维度 | 机制 |
+| 合约 | 地址 |
 |------|------|
-| 架构 | 非可升级，原子部署，单调安全 |
-| Guard | 不可变绑定，只收紧配置，ERC20 + DeFi tier 强制执行 |
-| 恢复 | 2-of-3 阈值，2 天时间锁，owner 不能取消 |
-| Session Key | 到期链上强制，即时撤销，Tier 1 限额适用 |
-| OAPD | 确定性 salt 跨 DApp 地址隔离 |
-| Parser | 只增不减注册，优雅 fallback，parser 只能收紧不能绕过 guard |
-| 测试覆盖 | 434 单元测试 + 50 E2E 测试，覆盖所有关键路径 |
-| 开放项 | Fuzz 测试，形式化验证，主网审计（计划中） |
+| SuperPaymaster | `0x16cE0c7d846f9446bbBeb9C5a84A4D140fAeD94A` |
+| aPNTs Token | `0xDf669834F04988BcEE0E3B6013B6b867Bd38778d` |
+| SBT（身份） | `0x677423f5Dad98D19cAE8661c36F094289cb6171a` |
+| Price Feed (Chainlink) | `0x694AA1769357215DE4FAC081bf1f309aDC325306` |
+
+### 5.4 测试 EOA 账户
+
+| 角色 | 地址 | 私钥环境变量 |
+|------|------|------------|
+| Owner / Operator | `0xb5600060e6de5E11D3636731964218E53caadf0E` | `PRIVATE_KEY` |
+| Guardian 1 (Bob，派生地址) | `0xF7Bf79AcB7F3702b9DbD397d8140ac9DE6Ce642C` | `PRIVATE_KEY_BOB` |
+| Guardian 2 (Jack) | `0x084b5F85A5149b03aDf9396C7C94D8B8F328FB36` | `PRIVATE_KEY_JACK` |
+
+> ⚠️ `.env.sepolia` 中的 `ADDRESS_BOB_EOA` 与 `PRIVATE_KEY_BOB` 派生地址不符，脚本中务必用 `privateKeyToAccount(PRIVATE_KEY_BOB).address`，不要直接用 `ADDRESS_BOB_EOA`。
 
 ---
 
-## 13. 多链部署指南
+## 6. Validator / Keeper / Bundler 集成依赖
 
-### 13.1 当前部署状态
+### 6.1 Bundler 依赖
 
-| 网络 | 状态 | Factory | 备注 |
-|------|------|---------|------|
-| Sepolia | ✅ 已部署 M6 r2 | `AIRACCOUNT_M6_R2_FACTORY` (.env.sepolia) | 441 单元测试 + 全量 E2E 验证 |
-| OP Mainnet | 🔲 脚本就绪，待部署 | — | EIP-7212 ✓ Fjord upgrade |
-| Base Mainnet | 🔲 脚本就绪（token-presets.json 已配置） | — | 同 OP 步骤 |
-| Arbitrum One | 🔲 规划中 | — | M7 目标 |
+AirAccount 使用 **ERC-4337 v0.7 PackedUserOperation**，需要支持 v0.7 的 Bundler。
 
-### 13.2 OP Mainnet 部署步骤
+| Bundler | 状态 | 配置 |
+|---------|------|------|
+| Alchemy AA | ✅ 推荐 | `SEPOLIA_RPC_URL` / `BUNDLER_URL` |
+| Pimlico | ✅ 推荐 | `PIMLICO_BUNDLER_URL` |
+| Candide (公共，无 key) | ✅ 测试用 | `CANDIDE_BUNDLER_URL` |
+| 自建 Bundler | 需实现 v0.7 | 支持 `eth_sendUserOperation` v0.7 |
 
-```bash
-# 1. 填写 .env.optimism
-#    PRIVATE_KEY=0x...
-#    PRIVATE_KEY_BOB=0x...
-#    PRIVATE_KEY_JACK=0x...
-#    (OPT_MAINNET_RPC 已填写，使用 Alchemy OP key)
+**注意**：Alchemy 免费版有"in-flight transaction limit"（并发限制），E2E 测试应串行运行。
 
-# 2. 确保 out/ 有最新 artifacts
-forge build
+### 6.2 BLS DVT 节点集成
 
-# 3. 部署工厂（~0.001–0.003 ETH，OP gas 极便宜）
-pnpm tsx scripts/deploy-op-mainnet.ts
+BLS 签名（algId=0x01/0x04/0x05）需要链下 DVT 节点网络配合。
 
-# 4. 将输出的地址填入 .env.optimism
-#    AIRACCOUNT_OP_FACTORY=0x...
-#    FACTORY_ADDRESS=0x...
+```
+架构：
+  用户 App → DVT Coordinator（链下服务）→ N 个 BLS 节点
+                                          → 聚合签名（BLS12-381）
+                                          → 返回 blsPayload（609 字节）
 
-# 5. 运行 E2E 验证（向 deployer 地址充少量 OP ETH 后）
-pnpm tsx scripts/test-op-e2e.ts
+接入步骤：
+  1. 节点运营方在 BLS Algorithm 合约注册（registerNode(pubKey)）
+  2. 用户账户开户时选择 N 个 DVT 节点
+  3. Coordinator 服务地址写入账户配置
+
+已注册测试节点（Sepolia）：
+  Node 1 pubkey: 0x0000...113489490... (BLS_TEST_PUBLIC_KEY_1 in .env.sepolia)
+  Node 2 pubkey: 0x0000...102c3707... (BLS_TEST_PUBLIC_KEY_2 in .env.sepolia)
 ```
 
-### 13.3 OP Mainnet 关键合约地址
+### 6.3 Keeper（时间触发）集成
 
-| 合约 | OP Mainnet 地址 | 说明 |
-|------|----------------|------|
-| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | ERC-4337 v0.7（同 Sepolia） |
-| USDC (native) | `0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85` | Circle native USDC on OP |
-| USDT | `0x94b008aA00579c1307B0EF2c499aD98a8ce58e58` | Tether on OP |
-| WETH | `0x4200000000000000000000000000000000000006` | OP 系统合约 WETH |
-| WBTC | `0x68f180fcCe6836688e9084f035309E29Bf0A2095` | Wrapped BTC on OP |
-| EIP-7212 P256 precompile | `0x0000000000000000000000000000000000000100` | Fjord upgrade (Jun 2024) ✓ |
+以下功能需要链下 Keeper 或用户手动触发：
 
-### 13.4 OP Gas 经济学
+| 功能 | Keeper 职责 | 触发时机 |
+|------|------------|---------|
+| 社交恢复执行 | 调用 `executeRecovery()` | `initiatedAt + 2 days` 后 |
+| EIP-7702 Rescue 执行 | 调用 `executeRescue()` | `rescueInitiatedAt + 2 days` 后 |
+| Session Key 过期清理 | 可选，节省存储（gas） | `expiry` 后 |
+| ForceExit 到 L1 | 调用 `finalizeWithdrawal()` | OP Stack: 7 天后；Arbitrum: ~1 天后 |
 
-| 操作 | Gas 单位 | USD 成本（@0.005 gwei, ETH=$3500） |
-|------|---------|----------------------------------|
-| 账户创建（含 guard） | ~2,947,710 | ~$0.052 |
-| ECDSA UserOp | ~140,352 | ~$0.0025 |
-| T2 Weighted UserOp | ~168,731 | ~$0.003 |
-| 社交恢复完整流程 | ~555,000 | ~$0.010 |
+**推荐**：使用 Chainlink Automation 或 Gelato Network 作为 Keeper，或在 App 内置定时任务。
 
-> L2 sub-cent 成本：OP 链上 Gas 赞助（SuperPaymaster）每月 100 万笔交易约 $2,500 — 完全商业可行。
+### 6.4 CalldataParser 集成（新增 DeFi 协议）
+
+要让 Guard 识别新的 DeFi 协议，需要：
+
+```solidity
+// 1. 实现 ICalldataParser 接口
+contract MyProtocolParser is ICalldataParser {
+    function parse(bytes calldata data)
+        external pure returns (address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOut)
+    { ... }
+}
+
+// 2. 在 Registry 注册（Registry owner 授权后执行）
+registry.registerParser(MY_PROTOCOL_ADDR, address(myParser));
+
+// 3. 用户将 Registry 绑定到账户
+account.execute(accountAddr, 0, abi.encodeCall(account.setParserRegistry, registryAddr))
+```
+
+**当前已注册（Sepolia）**：
+- UniswapV3 Router：`0x7464d5ec6891099d299e434ba1727a0a3f07b907`
+- Railgun Proxy：通过 `RailgunParser` 注册
+
+### 6.5 预编译依赖表
+
+| 预编译 | 地址 | EIP | 需要功能 | 当前状态 |
+|--------|------|-----|---------|---------|
+| P256VERIFY | `0x100` | EIP-7212 | algId=0x03/0x04/0x05/0x06 | ✅ Sepolia Pectra+ |
+| BLS12-381（G1/G2/Pairing） | `0x0b`–`0x12` | EIP-2537 | algId=0x01/0x04/0x05 | ✅ Sepolia Prague+ |
+| TSTORE/TLOAD | 内置 | EIP-1153 | algId 跨函数传递 | ✅ Cancun+ 全链 |
+
+---
+
+## 7. 已知限制与风险分析
+
+### 7.1 非可升级设计
+
+- **风险**：发现漏洞无法热修复，需要用户主动迁移资产到新版本工厂的账户。
+- **缓解**：非可升级意味着已审计代码永远不变，用户有充分理由信任；每次升级发布前充分测试和审计。
+- **极端情况**：若发现严重漏洞，将部署新工厂，通过 App 推送迁移指南，Guardian 辅助迁移。
+
+### 7.2 EIP-7702 私钥永久有效
+
+- **风险**：AirAccountDelegate 用户的 EOA 私钥无法被撤销，硬件被盗即资产危险。
+- **缓解**：Rescue 流程可在 2 天内转移 ETH 资产到新地址；建议 30 天内迁移到原生 AirAccountV7。
+- **不适用场景**：持有 >$10,000 资产的用户不应长期使用 AirAccountDelegate。
+
+### 7.3 CalldataParser 信任假设
+
+- **风险**：Registry owner 可以注册返回虚假金额的恶意 Parser，绕过 Guard 限额。
+- **当前状态**：Registry owner = EOA（测试阶段可接受）。
+- **主网要求**：Registry owner **必须**是 Gnosis Safe 3-of-5 + 48h Timelock，才能安全上主网。
+
+### 7.4 BLS 聚合依赖链下节点
+
+- **风险**：DVT 节点宕机时，algId=0x04/0x05 签名无法完成，Tier 2/3 交易被阻塞。
+- **缓解**：用户配置降级路径（如当 DVT 不可用时 Guardian 手动联署，algId=0x05 也可工作）。
+- **建议**：生产环境至少运行 5 个节点，阈值 3-of-5。
+
+### 7.5 P256/BLS 链兼容性
+
+- **P256（algId=0x03/0x06）**：仅限 Pectra+ 链。Ethereum mainnet 主网 Pectra 已激活（2025 Q1）；L2 视具体情况，OP Stack Fjord+ ✅，Arbitrum ✅，zkSync ✅。
+- **BLS（algId=0x01/0x04/0x05）**：仅限 Prague/Pectra+ 链。EIP-2537 在 Ethereum Pectra 中激活；L2 取决于各链升级进度。
+- **退路**：若部署到不支持预编译的链，仅 algId=0x02（ECDSA）和 0x07（Weighted ECDSA-only）可用。
+
+### 7.6 M7 Clone 代理开销
+
+- 每次调用增加约 4,000–5,000 gas（冷 DELEGATECALL）。
+- 批量打包多个 M7 账户 UserOp 时，第 2+ 个账户降至 ~100 gas（地址变 warm）。
+- 相比 LightAccount、SimpleAccount 仍有竞争力（见 §2 Gas 对比表）。
+
+---
+
+## 8. 极端情况处理手册
+
+### 极端情况 1：所有 Guardian 失联
+
+```
+现象：发起社交恢复后无法凑够 2 个 Guardian 投票
+处理：
+  1. owner 私钥仍有效时，正常使用账户（Guard 仍保护资产）
+  2. 在 App 内发起 Guardian 替换提案（需要 owner + 至少 1 个 Guardian）
+  3. 若只有 1 个 Guardian 响应，无法完成恢复 → 资产被 Guard 日限额保护
+  4. 极端情况：owner 私钥和全部 Guardian 同时丢失 → 资产永久锁定
+  预防措施：
+    - 每年检查一次 Guardian 是否仍可联系
+    - Guardian 3 建议使用 AAStar 社区 Guardian（专业看护服务）
+```
+
+### 极端情况 2：单 Guardian 合谋
+
+```
+现象：1 个 Guardian 和 2 个陌生人合谋提议恢复到攻击者地址
+处理：
+  - 提议时 owner 会收到通知（App 监听 RecoveryProposed 事件）
+  - owner 在 2 天时间锁内联系其他 Guardian 发起取消（需要 2-of-3 投票取消）
+  - 2 天后方可执行，owner 有足够反应时间
+  风险评估：低（需要 2 人合谋 + owner 2 天内无响应才能成功）
+```
+
+### 极端情况 3：Gas 费飙升（Bundler 拒绝低费 UserOp）
+
+```
+现象：高 gas 时期 Bundler 拒绝提交 UserOp
+处理：
+  1. 增加 maxFeePerGas（App 实时查询 eth_gasPrice）
+  2. 切换 Bundler（Pimlico 备用 → Candide 公共）
+  3. 如使用 SuperPaymaster：aPNTs 会多扣（按实际 gas 计算），不影响成功率
+  4. 极端情况：直接从 EOA 调用（降级路径，owner 私钥紧急使用）
+```
+
+### 极端情况 4：L2 Sequencer 宕机（ForceExit 场景）
+
+```
+现象：L2 Sequencer 宕机，无法提交 UserOp
+处理（OP Stack）：
+  1. 2-of-3 Guardian 通过 L1 向 L2ToL1MessagePasser 发起 ForceExit
+  2. 等待 7 天挑战期
+  3. 在 L1 上领取资产
+
+处理（Arbitrum）：
+  1. 2-of-3 Guardian 通过 ForceExitModule 调用 ArbSys.sendTxToL1
+  2. 等待约 1 天
+  3. 在 L1 上领取资产
+
+前提：账户需要安装 ForceExitModule（工厂默认不预装，需用户手动安装）
+```
+
+### 极端情况 5：Session Key 被盗
+
+```
+现象：DApp 服务端被攻击，sessionKey 私钥泄露
+处理：
+  1. owner 立即调用 sessionKeyValidator.revokeSession(account, sessionKey)
+     → 链上即时生效，无需等待
+  2. 已执行的交易无法撤销，但 Guard 日限额限制了损失
+  建议：高价值操作不使用 Session Key，日限额 Tier 1 设置保守值
+```
+
+---
+
+## 9. 安全摘要
+
+### 9.1 测试覆盖
+
+| 类型 | 数量 | 状态 |
+|------|:----:|:----:|
+| Foundry 单元测试 | **622** | ✅ 全部通过 |
+| Sepolia E2E 测试 | **约 80+** | ✅ 全部通过（M1–M7） |
+| 内部安全审计 | 3 轮 | ✅（docs/audit_report_*.md） |
+| 正式第三方审计 | 0 | ⏳ 待申请（见 TODO-001） |
+
+### 9.2 安全机制矩阵
+
+| 攻击向量 | 防御机制 | 位置 |
+|---------|---------|------|
+| 单私钥被盗 | 社交恢复 + 时间锁 | `AAStarAirAccountBase` |
+| 大额盗转 | Tier 分级 + Guard 日限额 | `AAStarGlobalGuard` |
+| DeFi 恶意合约 | Calldata 解析 + Token 限额 | `CalldataParserRegistry` |
+| 工厂前抢跑 | CREATE2 盐绑定 owner+guardian | `AAStarAirAccountFactoryV7` |
+| 模块安装攻击 | Guardian 阈值门控 | `AAStarAirAccountV7` |
+| Session Key 滥用 | 作用域+到期+即时撤销 | `SessionKeyValidator` |
+| AI 代理失控 | 速率限制+支出上限+目标白名单 | `AgentSessionKeyValidator` |
+| 跨账户污染 | TSTORE 按账户地址命名空间 | `AAStarValidator` |
+| L2 Sequencer 审查 | ForceExitModule | `ForceExitModule` |
+
+### 9.3 不变量（Invariants）
+
+1. **Guard 不可升级**：`AAStarGlobalGuard.account` 构造后不变，无法换绑
+2. **日限额单调递减**：Guard 限额只能降低，永远不能提高
+3. **社交恢复需要 2/3**：单 Guardian 无法独立完成恢复，2 天时间锁无法绕过
+4. **模块安装需要 Guardian**：单 owner 私钥无法安装恶意模块
+5. **Session Key 隔离**：Account A 的 Session Key 无法验证 Account B 的 UserOp
+6. **algId 路由无降级**：无效 algId 直接 revert，不会降级到更弱算法
+
+---
+
+## 10. 待办事项（TODO List）
+
+> 以下为 M7 发版后尚未完成的任务，需要持续推进。
+
+---
+
+### TODO-001：正式第三方安全审计 🔴 高优先级
+
+**负责人**：Jason（需要手动申请）
+**依赖**：M7 合约层已完成（✅）
+
+**操作步骤**：
+1. **申请 CodeHawks 竞争性审计**
+   - 网站：https://codehawks.com
+   - 联系 Cyfrin：说明公共品（public goods）属性，申请 reduced-cost 审计
+   - 审计范围文档：`docs/audit-scope.md`（已完成）
+   - 已知问题文档：`docs/known-issues.md`（已完成）
+   - 目标奖金池：$15,000–$20,000
+
+2. **同步申请 Immunefi Bug Bounty**（审计后）
+   - 需要先完成正式审计
+   - 初始 Vault 预算：~$50,000
+
+3. **准备材料**
+   - 审计范围：`src/` 下 4,456 行 Solidity（详见 `docs/audit-scope.md`）
+   - 测试覆盖报告：`forge coverage`
+   - 内部审计报告：`docs/audit_report_2026_03_19_comprehensive.md`
+
+---
+
+### TODO-002：前端 / 移动 App SDK 开发 🔴 高优先级
+
+**负责人**：前端团队（独立 Repo：`airaccount-sdk`）
+
+| 功能 | 包 | 优先级 |
+|------|-----|:------:|
+| Passkey 创建与签名 | `@webauthn-p256/core` | P0 |
+| P256 UserOp 签名 | viem + noble/curves | P0 |
+| Session Key 管理 | 封装 SessionKeyValidator ABI | P0 |
+| UserOp 构建助手 | 封装 §4.6 流程 | P0 |
+| ENS 地址解析 | `viem/ens` | P1 |
+| EIP-1193 Provider 包装 | `@mipd/store` + EIP-6963 | P1 |
+| Ledger/Trezor 硬件钱包 | `@ledgerhq/hw-app-eth` | P1 |
+| Helios 轻客户端 | `@a16z/helios` | P2 |
+| x402 AI 微支付 | `@x402/core` | P2 |
+| 每 DApp 独立地址（OAPD） | salt 推导工具函数 | P1 |
+
+**SDK 接口设计原则**：
+```typescript
+// 目标接口风格（供参考）
+import { AirAccount } from '@aastar/airaccount-sdk'
+
+const account = await AirAccount.connect({
+  factory: '0x9D07...',
+  owner: passkeyAccount,
+  guardians: [g1, g2],
+  dailyLimit: parseEther('0.1'),
+  bundler: 'https://api.pimlico.io/...'
+})
+
+await account.send({ to: recipient, value: parseEther('0.01') })
+// → 自动选择 algId，自动构建 UserOp，自动提交 Bundler
+```
+
+---
+
+### TODO-003：多链部署 🟡 中优先级
+
+**状态**：`deploy-multichain.ts` 脚本已完成，等待执行
+
+| 链 | 状态 | ForceExit 类型 | 备注 |
+|----|------|---------------|------|
+| Sepolia（测试网） | ✅ 已部署 | — | |
+| Ethereum Mainnet | ⏳ 待部署 | — | 需审计后 |
+| OP Mainnet | ⏳ 待执行 | `L2ToL1MessagePasser` | EIP-7212 ✅ |
+| Base Mainnet | ⏳ 待执行 | OP Stack 同上 | `token-presets.json` 已配 |
+| Arbitrum One | ⏳ 待执行 | `ArbSys.sendTxToL1` | |
+| zkSync Era | ⏳ 规划中 | zkSync 原生退出 | |
+
+**部署命令**：
+```bash
+CHAIN=optimism pnpm tsx scripts/deploy-multichain.ts
+CHAIN=base pnpm tsx scripts/deploy-multichain.ts
+```
+
+---
+
+### TODO-004：CalldataParser Registry 治理升级 🟡 中优先级
+
+**当前状态**：Registry owner = EOA（开发阶段）
+**主网要求**：移交给 Gnosis Safe 3-of-5 + 48h Timelock
+
+步骤：
+1. 部署 Gnosis Safe（3-of-5，含 Jason + AAStar 核心成员）
+2. 部署 TimelockController（48h delay）
+3. `registry.transferOwnership(timelockAddr)`
+4. 后续新增 Parser 需要 Safe 多签提案 → 48h 后生效
+
+---
+
+### TODO-005：BLS DVT 生产节点网络 🟡 中优先级
+
+**当前状态**：2 个测试节点（`BLS_TEST_PUBLIC_KEY_1/2`），仅用于 E2E 测试
+**生产要求**：5+ 独立节点，3-of-5 阈值，地理分布
+
+步骤：
+1. 招募节点运营方（DVT 节点运营激励设计）
+2. 节点软件开发（DVT Coordinator + BLS 签名服务）
+3. 在 BLS Algorithm 合约注册节点公钥
+4. App 端接入 DVT Coordinator API
+
+---
+
+### TODO-006：SuperPaymaster 集成测试 🟡 中优先级
+
+**当前状态**：SuperPaymaster 合约已部署，E2E 测试通过（1 笔），但缺少：
+- aPNTs 自动充值流程（当余额不足时如何提示用户）
+- 与 M7 工厂账户的完整集成测试（当前 E2E 基于 M5 账户）
+- Bundler 的 `pm_sponsorUserOperation` 接口对接
+
+---
+
+### TODO-007：ERC-7579 模块生态接入 🟢 低优先级
+
+AirAccount M7 已完整实现 ERC-7579 Validator / Executor / Hook 接口，可接入：
+- **ZeroDev 插件生态**（via Kernel 兼容层）
+- **Rhinestone 模块市场**（Registry 风格模块安装）
+- **自定义 Executor 模块**（如 DCA 策略、自动 Rebalancing）
+
+接入步骤：
+1. 验证 `IERC7579Account` 接口兼容性（`accountId()` 返回 `aastar.airaccount.v0.16.0`）
+2. 测试第三方模块安装流程（`installModule` + Guardian 签名）
+3. 上架 Rhinestone 模块注册表
+
+---
+
+### TODO-008：WalletBeat 评分优化 🟢 低优先级
+
+参考 `docs/walletbeat-assessment.md`，当前已完成 Stage 1 大部分项目：
+- ⏳ Stage 1 / S1-1：正式安全审计（见 TODO-001）
+- ⏳ Stage 1 / S1-2：硬件钱包 SDK 集成（见 TODO-002）
+- ⏳ Stage 2 / S2-4：多链部署（见 TODO-003）
+
+---
+
+### TODO-009：ForceExit 模块部署与测试 🟢 低优先级
+
+**当前状态**：`ForceExitModule.sol` 合约代码已完成，29 个单元测试通过
+**待完成**：
+- Sepolia 上部署合约
+- 接入测试账户，验证 OP Stack 和 Arbitrum 路径的实际链上流程
+- 提供用户 App 内"紧急退出"UI
+
+---
+
+### TODO-010：CHANGELOG 合并冲突修复 🟢 低优先级
+
+`CHANGELOG.md` 第 11 行存在 `<<<<<<< HEAD` 合并冲突标记，需手动清理。
+
+---
+
+*文档版本：v1.0.0（2026-03-21）*
+*下一次更新：审计完成后更新第三方审计结果*
