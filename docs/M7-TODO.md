@@ -7,13 +7,12 @@
 
 ---
 
-## Status Summary (2026-03-21)
+## Status Summary (2026-03-21, updated 2026-03-21)
 
 | Status | Count | Items |
 |--------|-------|-------|
-| ✅ Done | 16 | C1-C9, C11, C13-C17 |
-| 🔄 In Progress | 3 | C10, C12, C18 |
-| 🔲 Planned | 7 | F1-F7 (frontend SDK — separate repo) |
+| ✅ Done | 19 | C1-C18 (all contract layer items) |
+| 🔲 Planned | 7 | F1-F7 (frontend SDK — separate repo, out of scope) |
 
 ---
 
@@ -193,7 +192,7 @@ Add ERC-7831 resolver registration method — one-time setup for canonical cross
 ---
 
 ### C10 — L2 deployment + force-exit (M7.5) — Stage 2 / S2-4
-**STATUS: 🔄 IN PROGRESS**
+**STATUS: ✅ DONE (2026-03-21)**
 **Priority**: 🟡 | **Effort**: M | **Depends on**: M6 factory deployed
 
 - Deploy factory at deterministic address using `0x4e59b44847b379578588920cA78FbF26c0B4956C` (CREATE2 deployer)
@@ -233,7 +232,7 @@ contract RailgunParser is ICalldataParser {
 ---
 
 ### C12 — Professional audit prep (M7.6) — Stage 1 / S1-1 (BLOCKING)
-**STATUS: 🔄 IN PROGRESS**
+**STATUS: ✅ DONE (2026-03-21)**
 **Priority**: 🔴 | **Effort**: L | **Depends on**: M7.2 complete
 
 - **Scope doc**: `docs/audit-scope.md` — list all in-scope contracts, interfaces, deployment scripts
@@ -339,7 +338,7 @@ event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet);
 ---
 
 ### C18 — Hierarchical delegation / sub-agents (M7.17)
-**STATUS: 🔄 IN PROGRESS**
+**STATUS: ✅ DONE (2026-03-21)**
 **Priority**: 🟢 | **Effort**: MH | **Depends on**: C16
 
 Extend `AgentSessionKeyValidator`:
