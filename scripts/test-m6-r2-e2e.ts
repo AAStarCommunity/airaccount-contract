@@ -9,11 +9,7 @@
  *   5. Run ALG_WEIGHTED P256+ECDSA (M6.1 feature still works via factory)
  *
  * Prerequisites:
-<<<<<<< HEAD
- *   - pnpm tsx scripts/deploy-m6-r2.ts (set AIRACCOUNT_M6_R3_FACTORY in .env.sepolia)
-=======
  *   - pnpm tsx scripts/deploy-m6-r2.ts (set AIRACCOUNT_M6_R4_FACTORY in .env.sepolia)
->>>>>>> main
  *   - PRIVATE_KEY, PRIVATE_KEY_BOB, PRIVATE_KEY_JACK in .env.sepolia
  *
  * Run: pnpm tsx scripts/test-m6-r2-e2e.ts
@@ -54,11 +50,7 @@ const GUARDIAN0_KEY  = (process.env.PRIVATE_KEY_BOB  || required("PRIVATE_KEY_BO
 const GUARDIAN1_KEY  = (process.env.PRIVATE_KEY_JACK || required("PRIVATE_KEY_JACK")) as Hex;
 const RPC_URL        = process.env.SEPOLIA_RPC ?? process.env.SEPOLIA_RPC_URL ?? required("SEPOLIA_RPC_URL");
 const ENTRYPOINT     = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
-<<<<<<< HEAD
-const FACTORY_ADDR   = (process.env.AIRACCOUNT_M6_R3_FACTORY ?? required("AIRACCOUNT_M6_R3_FACTORY")) as Address;
-=======
 const FACTORY_ADDR   = (process.env.AIRACCOUNT_M6_R4_FACTORY ?? required("AIRACCOUNT_M6_R4_FACTORY")) as Address;
->>>>>>> main
 
 const CHAIN_ID = sepolia.id; // 11155111
 
