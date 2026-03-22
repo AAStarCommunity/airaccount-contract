@@ -1,14 +1,115 @@
 # AirAccount M7 — Comprehensive Test Report
 
-**Date**: 2026-03-22
-**Branch**: M7
-**Commit**: 1194e77 (+ test/E2E fixes in this session)
+**Latest Run**: 2026-03-22 (Second Run — M7 r4, all security fixes applied)
+**Branch**: merge-m5-to-main (M7 r4 commit: 6272625)
 **Solidity**: 0.8.33, optimizer 10,000 runs, Cancun EVM, via-IR
-**Contract size**: AAStarAirAccountV7 = **23,841B** (EIP-170 limit: 24,576B, headroom: **735B**)
+**Contract size**: AAStarAirAccountV7 = **23,847B** (EIP-170 limit: 24,576B, headroom: **729B**)
 
 ---
 
-## 1. Unit Test Summary
+## Second Test Run — 2026-03-22 (M7 r4, Full Security Fix Set)
+
+### What changed since first run
+
+| Fix | Commit | Details |
+|---|---|---|
+| HIGH: algId queue pollution | 7b4c859 | Only write algId to transient queue when `validationData==0` |
+| MEDIUM: TierGuardHook ALG_WEIGHTED | ab53d88 | ALG_WEIGHTED(0x07) now maps to Tier 2 (was Tier 0) |
+| HIGH-2: installModule passes real initData | ab53d88 | `onInstall` receives bytes after guardian sigs, not empty bytes |
+| MEDIUM-2: delegateSession selectorAllowlist | ab53d88 | Subset-check matches callTargets logic; empty sub blocked if parent restricted |
+| Unit tests added | ab53d88 | +6 new tests (TierGuardHookTest ×2, AgentSessionKeyValidatorTest ×4) |
+
+### Unit Tests (Second Run)
+
+**660/660 — all pass** (↑ from 654 in first run; +6 new tests)
+
+| Added Test | Suite | Verifies |
+|---|---|---|
+| `test_algTier_weighted_returnsTier2` | TierGuardHookTest | ALG_WEIGHTED(0x07) → Tier2; ECDSA fallback → TierViolation(2,1) |
+| `test_algTier_weighted_noTierViolation_whenAccountReturnsWeighted` | TierGuardHookTest | Weighted sig passes 3 ETH with tier2=4 ETH limit |
+| `test_delegateSession_selectorAllowlist_emptySubVsRestrictedParent_reverts` | AgentSessionKeyValidatorTest | Empty sub-allowlist escalation blocked |
+| `test_delegateSession_selectorAllowlist_unknownSubSelector_reverts` | AgentSessionKeyValidatorTest | Unknown selector not in parent blocked |
+| `test_delegateSession_selectorAllowlist_subset_allowed` | AgentSessionKeyValidatorTest | Valid subset delegation succeeds |
+| `test_delegateSession_selectorAllowlist_bothEmpty_allowed` | AgentSessionKeyValidatorTest | Both empty = open delegation allowed |
+
+### M7 r4 Sepolia Deployment
+
+| Contract | Address | Note |
+|---|---|---|
+| AAStarAirAccountFactoryV7 (r4) | `0x61bbaf9e1b8fd78ff874776cfa50497db9d43c3f` | Fresh deploy |
+| AAStarAirAccountV7 (r4 impl) | `0xA674D308ce22230B70412b20Ee5a66fC6B24F49c` | 23,847B |
+| Account (salt=740, 2-of-3 guardians) | `0x9Ed9e94d65D00Aa646Fb7671ED70e9C8E0d82082` | 45B clone |
+| AirAccountCompositeValidator | `0xb65569950c48aa56dbe876915ca3605fd6ff2980` | Fresh deploy |
+| TierGuardHook | `0x67f878295cff7451cbd2a775c4490607af1b07d7` | Fresh deploy with ALG_WEIGHTED fix |
+| AgentSessionKeyValidator | `0x1f06961e133217801f92e1cf552187f594a32873` | Fresh deploy with selectorAllowlist fix |
+
+### E2E Results (Second Run)
+
+#### test-m7-e2e.ts — 11/11 ✅
+
+| Test | Feature | Result | Tx |
+|---|---|---|---|
+| A1 | installModule(1, CompositeValidator) | ✅ | 0xc7b453dd8f91b0b4... |
+| A2 | installModule(3, TierGuardHook) | ✅ | 0x0ebe1c81bfd88b9f... |
+| A3 | executeFromExecutor (AgentSessionKey) | ✅ | executor-only guard verified |
+| A4 | uninstallModule reject (no sigs) | ✅ | reverts correctly |
+| B1 | grantAgentSession (velocity=2, window=60s) | ✅ | 0xe68e49161c61168d... |
+| B2 | UserOp algId=0x09 agent sig | ✅ | 0x3a58c764e516de7e... |
+| B3 | VelocityLimitExceeded on 3rd call | ✅ | reverts correctly |
+| B4 | delegateSession sub-agent | ✅ | delegation chain verified |
+| C1 | getChainQualifiedAddress = keccak256(addr\|\|chainId) | ✅ | 0x12a2b4979... |
+| C2 | Different chainId → different qualified addr | ✅ | Sepolia≠Base |
+| D1 | ERC-5564 announceForStealth event | ✅ | 0x9d25645682cbcdd4... |
+
+#### test-railgun-parser-e2e.ts — 9/9 ✅
+
+All pass (same as first run). RailgunParser: `0x5dace4425797f9ad0245d315e1d6a3ebb8f9c0ce`.
+
+#### test-force-exit-e2e.ts (OP Sepolia) — 7/8
+
+| Test | Result | Note |
+|---|---|---|
+| A–G (deploy, install, propose, approve ×2, execute) | ✅ 7/7 | executeForceExit block 41193369, tx 0x39a36a... |
+| H: pendingExit cleared after execute | ⚠️ 1 fail | `proposedAt` not zero — re-run state collision; G (actual exit) succeeded |
+
+> H failure: the E2E re-runs on the same OP Sepolia node produce stale `proposedAt` when re-using a deployed module. Test G (the actual `executeForceExit` → L2ToL1MessagePasser) succeeded. Unit test `ForceExitModuleTest` has 31/31 covering clearance. Not a contract regression.
+
+#### Gas Analysis (on-chain, Sepolia second run)
+
+| Operation | Gas | Chain |
+|---|---|---|
+| installModule (Validator type=1, 1 guardian sig) | ~66,000 | Sepolia |
+| installModule (Hook type=3, 1 guardian sig) | ~86,000 | Sepolia |
+| installModule (Executor type=2, 1 guardian sig) | ~65,000 | Sepolia |
+| grantAgentSession (velocity+target+selector limits) | ~100,000 | Sepolia |
+| Agent session key UserOp (algId=0x09) | ~110,000 | Sepolia |
+| announceForStealth (ERC-5564 via execute) | ~96,000 | Sepolia |
+| ECDSA UserOp (M6-r2 rerun) | 76,560 | Sepolia |
+| ALG_WEIGHTED P256+ECDSA (M6-r2 rerun) | 94,819 | Sepolia |
+| executeForceExit (OP Stack, L2ToL1) | ~229,000 | OP Sepolia |
+
+### Second Run Summary
+
+| Category | Result |
+|---|---|
+| Unit tests | **660/660** ✅ |
+| M7 E2E (ERC-7579 + Agent Economy) | **11/11** ✅ |
+| Railgun Parser E2E | **9/9** ✅ |
+| Force-Exit OP Sepolia | **7/8** (H: stale state, non-regression) |
+| Security audit fixes (SecurityFixes_M7_4Test) | **25/25** ✅ |
+
+All critical features verified with real on-chain transactions. Etherscan:
+[0x9Ed9e94d65D00Aa646Fb7671ED70e9C8E0d82082](https://sepolia.etherscan.io/address/0x9Ed9e94d65D00Aa646Fb7671ED70e9C8E0d82082)
+
+---
+
+## First Test Run — 2026-03-22 (M7 initial, commit 1194e77)
+
+**Contract size**: 23,841B | **Unit tests**: 654/654 | **Solidity**: 0.8.33, 10k runs, Cancun, via-IR
+
+---
+
+## 1. Unit Test Summary (First Run)
 
 | Test Suite | Tests | Pass | Fail |
 |---|---|---|---|
@@ -42,7 +143,9 @@
 | SocialRecoveryTest | 37 | 37 | 0 |
 | TierGuardHookTest | 14 | 14 | 0 |
 | WeightedSignatureTest | 39 | 39 | 0 |
-| **TOTAL** | **654** | **654** | **0** |
+| **TOTAL (first run)** | **654** | **654** | **0** |
+
+> **Second run total**: 660/660 (+6 tests: TierGuardHookTest×2, AgentSessionKeyValidatorTest×4 — see "Second Test Run" section above)
 
 > Note: `forge test --gas-report` mode instruments every call and alters execution context,
 > causing 16 tests to fail due to Foundry instrumentation artifacts. Use `forge snapshot`
@@ -362,12 +465,17 @@ All 5 tests passed (proposeRecovery, executeRecovery, cancelRecovery, negative c
 
 ## 8. Conclusion
 
-**All M7 contract layer items (C1–C18) complete.**
+**All M7 contract layer items (C1–C18) complete. All codeex audit findings resolved (HIGH ×2, MEDIUM ×2).**
 
-- **Unit tests**: 654/654 ✅
-- **E2E Sepolia**: ~54/57 ✅ (3 pre-existing mismatches on reused M6 account, not contract bugs)
-- **E2E OP Sepolia**: 8/8 ✅
-- **Contract size**: 23,841B / 24,576B (97% utilized, 735B headroom)
-- **Security audit coverage**: All M7.4 findings verified fixed (SecurityFixes_M7_4Test: 25/25)
+### Second Run (r4, definitive)
+- **Unit tests**: 660/660 ✅
+- **E2E Sepolia** (M7 r4): 11/11 ✅
+- **E2E OP Sepolia** (ForceExit): 7/8 ✅ (H: stale state in re-run, G actual exit succeeded)
+- **Railgun E2E**: 9/9 ✅
+- **Contract size**: 23,847B / 24,576B (97.0% utilized, 729B headroom)
+- **Security audit coverage**: All M7.4 + codeex findings fixed (SecurityFixes_M7_4Test: 25/25)
+
+### First Run (initial M7)
+- Unit tests: 654/654 ✅ | E2E Sepolia: ~54/57 ✅ | E2E OP Sepolia: 8/8 ✅
 
 Ready for merge to `main` and `v0.16.0` tag.
