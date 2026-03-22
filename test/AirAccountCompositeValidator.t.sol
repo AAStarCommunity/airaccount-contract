@@ -5,22 +5,33 @@ import {Test} from "forge-std/Test.sol";
 import {AirAccountCompositeValidator} from "../src/validators/AirAccountCompositeValidator.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 
-/// @dev Mock account that always returns EIP-1271 magic value from isValidSignature
+/// @dev Mock account that always returns 0 (success) from validateCompositeSignature
+///      Also implements isValidSignature for the isValidSignatureWithSender tests.
 contract MockAccountReturnsValid {
+    function validateCompositeSignature(bytes32, bytes calldata) external pure returns (uint256) {
+        return 0; // validation success
+    }
     function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
-        return 0x1626ba7e; // EIP-1271 magic
+        return 0x1626ba7e; // EIP-1271 magic (used by isValidSignatureWithSender tests)
     }
 }
 
-/// @dev Mock account that always returns failure from isValidSignature
+/// @dev Mock account that always returns 1 (failure) from validateCompositeSignature
+///      Also implements isValidSignature for the isValidSignatureWithSender tests.
 contract MockAccountReturnsInvalid {
+    function validateCompositeSignature(bytes32, bytes calldata) external pure returns (uint256) {
+        return 1; // validation failure
+    }
     function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
         return 0xffffffff; // failure magic
     }
 }
 
-/// @dev Mock account that reverts on isValidSignature
+/// @dev Mock account that reverts on validateCompositeSignature
 contract MockAccountReverts {
+    function validateCompositeSignature(bytes32, bytes calldata) external pure returns (uint256) {
+        revert("sig check failed");
+    }
     function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
         revert("sig check failed");
     }

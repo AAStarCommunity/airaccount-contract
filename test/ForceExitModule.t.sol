@@ -36,43 +36,20 @@ contract MockArbSys {
     }
 }
 
-/// @dev Simulates an AirAccount that exposes getConfigDescription() and owner()
+/// @dev Simulates an AirAccount that exposes guardians(i) and owner()
 contract MockAirAccount {
     address public owner;
-    address[3] public _guardians;
+    address[3] private _guardianSlots;
 
-    constructor(address _owner, address[3] memory guardians) {
+    constructor(address _owner, address[3] memory g) {
         owner = _owner;
-        _guardians = guardians;
+        _guardianSlots = g;
     }
 
-    /// @dev Returns a minimal AccountConfig-compatible ABI encoding
-    function getConfigDescription() external view returns (
-        address accountOwner,
-        address guardAddress,
-        uint256 dailyLimit,
-        uint256 dailyRemaining,
-        uint256 tier1Limit,
-        uint256 tier2Limit,
-        address[3] memory guardianAddresses,
-        uint8 guardianCount,
-        bool hasP256Key,
-        bool hasValidator,
-        bool hasAggregator,
-        bool hasActiveRecovery
-    ) {
-        accountOwner      = owner;
-        guardAddress      = address(0);
-        dailyLimit        = 1 ether;
-        dailyRemaining    = 1 ether;
-        tier1Limit        = 0.1 ether;
-        tier2Limit        = 1 ether;
-        guardianAddresses = _guardians;
-        guardianCount     = 3;
-        hasP256Key        = false;
-        hasValidator      = false;
-        hasAggregator     = false;
-        hasActiveRecovery = false;
+    /// @dev ERC-7579-compatible guardian getter (matches AAStarAirAccountBase.guardians)
+    function guardians(uint256 i) external view returns (address) {
+        if (i < 3) return _guardianSlots[i];
+        return address(0);
     }
 
     /// @dev Install the module (calls onInstall on msg.sender = module)

@@ -4,174 +4,141 @@ pragma solidity ^0.8.33;
 import {Test} from "forge-std/Test.sol";
 import {RailgunParser} from "../src/parsers/RailgunParser.sol";
 
-/// @title RailgunParserTest — Unit tests for M7.11 RailgunParser
+/// @title RailgunParserTest — Unit tests for M7.11 RailgunParser (V2.1 correct ABI)
+///
+/// @dev Calldata layout (verified against Railgun-Community/engine V2.1 ABI):
+///
+///   shield() selector: 0x044a40c3
+///     data[4:][128:160] = tokenAddress
+///     data[4:][192:224] = amount
+///     minimum data[4:] length: 352 bytes → total calldata: 356 bytes
+///
+///   transact() selector: 0xd8ae136a
+///     data[4:][544:576] = tokenAddress
+///     data[4:][608:640] = amount
+///     minimum data[4:] length: 960 bytes → total calldata: 964 bytes
 contract RailgunParserTest is Test {
     RailgunParser public parser;
 
-    /// @dev Railgun V3 transact() selector — matches RailgunParser.RAILGUN_TRANSACT
-    bytes4 internal constant RAILGUN_TRANSACT = 0x00f714ce;
-    /// @dev Railgun shield() selector — matches RailgunParser.RAILGUN_SHIELD
-    bytes4 internal constant RAILGUN_SHIELD = 0x960b850d;
+    /// @dev Railgun V2.1 selectors (verified against deployed contracts)
+    bytes4 internal constant RAILGUN_SHIELD   = 0x044a40c3;
+    bytes4 internal constant RAILGUN_TRANSACT = 0xd8ae136a;
 
-    // Sample token addresses
-    address internal constant TOKEN_A = address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48); // USDC mainnet
-    address internal constant TOKEN_B = address(0xdAC17F958D2ee523a2206206994597C13D831ec7); // USDT mainnet
+    address internal constant TOKEN_USDC = address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
+    address internal constant TOKEN_USDT = address(0xdAC17F958D2ee523a2206206994597C13D831ec7);
 
     function setUp() public {
         parser = new RailgunParser();
     }
 
-    // ─── Helper: build calldata with selector + padding + (token, amount) ──────
-    //
-    // RailgunParser strips the 4-byte selector, then passes data[4:] to _parseTransact/_parseShield.
-    // _tryDecodeTokenAmount reads at offset 64 within data[4:]:
-    //   tok = data[4:][64:96]   = data[68:100]
-    //   amt = data[4:][96:128]  = data[100:132]
-    //
-    // So full calldata layout:
-    //   [0:4]    = selector
-    //   [4:68]   = 64 bytes of padding (anything)
-    //   [68:100] = token address (right-padded to 32 bytes)
-    //   [100:132]= amount (uint256)
-    //
-    // Total minimum length: 132 bytes.
-    //
-    // NOTE: _parseShield also requires data[4:].length >= 224, so data.length >= 228.
-    // We pad accordingly for shield tests.
+    // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+    /// @dev Build minimal shield() calldata with valid token+amount at correct offsets.
+    ///      data[4:] layout: 128B padding | tokenAddress(32) | 32B padding | amount(32) | 160B tail padding
+    ///      Total: 4 + 352 = 356 bytes.
+    function _buildShieldCalldata(address token, uint256 amount) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            RAILGUN_SHIELD,
+            new bytes(128),                           // [4:132]   padding (ABI ptr + len + npk + tokenType)
+            bytes32(uint256(uint160(token))),          // [132:164]  tokenAddress  (offset 128 in data[4:])
+            new bytes(32),                            // [164:196]  tokenSubID
+            bytes32(amount),                          // [196:228]  amount         (offset 192 in data[4:])
+            new bytes(160)                            // [228:388]  ShieldCiphertext tail to reach 352-byte min
+        );
+    }
+
+    /// @dev Build minimal transact() calldata with valid token+amount at correct offsets.
+    ///      data[4:] layout: 544B padding | tokenAddress(32) | 32B padding | amount(32) | 320B tail padding
+    ///      Total: 4 + 960 = 964 bytes.
     function _buildTransactCalldata(address token, uint256 amount) internal pure returns (bytes memory) {
         return abi.encodePacked(
-            RAILGUN_TRANSACT,          // [0:4]   selector
-            new bytes(64),             // [4:68]  64-byte padding
-            bytes32(uint256(uint160(token))), // [68:100] token address padded to 32 bytes
-            bytes32(amount)            // [100:132] amount
+            RAILGUN_TRANSACT,
+            new bytes(544),                           // [4:548]   padding (SnarkProof + merkleRoot + offsets + npk + tokenType)
+            bytes32(uint256(uint160(token))),          // [548:580]  tokenAddress  (offset 544 in data[4:])
+            new bytes(32),                            // [580:612]  tokenSubID
+            bytes32(amount),                          // [612:644]  amount         (offset 608 in data[4:])
+            new bytes(320)                            // [644:964]  tail to reach 960-byte min
         );
     }
 
-    /// @dev Build shield calldata — needs data[4:].length >= 224, i.e. data.length >= 228
-    function _buildShieldCalldata(address token, uint256 amount) internal pure returns (bytes memory) {
-        // data[4:] must be >= 224 bytes and token at offset 64 within data[4:]
-        // Layout of data[4:]:
-        //   [0:64]   = 64-byte padding
-        //   [64:96]  = token address
-        //   [96:128] = amount
-        //   [128:224]= 96 more bytes of padding to reach minimum 224 bytes
-        return abi.encodePacked(
-            RAILGUN_SHIELD,            // [0:4]  selector
-            new bytes(64),             // [4:68] 64-byte padding
-            bytes32(uint256(uint160(token))), // [68:100] token
-            bytes32(amount),           // [100:132] amount
-            new bytes(96)              // [132:228] padding to reach 228 total (224 after selector)
-        );
-    }
+    // ─── Selector dispatch ────────────────────────────────────────────────────────
 
-    // ─── Test 1: unknown selector returns (address(0), 0) ─────────────────────
-
-    function test_parseTokenTransfer_unknownSelector_returnsZero() public view {
-        bytes memory data = abi.encodePacked(
-            bytes4(0xDEADBEEF),
-            new bytes(128)
-        );
+    function test_unknownSelector_returnsZero() public view {
+        bytes memory data = abi.encodePacked(bytes4(0xDEADBEEF), new bytes(1000));
         (address tok, uint256 amt) = parser.parseTokenTransfer(data);
         assertEq(tok, address(0));
         assertEq(amt, 0);
     }
 
-    // ─── Test 2: data.length < 4 returns (address(0), 0) ──────────────────────
-
-    function test_parseTokenTransfer_tooShort_returnsZero() public view {
-        bytes memory data = new bytes(3);
-        (address tok, uint256 amt) = parser.parseTokenTransfer(data);
+    function test_tooShort_returnsZero() public view {
+        (address tok, uint256 amt) = parser.parseTokenTransfer(new bytes(3));
         assertEq(tok, address(0));
         assertEq(amt, 0);
     }
 
-    // ─── Test 3: empty bytes returns (address(0), 0) ──────────────────────────
-
-    function test_parseTokenTransfer_emptyData_returnsZero() public view {
+    function test_emptyData_returnsZero() public view {
         (address tok, uint256 amt) = parser.parseTokenTransfer(new bytes(0));
         assertEq(tok, address(0));
         assertEq(amt, 0);
     }
 
-    // ─── Test 4: transact selector with valid data returns non-zero ───────────
+    // ─── shield() ────────────────────────────────────────────────────────────────
 
-    function test_parseTokenTransfer_transactSelector_withValidData_returnsNonZero() public view {
-        bytes memory data = _buildTransactCalldata(TOKEN_A, 1000e6);
+    function test_shield_validData_parsesCorrectly() public view {
+        bytes memory data = _buildShieldCalldata(TOKEN_USDT, 500e18);
         (address tok, uint256 amt) = parser.parseTokenTransfer(data);
-        assertEq(tok, TOKEN_A);
-        assertEq(amt, 1000e6);
-    }
-
-    // ─── Test 5: shield selector with valid data returns non-zero ─────────────
-
-    function test_parseTokenTransfer_shieldSelector_withValidData_returnsNonZero() public view {
-        bytes memory data = _buildShieldCalldata(TOKEN_B, 500e18);
-        (address tok, uint256 amt) = parser.parseTokenTransfer(data);
-        assertEq(tok, TOKEN_B);
+        assertEq(tok, TOKEN_USDT);
         assertEq(amt, 500e18);
     }
 
-    // ─── Test 6: transact selector with zero token returns (address(0), 0) ────
-
-    function test_parseTokenTransfer_transactSelector_zeroToken_returnsZero() public view {
-        // Build calldata with address(0) as token
-        bytes memory data = abi.encodePacked(
-            RAILGUN_TRANSACT,
-            new bytes(64),
-            bytes32(uint256(0)),     // token = address(0)
-            bytes32(uint256(1000e6)) // non-zero amount
-        );
+    function test_shield_zeroToken_returnsZero() public view {
+        bytes memory data = _buildShieldCalldata(address(0), 500e18);
         (address tok, uint256 amt) = parser.parseTokenTransfer(data);
         assertEq(tok, address(0));
         assertEq(amt, 0);
     }
 
-    // ─── Test 7: transact selector with zero amount returns (address(0), 0) ───
-
-    function test_parseTokenTransfer_transactSelector_zeroAmount_returnsZero() public view {
-        // Build calldata with valid token but zero amount
-        bytes memory data = abi.encodePacked(
-            RAILGUN_TRANSACT,
-            new bytes(64),
-            bytes32(uint256(uint160(TOKEN_A))), // valid token
-            bytes32(uint256(0))                 // amount = 0
-        );
+    function test_shield_zeroAmount_returnsZero() public view {
+        bytes memory data = _buildShieldCalldata(TOKEN_USDT, 0);
         (address tok, uint256 amt) = parser.parseTokenTransfer(data);
         assertEq(tok, address(0));
         assertEq(amt, 0);
     }
 
-    // ─── Test 8: transact selector but data too short (< 132 bytes) returns (0, 0) ──
-
-    function test_parseTokenTransfer_transactSelector_insufficientData_returnsZero() public view {
-        // 131 bytes total — one byte short of the 132-byte minimum for _parseTransact
-        bytes memory data = abi.encodePacked(RAILGUN_TRANSACT, new bytes(127));
+    function test_shield_insufficientData_returnsZero() public view {
+        // 355 bytes total = 1 byte short of the 356-byte minimum
+        bytes memory data = abi.encodePacked(RAILGUN_SHIELD, new bytes(351));
         (address tok, uint256 amt) = parser.parseTokenTransfer(data);
         assertEq(tok, address(0));
         assertEq(amt, 0);
     }
 
-    // ─── Test 9: shield selector but data too short (< 228 bytes) returns (0, 0) ───
+    // ─── transact() ──────────────────────────────────────────────────────────────
 
-    function test_parseTokenTransfer_shieldSelector_insufficientData_returnsZero() public view {
-        // 132 bytes total — enough for transact minimum (132) but NOT shield minimum (228)
-        bytes memory data = abi.encodePacked(
-            RAILGUN_SHIELD,
-            new bytes(64),
-            bytes32(uint256(uint160(TOKEN_A))),
-            bytes32(uint256(500e6))
-            // missing 96 bytes of shield padding
-        );
+    function test_transact_validData_parsesCorrectly() public view {
+        bytes memory data = _buildTransactCalldata(TOKEN_USDC, 1000e6);
+        (address tok, uint256 amt) = parser.parseTokenTransfer(data);
+        assertEq(tok, TOKEN_USDC);
+        assertEq(amt, 1000e6);
+    }
+
+    function test_transact_zeroToken_returnsZero() public view {
+        bytes memory data = _buildTransactCalldata(address(0), 1000e6);
         (address tok, uint256 amt) = parser.parseTokenTransfer(data);
         assertEq(tok, address(0));
         assertEq(amt, 0);
     }
 
-    // ─── Test 10: shield selector with zero amount returns (0, 0) ────────────────
+    function test_transact_zeroAmount_returnsZero() public view {
+        bytes memory data = _buildTransactCalldata(TOKEN_USDC, 0);
+        (address tok, uint256 amt) = parser.parseTokenTransfer(data);
+        assertEq(tok, address(0));
+        assertEq(amt, 0);
+    }
 
-    function test_parseTokenTransfer_shieldSelector_zeroAmount_returnsZero() public view {
-        bytes memory data = _buildShieldCalldata(TOKEN_B, 0);
+    function test_transact_insufficientData_returnsZero() public view {
+        // 963 bytes total = 1 byte short of the 964-byte minimum
+        bytes memory data = abi.encodePacked(RAILGUN_TRANSACT, new bytes(959));
         (address tok, uint256 amt) = parser.parseTokenTransfer(data);
         assertEq(tok, address(0));
         assertEq(amt, 0);

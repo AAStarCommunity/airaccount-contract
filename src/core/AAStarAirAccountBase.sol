@@ -8,12 +8,7 @@ import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {IAAStarValidator} from "../interfaces/IAAStarValidator.sol";
 import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
 import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
-import {ICalldataParser} from "../interfaces/ICalldataParser.sol";
-
-/// @dev Minimal interface for CalldataParserRegistry — avoids circular import
-interface ICalldataParserRegistry {
-    function getParser(address dest) external view returns (address);
-}
+import {ICalldataParser, ICalldataParserRegistry} from "../interfaces/ICalldataParser.sol";
 
 /**
  * @title AAStarAirAccountBase
@@ -107,18 +102,18 @@ abstract contract AAStarAirAccountBase is Initializable {
 
     // ── ERC-7579 Module Registry (M7.2) ──
 
-    /// @dev Installed validator modules (moduleTypeId=1). External validators beyond the built-in router.
-    mapping(address => bool) internal _installedValidators;
-
-    /// @dev Installed executor modules (moduleTypeId=2). Execute calls on behalf of this account.
-    mapping(address => bool) internal _installedExecutors;
-
-    /// @dev Installed hook modules (moduleTypeId=3). Pre/post execution hooks beyond built-in guard.
-    mapping(address => bool) internal _installedHooks;
+    /// @dev Installed module registry keyed by module type (1=validator, 2=executor, 3=hook).
+    mapping(uint256 => mapping(address => bool)) internal _installedModules;
 
     /// @dev installModule permission threshold. 40=owner-only, 70=owner+1guardian(default), 100=owner+2guardians.
     ///      0 means uninitialized → defaults to 70 at runtime.
     uint8 internal _installModuleThreshold;
+
+    /// @dev Active ERC-7579 hook module address (at most one active hook per account).
+    ///      Set when a hook (moduleTypeId=3) is installed; cleared on uninstall.
+    ///      When non-zero, execute/executeBatch dispatch preCheck() here and skip the
+    ///      inline guard.checkTransaction call to avoid double-counting daily limits.
+    address internal _activeHook;
 
     // ── P256 Passkey ──
 
@@ -190,7 +185,8 @@ abstract contract AAStarAirAccountBase is Initializable {
     /// @dev Proposals expire after 30 days if never executed
     uint256 internal constant WEIGHT_CHANGE_EXPIRY    = 30 days;
 
-    /// @notice Read-only snapshot of the account's current configuration
+    /// @notice Read-only snapshot of the account's current configuration.
+    ///         Used by off-chain UIs and tools like ForceExitModule to read account state.
     struct AccountConfig {
         address accountOwner;
         address guardAddress;
@@ -246,6 +242,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     error InvalidModuleType();
     error ModuleInvalid();
     error InstallModuleUnauthorized();
+    error HookReverted();
 
     // M6.1 / M6.2
     error WeightConfigNotInitialized();
@@ -429,33 +426,6 @@ abstract contract AAStarAirAccountBase is Initializable {
         return _guardianCount;
     }
 
-    // ─── Config Introspection ────────────────────────────────────────
-
-    /// @notice Returns a snapshot of the account's current configuration.
-    ///         Useful for off-chain UIs to display account status and security posture.
-    function getConfigDescription() external view returns (AccountConfig memory) {
-        uint256 remaining = 0;
-        uint256 limit = 0;
-        if (address(guard) != address(0)) {
-            remaining = guard.remainingDailyAllowance();
-            limit = guard.dailyLimit();
-        }
-
-        return AccountConfig({
-            accountOwner: owner,
-            guardAddress: address(guard),
-            dailyLimit: limit,
-            dailyRemaining: remaining,
-            tier1Limit: tier1Limit,
-            tier2Limit: tier2Limit,
-            guardianAddresses: [_guardian0, _guardian1, _guardian2],
-            guardianCount: _guardianCount,
-            hasP256Key: p256KeyX != bytes32(0),
-            hasValidator: address(validator) != address(0),
-            hasAggregator: blsAggregator != address(0),
-            hasActiveRecovery: activeRecovery.newOwner != address(0)
-        });
-    }
 
     // ─── Signature Validation ─────────────────────────────────────────
 
@@ -675,6 +645,21 @@ abstract contract AAStarAirAccountBase is Initializable {
         return (recovered != address(0) && recovered == owner) ? 0 : 1;
     }
 
+    /// @dev Shared BLS validation helper. Calls the BLS algorithm via validator router.
+    ///      Returns 0 on success, 1 on failure (no validator, no BLS alg, or alg returned 1).
+    ///      Extracts duplicated try/catch from _validateTripleSignature, _validateCumulativeTier2/3,
+    ///      and _validateWeightedSignature to reduce bytecode size.
+    function _callBLSValidator(bytes32 hash, bytes calldata blsData) private view returns (uint256) {
+        if (address(validator) == address(0)) return 1;
+        address blsAlg = validator.getAlgorithm(ALG_BLS);
+        if (blsAlg == address(0)) return 1;
+        try IAAStarAlgorithm(blsAlg).validate(hash, blsData) returns (uint256 r) {
+            return r;
+        } catch {
+            return 1;
+        }
+    }
+
     /**
      * @dev Validate triple signature: ECDSA×2 binding + BLS aggregate verification.
      *
@@ -729,16 +714,8 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
 
         // SECURITY 3: BLS aggregate verification via validator router (standalone mode)
-        address blsAlg = validator.getAlgorithm(ALG_BLS);
-        if (blsAlg == address(0)) return 1;
-
         bytes calldata blsPayload = sigData[32:baseOffset + 512];
-
-        try IAAStarAlgorithm(blsAlg).validate(userOpHash, blsPayload) returns (uint256 blsResult) {
-            return blsResult;
-        } catch {
-            return 1;
-        }
+        return _callBLSValidator(userOpHash, blsPayload);
     }
 
     /**
@@ -801,15 +778,9 @@ abstract contract AAStarAirAccountBase is Initializable {
             bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
             if (mpHash.recover(messagePointSignature) != owner) return 1;
 
-            address blsAlg = validator.getAlgorithm(ALG_BLS);
-            if (blsAlg == address(0)) return 1;
             // Pass BLS payload without nodeIdsLength prefix (same format as standalone BLS)
             bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
-            try IAAStarAlgorithm(blsAlg).validate(userOpHash, blsVerifyData) returns (uint256 r) {
-                if (r != 0) return 1;
-            } catch {
-                return 1;
-            }
+            if (_callBLSValidator(userOpHash, blsVerifyData) != 0) return 1;
             accumulated += wc.blsWeight;
             cursor += blsBlockLen;
         }
@@ -880,18 +851,9 @@ abstract contract AAStarAirAccountBase is Initializable {
         address mpRecovered = mpHash.recover(messagePointSignature);
         if (mpRecovered != owner) return 1;
 
-        // BLS verification via validator router
-        address blsAlg = validator.getAlgorithm(ALG_BLS);
-        if (blsAlg == address(0)) return 1;
-
         // BLS payload for validator: nodeIds + blsSig + messagePoint (skip nodeIdsLength prefix)
         bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
-
-        try IAAStarAlgorithm(blsAlg).validate(userOpHash, blsVerifyData) returns (uint256 blsResult) {
-            return blsResult;
-        } catch {
-            return 1;
-        }
+        return _callBLSValidator(userOpHash, blsVerifyData);
     }
 
     /**
@@ -954,26 +916,9 @@ abstract contract AAStarAirAccountBase is Initializable {
         address mpRecovered = mpHash.recover(messagePointSignature);
         if (mpRecovered != owner) return 1;
 
-        // BLS verification via validator router
-        address blsAlg = validator.getAlgorithm(ALG_BLS);
-        if (blsAlg == address(0)) return 1;
-
         // BLS payload for validator: nodeIds + blsSig + messagePoint (skip nodeIdsLength prefix)
         bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
-
-        try IAAStarAlgorithm(blsAlg).validate(userOpHash, blsVerifyData) returns (uint256 blsResult) {
-            return blsResult;
-        } catch {
-            return 1;
-        }
-    }
-
-    /// @dev Extract nodeIds array from sigData
-    function _extractNodeIds(bytes calldata sigData, uint256 count) internal pure returns (bytes32[] memory nodeIds) {
-        nodeIds = new bytes32[](count);
-        for (uint256 i = 0; i < count; i++) {
-            nodeIds[i] = bytes32(sigData[32 + i * 32:64 + i * 32]);
-        }
+        return _callBLSValidator(userOpHash, blsVerifyData);
     }
 
     // ─── Tiered Routing (F21) ────────────────────────────────────────
@@ -1018,6 +963,9 @@ abstract contract AAStarAirAccountBase is Initializable {
         uint256 value,
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
+        // Hook dispatch BEFORE consuming algId — getCurrentAlgId() peeks at current queue entry.
+        bool hookActive = _activeHook != address(0);
+        if (hookActive) _dispatchHook(value);
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
         uint8 guardAlgId = algId;   // preserve pre-resolution algId for guard whitelist check
         if (algId == ALG_WEIGHTED) {
@@ -1026,7 +974,7 @@ abstract contract AAStarAirAccountBase is Initializable {
         // Consume session key once per execute invocation (mirrors algId consumption).
         // Passed into _enforceGuard to prevent scope bypass in executeBatch.
         bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
-        _enforceGuard(value, algId, guardAlgId, taggedSessionKey, dest, func);
+        _enforceGuard(value, algId, guardAlgId, taggedSessionKey, dest, func, hookActive);
         _call(dest, value, func);
     }
 
@@ -1048,8 +996,10 @@ abstract contract AAStarAirAccountBase is Initializable {
         // Fix: previously _consumeSessionKey() was called inside _enforceGuard (per-call),
         // so calls 2+ in the batch got bytes32(0) and skipped scope enforcement entirely.
         bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
+        // Note: hook dispatch is NOT called for executeBatch — preCheck is single-execute only.
+        // The built-in guard still enforces limits per-call via _enforceGuard.
         for (uint256 i = 0; i < dest.length; i++) {
-            _enforceGuard(value[i], algId, guardAlgId, taggedSessionKey, dest[i], func[i]);
+            _enforceGuard(value[i], algId, guardAlgId, taggedSessionKey, dest[i], func[i], false);
             _call(dest[i], value[i], func[i]);
         }
     }
@@ -1070,6 +1020,28 @@ abstract contract AAStarAirAccountBase is Initializable {
     bytes4 internal constant ERC20_TRANSFER  = 0xa9059cbb;
     bytes4 internal constant ERC20_APPROVE   = 0x095ea7b3;
 
+    /// @dev ERC-7579 preCheck(address,uint256,bytes) selector — keccak256 first 4 bytes.
+    bytes4 private constant _PRECHECK_SEL = bytes4(keccak256("preCheck(address,uint256,bytes)"));
+
+    /// @dev Dispatch ERC-7579 preCheck to the active hook module (if any).
+    ///      Uses compact assembly encoding to avoid abi.encodeWithSignature bytecode cost.
+    ///      Reverts HookReverted() if hook call fails.
+    function _dispatchHook(uint256 ethValue) private {
+        address hook = _activeHook;
+        bytes4 sel = _PRECHECK_SEL;
+        bool ok;
+        assembly {
+            let m := mload(0x40)
+            mstore(m,          sel)       // selector at [0:4]
+            mstore(add(m,  4), caller())  // address at [4:36]
+            mstore(add(m, 36), ethValue)  // value at [36:68]
+            mstore(add(m, 68), 0x60)      // bytes offset = 96
+            mstore(add(m,100), 0)         // bytes length = 0
+            ok := call(gas(), hook, 0, m, 132, 0, 0)
+        }
+        if (!ok) revert HookReverted();
+    }
+
     /// @param algId      Resolved algorithm id (post-weighted-resolution). Used for tier checks.
     /// @param guardAlgId Pre-resolution algorithm id. Passed to guard whitelist check so that
     ///                   approving ALG_WEIGHTED(0x07) covers its tier resolutions (0x02/0x04/0x05).
@@ -1077,7 +1049,10 @@ abstract contract AAStarAirAccountBase is Initializable {
     /// @param taggedSessionKey Pre-consumed session key identifier (bytes32(0) if not a session key op).
     ///        Consumed ONCE by execute()/executeBatch() so every call in a batch shares the same
     ///        scope restrictions — preventing scope bypass on calls 2+ in a batch.
-    function _enforceGuard(uint256 value, uint8 algId, uint8 guardAlgId, bytes32 taggedSessionKey, address dest, bytes calldata func) internal {
+    /// @param skipEthCheck When true, skip guard.checkTransaction (hook already called it to avoid
+    ///        double-counting the daily ETH limit). false for direct owner calls and executeBatch
+    ///        when no hook is active.
+    function _enforceGuard(uint256 value, uint8 algId, uint8 guardAlgId, bytes32 taggedSessionKey, address dest, bytes calldata func, bool skipEthCheck) internal {
         // Cache guard address: avoids 3 separate SLOADs (COLD ~2100 + 2×WARM ~100 = ~2300 gas total)
         address guardAddr = address(guard);
 
@@ -1096,39 +1071,15 @@ abstract contract AAStarAirAccountBase is Initializable {
         // ETH daily limit + algorithm whitelist (writes dailySpent so next batch call sees updated value)
         // guardAlgId: pre-resolution algId so guard whitelist sees ALG_WEIGHTED(0x07) when that's what
         // was approved — approving 0x07 should not require separately approving resolved 0x02/0x04/0x05.
-        if (guardAddr != address(0)) {
+        // Skip when hook is active: hook.preCheck() already called guard.checkTransaction to avoid
+        // double-counting daily limits.
+        if (guardAddr != address(0) && !skipEthCheck) {
             guard.checkTransaction(value, guardAlgId);
         }
 
         // ERC20/DeFi token tier + daily limit enforcement (M5.1 + M6.6b)
         if (func.length >= 4 && guardAddr != address(0)) {
-            bool tokenHandled = false;
-
-            // M6.6b: DeFi parser registry check (runs first, more specific)
-            // try/catch: a buggy/malicious parser must not block execution (LOW audit finding 2026-03-20).
-            // On parser revert we fall through to the native ERC20 fallback below.
-            if (parserRegistry != address(0)) {
-                address parser = ICalldataParserRegistry(parserRegistry).getParser(dest);
-                if (parser != address(0)) {
-                    try ICalldataParser(parser).parseTokenTransfer(func) returns (address tok, uint256 amt) {
-                        if (tok != address(0) && amt > 0) {
-                            guard.checkTokenTransaction(tok, amt, guardAlgId);
-                            tokenHandled = true;
-                        }
-                    } catch {
-                        // Parser failed — fall through to native ERC20 fallback
-                    }
-                }
-            }
-
-            // Fallback: native ERC20 transfer/approve parsing (M5.1)
-            if (!tokenHandled && func.length >= 68) {
-                bytes4 sel = bytes4(func[:4]);
-                if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
-                    uint256 tokenAmount = abi.decode(func[36:68], (uint256));
-                    guard.checkTokenTransaction(dest, tokenAmount, guardAlgId);
-                }
-            }
+            _checkTokenGuard(dest, func, guardAlgId);
         }
 
         // SESSION KEY scope enforcement: verify contractScope and selectorScope against live calldata.
@@ -1225,6 +1176,31 @@ abstract contract AAStarAirAccountBase is Initializable {
             let readIdx := tload(add(WEIGHT_SLOT_BASE, 1))
             weight := tload(add(add(WEIGHT_SLOT_BASE, 2), readIdx))
             tstore(add(WEIGHT_SLOT_BASE, 1), add(readIdx, 1))
+        }
+    }
+
+    /// @dev ERC20/DeFi token guard enforcement shared by _enforceGuard and executeFromExecutor.
+    ///      Checks DeFi parser registry first, falls back to native ERC20 transfer/approve parsing.
+    ///      try/catch on getParser(): a buggy/malicious registry must not block execution (LOW audit 2026-03-20).
+    function _checkTokenGuard(address dest, bytes calldata data, uint8 algId) internal {
+        bool tokenHandled;
+        if (parserRegistry != address(0)) {
+            try ICalldataParserRegistry(parserRegistry).getParser(dest) returns (address parser) {
+                if (parser != address(0)) {
+                    try ICalldataParser(parser).parseTokenTransfer(data) returns (address tok, uint256 amt) {
+                        if (tok != address(0) && amt > 0) {
+                            guard.checkTokenTransaction(tok, amt, algId);
+                            tokenHandled = true;
+                        }
+                    } catch {}
+                }
+            } catch {}
+        }
+        if (!tokenHandled && data.length >= 68) {
+            bytes4 sel = bytes4(data[:4]);
+            if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
+                guard.checkTokenTransaction(dest, abi.decode(data[36:68], (uint256)), algId);
+            }
         }
     }
 

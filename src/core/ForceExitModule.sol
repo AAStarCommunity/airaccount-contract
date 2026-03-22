@@ -17,24 +17,8 @@ interface IArbSys {
     function sendTxToL1(address destination, bytes calldata calldataForL1) external payable returns (uint256);
 }
 
-/// @dev Minimal interface to read guardian snapshot from an AirAccount
-interface IAirAccountConfig {
-    struct AccountConfig {
-        address accountOwner;
-        address guardAddress;
-        uint256 dailyLimit;
-        uint256 dailyRemaining;
-        uint256 tier1Limit;
-        uint256 tier2Limit;
-        address[3] guardianAddresses;
-        uint8 guardianCount;
-        bool hasP256Key;
-        bool hasValidator;
-        bool hasAggregator;
-        bool hasActiveRecovery;
-    }
-    function getConfigDescription() external view returns (AccountConfig memory);
-}
+
+
 
 /**
  * @title ForceExitModule
@@ -270,24 +254,17 @@ contract ForceExitModule is IERC7579Module {
 
     // ─── Internal Helpers ──────────────────────────────────────────────────
 
-    /// @dev Read guardian addresses from an AirAccount via staticcall to getConfigDescription()
+    /// @dev Read guardian addresses from an AirAccount via individual guardians(i) getters.
+    ///      Falls back to address(0) for each slot if the account does not expose the getter.
     function _readGuardians(address account) internal view returns (address[3] memory guardians) {
-        (bool ok, bytes memory returnData) = account.staticcall(
-            abi.encodeWithSignature("getConfigDescription()")
-        );
-        if (ok && returnData.length >= 32) {
-            // AccountConfig is a complex struct; decode the full thing and extract guardianAddresses
-            // The struct layout: accountOwner(addr), guardAddress(addr), dailyLimit(u256), dailyRemaining(u256),
-            //                    tier1Limit(u256), tier2Limit(u256), guardianAddresses(addr[3]),
-            //                    guardianCount(u8), hasP256Key(bool), hasValidator(bool),
-            //                    hasAggregator(bool), hasActiveRecovery(bool)
-            IAirAccountConfig.AccountConfig memory cfg = abi.decode(
-                returnData,
-                (IAirAccountConfig.AccountConfig)
+        for (uint256 i = 0; i < 3; i++) {
+            (bool ok, bytes memory ret) = account.staticcall(
+                abi.encodeWithSignature("guardians(uint256)", i)
             );
-            guardians = cfg.guardianAddresses;
+            if (ok && ret.length >= 32) {
+                guardians[i] = abi.decode(ret, (address));
+            }
         }
-        // If staticcall fails, guardians remain [0,0,0] — execution will fail at approval threshold
     }
 
     /// @dev Read the owner address from an AirAccount via staticcall

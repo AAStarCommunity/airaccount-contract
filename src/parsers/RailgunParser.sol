@@ -3,43 +3,94 @@ pragma solidity ^0.8.33;
 
 import {ICalldataParser} from "../interfaces/ICalldataParser.sol";
 
-/// @title RailgunParser — ICalldataParser for Railgun V3 privacy pool transactions (M7.11)
-/// @notice Parses Railgun deposit (shield) calldata to extract (tokenIn, amountIn) for guard tier enforcement.
-/// @dev Railgun V3 uses a "transact" function for deposits. The guard enforces token spending limits
-///      on Railgun deposits exactly as it does for direct ERC-20 transfers.
+/// @title RailgunParser — ICalldataParser for Railgun V2.1 privacy pool transactions (M7.11)
+/// @notice Parses Railgun shield/transact calldata to extract (tokenAddress, amount) for guard enforcement.
 ///
-///      Railgun V3 mainnet proxy: 0x4025ee6512DBf386F9cf30C7E9A0A37460B3D0B4 (Ethereum)
-///      Railgun V3 Sepolia: check deployment registry at https://docs.railgun.org
+/// @dev ABI verified against Railgun-Community/engine src/abi/V2.1/RailgunSmartWallet.json
+///      and confirmed via eth_abi encoding tests against deployed contracts.
 ///
-///      Deposit flow:
-///        User → RailgunProxy.transact(commitments, encryptedRandom, npk, tokenData...)
-///        The tokenData includes: tokenType, tokenAddress, tokenSubID, amount
+///      ╔══════════════════════════════════════════════════════════════════════════╗
+///      ║  MULTI-CHAIN DEPENDENCY: Railgun V2.1 RailgunSmartWallet (proxy)        ║
+///      ║  Source: github.com/Railgun-Community/shared-models network-config.ts   ║
+///      ║                                                                          ║
+///      ║  Deployed chains and proxy addresses:                                   ║
+///      ║  chainId 1       Ethereum: 0xfa7093cdd9ee6932b4eb2c9e1cde7ce00b1fa4b9  ║
+///      ║  chainId 56      BSC:      0x590162bf4b50f6576a459b75309ee21d92178a10  ║
+///      ║  chainId 137     Polygon:  0x19b620929f97b7b990801496c3b361ca5def8c71  ║
+///      ║  chainId 42161   Arbitrum: 0xFA7093CDD9EE6932B4eb2c9e1cde7CE00B1FA4b9  ║
+///      ║  chainId 11155111 Sepolia: 0xeCFCf3b4eC647c4Ca6D49108b311b7a7C9543fea ║
+///      ║  chainId 80002   Amoy:     0xD1aC80208735C7f963Da560C42d6BD82A8b175B5  ║
+///      ║                                                                          ║
+///      ║  NOT deployed on: Optimism, Base, or any other chain.                  ║
+///      ║  Addresses are NOT CREATE2 deterministic — each chain is different.     ║
+///      ║  Ethereum and Arbitrum share the same address (verified).               ║
+///      ║                                                                          ║
+///      ║  Function selectors are chain-agnostic (derived from ABI, same on all): ║
+///      ║    shield()   = 0x044a40c3                                              ║
+///      ║    transact() = 0xd8ae136a                                              ║
+///      ╚══════════════════════════════════════════════════════════════════════════╝
 ///
-///      For AirAccount guard purposes, we parse the ERC-20 token address and amount from transact().
-///      If parsing fails (unknown format), we return (address(0), 0) — guard falls back to ETH check only.
+///      Function signatures (V2.1):
+///        shield(((bytes32,(uint8,address,uint256),uint120),(bytes32[3],bytes32))[])
+///          selector: 0x044a40c3
+///        transact((((uint256,uint256),(uint256[2],uint256[2]),(uint256,uint256)),bytes32,bytes32[],bytes32[],
+///          (uint16,uint72,uint8,uint64,address,bytes32,(bytes32[4],bytes32,bytes32,bytes,bytes)[]),
+///          (bytes32,(uint8,address,uint256),uint120))[])
+///          selector: 0xd8ae136a
 ///
-/// @dev Supported selectors:
-///      - transact(RailgunTransaction[] calldata transactions, ...) — Railgun V3 deposit
-///      - shield(ShieldRequest[] calldata shieldRequests, ...) — Railgun V3 direct shield
+///      shield() calldata layout (after selector, 1 request):
+///        [0:32]    = 0x20  (pointer to ShieldRequest[] array)
+///        [32:64]   = 1     (array length)
+///        [64:96]   = CommitmentPreimage.npk (bytes32 — random, NOT token address)
+///        [96:128]  = tokenType (uint8, padded to 32)
+///        [128:160] = tokenAddress  ← offset 128
+///        [160:192] = tokenSubID (uint256)
+///        [192:224] = value/amount  ← offset 192
+///        [224:...]  = ShieldCiphertext (encryptedBundle[3] + shieldKey)
+///        Minimum total calldata (after selector): 352 bytes
+///
+///      transact() calldata layout (after selector, 1 transaction):
+///        [0:32]    = 0x20  (pointer to Transaction[] array)
+///        [32:64]   = 1     (array length)
+///        [64:96]   = 0x20  (offset to tx[0])
+///        [96:352]  = SnarkProof (G1a + G2b + G1c = 8 × 32 bytes)
+///        [352:384] = merkleRoot (bytes32)
+///        [384:416] = offset to nullifiers[]
+///        [416:448] = offset to commitments[]
+///        [448:480] = offset to BoundParams
+///        [480:512] = unshieldPreimage.npk (bytes32)
+///        [512:544] = tokenType (uint8, padded to 32)
+///        [544:576] = tokenAddress  ← offset 544
+///        [576:608] = tokenSubID (uint256)
+///        [608:640] = value/amount  ← offset 608
+///        Minimum total calldata (after selector): 960 bytes
 contract RailgunParser is ICalldataParser {
-    // ─── Railgun V3 Selectors ─────────────────────────────────────────
+    // ─── Railgun V2.1 Selectors ──────────────────────────────────────────
 
-    /// @dev Railgun V3 transact() selector
-    /// keccak256("transact((bytes32,bytes32,bytes32,uint256,uint256,(address,uint8,uint256,uint256)[],(uint256[2])[],bytes32,bytes32,bytes,bytes32,uint256)[],uint256,(address,uint256)[],bool,bytes,(bytes32,bytes32)[])") - first 4 bytes
-    /// Note: The actual selector should be verified against the deployed contract.
-    /// Using a commonly observed selector pattern for Railgun V3.
-    bytes4 internal constant RAILGUN_TRANSACT = 0x00f714ce; // Railgun V3 transact()
+    /// @dev shield(((bytes32,(uint8,address,uint256),uint120),(bytes32[3],bytes32))[])
+    bytes4 internal constant RAILGUN_SHIELD   = 0x044a40c3;
 
-    /// @dev Railgun V2/V3 shield() selector
-    /// keccak256("shield((uint256,uint256,(address,uint8,uint256,uint256),(uint256[2],uint256[2]),bytes32)[])") - first 4 bytes
-    bytes4 internal constant RAILGUN_SHIELD = 0x960b850d; // Railgun shield()
+    /// @dev transact((((uint256,uint256),(uint256[2],uint256[2]),(uint256,uint256)),bytes32,bytes32[],bytes32[],
+    ///      (uint16,uint72,uint8,uint64,address,bytes32,(bytes32[4],bytes32,bytes32,bytes,bytes)[]),
+    ///      (bytes32,(uint8,address,uint256),uint120))[])
+    bytes4 internal constant RAILGUN_TRANSACT = 0xd8ae136a;
 
-    // ─── ICalldataParser Implementation ─────────────────────────────
+    // ─── ABI offsets (after selector) ───────────────────────────────────
 
-    /// @notice Parse Railgun deposit calldata to extract (tokenIn, amountIn).
-    /// @param data The full calldata of the Railgun transaction (including selector)
-    /// @return tokenIn ERC-20 token address being deposited (address(0) if ETH or parse failure)
-    /// @return amountIn Amount being deposited (0 if parse failure)
+    // shield(): single-request minimum (array header 64B + request 288B)
+    uint256 internal constant SHIELD_MIN_LEN            = 352;
+    uint256 internal constant SHIELD_TOKEN_ADDR_OFFSET  = 128;
+    uint256 internal constant SHIELD_AMOUNT_OFFSET      = 192;
+
+    // transact(): single-transaction minimum (array header 64B + tx 896B)
+    uint256 internal constant TRANSACT_MIN_LEN           = 960;
+    uint256 internal constant TRANSACT_TOKEN_ADDR_OFFSET = 544;
+    uint256 internal constant TRANSACT_AMOUNT_OFFSET     = 608;
+
+    // ─── ICalldataParser ─────────────────────────────────────────────────
+
+    /// @notice Parse Railgun V2.1 calldata to extract (tokenAddress, amount).
+    ///         Returns (address(0), 0) on unknown selector or parse failure.
     function parseTokenTransfer(bytes calldata data)
         external
         pure
@@ -47,72 +98,33 @@ contract RailgunParser is ICalldataParser {
         returns (address tokenIn, uint256 amountIn)
     {
         if (data.length < 4) return (address(0), 0);
-
         bytes4 sel = bytes4(data[:4]);
 
-        if (sel == RAILGUN_TRANSACT) {
-            return _parseTransact(data[4:]);
-        }
-
-        if (sel == RAILGUN_SHIELD) {
-            return _parseShield(data[4:]);
-        }
-
-        return (address(0), 0); // unknown selector
+        if (sel == RAILGUN_SHIELD)   return _parseShield(data[4:]);
+        if (sel == RAILGUN_TRANSACT) return _parseTransact(data[4:]);
+        return (address(0), 0);
     }
 
-    // ─── Internal Parsers ────────────────────────────────────────────
+    // ─── Internal parsers ────────────────────────────────────────────────
 
-    /// @dev Parse Railgun transact() calldata.
-    ///      Railgun transactions are complex ABI-encoded structures.
-    ///      We extract the first token address and total amount as a best-effort parse.
-    ///
-    ///      The calldata contains an array of RailgunTransaction structs, each of which
-    ///      has a bounded commitments array and token data. For guard purposes, we sum
-    ///      all token amounts in the first transaction's token outputs.
-    ///
-    ///      If the calldata structure cannot be safely decoded, return (address(0), 0).
-    function _parseTransact(bytes calldata data) internal pure returns (address, uint256) {
-        // Railgun V3 transact() ABI is complex. For a best-effort approach,
-        // we try to extract token data from offset 0 (first param = transactions array).
-        // The offset to the array start is encoded at bytes [0:32].
-        if (data.length < 64) return (address(0), 0);
+    /// @dev shield(): tokenAddress at offset 128, amount at offset 192.
+    ///      Minimum data length 352 bytes (after selector).
+    function _parseShield(bytes calldata data) internal pure returns (address tok, uint256 amt) {
+        if (data.length < SHIELD_MIN_LEN) return (address(0), 0);
 
-        // Try to decode as (address token, uint256 amount) at offset 32 of calldata.
-        // This works if the contract was called with a simple single-token deposit
-        // and the token address is at a predictable offset.
-        // For production, this should be updated with exact Railgun V3 ABI decoding.
-        (address tok, uint256 amt) = _tryDecodeTokenAmount(data);
-        return (tok, amt);
+        tok = address(uint160(uint256(bytes32(data[SHIELD_TOKEN_ADDR_OFFSET : SHIELD_TOKEN_ADDR_OFFSET + 32]))));
+        amt = uint256(bytes32(data[SHIELD_AMOUNT_OFFSET : SHIELD_AMOUNT_OFFSET + 32]));
+
+        if (tok == address(0) || amt == 0) return (address(0), 0);
     }
 
-    /// @dev Parse Railgun shield() calldata.
-    ///      shield(ShieldRequest[] requests)
-    ///      ShieldRequest: { random120Bits, fee, tokenData: {tokenType, tokenAddress, tokenSubID, value}, ... }
-    ///      tokenAddress is at a predictable offset for the first request.
-    function _parseShield(bytes calldata data) internal pure returns (address, uint256) {
-        // ShieldRequest[] is ABI encoded as a dynamic array.
-        // Offset to array data: data[0:32]
-        // Array length: at offsetPos
-        // First element starts at offsetPos + 32
-        // tokenAddress field within ShieldRequest is at a known offset.
-        if (data.length < 224) return (address(0), 0); // minimum size for 1 request
+    /// @dev transact(): tokenAddress at offset 544, amount at offset 608.
+    ///      Minimum data length 960 bytes (after selector).
+    function _parseTransact(bytes calldata data) internal pure returns (address tok, uint256 amt) {
+        if (data.length < TRANSACT_MIN_LEN) return (address(0), 0);
 
-        (address tok, uint256 amt) = _tryDecodeTokenAmount(data);
-        return (tok, amt);
-    }
-
-    /// @dev Best-effort scan for ERC-20 address + amount patterns in calldata.
-    ///      Scans at offset 64 (common location for token address in Railgun structs).
-    ///      Returns (address(0), 0) if no valid (token, amount) pair is found.
-    ///      In production, replace with exact Railgun V3 ABI decoding.
-    function _tryDecodeTokenAmount(bytes calldata data) internal pure returns (address tok, uint256 amt) {
-        // Try reading at offset 64 (common location for token address in Railgun structs)
-        uint256 offset = 64;
-        if (data.length < offset + 64) return (address(0), 0);
-
-        tok = address(uint160(uint256(bytes32(data[offset:offset + 32]))));
-        amt = uint256(bytes32(data[offset + 32:offset + 64]));
+        tok = address(uint160(uint256(bytes32(data[TRANSACT_TOKEN_ADDR_OFFSET : TRANSACT_TOKEN_ADDR_OFFSET + 32]))));
+        amt = uint256(bytes32(data[TRANSACT_AMOUNT_OFFSET : TRANSACT_AMOUNT_OFFSET + 32]));
 
         if (tok == address(0) || amt == 0) return (address(0), 0);
     }

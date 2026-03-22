@@ -64,7 +64,6 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     uint256 internal constant MODULE_TYPE_VALIDATOR = 1;
     uint256 internal constant MODULE_TYPE_EXECUTOR  = 2;
     uint256 internal constant MODULE_TYPE_HOOK     = 3;
-    uint256 internal constant MODULE_TYPE_FALLBACK = 4;
 
     /// @notice ERC-7579 account identity string.
     ///         Format: "vendor.name.version" — enables tooling to identify this account type.
@@ -75,30 +74,19 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @notice ERC-7579: declare which module types this account supports.
     ///         M7 declares validator(1), executor(2), and hook(3) support.
     function supportsModule(uint256 moduleTypeId) external pure returns (bool) {
-        return moduleTypeId == MODULE_TYPE_VALIDATOR
-            || moduleTypeId == MODULE_TYPE_EXECUTOR
-            || moduleTypeId == MODULE_TYPE_HOOK;
+        unchecked { return moduleTypeId - 1 < 3; } // 1,2,3=valid; 0 wraps to MAX→false
     }
 
     /// @notice ERC-7579: check whether a module is installed.
-    ///         For validators (type 1): returns true if module == validator router address OR in registry.
-    ///         For executors (type 2): checks installed executor registry.
-    ///         For hooks (type 3): checks installed hook registry.
+    ///         Checks the unified module registry for types 1-3.
+    ///         Note: the built-in ECDSA validator is registered at initialize time.
     function isModuleInstalled(
         uint256 moduleTypeId,
         address module,
         bytes calldata /* additionalContext */
     ) external view returns (bool) {
-        if (moduleTypeId == MODULE_TYPE_VALIDATOR) {
-            return module == address(validator) || _installedValidators[module];
-        }
-        if (moduleTypeId == MODULE_TYPE_EXECUTOR) {
-            return _installedExecutors[module];
-        }
-        if (moduleTypeId == MODULE_TYPE_HOOK) {
-            return _installedHooks[module];
-        }
-        return false;
+        if (moduleTypeId == 0 || moduleTypeId > 3) return false;
+        return _installedModules[moduleTypeId][module];
     }
 
     /// @notice ERC-1271: on-chain signature validation (used by ERC-7579 tooling and DeFi protocols).
@@ -110,6 +98,15 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         address signer = ECDSA.recover(hash, sig);
         if (signer == owner) return 0x1626ba7e;
         return 0xffffffff;
+    }
+
+    /// @notice H-5: Composite signature callback for AirAccountCompositeValidator module.
+    ///         Validates weighted/cumulative signatures using the account's built-in routing.
+    ///         Called by the installed CompositeValidator module via nonce-key routing.
+    ///         Also stores the algId in the transient queue (H-6) for guard tier enforcement.
+    function validateCompositeSignature(bytes32 hash, bytes calldata sig) external returns (uint256) {
+        if (!_installedModules[MODULE_TYPE_VALIDATOR][msg.sender]) revert ModuleNotInstalled();
+        return _validateSignature(hash, sig);
     }
 
     /// @notice ERC-165: interface detection.
@@ -131,10 +128,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     ) external onlyEntryPoint returns (uint256 validationData) {
         // ERC-7579 nonce key routing: high 192 bits of nonce = validator module address (M7.2).
         // If non-zero, route to installed validator module instead of built-in signature routing.
-        uint192 validatorId = uint192(userOp.nonce >> 64);
-        if (validatorId != 0) {
-            address validatorModule = address(uint160(validatorId));
-            if (!_installedValidators[validatorModule]) {
+        address validatorModule = address(uint160(userOp.nonce >> 64));
+        if (validatorModule != address(0)) {
+            if (!_installedModules[MODULE_TYPE_VALIDATOR][validatorModule]) {
                 validationData = 1; // SIG_VALIDATION_FAILED — module not installed
             } else {
                 // selector = keccak256("validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)")
@@ -142,6 +138,10 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
                     abi.encodeWithSelector(0x97003203, userOp, userOpHash)
                 );
                 validationData = (ok && ret.length >= 32) ? abi.decode(ret, (uint256)) : 1;
+                // H-6: store sig[0] as algId so guard receives the correct tier.
+                // CompositeValidator may push a more-specific algId first via validateCompositeSignature;
+                // execute() reads that entry (pos 0) first, leaving this one unconsumed.
+                if (userOp.signature.length > 0) _storeValidatedAlgId(uint8(userOp.signature[0]));
             }
         } else {
             validationData = _validateSignature(userOpHash, userOp.signature);
@@ -153,150 +153,114 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     // ─── ERC-7579 Module Management (M7.2) ────────────────────────────
 
+    /// @dev Best-effort onInstall/onUninstall(bytes) call with empty data.
+    ///      Uses scratch memory (0x00) and ignores call result.
+    function _callLifecycle(bytes4 sel, address module) private {
+        assembly {
+            mstore(0, sel)
+            mstore(4, 0x20)
+            mstore(0x24, 0)
+            pop(call(gas(), module, 0, 0, 0x44, 0, 0))
+        }
+    }
+
+    /// @dev Verify `count` sequential 65-byte ECDSA sigs from distinct guardians.
+    ///      Reverts InstallModuleUnauthorized on any failure (too few bytes, non-guardian, double-vote).
+    function _checkGuardianSigs(bytes32 hash, bytes calldata sigs, uint8 count) private {
+        uint256 bitmap;
+        for (uint8 i; i < count; ++i) {
+            uint256 end = uint256(i + 1) * 65;
+            if (sigs.length < end) revert InstallModuleUnauthorized();
+            address recovered = hash.recover(sigs[end - 65 : end]);
+            uint256 bit = uint256(1) << _guardianIndex(recovered);
+            if (bitmap & bit != 0) revert InstallModuleUnauthorized();
+            bitmap |= bit;
+        }
+    }
+
     /// @notice ERC-7579: Install a module.
     /// @param moduleTypeId 1=Validator, 2=Executor, 3=Hook
     /// @param module Module contract address (must be deployed)
-    /// @param initData Guardian acceptance signature(s) + optional module init data.
-    ///   Number of guardian sigs prepended: 0 if threshold<=40, 1 if threshold<=70, 2 if threshold=100.
-    ///   Guardian sig hash: keccak256("INSTALL_MODULE" || chainId || account || moduleTypeId || module).toEthSignedMessageHash()
+    /// @param initData Guardian acceptance signature(s) prepended.
+    ///   Count: 0 if threshold<=40, 1 if threshold<=70, 2 if threshold=100.
+    ///   Sig hash: keccak256("INSTALL_MODULE" || chainId || account || moduleTypeId || module).toEthSignedMessageHash()
     function installModule(
         uint256 moduleTypeId,
         address module,
         bytes calldata initData
     ) external onlyOwnerOrEntryPoint {
-        if (module == address(0) || module.code.length == 0) revert ModuleInvalid();
+        if (module == address(0)) revert ModuleInvalid();
         if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
 
-        // Determine required guardian signatures based on threshold
         uint8 threshold = _installModuleThreshold == 0 ? 70 : _installModuleThreshold;
         uint8 sigsRequired = threshold >= 100 ? 2 : (threshold >= 70 ? 1 : 0);
 
         if (sigsRequired > 0) {
-            bytes32 installHash = keccak256(
-                abi.encodePacked("INSTALL_MODULE", block.chainid, address(this), moduleTypeId, module)
-            ).toEthSignedMessageHash();
-
-            uint256 approvedBitmap = 0;
-            for (uint8 i = 0; i < sigsRequired; i++) {
-                if (initData.length < uint256(i + 1) * 65) revert InstallModuleUnauthorized();
-                bytes memory sig = abi.encodePacked(initData[uint256(i) * 65:uint256(i + 1) * 65]);
-                address recovered = installHash.recover(sig);
-                uint8 gi = _guardianIndex(recovered); // reverts NotGuardian if not a guardian
-                uint256 bit = uint256(1) << gi;
-                if (approvedBitmap & bit != 0) revert InstallModuleUnauthorized(); // no double-voting
-                approvedBitmap |= bit;
-            }
+            _checkGuardianSigs(
+                keccak256(abi.encodePacked("INSTALL_MODULE", block.chainid, address(this), moduleTypeId, module))
+                    .toEthSignedMessageHash(),
+                initData, sigsRequired
+            );
         }
 
-        if (moduleTypeId == MODULE_TYPE_VALIDATOR) {
-            if (_installedValidators[module]) revert ModuleAlreadyInstalled();
-            _installedValidators[module] = true;
-        } else if (moduleTypeId == MODULE_TYPE_EXECUTOR) {
-            if (_installedExecutors[module]) revert ModuleAlreadyInstalled();
-            _installedExecutors[module] = true;
-        } else {
-            // MODULE_TYPE_HOOK
-            if (_installedHooks[module]) revert ModuleAlreadyInstalled();
-            _installedHooks[module] = true;
-        }
-
+        if (_installedModules[moduleTypeId][module]) revert ModuleAlreadyInstalled();
+        _installedModules[moduleTypeId][module] = true;
+        if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module; // track active hook for dispatch
+        _callLifecycle(0x6d61fe70, module); // M-10: best-effort onInstall(bytes)
         emit ModuleInstalled(moduleTypeId, module);
     }
 
     /// @notice ERC-7579: Uninstall a module.
-    /// @dev Always requires 2 guardian signatures regardless of installModuleThreshold.
-    ///      Guardian sig hash: keccak256("UNINSTALL_MODULE" || chainId || account || moduleTypeId || module).toEthSignedMessageHash()
+    /// @dev Always requires 2 guardian sigs regardless of installModuleThreshold.
+    ///      Sig hash: keccak256("UNINSTALL_MODULE" || chainId || account || moduleTypeId || module).toEthSignedMessageHash()
     function uninstallModule(
         uint256 moduleTypeId,
         address module,
         bytes calldata deInitData
-    ) external {
+    ) external onlyOwnerOrEntryPoint {
         if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
 
-        // Uninstall always requires 2 guardian signatures (stronger than install)
-        if (_guardianCount < 2) revert InstallModuleUnauthorized();
-        bytes32 uninstallHash = keccak256(
-            abi.encodePacked("UNINSTALL_MODULE", block.chainid, address(this), moduleTypeId, module)
-        ).toEthSignedMessageHash();
+        _checkGuardianSigs(
+            keccak256(abi.encodePacked("UNINSTALL_MODULE", block.chainid, address(this), moduleTypeId, module))
+                .toEthSignedMessageHash(),
+            deInitData, 2
+        );
 
-        uint256 approvedBitmap = 0;
-        for (uint8 i = 0; i < 2; i++) {
-            if (deInitData.length < uint256(i + 1) * 65) revert InstallModuleUnauthorized();
-            bytes memory sig = abi.encodePacked(deInitData[uint256(i) * 65:uint256(i + 1) * 65]);
-            address recovered = uninstallHash.recover(sig);
-            uint8 gi = _guardianIndex(recovered); // reverts NotGuardian if not a guardian
-            uint256 bit = uint256(1) << gi;
-            if (approvedBitmap & bit != 0) revert InstallModuleUnauthorized(); // no double-voting
-            approvedBitmap |= bit;
-        }
-
-        if (moduleTypeId == MODULE_TYPE_VALIDATOR) {
-            if (!_installedValidators[module]) revert ModuleNotInstalled();
-            _installedValidators[module] = false;
-        } else if (moduleTypeId == MODULE_TYPE_EXECUTOR) {
-            if (!_installedExecutors[module]) revert ModuleNotInstalled();
-            _installedExecutors[module] = false;
-        } else {
-            if (!_installedHooks[module]) revert ModuleNotInstalled();
-            _installedHooks[module] = false;
-        }
-
+        if (!_installedModules[moduleTypeId][module]) revert ModuleNotInstalled();
+        _installedModules[moduleTypeId][module] = false;
+        if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook == module) _activeHook = address(0);
+        _callLifecycle(0x8a91b0e3, module); // M-10: best-effort onUninstall(bytes)
         emit ModuleUninstalled(moduleTypeId, module);
     }
 
-    /// @dev Execution struct for batch mode in executeFromExecutor
-    struct Execution {
-        address target;
-        uint256 value;
-        bytes data;
-    }
-
-    /// @notice ERC-7579: Execute calls on behalf of this account, called by an installed executor module.
-    /// @param mode ModeCode (bytes32): byte[0]=callType (0x00=single, 0x01=batch), byte[1]=execType (ignored)
-    /// @param executionCalldata For single: abi.encodePacked(target, value, calldata). For batch: abi.encode(Execution[])
-    /// @return returnData Array of return data from each call
+    /// @notice ERC-7579: Execute a single call on behalf of this account, called by an installed executor module.
+    ///         Executor modules are installed via guardians (installModule requires guardian sig), providing
+    ///         authentication. The guard is still enforced here for ETH value AND ERC20 token limits.
+    /// @param mode    ModeCode (bytes32): byte[0] must be 0x00 (single call). Batch mode not supported in M7.
+    /// @param executionCalldata abi.encodePacked(target(20), value(32), calldata)
+    /// @return returnData Single-element array with the call's return bytes
     function executeFromExecutor(
         bytes32 mode,
         bytes calldata executionCalldata
     ) external nonReentrant returns (bytes[] memory returnData) {
-        if (!_installedExecutors[msg.sender]) revert ModuleNotInstalled();
+        if (!_installedModules[MODULE_TYPE_EXECUTOR][msg.sender]) revert ModuleNotInstalled();
+        if (uint8(bytes1(mode)) != 0x00) revert InvalidModuleType(); // only single-call (M7)
+        if (executionCalldata.length < 52) revert ArrayLengthMismatch();
 
-        uint8 callType = uint8(bytes1(mode));
+        address target = address(bytes20(executionCalldata[0:20]));
+        uint256 value  = uint256(bytes32(executionCalldata[20:52]));
+        bytes calldata data = executionCalldata[52:];
 
-        if (callType == 0x00) {
-            // Single call: target(20) ++ value(32) ++ calldata
-            if (executionCalldata.length < 52) revert ArrayLengthMismatch();
-            address target = address(bytes20(executionCalldata[0:20]));
-            uint256 value = uint256(bytes32(executionCalldata[20:52]));
-            bytes calldata data = executionCalldata[52:];
-
-            // Enforce daily limit (no tier re-check: executor install was guardian-gated)
-            if (address(guard) != address(0)) {
-                guard.checkTransaction(value, ALG_ECDSA); // use ALG_ECDSA as executor-level tier
-            }
-
-            returnData = new bytes[](1);
-            (bool success, bytes memory result) = target.call{value: value}(data);
-            if (!success) {
-                assembly { revert(add(result, 32), mload(result)) }
-            }
-            returnData[0] = result;
-        } else if (callType == 0x01) {
-            // Batch call: abi.encode(Execution[])
-            Execution[] memory execs = abi.decode(executionCalldata, (Execution[]));
-            returnData = new bytes[](execs.length);
-            for (uint256 i = 0; i < execs.length; i++) {
-                if (address(guard) != address(0)) {
-                    guard.checkTransaction(execs[i].value, ALG_ECDSA);
-                }
-                (bool success, bytes memory result) = execs[i].target.call{value: execs[i].value}(execs[i].data);
-                if (!success) {
-                    assembly { revert(add(result, 32), mload(result)) }
-                }
-                returnData[i] = result;
-            }
-        } else {
-            revert InvalidModuleType(); // unsupported callType
+        // Enforce ETH + token daily limits at ALG_ECDSA tier.
+        // Executor install required guardian approval, but guard still applies per-op limits.
+        if (address(guard) != address(0)) {
+            guard.checkTransaction(value, ALG_ECDSA);
+            if (data.length >= 4) _checkTokenGuard(target, data, ALG_ECDSA);
         }
+
+        returnData = new bytes[](1);
+        (bool success, bytes memory result) = target.call{value: value}(data);
+        if (!success) { assembly { revert(add(result, 32), mload(result)) } }
+        returnData[0] = result;
     }
 }

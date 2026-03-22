@@ -42,9 +42,11 @@ contract AirAccountCompositeValidator is IERC7579Validator {
 
     // ─── IERC7579Validator ─────────────────────────────────────────
 
-    /// @notice Validate a UserOperation by delegating to the account's ERC-1271 validation.
-    /// @dev The account (msg.sender when called via executeFromEntryPoint flow) validates via
-    ///      its own isValidSignature. This avoids duplicating cryptographic logic.
+    /// @notice Validate a UserOperation by delegating back to the account's full signature validation.
+    /// @dev Calls account.validateCompositeSignature(userOpHash, sig) which runs the same
+    ///      cryptographic logic as the built-in path (P256+BLS+Guardian for T2/T3, weighted for 0x07).
+    ///      The account sets SKIP_ALGID_STORE_SLOT before validation so algId is stored only once
+    ///      (by the outer validateUserOp), preventing queue corruption in batched UserOps.
     function validateUserOp(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash
@@ -59,18 +61,13 @@ contract AirAccountCompositeValidator is IERC7579Validator {
             revert UnsupportedAlgId(algId);
         }
 
-        // Delegate to account's ERC-1271 isValidSignature for verification.
-        // The account's isValidSignature validates owner ECDSA signatures (not UserOp signatures).
-        // For UserOp validation, we need to call the account's validateUserOp logic directly.
-        // Since we're called BY the account via nonce-key routing, the account calls us with
-        // (userOp, userOpHash) — we call back to the account's own _validateSignature indirectly
-        // by verifying the signature matches the userOpHash.
-        (bool ok, bytes memory ret) = userOp.sender.staticcall(
-            abi.encodeWithSignature("isValidSignature(bytes32,bytes)", userOpHash, userOp.signature)
+        // Delegate to account's full validateCompositeSignature (not isValidSignature — that is
+        // owner-ECDSA only and would reject all multi-sig formats).
+        (bool ok, bytes memory ret) = userOp.sender.call(
+            abi.encodeWithSignature("validateCompositeSignature(bytes32,bytes)", userOpHash, userOp.signature)
         );
         if (ok && ret.length >= 32) {
-            bytes4 magic = abi.decode(ret, (bytes4));
-            return magic == 0x1626ba7e ? 0 : 1;
+            return abi.decode(ret, (uint256));
         }
         return 1;
     }
