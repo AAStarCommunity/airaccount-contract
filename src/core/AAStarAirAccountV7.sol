@@ -189,7 +189,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         address module,
         bytes calldata initData
     ) external onlyOwnerOrEntryPoint {
-        if (module == address(0)) revert ModuleInvalid();
+        if (module == address(0) || module.code.length == 0) revert ModuleInvalid();
         if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
 
         uint8 threshold = _installModuleThreshold == 0 ? 70 : _installModuleThreshold;

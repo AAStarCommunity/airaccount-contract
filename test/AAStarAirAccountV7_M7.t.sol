@@ -206,10 +206,9 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_installModule_noCode_reverts() public {
-        // address(0xDEAD) is an EOA with no code; with default threshold=70 and no guardian sig,
-        // fails with InstallModuleUnauthorized (code-length check removed for size; guardian gate applies)
+        // address(0xDEAD) is an EOA with no code; reverts ModuleInvalid() before guardian gate.
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
+        vm.expectRevert(AAStarAirAccountBase.ModuleInvalid.selector);
         account.installModule(1, address(0xDEAD), "");
     }
 

@@ -663,48 +663,39 @@ async function main() {
 
   // ── A4: uninstallModule requires 2 guardian sigs ──────────────────────────
 
-  console.log("\n[A4] uninstallModule requires threshold-weight sig (owner + guardian)");
+  console.log("\n[A4] uninstallModule requires 2 guardian sigs (direct call, no guardian sigs → should revert)");
 
   if (compositeValidatorAddr !== "0x0000000000000000000000000000000000000000") {
     try {
-      // Attempt uninstall with ONLY owner sig (insufficient weight) — should fail
-      const nonce = await publicClient.readContract({
-        address: ENTRYPOINT, abi: ENTRYPOINT_ABI, functionName: "getNonce",
-        args: [accountAddr, 0n],
-      });
-      const uninstallCallData = encodeFunctionData({
-        abi: ACCOUNT_ABI, functionName: "uninstallModule",
-        args: [1n, compositeValidatorAddr, "0x" as Hex],
-      });
-      const opHash = await getUserOpHash(publicClient, accountAddr, uninstallCallData, nonce);
-      const weakSig = await buildEcdsaSig(ownerAccount, opHash); // owner-only, weight=40 < threshold=70
-
+      // Call uninstallModule directly from owner with empty deInitData (no guardian sigs).
+      // EntryPoint handleOps catches execution-phase reverts silently — so we test via direct call.
+      // uninstallModule always requires 2 guardian sigs via _checkGuardianSigs(hash, deInitData, 2).
       try {
         await publicClient.simulateContract({
-          address:      ENTRYPOINT,
-          abi:          ENTRYPOINT_ABI,
-          functionName: "handleOps",
-          args:         [[{
-            sender:             accountAddr,
-            nonce,
-            initCode:           "0x" as Hex,
-            callData:           uninstallCallData,
-            accountGasLimits:   packUint128(300_000n, 300_000n),
-            preVerificationGas: 50_000n,
-            gasFees:            packUint128(2_000_000_000n, 2_000_000_000n),
-            paymasterAndData:   "0x" as Hex,
-            signature:          weakSig,
-          }], ownerAddr],
-          account: ownerAddr,
+          address:      accountAddr,
+          abi:          ACCOUNT_ABI,
+          functionName: "uninstallModule",
+          args:         [1n, compositeValidatorAddr, "0x" as Hex],
+          account:      ownerAddr,
         });
-        fail("A4", "UNEXPECTED: owner-only uninstall should have been rejected by threshold check");
+        fail("A4", "UNEXPECTED: uninstallModule with no guardian sigs should have reverted InstallModuleUnauthorized");
       } catch (revertErr: any) {
-        if (revertErr.message?.includes("AA24") ||
-            revertErr.message?.includes("InsecureWeightConfig") ||
+        if (revertErr.message?.includes("InstallModuleUnauthorized") ||
+            revertErr.message?.includes("0x8cd65c1f") ||
             revertErr.message?.includes("revert")) {
-          pass("A4", "Owner-only uninstall correctly rejected (insufficient weight for threshold=70)");
+          // Also verify module is still installed (uninstall did not happen)
+          const stillInstalled = await publicClient.readContract({
+            address: accountAddr, abi: ACCOUNT_ABI,
+            functionName: "isModuleInstalled",
+            args: [1n, compositeValidatorAddr, "0x" as Hex],
+          });
+          if (stillInstalled) {
+            pass("A4", `uninstallModule correctly rejected with no guardian sigs (module still installed)`);
+          } else {
+            fail("A4", "Module was uninstalled despite no guardian sigs — guardian gate bypassed!");
+          }
         } else {
-          fail("A4", `Unexpected revert reason: ${revertErr.message?.slice(0, 120)}`);
+          fail("A4", `Unexpected revert: ${revertErr.message?.slice(0, 120)}`);
         }
       }
     } catch (e: any) {
