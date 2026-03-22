@@ -49,8 +49,10 @@ const SALT = 740n; // M7 r4 account salt
 
 const RPC_URL     = (process.env.SEPOLIA_RPC ?? process.env.SEPOLIA_RPC_URL)!;
 const PRIVATE_KEY = process.env.PRIVATE_KEY as Hex;
-const G1_KEY      = (process.env.PRIVATE_KEY_BOB  ?? "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d") as Hex;
-const G2_KEY      = (process.env.PRIVATE_KEY_JACK ?? "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a") as Hex;
+// Guardian keys must be explicitly set — no fallback to well-known test keys to prevent
+// accidental use of publicly-known guardians on any network (testnet or mainnet).
+const G1_KEY      = process.env.PRIVATE_KEY_BOB  as Hex;
+const G2_KEY      = process.env.PRIVATE_KEY_JACK as Hex;
 const COMMUNITY   = (process.env.COMMUNITY_GUARDIAN_ADDRESS ?? "0x0000000000000000000000000000000000000000") as Address;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -79,6 +81,8 @@ async function waitTx(
 async function main() {
   if (!PRIVATE_KEY) { console.error("Missing PRIVATE_KEY"); process.exit(1); }
   if (!RPC_URL)     { console.error("Missing SEPOLIA_RPC_URL"); process.exit(1); }
+  if (!G1_KEY)      { console.error("Missing PRIVATE_KEY_BOB — guardian keys must be explicit, no public-key fallback allowed"); process.exit(1); }
+  if (!G2_KEY)      { console.error("Missing PRIVATE_KEY_JACK — guardian keys must be explicit, no public-key fallback allowed"); process.exit(1); }
 
   const owner = privateKeyToAccount(PRIVATE_KEY);
   const g1    = privateKeyToAccount(G1_KEY);

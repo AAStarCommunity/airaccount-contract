@@ -68,9 +68,11 @@ const CHAIN_ID        = BigInt(optimismSepolia.id); // 11155420n
 // L2ToL1MessagePasser precompile — same address on all OP Stack chains
 const L2_TO_L1_MSG_PASSER = getAddress("0x4200000000000000000000000000000000000016");
 
-// Salt for E2E test account — use current timestamp so each run gets a fresh account,
-// avoiding stale proposal / stale module-install state from previous runs.
-const TEST_SALT = BigInt(Math.floor(Date.now() / 1000)) % 100000n + 70000n;
+// Salt for E2E test account — combine timestamp + random to avoid collision when two
+// runs happen in the same second (e.g. CI parallelism). Can be overridden via env var.
+const TEST_SALT = process.env.FORCE_EXIT_TEST_SALT
+  ? BigInt(process.env.FORCE_EXIT_TEST_SALT)
+  : BigInt(Math.floor(Date.now() / 1000)) * 1000n + BigInt(Math.floor(Math.random() * 1000)) + 70000000n;
 
 // ─── Load artifacts ───────────────────────────────────────────────────────────
 
