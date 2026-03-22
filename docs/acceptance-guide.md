@@ -618,7 +618,71 @@ await account.write.cancelRecovery()  // msg.sender = guardian，达到阈值时
 
 ---
 
-## 5. 已部署合约地址
+## 5. 合约全景与部署地址
+
+### 5.0 合约全景：本 Repo 自研 vs 外部依赖
+
+#### 本 Repo 自研合约（15 个可部署合约 + 1 个抽象基类）
+
+**Core 层（8 个）**
+
+| 合约 | 类型 | 说明 |
+|------|------|------|
+| `AAStarAirAccountV7` | 账户实现 | ERC-4337 主账户，ERC-7579 模块宿主，EIP-170 合规（24,497B） |
+| `AAStarAirAccountBase` | 抽象基类 | 共享存储布局、algId 路由、Guardian 状态机（不独立部署） |
+| `AAStarAirAccountFactoryV7` | 工厂 | EIP-1167 clone 工厂，CREATE2 确定性地址，9,527B |
+| `AAStarGlobalGuard` | 全局防护 | 不可绕过的每日限额 + 层级限额，账户部署时绑定 |
+| `AirAccountDelegate` | EIP-7702 | EOA 委托目标，零存储变量，~48 行有效逻辑 |
+| `CalldataParserRegistry` | 解析注册表 | 协议感知消费守卫，管理 ICalldataParser 注册 |
+| `ForceExitModule` | ERC-7579 Executor | L2→L1 强制提款，Guardian 2-of-3 门控，Guardian 快照防篡改 |
+| `TierGuardHook` | ERC-7579 Hook | 每笔执行前强制执行层级限额，不可绕过 |
+
+**Validator / Algorithm 层（6 个）**
+
+| 合约 | algId | 说明 |
+|------|-------|------|
+| `AAStarValidator` | — | 算法路由器，algId → Algorithm 合约 |
+| `AAStarBLSAlgorithm` | 0x01/0x04/0x05 | BLS12-381 验证 + DVT 聚合 |
+| `AAStarBLSAggregator` | — | ERC-4337 IAggregator，BLS 聚合验证 |
+| `SessionKeyValidator` | 0x08 | 时限 + 目标白名单 + 消费上限 session key |
+| `AgentSessionKeyValidator` | 0x09 | AI agent 能力委托，velocityLimit + bitmap 撤销，支持 delegateSession |
+| `AirAccountCompositeValidator` | — | ERC-7579 Validator 模块，组合多种验证策略 |
+
+**Parser 层（2 个）**
+
+| 合约 | 说明 |
+|------|------|
+| `UniswapV3Parser` | 解析 exactInput/exactOutput，提取 amountOutMinimum 对比层级限额 |
+| `RailgunParser` | 解析 Railgun shield/unshield，金额可见性守卫 |
+
+**合计：15 个可独立部署合约 + 1 个抽象基类 + 4 个接口文件**
+
+---
+
+#### 外部依赖（运行时调用）
+
+| 合约 / 服务 | 地址（Sepolia） | 依赖类型 | 说明 |
+|------------|----------------|---------|------|
+| **EntryPoint v0.7** | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | 🔴 核心必需 | ERC-4337 全链单例，不可替换 |
+| **Chainlink ETH/USD** | `0x694AA1769357215DE4FAC081bf1f309aDC325306` | 🟡 ERC20 Guard | ERC20 层级限额的美元换算，可换源 |
+| **ERC-5564 Announcer** | `0x55649E01B5Df198D18D95b5cc5051630cfD45564` | 🟢 可选 | stealth 地址公告注册表（EIP-5564 标准） |
+| **ERC-8004 Registry** | `0x8004A818BFB912233c491871b3d84c89A494BD9e` | 🟢 可选 | AI agent 身份绑定，M7 agent economy |
+| **OP Stack L2ToL1MessagePasser** | `0x4200...0016`（L2 预编译） | 🟡 ForceExit | OP Stack L2 预编译，地址固定不可换 |
+| **Arbitrum ArbSys** | `0x0000...0064`（L2 预编译） | 🟡 ForceExit | Arbitrum L2 预编译，地址固定不可换 |
+| **SuperPaymaster** | `0x16cE0c7d846f9446bbBeb9C5a84A4D140fAeD94A` | 🟢 可选 | AAStar 团队部署，gasless 交易赞助 |
+
+**编译时库依赖（无运行时调用）**
+
+| 库 | 用途 |
+|----|------|
+| OpenZeppelin `ECDSA` / `MessageHashUtils` | 签名恢复、EIP-191/712 哈希 |
+| OpenZeppelin `Clones` | EIP-1167 最小代理克隆（工厂） |
+| OpenZeppelin `Initializable` | 防重复初始化（基类） |
+| `account-abstraction` interfaces | IAccount, IEntryPoint, PackedUserOperation, IAggregator 接口定义 |
+
+> **关键结论**：唯一的强依赖是 EntryPoint v0.7（全链单例）。其余外部合约均可降级（Chainlink → 其他预言机）或完全禁用（stealth/agent/paymaster 均为可选功能）。ForceExit 的 L2 预编译依赖是 L2 网络固定提供的，不构成中心化风险。
+
+---
 
 ### 5.1 当前版本（M7，Sepolia）
 
