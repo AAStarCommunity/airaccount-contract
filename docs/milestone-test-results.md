@@ -562,9 +562,22 @@
 | B4 | delegateSession: sub-agent delegatedBy verified | ✅ PASS | — |
 | C1 | getChainQualifiedAddress = keccak256(addr ∥ chainId) | ✅ PASS | — |
 | C2 | Different chainIds → different qualified addresses | ✅ PASS | — |
-| D1 | announceForStealth ERC-5564 event | ⏭ SKIP | EIP-7702 EOA not configured |
+| D1 | announceForStealth ERC-5564 event | ✅ PASS | `0xacfdf50f...` (block 10495245) |
 
-**Total: 10/10 passed, 1 skipped (D1: requires EIP-7702 delegated EOA)**
+**Total: 11/11 passed (D1 now verified via `test-7702-stealth-e2e.ts`)**
+
+#### EIP-7702 Stealth E2E (2026-03-22) — `test-7702-stealth-e2e.ts`
+
+| Test | Description | Result | Tx |
+|------|-------------|--------|----|
+| A | Deploy AirAccountDelegate singleton | ✅ PASS | `0x8b8814bb...` |
+| B | BOB signs EIP-7702 auth + Type 4 delegation tx | ✅ PASS | `0x7a5a4174...` |
+| C | Verify BOB code = `0xef0100 \|\| AirAccountDelegate` | ✅ PASS | — |
+| B2 | BOB calls `initialize()` with ANNI + JACK guardian sigs | ✅ PASS | `0x5eb997d6...` |
+| D | BOB calls `execute → announceForStealth` → ERC5564Announcement event | ✅ PASS | `0xacfdf50f...` |
+
+- BOB EOA (delegated): `0xF7Bf79AcB7F3702b9DbD397d8140ac9DE6Ce642C`
+- AirAccountDelegate: `0x5804b6119d12ad403a430fd3cff12a8ff6e4064b`
 
 ### Deployed Addresses (Sepolia — canonical M7)
 
@@ -574,5 +587,6 @@
 | Implementation | `0xf01e3Dd359DfF8e578Ee8760266E3fB9530F07A0` | 24,497B |
 | Account (salt=700, E2E) | `0xCD1eE31b1D887FE7dC086b023Db162C84B499158` | — |
 | Account (salt=2000, guardian accept) | `0xb185C9634dCBC43F71bE7de15001A438eDC50DEb` | — |
+| AirAccountDelegate (EIP-7702) | `0x5804b6119d12ad403a430fd3cff12a8ff6e4064b` | — |
 
 > Modules (CompositeValidator, TierGuardHook, AgentSessionKeyValidator) are deployed on-demand per account during `installModule`. Addresses from E2E run: CompositeValidator `0xef9247b1...`, TierGuardHook `0xcaaa70fd...`, AgentSessionKeyValidator `0x9299ad50...`
