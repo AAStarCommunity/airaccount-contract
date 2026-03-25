@@ -1,7 +1,7 @@
 # AirAccount — Known Issues & Accepted Risks
 
-**Version**: v0.16.0 (M7 release candidate)
-**Last Updated**: 2026-03-21
+**Version**: v0.16.0 (M7 r4)
+**Last Updated**: 2026-03-22
 **Purpose**: This document explicitly declares known limitations and accepted risks in AirAccount's design. It exists so that security auditors and users can make an informed decision. Items listed here are **intentional design trade-offs**, not bugs. Auditors should NOT file findings for these items unless they identify a new exploit path that makes the described risk worse than documented.
 
 ---
@@ -263,6 +263,77 @@ Auditors should confirm: (1) no bypass exists where a lower-weight bitmap is cra
 
 ---
 
+## KI-9 — Session Key Scope Enforced at Execution Phase, Not Validation Phase
+
+**Severity**: Medium (ERC-4337 design constraint, not a bug)
+**Affected Contract**: `AAStarAirAccountBase.sol` (lines ~1089–1119), `AgentSessionKeyValidator.sol`
+**Category**: ERC-4337 architecture constraint
+
+### Description
+
+`AgentSessionKeyValidator.validateUserOp()` is a stateless validation function: it verifies the session key signature and checks policy bounds (spend cap, velocity, expiry) but **cannot** inspect the calldata of the `execute()` call that will run later. The `contractScope` (target address allowlist) and `selectorScope` (function selector allowlist) are checked inside `AAStarAirAccountBase._executeSessionKeyCall()` during the execution phase, not during `validateUserOp`.
+
+This means:
+
+- A UserOp signed by a valid session key always passes validation, even if the `callTarget` or `callSelector` is outside the session's declared scope.
+- The scope enforcement fires later (execution phase), causing the transaction to **revert after gas is consumed**, rather than being rejected by the bundler pre-flight.
+- There is no way under ERC-4337's stateless validation model to read call target/selector during `validateUserOp` without a storage read (which bundlers disallow during simulation).
+
+### Risk
+
+A malicious bundler or attacker who gains a session key cannot bypass scope enforcement — the execution-phase check will revert. However:
+- Gas is still consumed on out-of-scope calls (no bundler-level early rejection).
+- The user experience is degraded: bundler simulation may show "valid" for an out-of-scope call, which then reverts on-chain.
+- If a future ERC-4337 version allows calldata inspection in `validateUserOp`, the enforcement should be moved there.
+
+### Mitigation
+
+- This is a fundamental ERC-4337 architectural constraint (stateless validation rule), not a contract bug. The scope check cannot be moved to the validation phase without violating bundler policy.
+- Execution-phase enforcement is correct and complete — out-of-scope calls always revert.
+- Future improvement: ERC-4337 v0.8 / native AA models may allow richer validation context; scope enforcement can be updated then.
+
+### Auditor Note
+
+Auditors should confirm that `_executeSessionKeyCall()` correctly enforces `contractScope` and `selectorScope` for every execution path. The validation-phase gap is accepted and documented here.
+
+---
+
+## KI-10 — ForceExit Proposal Invalidated by Guardian Set Change
+
+**Severity**: Low (design decision, security-first)
+**Affected Contract**: `ForceExitModule.sol` — `approveForceExit` / `executeForceExit`
+**Category**: Guardian management / social recovery consistency
+
+### Description
+
+When a `proposeForceExit()` is recorded, the proposal stores the `proposer` address but does **not** snapshot the guardian set at proposal time. If the account owner subsequently calls `updateGuardians()` to change the guardian set between the proposal and execution, the new guardian set governs `approveForceExit` and `executeForceExit`. Any guardian signatures collected under the old set become invalid — their addresses are no longer recognized as guardians.
+
+This means:
+
+1. Alice proposes a force exit. Guardians G1, G2, G3 are set.
+2. Owner (possibly compromised) calls `updateGuardians()` replacing G1, G2, G3 with G4, G5, G6.
+3. G1 and G2 attempt to `approveForceExit` → revert `NotGuardian`.
+4. The force exit is effectively blocked unless G4/G5/G6 cooperate.
+
+### Risk
+
+A compromised owner key could delay or block an in-progress force exit by rotating the guardian set after proposal. This is a **guardian-override attack**: the owner key provides a last-resort escape hatch to block forced withdrawal.
+
+The risk is partially mitigated by the `installModuleThreshold` requirement: changing guardians (via module reinstall) requires owner + 1 guardian. However, `updateGuardians()` is an owner-only call in the current implementation.
+
+### Mitigation
+
+- **Security-first design choice**: the current behavior is intentional. Blocking an in-progress force exit is only possible if the owner key cooperates with a guardian change, which implies the owner is not fully compromised (or is actively trying to stop an unauthorized recovery).
+- Future improvement: snapshot the guardian set at proposal time (store a `bytes32 guardianSetHash`), and validate approvals against the snapshotted set rather than the current set. This would prevent guardian rotation from invalidating an in-progress proposal.
+- Alternatively: add a `guardianVersion` counter; `approveForceExit` must match the `guardianVersion` at proposal time.
+- Users who detect a guardian-rotation attack during an active force exit should re-propose with the new guardians.
+
+### Auditor Note
+
+Auditors should verify that `updateGuardians()` cannot be called during an active force exit proposal without requiring threshold signatures. If `updateGuardians` can be called with only an owner key while a proposal is active, this represents a meaningful degradation of the force exit security guarantee.
+
+---
+
 ## Summary Table
 
 | ID | Issue | Severity | Category | Fixable? |
@@ -275,3 +346,5 @@ Auditors should confirm: (1) no bypass exists where a lower-weight bitmap is cra
 | KI-6 | No timelock on module install | Low | Module management | Planned improvement |
 | KI-7 | P256 precompile only on OP Stack chains | Medium | Deployment | Deployment-specific |
 | KI-8 | Weighted signature bitmap malleability | Informational | By design | N/A |
+| KI-9 | Session key scope checked in execution phase only | Medium | ERC-4337 constraint | No (protocol limit) |
+| KI-10 | ForceExit proposal invalidated by guardian rotation | Low | Design decision | Planned improvement |
