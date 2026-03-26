@@ -27,19 +27,11 @@ AirAccount 遵循渐进式里程碑开发模式，每个里程碑在前一版本
 | 里程碑 | 版本 | 状态 | 核心算法 | 主要功能 | Factory 地址 | 代表性 Gas |
 |--------|------|------|----------|----------|--------------|------------|
 | **M1** | v0.10.x | ✅ 完成 | ALG_ECDSA(0x02) | 基础 ECDSA 钱包，ERC-4337 v0.6，单所有者，Sepolia E2E | `0x26Af...FAcD` | 523,306 (YetAA baseline) |
-<<<<<<< HEAD
-| **M2** | v0.11.x | ✅ 完成 | ALG_BLS(0x01), ALG_ECDSA(0x02), ALG_P256(0x04) | BLS 三重签名（ECDSA + P256/WebAuthn + BLS），Solc 0.8.33，DVT aggregator | `0x5Ba1...Afe04` | 259,694 (-50.4%) |
-| **M3** | v0.12.x | ✅ 完成 | ALG_ECDSA(0x02) | 安全加固，2-of-3 Guardian 社交恢复，24h timelock，domain separation，fail-fast 验证 | `0xce42...206c1` | 127,249 (-75.7% vs M1) |
-| **M4** | v0.12.5 | ✅ 完成 | ALG_ECDSA, ALG_P256, ALG_BLS | 累积签名分层安全（T1/T2/T3），DVT messagePoint 绑定，社交恢复 E2E，salt 寻址 | `0x914d...6d88` | T1: 140,352 / T2: 278,634 / T3: 288,351 |
-| **M5** | v0.14.0 | ✅ 完成 | ALG_COMBINED_T1(0x06), ALG_ECDSA, ALG_P256, ALG_BLS | ERC20 守卫，治理锁，Guardian 接受签名，零信任 T1（P256 AND ECDSA），跨操作回放防护 | `0x1ffa...c3b9` | 280/280 测试通过 |
-| **M6** | v0.15.x | ✅ 完成 | ALG_WEIGHTED(0x03), ALG_SESSION_KEY(0x08) | Session Key，CalldataParserRegistry，EIP-170 合规，加权多签，审计修复（HIGH+LOW），OAPD E2E | `r2: Sepolia 已部署` | T2 Weighted: 168,731 / 合约 20,900B |
-=======
 | **M2** | v0.11.x | ✅ 完成 | ALG_BLS(0x01), ALG_ECDSA(0x02), ALG_P256(0x03) | BLS 三重签名（ECDSA + P256/WebAuthn + BLS），Solc 0.8.33，DVT aggregator | `0x5Ba1...Afe04` | 259,694 (-50.4%) |
 | **M3** | v0.12.x | ✅ 完成 | ALG_ECDSA(0x02) | 安全加固，2-of-3 Guardian 社交恢复，24h timelock，domain separation，fail-fast 验证 | `0xce42...206c1` | 127,249 (-75.7% vs M1) |
 | **M4** | v0.12.5 | ✅ 完成 | ALG_ECDSA, ALG_P256, ALG_BLS | 累积签名分层安全（T1/T2/T3），DVT messagePoint 绑定，社交恢复 E2E，salt 寻址 | `0x914d...6d88` | T1: 140,352 / T2: 278,634 / T3: 288,351 |
 | **M5** | v0.14.0 | ✅ 完成 | ALG_COMBINED_T1(0x06), ALG_ECDSA, ALG_P256, ALG_BLS | ERC20 守卫，治理锁，Guardian 接受签名，零信任 T1（P256 AND ECDSA），跨操作回放防护 | `0x1ffa...c3b9` | 280/280 测试通过 |
 | **M6** | v0.15.x | ✅ 完成 | ALG_WEIGHTED(0x07), ALG_SESSION_KEY(0x08) | Session Key，CalldataParserRegistry，EIP-170 合规，加权多签，审计修复（HIGH+LOW），OAPD E2E | `r2: Sepolia 已部署` | T2 Weighted: 168,731 / 合约 20,900B |
->>>>>>> main
 | **M7** | 计划中 | 🔲 规划 | ERC-7579 完整实现 | L2 多链部署，隐私层（Railgun/Kohaku），ERC-8004 Agent 身份，x402 支付，Agent Session Keys | 待部署 | 目标 500+ 测试 |
 
 ### M5 详细功能清单
