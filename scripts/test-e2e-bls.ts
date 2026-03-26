@@ -316,29 +316,20 @@ async function main() {
     console.log("  Continuing with signature construction...\n");
   }
 
-  // ECDSA signatures
-  // mpHash binds messagePoint to the specific userOpHash (M5.2 security requirement)
-  const aaSignature = await signer.signMessage({ message: { raw: hexToBytes(userOpHash) } });
-  const mpHash = keccak256((`0x` + userOpHash.slice(2) + msgPointEncoded.slice(2)) as Hex);
-  const mpSignature = await signer.signMessage({ message: { raw: hexToBytes(mpHash) } });
-
-  console.log(`  AA sig: ${aaSignature.slice(0, 22)}...`);
-  console.log(`  MP sig: ${mpSignature.slice(0, 22)}...`);
-
-  // Pack triple signature: algId(1) + nodeIdsLength(32) + nodeIds(2×32) + blsSig(256) + messagePoint(256) + aaSig(65) + mpSig(65)
+  // M2-format triple signature: algId(1) + nodeIdsLength(32) + nodeIds(2×32) + blsSig(256) + messagePoint(256)
+  // The M2 validator at 0x730a162Ce3202b94cC5B74181B75b11eBB3045B1 expects exactly 609 bytes (no aaSig/mpSig).
+  // M5.2+ added aaSig+mpSig binding but this test uses the deployed M2 account + validator.
   const tripleSignature = (
     "0x01" +
     toHex(2n, { size: 32 }).slice(2) +
     BLS_NODE_ID_1.slice(2) +
     BLS_NODE_ID_2.slice(2) +
     aggSigEncoded.slice(2) +
-    msgPointEncoded.slice(2) +
-    aaSignature.slice(2) +
-    mpSignature.slice(2)
+    msgPointEncoded.slice(2)
   ) as Hex;
 
   const sigLen = (tripleSignature.length - 2) / 2;
-  console.log(`  Signature: ${sigLen} bytes (expected: ${1 + 32 + 64 + 256 + 256 + 65 + 65} = 739)\n`);
+  console.log(`  Signature: ${sigLen} bytes (expected: ${1 + 32 + 64 + 256 + 256} = 609)\n`);
 
   const signedUserOp = { ...userOp, signature: tripleSignature };
 
@@ -374,9 +365,8 @@ async function main() {
     console.log(`  Etherscan: https://sepolia.etherscan.io/tx/${receipt.transactionHash}\n`);
   } catch (e: any) {
     console.error(`  handleOps failed: ${e.message?.slice(0, 300)}`);
-    console.log("\n  NOTE: EIP-2537 BLS precompiles require Prague fork on Sepolia.");
-    console.log("  Triple signature construction: OK");
-    console.log("  On-chain BLS pairing: requires precompile support\n");
+    console.log("\n  NOTE: EIP-2537 BLS precompiles are active on Sepolia (Pectra/Prague fork).");
+    console.log("  If validation fails, check BLS node registration and signature format.");
     process.exit(1);
   }
 

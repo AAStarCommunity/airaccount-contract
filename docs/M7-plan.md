@@ -423,3 +423,638 @@ These are explicitly OUT of M7 scope:
 | Audit | M7.6 | 2–4 weeks depending on firm |
 | Launch | M7.5, M7.7 | Post-audit deployment + bug bounty |
 | Long-term | M7.1, M7.8, M7.11–M7.13 | DVT-dependent or privacy-dependent |
+
+---
+
+## WalletBeat Stage 0 / Stage 1 / Stage 2 — Full Feature Table & M7 TODO Integration
+
+**Assessment date**: 2026-03-21 | **Baseline**: AirAccount v0.15.0 (M6)
+
+WalletBeat rates **end-to-end wallet applications**. AirAccount is the **smart contract layer** — most Stage 1/2 criteria are CLIENT (frontend) responsibilities. The tables below mark each criterion's responsibility layer and current contract-layer status.
+
+### Stage 0 — Source Code Publicly Visible
+
+| Standard | AirAccount Status | Notes |
+|----------|-------------------|-------|
+| Source code publicly visible | ✅ PASS | GPL-3.0, GitHub public |
+
+**Stage 0: ACHIEVED.**
+
+---
+
+### Stage 1 — 9 Criteria
+
+| # | Criterion | Layer | Contract Status | M7 Action |
+|---|-----------|-------|-----------------|-----------|
+| S1-1 | Security Audit (last 12 months) | Contract | ⚠️ PARTIAL — internal only | **M7.6: External audit (blocking)** |
+| S1-2 | Hardware Wallet Support (≥3) | CLIENT | 🆗 P256 on-chain | Frontend: Ledger/Trezor/GridPlus SDK |
+| S1-3 | Chain Verification (L1 light client) | CLIENT | 🆗 | Frontend: Helios integration |
+| S1-4 | Private Transfers (by default) | Contract | ❌ FAIL | M7.11: Railgun parser + SDK |
+| S1-5 | Account Portability | Contract | ✅ PASS | — |
+| S1-6 | Support Own Node | CLIENT | 🆗 | Frontend: RPC config UI |
+| S1-7 | FOSS License | Contract | ✅ PASS | — |
+| S1-8 | Address Resolution (ENS) | CLIENT | 🆗 | Frontend: viem ENS + normalize() |
+| S1-9 | Browser Integration (EIP-1193) | CLIENT | 🆗 | Frontend: EIP-1193 provider + EIP-6963 |
+
+**Contract-layer Stage 1 blocker: M7.6 (external audit). S1-4 private transfers is a hard contract blocker deferred to M7.11.**
+
+---
+
+### Stage 2 — 10 Criteria
+
+| # | Criterion | Layer | Contract Status | M7 Action |
+|---|-----------|-------|-----------------|-----------|
+| S2-1 | Bug Bounty Program | Contract | ❌ FAIL | **M7.7: Immunefi (after M7.6)** |
+| S2-2 | Address Privacy | Contract | ⚠️ PARTIAL — OAPD reduces correlation | M7.11 improves further |
+| S2-3 | Multi-Address Correlation Prevention | Contract | ✅ PASS | OAPD: salt=keccak256(owner+dappId) |
+| S2-4 | TX Inclusion (L2→L1 force-exit) | Contract | ❌ N/A — L1 only | **M7.5: L2 deployment + force-exit** |
+| S2-5 | Chain Configurability | CLIENT | 🆗 | Frontend: RPC config |
+| S2-6 | Funding Transparency | Project | ❔ UNKNOWN | Add FUNDING.md to repo |
+| S2-7 | Fee Transparency | CLIENT | ⚠️ PARTIAL — data available | Frontend: daily limit UI |
+| S2-8 | Chain Address Resolution (ERC-7828/7831) | Contract | ❌ FAIL | **M7.4: ERC-7828 helper** |
+| S2-9 | Account Abstraction (ERC-4337) | Contract | ✅ PASS+ | Exceeds requirement |
+| S2-10 | Transaction Batching | Contract | ✅ PASS | executeBatch implemented |
+
+---
+
+### WalletBeat TODO — Integrated into M7
+
+#### Stage 1 TODOs (contract layer)
+- [ ] **M7.6** — Commission professional security audit (CodeHawks/Code4rena, ~$15–30k prize pool). **Stage 1 gating blocker.**
+- [ ] **M7.11** — Railgun privacy pool integration (RailgunParser + CalldataParserRegistry). Partial S1-4 coverage.
+- [ ] Frontend companion: P256 hardware wallet SDK (Ledger/Trezor/GridPlus) — see HW Wallet Integration Guide below.
+- [ ] Frontend companion: Helios light client integration — see Helios Integration Guide below.
+- [ ] Frontend companion: ENS address resolution via viem `getEnsAddress` + `normalize()`.
+- [ ] Frontend companion: EIP-1193 provider wrapper + EIP-6963 multi-wallet discovery.
+
+#### Stage 2 TODOs (contract layer)
+- [ ] **M7.7** — Immunefi bug bounty program (after M7.6 audit complete). ~$50k initial funding.
+- [ ] **M7.5** — L2 deployment (Base, Arbitrum, OP Stack) + canonical bridge force-exit. S2-4.
+- [ ] **M7.4** — ERC-7828 chainId helper + ERC-7831 resolver. S2-8.
+- [ ] **FUNDING.md** — Add funding transparency document. Low-effort, S2-6.
+
+#### Stage 2 TODOs (frontend companion)
+- [ ] Daily limit UI: show `guard.todaySpent()`, `getDeposit()`, gas sponsorship status (S2-7).
+- [ ] Per-DApp address UI using OAPD salt derivation (S2-2 improvement).
+- [ ] ERC-5792 `wallet_sendCalls` wrapping `executeBatch` (S2-10 UI layer).
+
+---
+
+## Professional Audit Pricing & Open-Source Discount Guide
+
+### Pricing Reference (2026)
+
+| Auditor | Price Range | Open-Source / Public Goods | Timeline |
+|---------|-------------|---------------------------|----------|
+| **CodeHawks (Cyfrin)** | $5k–30k prize pool | ✅ Public goods track + subsidized community audits | 1–2 weeks |
+| **Code4rena** | $20k–50k prize pool | ✅ Low-budget public goods accepted | 1–2 weeks |
+| **Sherlock** | $15k–40k | ❌ Commercial pricing | 2–3 weeks |
+| **Trail of Bits** | $500–1500/h (min $50k) | ❌ | 4–8 weeks |
+| **OpenZeppelin** | $50k–100k+ | ❌ | 4–8 weeks |
+| **Spearbit/Cantina** | $100k+ | ❌ | 6–12 weeks |
+
+### Recommendation for AirAccount (Public Goods / Academic)
+
+AirAccount is GPL-3.0 open source, academic research (CMU PhD), no commercial profit. Best path:
+
+1. **Primary**: Apply to **CodeHawks** (codehawks.com) as a public goods project. Contact Cyfrin directly — Patrick Collins is known to offer reduced-cost competitive audits for academic/open-source work. Target $15–20k prize pool.
+2. **Alternative**: **Code4rena** with $20k prize pool — the competitive format maximizes coverage for the budget.
+3. **Timing**: After M6 feature-complete (M7.6 scope = M6 codebase). Audit scope: `AAStarAirAccountBase`, `AAStarAirAccountFactoryV7`, `SessionKeyValidator`, `AirAccountDelegate`, `CalldataParserRegistry`, `UniswapV3Parser`, `AAStarGlobalGuard`.
+
+---
+
+## Frontend Integration Guide: Hardware Wallet SDK
+
+### Overview
+
+AirAccount's on-chain P-256, ECDSA, BLS validators provide the cryptographic primitives. Hardware wallet integration is a **frontend SDK responsibility** that maps device signing to AirAccount's UserOperation signature format.
+
+### Key Packages
+
+```bash
+# Hardware communication
+pnpm add @ledgerhq/device-management-kit @ledgerhq/hw-app-eth @ledgerhq/hw-transport-webhid
+
+# Trezor
+pnpm add @trezor/connect-web
+
+# GridPlus Lattice
+pnpm add gridplus-sdk
+
+# Cryptography
+pnpm add @noble/curves webauthn-p256
+
+# ERC-4337 utilities
+pnpm add viem permissionless wagmi @wagmi/connectors
+```
+
+> ⚠️ **Do NOT use `@ledgerhq/connect-kit`** — was compromised with a crypto drainer. Use `@ledgerhq/device-management-kit` instead.
+
+### Device Support Matrix
+
+| Device | ECDSA | P-256/WebAuthn | Notes |
+|--------|-------|----------------|-------|
+| Ledger Nano X/S+ | ✅ | ✅ via FIDO2 mode | Requires firmware update for WebAuthn |
+| Trezor Model T/Safe | ✅ | ❌ (in progress) | P-256 planned; use ECDSA for now |
+| GridPlus Lattice1 | ✅ | ❌ | Best for Paymaster operators, not end-users |
+| YubiKey (FIDO2) | — | ✅ | WebAuthn only; maps directly to AirAccount P-256 |
+
+### Ledger + viem Integration Pattern
+
+```typescript
+import TransportWebHID from '@ledgerhq/hw-transport-webhid';
+import Eth from '@ledgerhq/hw-app-eth';
+import { getUserOpHash } from 'permissionless';
+
+const transport = await TransportWebHID.create();
+const eth = new Eth(transport);
+const { address } = await eth.getAddress("m/44'/60'/0'/0/0");
+
+// Sign UserOp hash with Ledger
+const userOpHash = getUserOpHash(userOp, entryPointAddress, chainId);
+const { signature } = await eth.signPersonalMessage(
+  "m/44'/60'/0'/0/0",
+  userOpHash.slice(2)
+);
+userOp.signature = signature;
+```
+
+### WebAuthn / YubiKey → On-Chain P-256
+
+```typescript
+// Registration: get P-256 public key from hardware key
+const credential = await navigator.credentials.create({
+  publicKey: {
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    rp: { name: 'AirAccount', id: 'airaccount.io' },
+    user: { id: new Uint8Array([1]), name: 'user', displayName: 'User' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }], // ES256 = P-256
+  },
+});
+// Extract x, y coordinates → store in AirAccount as P-256 public key
+
+// Signing: sign UserOp hash with hardware key
+const assertion = await navigator.credentials.get({
+  publicKey: {
+    challenge: userOpHash,       // keccak256 of UserOp
+    allowCredentials: [{ type: 'public-key', id: credentialId }],
+    userVerification: 'required',
+  },
+});
+// Extract (r, s) from assertion.response.signature → AirAccount signature
+```
+
+### On-Chain P-256 Verifier
+
+Use **daimo-eth/p256-verifier** (audited, ~330k gas):
+
+```bash
+forge install daimo-eth/p256-verifier
+```
+
+```solidity
+import { WebAuthn } from "p256-verifier/src/WebAuthn.sol";
+// Already integrated in AirAccount's _validateP256()
+```
+
+### EIP-6963 Multi-Wallet Discovery
+
+```bash
+pnpm add @mipd/store
+```
+
+```typescript
+import { MIPD } from '@mipd/store';
+const providerStore = MIPD.createStore();
+// Auto-discovers Ledger, Trezor, MetaMask extensions via EIP-6963
+providerStore.subscribe(providers => renderWalletButtons(providers));
+window.dispatchEvent(new Event('eip6963:requestProvider'));
+```
+
+### Recommended Open-Source References
+
+| Project | URL | What to Learn |
+|---------|-----|---------------|
+| **passkeys-4337/smart-wallet** | https://github.com/passkeys-4337/smart-wallet | P-256 WebAuthn + ERC-4337 full flow |
+| **ZeroDev Kernel signers** | https://github.com/zerodevapp/zerodev-signer-examples | Modular HW wallet signer interface |
+| **Candide AbstractionKit** | https://github.com/candidelabs/abstractionkit | Safe-based account + passkey plugin |
+| **Coinbase Smart Wallet** | https://github.com/coinbase/smart-wallet | Consumer UX + Ledger support |
+
+### Gas Reference
+
+| Sig Type | Gas per validateUserOp |
+|----------|----------------------|
+| ECDSA (secp256k1) | ~3,000 gas (ecrecover precompile) |
+| P-256 (daimo verifier) | ~330,000 gas |
+| P-256 (EIP-7212 precompile, future) | ~3,450 gas |
+
+> EIP-7212 (P-256 precompile) is live on Base, zkSync. On mainnet/Sepolia, use daimo verifier fallback.
+
+---
+
+## Frontend Integration Guide: Helios Light Client
+
+### What is Helios
+
+Helios (github.com/a16z/helios) is a trustless Ethereum light client in Rust + WASM. It converts any untrusted centralized RPC into a cryptographically verified RPC by checking against Beacon Chain consensus. Syncs in ~2 seconds.
+
+**Supported networks**: Ethereum mainnet, Sepolia, Holesky, Base, OP Stack, Linea.
+
+### Installation
+
+```bash
+pnpm add @a16z/helios viem
+```
+
+### Basic Integration with viem
+
+```typescript
+import { createHeliosProvider } from '@a16z/helios';
+import { createPublicClient, custom } from 'viem';
+import { mainnet } from 'viem/chains';
+
+const heliosProvider = await createHeliosProvider({
+  executionRpc: 'https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY',
+  consensusRpc: 'https://www.lightclientdata.org', // Default (run by a16z, free)
+  network: 'mainnet',
+  checkpoint: '0x85e6151a246e8fdba36db27a0c7678a575346272fe978c9281e13a8b26cdfa68',
+}, 'ethereum');
+
+await heliosProvider.waitSynced(); // ~2 seconds
+
+const client = createPublicClient({
+  chain: mainnet,
+  transport: custom(heliosProvider),
+});
+```
+
+### Production Pattern: Helios + Fallback
+
+```typescript
+export async function createVerifiedClient(network = 'mainnet') {
+  const executionRpc = `https://eth-${network}.g.alchemy.com/v2/${ALCHEMY_KEY}`;
+  try {
+    const helios = await createHeliosProvider({
+      executionRpc,
+      consensusRpc: 'https://www.lightclientdata.org',
+      network,
+      checkpoint: CHECKPOINTS[network],
+    }, 'ethereum');
+    // Timeout after 3s — don't block app startup
+    await Promise.race([helios.waitSynced(), new Promise((_, r) => setTimeout(r, 3000))]);
+    return { client: createPublicClient({ chain, transport: custom(helios) }), trustless: true };
+  } catch {
+    // Graceful fallback to standard RPC
+    return { client: createPublicClient({ chain, transport: http(executionRpc) }), trustless: false };
+  }
+}
+```
+
+### Consensus RPC Options (Free)
+
+| Endpoint | Provider | Notes |
+|----------|---------|-------|
+| `https://www.lightclientdata.org` | a16z (default) | Reliable, no auth required |
+| Beaconcha.in API | Beaconchain | Free tier |
+| dRPC Beacon RPC | dRPC | Free, multiple regions |
+| Your own Nimbus/Lodestar | Self-hosted | Best for production |
+
+### Checkpoints
+
+Get from beaconcha.in (mainnet) or sepolia.beaconcha.in (Sepolia). Checkpoints older than 2 weeks are unsafe — cache and refresh weekly.
+
+### ERC-4337 Consideration
+
+Helios is **execution-layer only** — it does NOT support bundler methods (`eth_sendUserOperation`, `eth_getUserOperationByHash`). Use a hybrid approach:
+
+```typescript
+// Trustless reads via Helios
+const balance = await heliosClient.getBalance({ address });
+
+// Bundler calls via traditional RPC (acceptable — bundler is not in trust model)
+const userOpHash = await bundlerClient.sendUserOperation(userOp);
+```
+
+### Open-Source References
+
+| Project | URL |
+|---------|-----|
+| a16z/helios | https://github.com/a16z/helios |
+| Helios npm | https://www.npmjs.com/package/@a16z/helios |
+| Setup guide (Chainstack) | https://chainstack.com/helios-client/ |
+
+### Deployment Checklist
+
+- [ ] Add `HELIOS_CHECKPOINT` env var, refresh weekly via CI job
+- [ ] Implement fallback to HTTP RPC when Helios fails (see pattern above)
+- [ ] Show "trustless" / "unverified" indicator in wallet UI
+- [ ] Use Helios for balance/state reads; traditional RPC for bundler calls
+- [ ] Test on Sepolia before mainnet deployment
+
+---
+
+## Frontend Integration Guide: ENS Address Resolution
+
+### viem Built-in ENS (Recommended)
+
+```typescript
+import { createPublicClient, http } from 'viem';
+import { mainnet } from 'viem/chains';
+import { normalize } from 'viem/ens';
+
+const client = createPublicClient({ chain: mainnet, transport: http() });
+
+// Before calling execute(dest, ...) in AirAccount:
+async function resolveRecipient(input: string): Promise<`0x${string}`> {
+  if (input.endsWith('.eth') || input.includes('.')) {
+    const resolved = await client.getEnsAddress({ name: normalize(input) });
+    if (!resolved) throw new Error(`ENS name ${input} not found`);
+    return resolved;
+  }
+  return input as `0x${string}`; // Already a raw address
+}
+```
+
+**Always call `normalize()` before `getEnsAddress()`** to prevent forbidden characters.
+
+### L2 Cross-Chain ENS (CCIP-Read / EIP-3668)
+
+For names managed on L2 (e.g., `alice.linea.eth`), viem handles CCIP-Read automatically when you pass `gatewayUrls`:
+
+```typescript
+const address = await client.getEnsAddress({
+  name: normalize('alice.linea.eth'),
+  gatewayUrls: ['https://ccip.ens.eth'],
+  universalResolverAddress: '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e',
+});
+```
+
+### Reference Implementations
+
+| Project | URL |
+|---------|-----|
+| Rainbow Wallet | https://github.com/rainbow-me/rainbow |
+| Frame Wallet | https://github.com/floating/frame |
+| ENS CCIP-Read docs | https://docs.ens.domains/resolvers/ccip-read/ |
+
+---
+
+## Frontend Integration Guide: EIP-1193 Browser Provider + EIP-6963
+
+### AirAccount as EIP-1193 Provider
+
+To make AirAccount discoverable by DApps (MetaMask-compatible), wrap it as an EIP-1193 provider:
+
+```typescript
+// Core: eth_sendTransaction → UserOp conversion
+const createAirAccountProvider = (airAccount, bundler, publicRpc) => ({
+  request: async ({ method, params }) => {
+    switch (method) {
+      case 'eth_requestAccounts':
+      case 'eth_accounts':
+        return [airAccount.address];
+
+      case 'eth_sendTransaction': {
+        const tx = params[0];
+        // Build + sign + submit UserOp
+        const userOp = await buildUserOp(airAccount, tx);
+        const opHash = await bundler.sendUserOperation(userOp, ENTRY_POINT);
+        // Return tx hash after UserOp is included
+        const receipt = await bundler.waitForUserOperationReceipt({ hash: opHash });
+        return receipt.receipt.transactionHash;
+      }
+
+      case 'personal_sign':
+        return airAccount.signMessage(params[0]);
+
+      case 'eth_signTypedData_v4':
+        return airAccount.signTypedData(JSON.parse(params[1]));
+
+      default:
+        // Forward read-only calls to public RPC
+        return publicRpc.request({ method, params });
+    }
+  },
+});
+```
+
+### EIP-6963 Wallet Announcement
+
+```typescript
+// AirAccount wallet extension announces itself to DApps
+const info = {
+  uuid: crypto.randomUUID(),
+  name: 'AirAccount',
+  icon: 'data:image/svg+xml,...', // wallet icon data URL
+  rdns: 'io.airaccount',
+};
+window.dispatchEvent(new CustomEvent('eip6963:announceProvider', {
+  detail: Object.freeze({ info, provider: airAccountProvider }),
+}));
+window.addEventListener('eip6963:requestProvider', () =>
+  window.dispatchEvent(new CustomEvent('eip6963:announceProvider', {
+    detail: Object.freeze({ info, provider: airAccountProvider }),
+  }))
+);
+```
+
+### wagmi Integration
+
+```typescript
+import { createConfig } from 'wagmi';
+import { custom } from 'viem';
+
+const config = createConfig({
+  connectors: [
+    // Auto-discovers AirAccount via EIP-6963
+  ],
+  client: createWalletClient({ transport: custom(airAccountProvider) }),
+});
+```
+
+### Reference Implementations
+
+| Project | URL |
+|---------|-----|
+| Coinbase Wallet SDK (EIP-1193 + EIP-6963) | https://github.com/coinbase/coinbase-wallet-sdk |
+| MIPD (EIP-6963 discovery) | https://github.com/wevm/mipd |
+| Frame Wallet (EIP-1193 provider) | https://github.com/floating/frame |
+| WalletConnect EIP-6963 reference | https://github.com/WalletConnect/EIP6963 |
+
+---
+
+## Frontend Integration Guide: Private Transfers (Railgun / Kohaku SDK)
+
+### Does Railgun SDK cover S1-4 Private Transfers?
+
+**Yes** — `@railgun-community/wallet` SDK enables shielded token pools from any ERC-4337 account. Kohaku (Ethereum Foundation framework) uses Railgun as its privacy protocol layer, so integrating Railgun covers both.
+
+### Key Packages
+
+```bash
+pnpm add @railgun-community/wallet @railgun-community/shared-models @railgun-community/engine
+```
+
+### What AirAccount Needs (Contract Layer — M7.11)
+
+```solidity
+// RailgunParser.sol — ICalldataParser implementation
+// Parses Railgun multicall() calldata to extract (tokenIn, amountIn)
+// so AAStarGlobalGuard can enforce tier limits on shielding operations
+
+contract RailgunParser is ICalldataParser {
+    function parseCalldata(address, bytes calldata data)
+        external pure returns (address token, uint256 amount) {
+        // Decode RelayAdapt.multicall(Transaction[] calls) calldata
+        // Extract token + amount from first Transaction's tokenType/tokenAddress/amount fields
+    }
+}
+```
+
+Register once at factory deploy:
+```typescript
+registry.registerParser(RAILGUN_RELAY_ADAPT_ADDRESS, railgunParserAddress);
+```
+
+### Frontend Shielding Flow
+
+```typescript
+import { RailgunWallet } from '@railgun-community/wallet';
+
+// 1. Initialize Railgun wallet
+const railgunWallet = await RailgunWallet.create(db, provider);
+
+// 2. Shield tokens into private pool (from AirAccount)
+const shieldTx = await railgunWallet.populateShield(
+  tokenAddress, amount, railgunRecipientAddress
+);
+
+// 3. Submit as AirAccount UserOp (guard checks tier via RailgunParser)
+const userOp = await buildUserOpForExecute(
+  airAccountAddress, shieldTx.to, shieldTx.value, shieldTx.data
+);
+await bundler.sendUserOperation(userOp, ENTRY_POINT);
+```
+
+### Reference Implementation
+
+| Project | URL | Notes |
+|---------|-----|-------|
+| Railway Wallet | https://github.com/Railway-Wallet/Railway-Wallet | Production Railgun wallet, fully open source |
+| Railgun SDK | https://github.com/Railgun-Community/wallet | Core SDK |
+| Kohaku | https://github.com/ethereum/kohaku | EF privacy framework (wraps Railgun) |
+| Railgun Docs | https://docs.railgun.org/developer-guide | 9-phase init guide |
+
+---
+
+## ERC-7579 + `_enforceGuard` Integration Design
+
+### Are the Two Guards Duplicates?
+
+**No.** They are orthogonal:
+
+| Check | What it does | When triggered |
+|-------|-------------|----------------|
+| Module auth check | "Is caller an installed executor module?" | At `executeFromExecutor` entry |
+| `_enforceGuard` | Daily spend limit + tier level enforcement | At execution dispatch |
+
+One is identity/authentication, the other is spending policy. They never overlap.
+
+### Gas Cost Analysis
+
+| Path | Gas Breakdown | Total |
+|------|--------------|-------|
+| Normal `execute()` | EntryPoint 35k + sig verify 5–50k + guard 3–8k | ~43–93k |
+| `executeFromExecutor` + guard | Module auth SLOAD 100–2100 + guard 3–8k | ~3–10k |
+| **Net difference** | executeFromExecutor saves 30–50k gas vs execute() | **Still cheaper** |
+
+Adding `_enforceGuard` to `executeFromExecutor` costs ~3,000–8,000 gas but saves 30,000+ gas vs a standard UserOp. The guard does not cause a "gas spike" — it's a net saving.
+
+### Elegant Integration: "Daily Limit Only" for Executor Calls
+
+The key design insight: `installModule` requires **guardian 2-of-3 approval + timelock**. That IS the tier-3 authorization. Once a module is trusted-and-installed, its calls only need spending limit enforcement, not tier re-checking.
+
+**`algId = 0x00` = EXECUTOR_MODE** — signals guard to skip tier check, enforce daily limit only:
+
+```solidity
+// In AAStarAirAccountBase.sol
+function executeFromExecutor(ModeCode mode, bytes calldata executionCalldata)
+    external
+    nonReentrant
+    returns (bytes[] memory returnData)
+{
+    // 1. Auth: caller must be an installed ERC-7579 executor module
+    if (!_installedModules[msg.sender][MODULE_TYPE_EXECUTOR]) {
+        revert NotInstalledExecutor();
+    }
+
+    // 2. Decode execution based on ModeCode callType
+    (CallType callType,) = mode.decodeMode();
+    if (callType == CALLTYPE_SINGLE) {
+        (address target, uint256 value, bytes calldata callData) =
+            executionCalldata.decodeSingle();
+
+        // 3. Guard: daily limit only (algId=0x00 = executor mode, skip tier)
+        // installModule already required guardian 2-of-3 — that is the tier auth.
+        // This avoids duplicate tier checking without sacrificing spend protection.
+        if (address(guard) != address(0)) {
+            guard.checkTransaction(target, value, 0x00);
+        }
+
+        returnData = new bytes[](1);
+        returnData[0] = _call(target, value, callData);
+    }
+    // CALLTYPE_BATCH: iterate, same pattern
+}
+```
+
+**In `AAStarGlobalGuard.checkTransaction`**, handle `algId=0x00`:
+
+```solidity
+function checkTransaction(address dest, uint256 value, uint8 algId) external {
+    require(msg.sender == account, "Not account");
+
+    if (algId == 0x00) {
+        // Executor mode: daily ETH limit only, no tier check
+        // Module was guardian-approved at installModule time
+        _checkAndAccumulateDailySpend(value);
+        return;
+    }
+
+    // Normal tiered path (T1/T2/T3 based on algId)
+    _checkTier(dest, value, algId);
+    _checkAndAccumulateDailySpend(value);
+}
+```
+
+### installModule Security Gate
+
+`installModule` must require guardian 2-of-3 to prevent an attacker from installing a malicious executor that drains the account via the daily-limit-only path:
+
+```solidity
+function installModule(uint256 moduleTypeId, address module, bytes calldata initData)
+    external
+{
+    // Guardian threshold: same as social recovery (2-of-3, with timelock)
+    _requireGuardianApproval();  // or: require(msg.sender == address(this)) from guardian-signed UserOp
+
+    require(module != address(0), "ModuleZero");
+    require(moduleTypeId <= MODULE_TYPE_FALLBACK, "UnknownModuleType");
+
+    _installedModules[module][moduleTypeId] = true;
+    emit ModuleInstalled(moduleTypeId, module);
+
+    IModule(module).onInstall(initData);
+}
+```
+
+### Summary: Zero Duplication, No Gas Spike
+
+```
+installModule (guardian-gated, one-time) → tier authorization
+executeFromExecutor → daily limit enforcement (via guard, algId=0x00)
+execute() (via UserOp) → full tier + daily limit (via guard, algId=resolved)
+```
+
+Each path runs exactly one guard check, with the appropriate scope. The ERC-7579 module system does not compromise AirAccount's tier security model; it delegates tier authorization to the `installModule` gating step.
+

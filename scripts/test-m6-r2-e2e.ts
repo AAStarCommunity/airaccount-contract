@@ -269,13 +269,12 @@ async function main() {
   console.log("\n── Test B: Verify account state ────────────────────────────");
 
   try {
-    const [accOwner, guardAddr, g0, g1, g2, ver] = await Promise.all([
+    const [accOwner, guardAddr, g0, g1, g2] = await Promise.all([
       publicClient.readContract({ address: accountAddr, abi: ACCOUNT_ABI, functionName: "owner" }),
       publicClient.readContract({ address: accountAddr, abi: ACCOUNT_ABI, functionName: "guard" }),
       publicClient.readContract({ address: accountAddr, abi: ACCOUNT_ABI, functionName: "guardians", args: [0n] }),
       publicClient.readContract({ address: accountAddr, abi: ACCOUNT_ABI, functionName: "guardians", args: [1n] }),
       publicClient.readContract({ address: accountAddr, abi: ACCOUNT_ABI, functionName: "guardians", args: [2n] }),
-      publicClient.readContract({ address: accountAddr, abi: ACCOUNT_ABI, functionName: "version" }),
     ]);
 
     console.log(`  Owner:    ${accOwner}`);
@@ -283,7 +282,6 @@ async function main() {
     console.log(`  Guardian0: ${g0}`);
     console.log(`  Guardian1: ${g1}`);
     console.log(`  Guardian2: ${g2}`);
-    console.log(`  Version:  ${ver}`);
 
     if (accOwner.toLowerCase() === owner.address.toLowerCase()) pass("B: owner correct");
     else fail("B: owner mismatch", `expected ${owner.address}, got ${accOwner}`);

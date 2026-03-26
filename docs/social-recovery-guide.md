@@ -100,9 +100,16 @@ During the 48-hour timelock:
 
 The current owner can also **remove a compromised guardian** during this window:
 ```
-removeGuardian(guardianIndex)
+removeGuardian(guardianIndex, [sig_from_other_guardian_1, sig_from_other_guardian_2])
 ```
 This automatically cancels any active recovery (since the guardian set has changed).
+
+> **Security note (M7.3):** `removeGuardian` requires signatures from all non-removed guardians.
+> Removing a guardian is classified at the same security level as social recovery because it
+> reduces the account's protection level. This prevents a compromised owner key from silently
+> stripping all guardian protection. Required sigs: 0 for 1 guardian, 1 for 2 guardians, 2 for 3 guardians.
+>
+> Signature pre-image: `keccak256("REMOVE_GUARDIAN" || chainId || account || guardianAddress).toEthSignedMessageHash()`
 
 ### A.7 Step 6: Executing Recovery
 
@@ -191,7 +198,7 @@ Social recovery is implemented in `AAStarAirAccountBase.sol` (lines 375–486), 
 │  │  execute() / executeBatch()                       │  │
 │  │                                                   │  │
 │  │  addGuardian()      ← onlyOwner                   │  │
-│  │  removeGuardian()   ← onlyOwner                   │  │
+│  │  removeGuardian()   ← onlyOwner + other guardians │  │
 │  │  proposeRecovery()  ← any guardian                 │  │
 │  │  approveRecovery()  ← any guardian                 │  │
 │  │  executeRecovery()  ← permissionless               │  │
@@ -307,8 +314,20 @@ function addGuardian(address _guardian) external onlyOwner {
 #### B.4.2 Removing Guardians
 
 ```solidity
-function removeGuardian(uint8 index) external onlyOwner {
+function removeGuardian(uint8 index, bytes[] calldata guardianSigs) external onlyOwner {
+    // M7.3 security: require signatures from all non-removed guardians.
+    // Removing a guardian reduces security level, so it requires the same
+    // level of authorization as social recovery (guardian consensus).
+    //
+    //   1 guardian  → 0 sigs required (no other guardians exist)
+    //   2 guardians → 1 sig  (the other guardian must agree)
+    //   3 guardians → 2 sigs (both other guardians must agree)
+    //
+    // Sig pre-image: keccak256("REMOVE_GUARDIAN" || chainId || account || guardianAddr).toEthSignedMessageHash()
+    // ... validate guardian sigs ...
+
     // ... shift array ...
+    guardianVersion++; // F2: invalidate any pending ForceExit proposals
 
     // CRITICAL: Cancel active recovery if guardian set changes
     if (activeRecovery.newOwner != address(0)) {

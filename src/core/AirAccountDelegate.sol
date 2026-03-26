@@ -7,6 +7,16 @@ import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 
+/// @dev ERC-5564 Announcer interface (deployed on mainnet/testnet by ERC-5564 authors)
+interface IERC5564Announcer {
+    function announce(
+        uint256 schemeId,
+        address stealthAddress,
+        bytes calldata ephemeralPubKey,
+        bytes calldata metadata
+    ) external;
+}
+
 /**
  * @title AirAccountDelegate
  * @notice EIP-7702 compatible AirAccount implementation contract.
@@ -95,6 +105,7 @@ contract AirAccountDelegate {
     error GuardianAlreadyCancelVoted();
     error RescueAlreadyPending();
     error InvalidAddress();
+    error ArrayLengthMismatch();
     error CallFailed(bytes reason);
 
     // ─── Events ───────────────────────────────────────────────────────────────
@@ -254,7 +265,7 @@ contract AirAccountDelegate {
         DelegateStorage storage ds = _ds();
         if (!ds.initialized) revert NotInitialized();
 
-        if (dest.length != value.length || dest.length != data.length) revert InvalidAddress();
+        if (dest.length != value.length || dest.length != data.length) revert ArrayLengthMismatch();
 
         uint8 algId = msg.sender == address(ENTRY_POINT) ? _consumeAlgId() : ALG_ECDSA;
 
@@ -478,6 +489,33 @@ contract AirAccountDelegate {
             if (ds.guardians[i] == who && who != address(0)) return (i, true);
         }
         return (0, false);
+    }
+
+    // ─── ERC-5564 Stealth Address (M7.13) ────────────────────────────────────────
+
+    /// @notice Publish a stealth address announcement via ERC-5564 Announcer.
+    /// @dev This allows the recipient to scan announcements and find stealth payments.
+    ///      The stealth address derivation is done OFF-CHAIN — this contract just publishes the announcement.
+    ///      Receiving assets at stealth addresses requires no special handling (just a regular receive).
+    /// @param announcer ERC-5564 Announcer contract address
+    ///        (Ethereum: 0x55649E01B5Df198D18D95b5cc5051630cfD45564, Sepolia: 0x55649E01B5Df198D18D95b5cc5051630cfD45564)
+    /// @param stealthAddress The one-time stealth address derived from recipient's stealth meta-address
+    /// @param ephemeralPubKey The sender's ephemeral public key (33 bytes for secp256k1)
+    /// @param metadata Protocol-specific metadata (can encode view tag for efficient scanning)
+    function announceForStealth(
+        address announcer,
+        address stealthAddress,
+        bytes calldata ephemeralPubKey,
+        bytes calldata metadata
+    ) external {
+        if (msg.sender != address(this)) revert OnlySelf();
+        require(announcer != address(0), "Invalid announcer");
+        IERC5564Announcer(announcer).announce(
+            1, // schemeId=1 for secp256k1 stealth addresses
+            stealthAddress,
+            ephemeralPubKey,
+            metadata
+        );
     }
 
     // ─── Transient Storage (algId queue) ─────────────────────────────────────

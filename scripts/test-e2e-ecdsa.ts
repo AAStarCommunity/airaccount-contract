@@ -18,6 +18,8 @@
  * Uses viem only (no ethers.js)
  */
 
+import { config } from "dotenv";
+import { resolve } from "path";
 import {
   createPublicClient,
   createWalletClient,
@@ -34,12 +36,14 @@ import {
   keccak256,
   concat,
   getAddress,
+  type Address,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { readFileSync, existsSync } from "fs";
-import { resolve } from "path";
 import { fileURLToPath } from "url";
+
+config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
 // ─── Config from environment ─────────────────────────────────────────────────
 
@@ -53,9 +57,9 @@ const required = (k: string): string => {
 };
 
 const PRIVATE_KEY = required("PRIVATE_KEY") as `0x${string}`;
-const RPC_URL = (process.env.SEPOLIA_RPC ?? required("SEPOLIA_RPC")) as string;
+const RPC_URL = (process.env.SEPOLIA_RPC_URL ?? process.env.SEPOLIA_RPC ?? required("SEPOLIA_RPC_URL")) as string;
 const ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
-const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS || "";
+const FACTORY_ADDRESS = (process.env.AIRACCOUNT_M7_FACTORY ?? process.env.FACTORY_ADDRESS ?? "") as string;
 const DRY_RUN = !!process.env.DRY_RUN;
 
 // Transfer recipient: if not set, send to self (harmless round-trip)
@@ -137,7 +141,49 @@ const ENTRYPOINT_ABI = [
     ],
     outputs: [{ name: "nonce", type: "uint256" }],
   },
+  {
+    name: "FailedOp",
+    type: "error",
+    inputs: [
+      { name: "opIndex", type: "uint256" },
+      { name: "reason", type: "string" },
+    ],
+  },
+  {
+    name: "FailedOpWithRevert",
+    type: "error",
+    inputs: [
+      { name: "opIndex", type: "uint256" },
+      { name: "reason", type: "string" },
+      { name: "inner", type: "bytes" },
+    ],
+  },
 ] as const;
+
+// InitConfig components for M6/M7 factory (3-arg createAccount/getAddress)
+const INIT_CONFIG_COMPONENTS = [
+  { name: "guardians",           type: "address[3]" },
+  { name: "dailyLimit",          type: "uint256"    },
+  { name: "approvedAlgIds",      type: "uint8[]"    },
+  { name: "minDailyLimit",       type: "uint256"    },
+  { name: "initialTokens",       type: "address[]"  },
+  { name: "initialTokenConfigs", type: "tuple[]", components: [
+    { name: "tier1Limit", type: "uint256" },
+    { name: "tier2Limit", type: "uint256" },
+    { name: "dailyLimit", type: "uint256" },
+  ]},
+] as const;
+
+// Minimal ECDSA-only config: no guardians, no guard (dailyLimit=0)
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as Address;
+const INIT_CONFIG = {
+  guardians:           [ZERO_ADDR, ZERO_ADDR, ZERO_ADDR] as [Address, Address, Address],
+  dailyLimit:          0n,
+  approvedAlgIds:      [] as number[],
+  minDailyLimit:       0n,
+  initialTokens:       [] as Address[],
+  initialTokenConfigs: [] as { tier1Limit: bigint; tier2Limit: bigint; dailyLimit: bigint }[],
+};
 
 const FACTORY_ABI = [
   {
@@ -145,8 +191,9 @@ const FACTORY_ABI = [
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "owner", type: "address" },
-      { name: "salt", type: "uint256" },
+      { name: "owner",  type: "address" },
+      { name: "salt",   type: "uint256" },
+      { name: "config", type: "tuple", components: INIT_CONFIG_COMPONENTS },
     ],
     outputs: [{ name: "account", type: "address" }],
   },
@@ -155,8 +202,9 @@ const FACTORY_ABI = [
     type: "function",
     stateMutability: "view",
     inputs: [
-      { name: "owner", type: "address" },
-      { name: "salt", type: "uint256" },
+      { name: "owner",  type: "address" },
+      { name: "salt",   type: "uint256" },
+      { name: "config", type: "tuple", components: INIT_CONFIG_COMPONENTS },
     ],
     outputs: [{ name: "account", type: "address" }],
   },
@@ -213,20 +261,10 @@ const ACCOUNT_ABI = [
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
-// EIP-191 personal sign: sign keccak256("\x19Ethereum Signed Message:\n" + len(message) + message)
+// EIP-191 personal sign: sign keccak256("\x19Ethereum Signed Message:\n32" + messageHash)
+// viem's signMessage with { raw: bytes } applies exactly one EIP-191 prefix wrap.
 async function signMessageEIP191(account: ReturnType<typeof privateKeyToAccount>, messageHash: `0x${string}`): Promise<`0x${string}`> {
-  // messageHash is 32 bytes, so len = 32
-  const prefix = `\x19Ethereum Signed Message:\n32`;
-  const prefixBytes = new TextEncoder().encode(prefix);
-  const messageBytes = hexToBytes(messageHash);
-  const fullMessage = concat([prefixBytes, messageBytes]);
-  const fullHash = keccak256(fullMessage);
-  
-  const signature = await account.signMessage({
-    message: { raw: hexToBytes(fullHash) },
-  });
-  
-  return signature;
+  return account.signMessage({ message: { raw: hexToBytes(messageHash) } });
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -316,8 +354,10 @@ async function main() {
           { name: "tier2Limit", type: "uint256" },
           { name: "dailyLimit", type: "uint256" },
         ]},
+        { type: "address" }, // defaultValidatorModule
+        { type: "address" }, // defaultHookModule
       ],
-      [ENTRYPOINT, "0x0000000000000000000000000000000000000000", [], []]
+      [ENTRYPOINT, "0x0000000000000000000000000000000000000000", [], [], "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000"]
     );
     const deployBytecode = concat([factoryBytecode, constructorArgs]) as `0x${string}`;
     
@@ -342,7 +382,7 @@ async function main() {
     address: factoryAddr,
     abi: FACTORY_ABI,
     functionName: "getAddress",
-    args: [account.address, 0n],
+    args: [account.address, 0n, INIT_CONFIG],
   });
   
   console.log(`  Predicted address: ${predictedAddr}`);
@@ -359,7 +399,7 @@ async function main() {
       address: factoryAddr,
       abi: FACTORY_ABI,
       functionName: "createAccount",
-      args: [account.address, 0n],
+      args: [account.address, 0n, INIT_CONFIG],
     });
     
     const receipt = await publicClient.waitForTransactionReceipt({ hash });

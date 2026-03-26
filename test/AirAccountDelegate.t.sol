@@ -8,6 +8,26 @@ import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOper
 import {AirAccountDelegate} from "../src/core/AirAccountDelegate.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 
+/// @dev Mock ERC-5564 Announcer for stealth address tests
+contract MockAnnouncer {
+    address public lastStealthAddress;
+    bytes public lastEphemeralPubKey;
+    bytes public lastMetadata;
+    uint256 public callCount;
+
+    function announce(
+        uint256,
+        address stealthAddress,
+        bytes calldata ephemeralPubKey,
+        bytes calldata metadata
+    ) external {
+        lastStealthAddress = stealthAddress;
+        lastEphemeralPubKey = ephemeralPubKey;
+        lastMetadata = metadata;
+        callCount++;
+    }
+}
+
 /**
  * @title AirAccountDelegateTest — Unit tests for M6-7702 AirAccountDelegate
  *
@@ -457,7 +477,7 @@ contract AirAccountDelegateTest is Test {
         uint256[] memory values = new uint256[](3); // mismatch
         bytes[]   memory data   = new bytes[](2);
         vm.prank(eoa);
-        vm.expectRevert(AirAccountDelegate.InvalidAddress.selector);
+        vm.expectRevert(AirAccountDelegate.ArrayLengthMismatch.selector);
         delegate.executeBatch(dests, values, data);
     }
 
@@ -467,7 +487,7 @@ contract AirAccountDelegateTest is Test {
         uint256[] memory values = new uint256[](2);
         bytes[]   memory data   = new bytes[](3); // mismatch
         vm.prank(eoa);
-        vm.expectRevert(AirAccountDelegate.InvalidAddress.selector);
+        vm.expectRevert(AirAccountDelegate.ArrayLengthMismatch.selector);
         delegate.executeBatch(dests, values, data);
     }
 
@@ -621,5 +641,66 @@ contract AirAccountDelegateTest is Test {
             ""
         );
         delegate.addDeposit{value: 0.01 ether}();
+    }
+
+    // ─── ERC-5564 Stealth Address (M7.13) ────────────────────────────────────
+
+    function test_announceForStealth_succeeds() public {
+        _initialize(1 ether);
+        MockAnnouncer announcer = new MockAnnouncer();
+        address stealthAddr = makeAddr("stealth");
+        bytes memory ephemeralKey = hex"02deadbeef1234";
+        bytes memory metadata = hex"0102";
+
+        // owner() == address(this) (eoa), so msg.sender must be eoa
+        vm.prank(eoa);
+        delegate.announceForStealth(address(announcer), stealthAddr, ephemeralKey, metadata);
+
+        assertEq(announcer.lastStealthAddress(), stealthAddr);
+        assertEq(announcer.callCount(), 1);
+    }
+
+    function test_announceForStealth_passesEphemeralKeyAndMetadata() public {
+        _initialize(1 ether);
+        MockAnnouncer announcer = new MockAnnouncer();
+        address stealthAddr = makeAddr("stealth2");
+        bytes memory ephemeralKey = hex"0312345678abcdef";
+        bytes memory metadata = hex"abcd1234";
+
+        vm.prank(eoa);
+        delegate.announceForStealth(address(announcer), stealthAddr, ephemeralKey, metadata);
+
+        assertEq(announcer.lastEphemeralPubKey(), ephemeralKey);
+        assertEq(announcer.lastMetadata(), metadata);
+    }
+
+    function test_announceForStealth_notOwner_reverts() public {
+        _initialize(1 ether);
+        MockAnnouncer announcer = new MockAnnouncer();
+
+        vm.prank(makeAddr("random"));
+        vm.expectRevert(AirAccountDelegate.OnlySelf.selector);
+        delegate.announceForStealth(address(announcer), makeAddr("stealth"), "", "");
+    }
+
+    function test_announceForStealth_zeroAnnouncer_reverts() public {
+        _initialize(1 ether);
+
+        vm.prank(eoa);
+        vm.expectRevert();
+        delegate.announceForStealth(address(0), makeAddr("stealth"), "", "");
+    }
+
+    function test_announceForStealth_calledMultipleTimes_incrementsCount() public {
+        _initialize(1 ether);
+        MockAnnouncer announcer = new MockAnnouncer();
+
+        vm.startPrank(eoa);
+        delegate.announceForStealth(address(announcer), makeAddr("s1"), hex"01", "");
+        delegate.announceForStealth(address(announcer), makeAddr("s2"), hex"02", "");
+        delegate.announceForStealth(address(announcer), makeAddr("s3"), hex"03", "");
+        vm.stopPrank();
+
+        assertEq(announcer.callCount(), 3);
     }
 }
