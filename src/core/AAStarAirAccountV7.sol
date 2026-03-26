@@ -126,7 +126,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         bytes32 userOpHash,
         uint256 missingAccountFunds
     ) external onlyEntryPoint returns (uint256 validationData) {
-        // ERC-7579 nonce key routing: high 192 bits of nonce = validator module address (M7.2).
+        // ERC-7579 nonce key routing: low 160 bits of the 192-bit nonce key = validator module address (M7.2).
         // If non-zero, route to installed validator module instead of built-in signature routing.
         address validatorModule = address(uint160(userOp.nonce >> 64));
         if (validatorModule != address(0)) {
@@ -199,25 +199,32 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         uint8 sigsRequired = threshold >= 100 ? 2 : (threshold >= 70 ? 1 : 0);
 
         if (sigsRequired > 0) {
+            uint256 sigEnd = uint256(sigsRequired) * 65;
+            // Explicit length guard before slice — prevents panic and gives readable revert.
+            if (initData.length < sigEnd) revert InstallModuleUnauthorized();
+            // v3-MEDIUM fix: sig binds keccak256(moduleInitData) to prevent config-swap attacks.
+            // Guardian signs over both the module identity AND the module init configuration.
+            bytes32 moduleInitDataHash = keccak256(initData[sigEnd:]);
             _checkGuardianSigs(
-                keccak256(abi.encodePacked("INSTALL_MODULE", block.chainid, address(this), moduleTypeId, module))
-                    .toEthSignedMessageHash(),
+                keccak256(abi.encodePacked(
+                    "INSTALL_MODULE", block.chainid, address(this),
+                    moduleTypeId, module, moduleInitDataHash
+                )).toEthSignedMessageHash(),
                 initData, sigsRequired
             );
         }
 
-        if (_installedModules[moduleTypeId][module]) revert ModuleAlreadyInstalled();
-        _installedModules[moduleTypeId][module] = true;
-        // Only one active hook is tracked. Installing a second Hook module overwrites _activeHook,
-        // silently deactivating the previous hook's preCheck dispatch. Callers must uninstall the
-        // existing hook before installing a new one to avoid silent deactivation.
-        if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
-
-        // Pass bytes after the guardian sigs as actual module initData.
-        // Best-effort: ignore onInstall revert (backward-compatible with modules that don't need initData).
         bytes calldata moduleInitData = initData[uint256(sigsRequired) * 65:];
+
+        if (_installedModules[moduleTypeId][module]) revert ModuleAlreadyInstalled();
+        // LOW-1: Reject second hook install — silent overwrite would deactivate TierGuardHook without warning.
+        // Caller must explicitly uninstallModule the existing hook before installing a new one.
+        if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook != address(0)) revert ModuleAlreadyInstalled();
+        _installedModules[moduleTypeId][module] = true;
+        if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
+        // slither-disable-next-line unused-return
         (bool _ok,) = module.call(abi.encodeWithSelector(0x6d61fe70, moduleInitData));
-        _ok; // best-effort
+        (_ok); // best-effort: ignore onInstall revert
 
         emit ModuleInstalled(moduleTypeId, module);
     }

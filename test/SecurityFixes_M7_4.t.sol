@@ -175,8 +175,14 @@ contract SecurityFixes_M7_4Test is Test {
     function _installSig(Vm.Wallet memory wallet, address acc, uint256 moduleTypeId, address module)
         internal view returns (bytes memory)
     {
+        return _installSigWithData(wallet, acc, moduleTypeId, module, "");
+    }
+
+    function _installSigWithData(Vm.Wallet memory wallet, address acc, uint256 moduleTypeId, address module, bytes memory moduleInitData)
+        internal view returns (bytes memory)
+    {
         bytes32 hash = keccak256(
-            abi.encodePacked("INSTALL_MODULE", block.chainid, acc, moduleTypeId, module)
+            abi.encodePacked("INSTALL_MODULE", block.chainid, acc, moduleTypeId, module, keccak256(moduleInitData))
         ).toEthSignedMessageHash();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wallet, hash);
         return abi.encodePacked(r, s, v);
@@ -530,8 +536,9 @@ contract SecurityFixes_M7_4Test is Test {
     ///         HIGH-2 fix: installModule now extracts sigsRequired*65 bytes as guardian sigs,
     ///         then passes the remainder to onInstall(bytes).
     function test_M10_installModule_passesInitDataToOnInstall() public {
-        bytes memory guardianSig = _installSig(g0Wallet, address(account), 1, address(trackingModule));
         bytes memory extraData = abi.encodePacked("extra-init-data-for-module");
+        // v3-MEDIUM fix: guardian sig must bind keccak256(moduleInitData)
+        bytes memory guardianSig = _installSigWithData(g0Wallet, address(account), 1, address(trackingModule), extraData);
         bytes memory fullInitData = abi.encodePacked(guardianSig, extraData);
 
         vm.prank(ownerWallet.addr);
@@ -622,10 +629,13 @@ contract SecurityFixes_M7_4Test is Test {
         // Deploy a second tracking module
         TrackingModule trackingModule2 = new TrackingModule();
 
-        bytes memory sig1 = _installSig(g0Wallet, address(account), 2, address(trackingModule));  // executor
-        bytes memory sig2 = _installSig(g0Wallet, address(account), 3, address(trackingModule2)); // hook
-        bytes memory initData1 = abi.encodePacked(sig1, bytes("data-for-module1"));
-        bytes memory initData2 = abi.encodePacked(sig2, bytes("data-for-module2"));
+        // v3-MEDIUM fix: sigs bind their respective moduleInitData
+        bytes memory extra1 = bytes("data-for-module1");
+        bytes memory extra2 = bytes("data-for-module2");
+        bytes memory sig1 = _installSigWithData(g0Wallet, address(account), 2, address(trackingModule), extra1);
+        bytes memory sig2 = _installSigWithData(g0Wallet, address(account), 3, address(trackingModule2), extra2);
+        bytes memory initData1 = abi.encodePacked(sig1, extra1);
+        bytes memory initData2 = abi.encodePacked(sig2, extra2);
 
         vm.prank(ownerWallet.addr);
         account.installModule(2, address(trackingModule), initData1);

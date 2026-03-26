@@ -105,12 +105,19 @@ contract AAStarAirAccountV7_M7Test is Test {
 
     // ─── Internal helpers ─────────────────────────────────────────────────────
 
-    /// @dev Build a guardian install signature for `account` (uses address(account))
+    /// @dev Build a guardian install signature for `account`.
+    ///      Sig now binds keccak256(moduleInitData) to prevent config-swap attacks (v3-MEDIUM fix).
     function _installSig(Vm.Wallet memory w, address acct, uint256 moduleTypeId, address module)
         internal view returns (bytes memory)
     {
+        return _installSigWithData(w, acct, moduleTypeId, module, "");
+    }
+
+    function _installSigWithData(Vm.Wallet memory w, address acct, uint256 moduleTypeId, address module, bytes memory moduleInitData)
+        internal view returns (bytes memory)
+    {
         bytes32 raw = keccak256(abi.encodePacked(
-            "INSTALL_MODULE", block.chainid, acct, moduleTypeId, module
+            "INSTALL_MODULE", block.chainid, acct, moduleTypeId, module, keccak256(moduleInitData)
         ));
         bytes32 ethHash = raw.toEthSignedMessageHash();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
@@ -234,6 +241,35 @@ contract AAStarAirAccountV7_M7Test is Test {
         account.installModule(1, address(mockModule), sig2);
     }
 
+    function test_installModule_secondHook_reverts() public {
+        // LOW-1 fix: installing a second hook must revert, not silently overwrite
+        _installWithG0(3, address(mockModule));
+        // deploy a second distinct mock module
+        MockModule mockModule2 = new MockModule();
+        bytes memory sig2 = _installSig(g0Wallet, address(account), 3, address(mockModule2));
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.ModuleAlreadyInstalled.selector);
+        account.installModule(3, address(mockModule2), sig2);
+    }
+
+    function test_installModule_hookAfterUninstall_succeeds() public {
+        // After uninstalling the first hook, a new hook can be installed
+        _installWithG0(3, address(mockModule));
+        // uninstall requires 2 guardian sigs
+        bytes memory unSig = abi.encodePacked(
+            _uninstallSig(g0Wallet, address(account), 3, address(mockModule)),
+            _uninstallSig(g1Wallet, address(account), 3, address(mockModule))
+        );
+        vm.prank(ownerWallet.addr);
+        account.uninstallModule(3, address(mockModule), unSig);
+        // now install a second hook — should succeed
+        MockModule mockModule2 = new MockModule();
+        bytes memory sig2 = _installSig(g0Wallet, address(account), 3, address(mockModule2));
+        vm.prank(ownerWallet.addr);
+        account.installModule(3, address(mockModule2), sig2);
+        assertTrue(account.isModuleInstalled(3, address(mockModule2), ""));
+    }
+
     /// @notice Default threshold is 70 → 1 guardian sig required. No sig → should revert.
     function test_installModule_defaultThreshold_noGuardianSig_reverts() public {
         vm.prank(ownerWallet.addr);
@@ -251,24 +287,13 @@ contract AAStarAirAccountV7_M7Test is Test {
 
     function test_installModule_duplicateGuardianSig_reverts() public {
         // Both sig slots use the same guardian (g0) — should be rejected as double-voting
-        bytes memory sig0 = _installSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory sig1 = _installSig(g0Wallet, address(account), 1, address(mockModule));
-
-        // Deploy an account with threshold=100 so 2 guardian sigs are required
         AAStarAirAccountV7 acc100 = _deployAccountWithThreshold(100);
-
-        bytes32 raw = keccak256(abi.encodePacked(
-            "INSTALL_MODULE", block.chainid, address(acc100), uint256(1), address(mockModule)
-        ));
-        bytes32 ethHash = raw.toEthSignedMessageHash();
-        (uint8 v0, bytes32 r0, bytes32 s0) = vm.sign(g0Wallet.privateKey, ethHash);
-        bytes memory dup0 = abi.encodePacked(r0, s0, v0);
-        bytes memory dup1 = abi.encodePacked(r0, s0, v0);
+        // Use new sig format: binds keccak256(moduleInitData) = keccak256("") for no initData
+        bytes memory dupSig = _installSigWithData(g0Wallet, address(acc100), 1, address(mockModule), "");
 
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
-        acc100.installModule(1, address(mockModule), abi.encodePacked(dup0, dup1));
-        (sig0, sig1); // silence unused warning
+        acc100.installModule(1, address(mockModule), abi.encodePacked(dupSig, dupSig));
     }
 
     // ─── installModule: threshold=100 (2 guardian sigs required) ────────────
@@ -276,35 +301,32 @@ contract AAStarAirAccountV7_M7Test is Test {
     function test_installModule_threshold100_withTwoGuardianSigs_succeeds() public {
         AAStarAirAccountV7 acc100 = _deployAccountWithThreshold(100);
 
-        bytes32 raw = keccak256(abi.encodePacked(
-            "INSTALL_MODULE", block.chainid, address(acc100), uint256(1), address(mockModule)
-        ));
-        bytes32 ethHash = raw.toEthSignedMessageHash();
-        (uint8 v0, bytes32 r0, bytes32 s0) = vm.sign(g0Wallet.privateKey, ethHash);
-        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(g1Wallet.privateKey, ethHash);
-        bytes memory twoSigs = abi.encodePacked(
-            abi.encodePacked(r0, s0, v0),
-            abi.encodePacked(r1, s1, v1)
-        );
+        bytes memory sig0 = _installSigWithData(g0Wallet, address(acc100), 1, address(mockModule), "");
+        bytes memory sig1 = _installSigWithData(g1Wallet, address(acc100), 1, address(mockModule), "");
 
         vm.prank(ownerWallet.addr);
-        acc100.installModule(1, address(mockModule), twoSigs);
+        acc100.installModule(1, address(mockModule), abi.encodePacked(sig0, sig1));
         assertTrue(acc100.isModuleInstalled(1, address(mockModule), ""));
     }
 
     function test_installModule_threshold100_onlyOneSig_reverts() public {
         AAStarAirAccountV7 acc100 = _deployAccountWithThreshold(100);
 
-        bytes32 raw = keccak256(abi.encodePacked(
-            "INSTALL_MODULE", block.chainid, address(acc100), uint256(1), address(mockModule)
-        ));
-        bytes32 ethHash = raw.toEthSignedMessageHash();
-        (uint8 v0, bytes32 r0, bytes32 s0) = vm.sign(g0Wallet.privateKey, ethHash);
-        bytes memory oneSig = abi.encodePacked(r0, s0, v0);
+        bytes memory oneSig = _installSigWithData(g0Wallet, address(acc100), 1, address(mockModule), "");
 
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
         acc100.installModule(1, address(mockModule), oneSig);
+    }
+
+    function test_installModule_sigBindsInitData_wrongInitData_reverts() public {
+        // v3-MEDIUM: sig signed over empty initData; providing non-empty initData must revert
+        bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory wrongInitData = abi.encodePacked(sig, bytes32(uint256(0xdeadbeef)));
+
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
+        account.installModule(1, address(mockModule), wrongInitData);
     }
 
     // ─── installModule: threshold=40 (owner-only, 0 guardian sigs) ───────────

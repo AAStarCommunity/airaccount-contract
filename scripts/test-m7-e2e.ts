@@ -385,8 +385,8 @@ async function buildInstallSig(
 }
 
 /** Build the 65-byte guardian initData required by installModule.
- *  installModule checks: keccak256(abi.encodePacked("INSTALL_MODULE", chainId, account, moduleTypeId, module)).toEthSignedMessageHash()
- *  Signed by a guardian (must be in the account's guardian list).
+ *  v3-MEDIUM fix: sig now binds keccak256(moduleInitData) to prevent config-swap attacks.
+ *  installHash = keccak256("INSTALL_MODULE" || chainId || account || moduleTypeId || module || keccak256(moduleInitData))
  */
 async function buildGuardianInstallInitData(
   guardianAccount: ReturnType<typeof privateKeyToAccount>,
@@ -394,10 +394,12 @@ async function buildGuardianInstallInitData(
   moduleTypeId: bigint,
   moduleAddr: Address,
   chainId: bigint = 11155111n, // Sepolia
+  moduleInitData: Hex = "0x",  // bytes passed to onInstall (empty = no module config)
 ): Promise<Hex> {
+  const moduleInitDataHash = keccak256(moduleInitData);
   const preimage = encodePacked(
-    ["string", "uint256", "address", "uint256", "address"],
-    ["INSTALL_MODULE", chainId, accountAddr, moduleTypeId, moduleAddr],
+    ["string", "uint256", "address", "uint256", "address", "bytes32"],
+    ["INSTALL_MODULE", chainId, accountAddr, moduleTypeId, moduleAddr, moduleInitDataHash],
   );
   const installHash = keccak256(preimage);
   const ethSignedHash = keccak256(concat([

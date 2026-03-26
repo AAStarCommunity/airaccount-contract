@@ -504,7 +504,8 @@ contract AgentSessionKeyValidatorTest is Test {
         uint256 cap = 1000 ether;
         _grantSessionWithCap(cap);
 
-        // Spend below cap — should not revert
+        // Only account may call recordSpend
+        vm.prank(account);
         validator.recordSpend(account, sessionWallet.addr, 500 ether);
     }
 
@@ -512,7 +513,7 @@ contract AgentSessionKeyValidatorTest is Test {
         uint256 cap = 1000 ether;
         _grantSessionWithCap(cap);
 
-        // Spend exactly at cap — should not revert
+        vm.prank(account);
         validator.recordSpend(account, sessionWallet.addr, 1000 ether);
     }
 
@@ -520,9 +521,10 @@ contract AgentSessionKeyValidatorTest is Test {
         uint256 cap = 1000 ether;
         _grantSessionWithCap(cap);
 
-        // Spend 600 first
+        vm.prank(account);
         validator.recordSpend(account, sessionWallet.addr, 600 ether);
         // Spend another 500 → cumulative 1100 > cap 1000
+        vm.prank(account);
         vm.expectRevert(
             abi.encodeWithSelector(
                 AgentSessionKeyValidator.SpendCapExceeded.selector,
@@ -554,8 +556,19 @@ contract AgentSessionKeyValidatorTest is Test {
         validator.grantAgentSession(sessionWallet.addr, cfg);
 
         // Spend any amount — should not revert (skips tracking entirely)
+        vm.startPrank(account);
         validator.recordSpend(account, sessionWallet.addr, type(uint256).max / 2);
         validator.recordSpend(account, sessionWallet.addr, type(uint256).max / 2);
+        vm.stopPrank();
+    }
+
+    function test_recordSpend_nonAccount_reverts() public {
+        uint256 cap = 1000 ether;
+        _grantSessionWithCap(cap);
+
+        // Attacker (address(this)) tries to grief by exhausting spend cap
+        vm.expectRevert(AgentSessionKeyValidator.OnlyAccountOwner.selector);
+        validator.recordSpend(account, sessionWallet.addr, cap);
     }
 
     // ─── G. delegateSession ────────────────────────────────────────────

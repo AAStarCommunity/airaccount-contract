@@ -298,7 +298,9 @@ contract AgentSessionKeyValidator is IERC7579Validator {
 
     /// @notice Update cumulative spend tracking.
     /// @dev Called by account after each spend to track against spendCap.
+    ///      Only the account itself may call this — prevents griefing via artificial cap exhaustion.
     function recordSpend(address account, address sessionKey, uint256 amount) external {
+        if (msg.sender != account) revert OnlyAccountOwner();
         AgentSessionConfig storage cfg = agentSessions[account][sessionKey];
         if (cfg.spendCap == 0) return; // no cap — skip tracking
 
