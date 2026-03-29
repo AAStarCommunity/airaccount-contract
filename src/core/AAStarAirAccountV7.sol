@@ -65,6 +65,10 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     uint256 internal constant MODULE_TYPE_EXECUTOR  = 2;
     uint256 internal constant MODULE_TYPE_HOOK     = 3;
 
+    // ERC-7579 module lifecycle selectors
+    bytes4 private constant SEL_ON_INSTALL   = 0x6d61fe70; // onInstall(bytes)
+    bytes4 private constant SEL_ON_UNINSTALL = 0x8a91b0e3; // onUninstall(bytes)
+
     /// @notice ERC-7579 account identity string.
     ///         Format: "vendor.name.version" — enables tooling to identify this account type.
     function accountId() external pure returns (string memory) {
@@ -223,7 +227,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         _installedModules[moduleTypeId][module] = true;
         if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
         // slither-disable-next-line unused-return
-        (bool _ok,) = module.call(abi.encodeWithSelector(0x6d61fe70, moduleInitData));
+        (bool _ok,) = module.call(abi.encodeWithSelector(SEL_ON_INSTALL, moduleInitData));
         (_ok); // best-effort: ignore onInstall revert
 
         emit ModuleInstalled(moduleTypeId, module);
@@ -248,7 +252,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         if (!_installedModules[moduleTypeId][module]) revert ModuleNotInstalled();
         _installedModules[moduleTypeId][module] = false;
         if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook == module) _activeHook = address(0);
-        _callLifecycle(0x8a91b0e3, module); // M-10: best-effort onUninstall(bytes)
+        _callLifecycle(SEL_ON_UNINSTALL, module); // M-10: best-effort onUninstall(bytes)
         emit ModuleUninstalled(moduleTypeId, module);
     }
 

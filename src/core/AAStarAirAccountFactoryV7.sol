@@ -162,6 +162,7 @@ contract AAStarAirAccountFactoryV7 {
         uint256 dailyLimit
     ) external returns (address account) {
         require(guardian1 != address(0) && guardian2 != address(0), "Guardians required");
+        require(guardian1 != guardian2, "Guardians must be distinct");
         require(dailyLimit > 0, "Daily limit required"); // F72: guard must be configured
 
         // Verify both guardians signed the domain-separated acceptance message (F56 — M5.3)
