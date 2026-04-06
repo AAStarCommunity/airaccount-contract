@@ -28,6 +28,7 @@ contract TierGuardHook is IERC7579Hook {
 
     error TierGuardHookUnauthorized();
     error TierViolation(uint8 required, uint8 provided);
+    error UnknownAlgId(uint8 algId);
 
     // ALG constants (mirrors AAStarAirAccountBase)
     uint8 internal constant ALG_ECDSA          = 0x02;
@@ -35,6 +36,9 @@ contract TierGuardHook is IERC7579Hook {
     uint8 internal constant ALG_CUMULATIVE_T2  = 0x04;
     uint8 internal constant ALG_CUMULATIVE_T3  = 0x05;
     uint8 internal constant ALG_WEIGHTED       = 0x07;
+    uint8 internal constant ALG_BLS            = 0x01;
+    uint8 internal constant ALG_COMBINED_T1    = 0x06;
+    uint8 internal constant ALG_SESSION_KEY    = 0x08;
 
     // ─── IERC7579Module ─────────────────────────────────────────────
 
@@ -131,10 +135,10 @@ contract TierGuardHook is IERC7579Hook {
     }
 
     function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == ALG_CUMULATIVE_T3 || algId == 0x01) return 3;
+        if (algId == ALG_CUMULATIVE_T3 || algId == ALG_BLS) return 3;
         if (algId == ALG_CUMULATIVE_T2 || algId == ALG_WEIGHTED) return 2; // weighted multisig = at least Tier 2
-        if (algId == ALG_ECDSA || algId == ALG_P256 || algId == 0x06 || algId == 0x08) return 1;
-        return 0;
+        if (algId == ALG_ECDSA || algId == ALG_P256 || algId == ALG_COMBINED_T1 || algId == ALG_SESSION_KEY) return 1;
+        revert UnknownAlgId(algId);
     }
 
     function _requiredTier(uint256 amount, uint256 t1, uint256 t2) internal pure returns (uint8) {

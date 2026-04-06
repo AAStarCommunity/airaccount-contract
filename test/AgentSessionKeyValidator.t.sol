@@ -1002,4 +1002,90 @@ contract AgentSessionKeyValidatorTest is Test {
         assertEq(storedExpiry, parentExpiry);
         assertFalse(revoked);
     }
+
+    // ─── Review fix: selectorAllowlist length limit ───────────────────
+
+    function test_grantAgentSession_tooManySelectors_reverts() public {
+        vm.prank(account);
+        validator.onInstall(bytes(""));
+
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        address[] memory targets = new address[](0);
+        bytes4[] memory selectors = new bytes4[](31); // MAX_SELECTORS = 30
+        for (uint256 i = 0; i < 31; i++) {
+            selectors[i] = bytes4(uint32(i + 1));
+        }
+        AgentSessionKeyValidator.AgentSessionConfig memory cfg = AgentSessionKeyValidator.AgentSessionConfig({
+            expiry: expiry,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            spendToken: address(0),
+            spendCap: 0,
+            revoked: false,
+            callTargets: targets,
+            selectorAllowlist: selectors
+        });
+
+        vm.prank(account);
+        vm.expectRevert(AgentSessionKeyValidator.MaxSelectorsExceeded.selector);
+        validator.grantAgentSession(sessionWallet.addr, cfg);
+    }
+
+    function test_grantAgentSession_exactMaxSelectors_succeeds() public {
+        vm.prank(account);
+        validator.onInstall(bytes(""));
+
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        address[] memory targets = new address[](0);
+        bytes4[] memory selectors = new bytes4[](30); // exactly MAX_SELECTORS
+        for (uint256 i = 0; i < 30; i++) {
+            selectors[i] = bytes4(uint32(i + 1));
+        }
+        AgentSessionKeyValidator.AgentSessionConfig memory cfg = AgentSessionKeyValidator.AgentSessionConfig({
+            expiry: expiry,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            spendToken: address(0),
+            spendCap: 0,
+            revoked: false,
+            callTargets: targets,
+            selectorAllowlist: selectors
+        });
+
+        vm.prank(account);
+        validator.grantAgentSession(sessionWallet.addr, cfg);
+        // Should succeed without revert
+    }
+
+    function test_delegateSession_tooManySelectors_reverts() public {
+        vm.prank(account);
+        validator.onInstall(bytes(""));
+
+        // Grant parent session with unlimited selectors
+        uint48 parentExpiry = uint48(block.timestamp + 2 hours);
+        AgentSessionKeyValidator.AgentSessionConfig memory parentCfg = _defaultConfig(parentExpiry);
+        vm.prank(account);
+        validator.grantAgentSession(sessionWallet.addr, parentCfg);
+
+        // Sub-delegate with too many selectors
+        Vm.Wallet memory subWallet = vm.createWallet("subTooMany");
+        bytes4[] memory selectors = new bytes4[](31);
+        for (uint256 i = 0; i < 31; i++) {
+            selectors[i] = bytes4(uint32(i + 1));
+        }
+        AgentSessionKeyValidator.AgentSessionConfig memory subCfg = AgentSessionKeyValidator.AgentSessionConfig({
+            expiry: parentExpiry,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            spendToken: address(0),
+            spendCap: 0,
+            revoked: false,
+            callTargets: new address[](0),
+            selectorAllowlist: selectors
+        });
+
+        vm.prank(sessionWallet.addr);
+        vm.expectRevert(AgentSessionKeyValidator.MaxSelectorsExceeded.selector);
+        validator.delegateSession(subWallet.addr, subCfg);
+    }
 }

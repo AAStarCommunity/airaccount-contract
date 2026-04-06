@@ -59,6 +59,9 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     /// @dev Maximum number of callTargets entries per session (gas-bomb prevention)
     uint256 internal constant MAX_CALL_TARGETS = 20;
 
+    /// @dev Maximum number of selectorAllowlist entries per session (gas-bomb prevention)
+    uint256 internal constant MAX_SELECTORS = 30;
+
     // ─── Events ──────────────────────────────────────────────────────
 
     event AgentSessionGranted(address indexed account, address indexed sessionKey, uint48 expiry);
@@ -90,6 +93,8 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     error ParentSessionExpired();
     /// @dev callTargets list exceeds maximum allowed length
     error MaxTargetsExceeded();
+    /// @dev selectorAllowlist exceeds maximum allowed length
+    error MaxSelectorsExceeded();
 
     // ─── IERC7579Module ─────────────────────────────────────────────
 
@@ -115,6 +120,7 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     function grantAgentSession(address sessionKey, AgentSessionConfig calldata cfg) external {
         if (cfg.expiry <= block.timestamp) revert InvalidExpiry();
         if (cfg.callTargets.length > MAX_CALL_TARGETS) revert MaxTargetsExceeded();
+        if (cfg.selectorAllowlist.length > MAX_SELECTORS) revert MaxSelectorsExceeded();
         agentSessions[msg.sender][sessionKey] = cfg;
         // Track which account owns this session key (last grant wins for cross-account reuse)
         sessionKeyOwner[sessionKey] = msg.sender;
@@ -172,37 +178,20 @@ contract AgentSessionKeyValidator is IERC7579Validator {
             if (parentCfg.callTargets.length != 0) revert ScopeEscalationDenied();
         } else if (parentCfg.callTargets.length > 0) {
             // both have restricted lists — every sub target must appear in parent's list
-            for (uint256 i = 0; i < subCfg.callTargets.length; i++) {
-                bool found = false;
-                for (uint256 j = 0; j < parentCfg.callTargets.length; j++) {
-                    if (subCfg.callTargets[i] == parentCfg.callTargets[j]) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) revert ScopeEscalationDenied();
-            }
+            if (!_isSubsetAddresses(subCfg.callTargets, parentCfg.callTargets)) revert ScopeEscalationDenied();
         }
 
         // Enforce scope: selectorAllowlist cannot expand beyond parent's allowlist.
         // Empty selectorAllowlist = "all selectors allowed" (widest scope), same as callTargets=empty.
         // sub=empty (all selectors) is only valid if parent is also empty (all selectors).
         // sub=non-empty (restricted) is always a subset of any parent scope.
+        if (subCfg.selectorAllowlist.length > MAX_SELECTORS) revert MaxSelectorsExceeded();
         if (subCfg.selectorAllowlist.length == 0) {
             // sub requests all selectors — only valid if parent also allows all
             if (parentCfg.selectorAllowlist.length != 0) revert ScopeEscalationDenied();
         } else if (parentCfg.selectorAllowlist.length > 0) {
             // both have restricted lists — every sub selector must appear in parent's list
-            for (uint256 i = 0; i < subCfg.selectorAllowlist.length; i++) {
-                bool found = false;
-                for (uint256 j = 0; j < parentCfg.selectorAllowlist.length; j++) {
-                    if (subCfg.selectorAllowlist[i] == parentCfg.selectorAllowlist[j]) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) revert ScopeEscalationDenied();
-            }
+            if (!_isSubsetSelectors(subCfg.selectorAllowlist, parentCfg.selectorAllowlist)) revert ScopeEscalationDenied();
         }
 
         // Store sub-session under the same parent account
@@ -272,27 +261,13 @@ contract AgentSessionKeyValidator is IERC7579Validator {
         if (cfg.expiry == 0) revert SessionNotFound();
 
         // Check call target allowlist
-        if (cfg.callTargets.length > 0) {
-            bool targetAllowed = false;
-            for (uint256 i = 0; i < cfg.callTargets.length; i++) {
-                if (cfg.callTargets[i] == callTarget) {
-                    targetAllowed = true;
-                    break;
-                }
-            }
-            if (!targetAllowed) revert CallTargetForbidden(callTarget);
+        if (cfg.callTargets.length > 0 && !_containsAddress(cfg.callTargets, callTarget)) {
+            revert CallTargetForbidden(callTarget);
         }
 
         // Check selector allowlist
-        if (cfg.selectorAllowlist.length > 0) {
-            bool selectorAllowed = false;
-            for (uint256 i = 0; i < cfg.selectorAllowlist.length; i++) {
-                if (cfg.selectorAllowlist[i] == selector) {
-                    selectorAllowed = true;
-                    break;
-                }
-            }
-            if (!selectorAllowed) revert SelectorForbidden(callTarget, selector);
+        if (cfg.selectorAllowlist.length > 0 && !_containsSelector(cfg.selectorAllowlist, selector)) {
+            revert SelectorForbidden(callTarget, selector);
         }
     }
 
@@ -317,5 +292,39 @@ contract AgentSessionKeyValidator is IERC7579Validator {
         bytes calldata /* data */
     ) external pure override returns (bytes4) {
         return 0xffffffff; // Not used for ERC-1271
+    }
+
+    // ─── Private helpers ─────────────────────────────────────────────
+
+    /// @dev Returns true if `value` is present in `arr`.
+    function _containsAddress(address[] storage arr, address value) private view returns (bool) {
+        for (uint256 i = 0; i < arr.length; i++) {
+            if (arr[i] == value) return true;
+        }
+        return false;
+    }
+
+    /// @dev Returns true if `value` is present in `arr`.
+    function _containsSelector(bytes4[] storage arr, bytes4 value) private view returns (bool) {
+        for (uint256 i = 0; i < arr.length; i++) {
+            if (arr[i] == value) return true;
+        }
+        return false;
+    }
+
+    /// @dev Returns true if every element of `sub` is present in `parent`.
+    function _isSubsetAddresses(address[] calldata sub, address[] storage parent) private view returns (bool) {
+        for (uint256 i = 0; i < sub.length; i++) {
+            if (!_containsAddress(parent, sub[i])) return false;
+        }
+        return true;
+    }
+
+    /// @dev Returns true if every element of `sub` is present in `parent`.
+    function _isSubsetSelectors(bytes4[] calldata sub, bytes4[] storage parent) private view returns (bool) {
+        for (uint256 i = 0; i < sub.length; i++) {
+            if (!_containsSelector(parent, sub[i])) return false;
+        }
+        return true;
     }
 }

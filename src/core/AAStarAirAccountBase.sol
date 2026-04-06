@@ -278,6 +278,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     event WeightChangeCancelled();
     event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
     event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
+    event ModuleInstallCallbackFailed(uint256 indexed moduleTypeId, address indexed module);
     event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet);
 
     // ─── Modifiers ────────────────────────────────────────────────────
@@ -1321,7 +1322,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     function cancelRecovery() external {
         if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
 
-        uint8 guardianIndex = _guardianIndex(msg.sender); // reverts if not guardian
+        uint8 guardianIndex = _guardianIndex(msg.sender);
         uint256 bit = uint256(1) << guardianIndex;
         if (activeRecovery.cancellationBitmap & bit != 0) revert AlreadyCancelVoted();
 
@@ -1469,7 +1470,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     function cancelWeightChange() external {
         if (pendingWeightChange.proposedAt == 0) revert NoWeightChangeProposal();
         if (msg.sender != owner) {
-            _guardianIndex(msg.sender); // reverts NotGuardian if not a guardian
+            _guardianIndex(msg.sender);
         }
         delete pendingWeightChange;
         emit WeightChangeCancelled();

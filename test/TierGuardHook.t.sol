@@ -229,6 +229,47 @@ contract TierGuardHookTest is Test {
 
     // ─── Multi-account isolation ──────────────────────────────────────────────
 
+    // ─── Review fix: unknown algId reverts ──────────────────────────────
+
+    /// @notice An account returning an unrecognized algId (e.g. 0xFF) should revert with UnknownAlgId,
+    ///         preventing silent tier-0 bypass for future algIds that are added without updating TierGuardHook.
+    function test_preCheck_unknownAlgId_reverts() public {
+        MockAccountWithAlgId unknownAccount = new MockAccountWithAlgId(0xFF);
+        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(5 ether));
+        unknownAccount.callInstall(hook, data);
+        guard.setShouldRevert(false);
+        guard.setTodaySpent(0);
+
+        vm.expectRevert(abi.encodeWithSelector(TierGuardHook.UnknownAlgId.selector, uint8(0xFF)));
+        unknownAccount.callPreCheckExpectRevert(hook, address(this), 0.5 ether, "");
+    }
+
+    /// @notice algId=0x09 (undefined) should also revert
+    function test_preCheck_algId0x09_reverts() public {
+        MockAccountWithAlgId account09 = new MockAccountWithAlgId(0x09);
+        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(5 ether));
+        account09.callInstall(hook, data);
+        guard.setShouldRevert(false);
+        guard.setTodaySpent(0);
+
+        vm.expectRevert(abi.encodeWithSelector(TierGuardHook.UnknownAlgId.selector, uint8(0x09)));
+        account09.callPreCheckExpectRevert(hook, address(this), 0.5 ether, "");
+    }
+
+    /// @notice algId=0x00 (unset) should revert UnknownAlgId
+    function test_preCheck_algId0x00_reverts() public {
+        MockAccountWithAlgId account00 = new MockAccountWithAlgId(0x00);
+        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(5 ether));
+        account00.callInstall(hook, data);
+        guard.setShouldRevert(false);
+        guard.setTodaySpent(0);
+
+        vm.expectRevert(abi.encodeWithSelector(TierGuardHook.UnknownAlgId.selector, uint8(0x00)));
+        account00.callPreCheckExpectRevert(hook, address(this), 0.5 ether, "");
+    }
+
+    // ─── Multi-account isolation ──────────────────────────────────────────────
+
     function test_multiAccount_isolatedState() public {
         MockAccountCaller accountB = new MockAccountCaller();
 

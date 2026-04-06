@@ -39,6 +39,16 @@ contract MockModule {
     fallback() external payable {}
 }
 
+// ─── Mock module that reverts on onInstall ────────────────────────────────────
+
+contract RevertingModule {
+    function onInstall(bytes calldata) external pure { revert("install failed"); }
+    function onUninstall(bytes calldata) external pure {}
+    function isValidSignatureWithSender(address, bytes32, bytes calldata) external pure returns (bytes4) { return 0xffffffff; }
+    receive() external payable {}
+    fallback() external payable {}
+}
+
 // ─── Mock target contract for execute tests ───────────────────────────────────
 
 contract MockTarget {
@@ -798,5 +808,32 @@ contract AAStarAirAccountV7_M7Test is Test {
         // Slot 7 = _installModuleThreshold (uint8) after unified _installedModules mapping at slot 6.
         vm.store(address(acc), bytes32(uint256(7)), bytes32(uint256(threshold)));
         return acc;
+    }
+
+    // ─── Review fix: ModuleInstallCallbackFailed event ───────────────────
+
+    function test_installModule_onInstallReverts_emitsCallbackFailed() public {
+        RevertingModule badModule = new RevertingModule();
+        bytes memory sig = _installSigWithData(g0Wallet, address(account), 1, address(badModule), "");
+        vm.prank(ownerWallet.addr);
+        vm.expectEmit(true, true, false, false);
+        emit AAStarAirAccountBase.ModuleInstallCallbackFailed(1, address(badModule));
+        account.installModule(1, address(badModule), sig);
+        // Module is still marked as installed (best-effort pattern)
+        assertTrue(account.isModuleInstalled(1, address(badModule), ""));
+    }
+
+    function test_installModule_onInstallSucceeds_noCallbackFailedEvent() public {
+        // Normal module install should NOT emit ModuleInstallCallbackFailed
+        bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        vm.recordLogs();
+        account.installModule(1, address(mockModule), sig);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        // Check that no ModuleInstallCallbackFailed event was emitted
+        bytes32 failedSig = keccak256("ModuleInstallCallbackFailed(uint256,address)");
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics[0] != failedSig, "Unexpected ModuleInstallCallbackFailed event");
+        }
     }
 }

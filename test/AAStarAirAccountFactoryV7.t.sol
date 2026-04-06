@@ -476,4 +476,85 @@ contract AAStarAirAccountFactoryV7Test is Test {
         address account2 = factory.createAccount(ownerA, 42, _minimalConfig()); // same params = same address
         assertEq(account1, account2);
     }
+
+    // ─── Review fix: createAccount guardian dedup ────────────────────
+
+    /// @dev Duplicate guardian[0] == guardian[1] should revert
+    function test_createAccount_duplicateGuardian01_reverts() public {
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02;
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [g1Wallet.addr, g1Wallet.addr, communityGuardian],
+            dailyLimit: 1 ether,
+            approvedAlgIds: algIds,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+        vm.expectRevert(AAStarAirAccountFactoryV7.DuplicateGuardian.selector);
+        factory.createAccount(ownerA, 0, config);
+    }
+
+    /// @dev Duplicate guardian[0] == guardian[2] should revert
+    function test_createAccount_duplicateGuardian02_reverts() public {
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02;
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [g1Wallet.addr, g2Wallet.addr, g1Wallet.addr],
+            dailyLimit: 1 ether,
+            approvedAlgIds: algIds,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+        vm.expectRevert(AAStarAirAccountFactoryV7.DuplicateGuardian.selector);
+        factory.createAccount(ownerA, 0, config);
+    }
+
+    /// @dev Duplicate guardian[1] == guardian[2] should revert
+    function test_createAccount_duplicateGuardian12_reverts() public {
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02;
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [g1Wallet.addr, g2Wallet.addr, g2Wallet.addr],
+            dailyLimit: 1 ether,
+            approvedAlgIds: algIds,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+        vm.expectRevert(AAStarAirAccountFactoryV7.DuplicateGuardian.selector);
+        factory.createAccount(ownerA, 0, config);
+    }
+
+    /// @dev address(0) duplicates are allowed (unused slots)
+    function test_createAccount_zeroGuardiansAllowed() public {
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 0,
+            approvedAlgIds: new uint8[](0),
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+        // Should NOT revert — all zeros means no guardians
+        address acc = factory.createAccount(ownerA, 50, config);
+        assertTrue(acc.code.length > 0);
+    }
+
+    /// @dev Mixed: one non-zero + two zeros should pass
+    function test_createAccount_oneGuardianTwoZeros_passes() public {
+        uint8[] memory algIds = new uint8[](1);
+        algIds[0] = 0x02;
+        AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
+            guardians: [g1Wallet.addr, address(0), address(0)],
+            dailyLimit: 1 ether,
+            approvedAlgIds: algIds,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+        address acc = factory.createAccount(ownerA, 51, config);
+        assertTrue(acc.code.length > 0);
+    }
 }
