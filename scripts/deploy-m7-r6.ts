@@ -1,4 +1,12 @@
 /**
+ * @deprecated r6 has been superseded by r7. DO NOT USE for any deployment.
+ * r6 silently defaults COMMUNITY_GUARDIAN_ADDRESS to address(0), which degrades
+ * social recovery from 2-of-3 to 2-of-2. Use deploy-m7-r7.ts instead.
+ */
+console.error("ERROR: deploy-m7-r6.ts is deprecated and disabled. Use deploy-m7-r7.ts instead.");
+process.exit(1);
+
+/**
  * deploy-m7-r6.ts — Deploy AirAccount M7 r6 (simplify + guardian distinct fix) to Sepolia
  *
  * Changes from r5:

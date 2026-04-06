@@ -59,6 +59,9 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     /// @dev Maximum number of callTargets entries per session (gas-bomb prevention)
     uint256 internal constant MAX_CALL_TARGETS = 20;
 
+    /// @dev Maximum number of selectorAllowlist entries per session (gas-bomb prevention)
+    uint256 internal constant MAX_SELECTORS = 30;
+
     // ─── Events ──────────────────────────────────────────────────────
 
     event AgentSessionGranted(address indexed account, address indexed sessionKey, uint48 expiry);
@@ -90,6 +93,8 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     error ParentSessionExpired();
     /// @dev callTargets list exceeds maximum allowed length
     error MaxTargetsExceeded();
+    /// @dev selectorAllowlist exceeds maximum allowed length
+    error MaxSelectorsExceeded();
 
     // ─── IERC7579Module ─────────────────────────────────────────────
 
@@ -115,6 +120,7 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     function grantAgentSession(address sessionKey, AgentSessionConfig calldata cfg) external {
         if (cfg.expiry <= block.timestamp) revert InvalidExpiry();
         if (cfg.callTargets.length > MAX_CALL_TARGETS) revert MaxTargetsExceeded();
+        if (cfg.selectorAllowlist.length > MAX_SELECTORS) revert MaxSelectorsExceeded();
         agentSessions[msg.sender][sessionKey] = cfg;
         // Track which account owns this session key (last grant wins for cross-account reuse)
         sessionKeyOwner[sessionKey] = msg.sender;
@@ -179,6 +185,7 @@ contract AgentSessionKeyValidator is IERC7579Validator {
         // Empty selectorAllowlist = "all selectors allowed" (widest scope), same as callTargets=empty.
         // sub=empty (all selectors) is only valid if parent is also empty (all selectors).
         // sub=non-empty (restricted) is always a subset of any parent scope.
+        if (subCfg.selectorAllowlist.length > MAX_SELECTORS) revert MaxSelectorsExceeded();
         if (subCfg.selectorAllowlist.length == 0) {
             // sub requests all selectors — only valid if parent also allows all
             if (parentCfg.selectorAllowlist.length != 0) revert ScopeEscalationDenied();

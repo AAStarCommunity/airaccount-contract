@@ -278,6 +278,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     event WeightChangeCancelled();
     event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
     event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
+    event ModuleInstallCallbackFailed(uint256 indexed moduleTypeId, address indexed module);
     event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet);
 
     // ─── Modifiers ────────────────────────────────────────────────────

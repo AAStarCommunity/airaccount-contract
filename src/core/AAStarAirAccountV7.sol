@@ -228,7 +228,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
         // slither-disable-next-line unused-return
         (bool _ok,) = module.call(abi.encodeWithSelector(SEL_ON_INSTALL, moduleInitData));
-        (_ok); // best-effort: ignore onInstall revert
+        if (!_ok) emit ModuleInstallCallbackFailed(moduleTypeId, module);
 
         emit ModuleInstalled(moduleTypeId, module);
     }

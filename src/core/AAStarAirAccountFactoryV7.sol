@@ -44,6 +44,7 @@ contract AAStarAirAccountFactoryV7 {
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
 
     error GuardianDidNotAccept(address guardian);
+    error DuplicateGuardian();
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
@@ -97,6 +98,13 @@ contract AAStarAirAccountFactoryV7 {
         uint256 salt,
         AAStarAirAccountBase.InitConfig memory config
     ) external returns (address account) {
+        // Validate guardians: non-zero entries must be pairwise distinct.
+        // Without this, [addrA, addrA, addrB] degrades 2-of-3 social recovery to 1-of-2.
+        address[3] memory g = config.guardians;
+        if (g[0] != address(0) && g[1] != address(0) && g[0] == g[1]) revert DuplicateGuardian();
+        if (g[0] != address(0) && g[2] != address(0) && g[0] == g[2]) revert DuplicateGuardian();
+        if (g[1] != address(0) && g[2] != address(0) && g[1] == g[2]) revert DuplicateGuardian();
+
         // Bind address to config: include guardians and dailyLimit in salt so that
         // a front-runner cannot pre-deploy this address with a different (malicious) config.
         // Without this, anyone could call createAccount(victim, salt, maliciousConfig) and
