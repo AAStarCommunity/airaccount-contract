@@ -810,30 +810,26 @@ contract AAStarAirAccountV7_M7Test is Test {
         return acc;
     }
 
-    // ─── Review fix: ModuleInstallCallbackFailed event ───────────────────
+    // ─── Review fix: ModuleInstallCallbackFailed — now reverts instead of emitting event ─────
 
-    function test_installModule_onInstallReverts_emitsCallbackFailed() public {
+    function test_installModule_onInstallReverts_reverts() public {
+        // MEDIUM-1 fix: onInstall failure now hard-reverts; module is NOT marked installed
         RevertingModule badModule = new RevertingModule();
         bytes memory sig = _installSigWithData(g0Wallet, address(account), 1, address(badModule), "");
         vm.prank(ownerWallet.addr);
-        vm.expectEmit(true, true, false, false);
-        emit AAStarAirAccountBase.ModuleInstallCallbackFailed(1, address(badModule));
+        vm.expectRevert(
+            abi.encodeWithSelector(AAStarAirAccountBase.ModuleInstallCallbackFailed.selector, 1, address(badModule))
+        );
         account.installModule(1, address(badModule), sig);
-        // Module is still marked as installed (best-effort pattern)
-        assertTrue(account.isModuleInstalled(1, address(badModule), ""));
+        // Module must NOT be marked installed after revert
+        assertFalse(account.isModuleInstalled(1, address(badModule), ""));
     }
 
-    function test_installModule_onInstallSucceeds_noCallbackFailedEvent() public {
-        // Normal module install should NOT emit ModuleInstallCallbackFailed
+    function test_installModule_onInstallSucceeds_noRevert() public {
+        // Normal module install should succeed without revert
         bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        vm.recordLogs();
         account.installModule(1, address(mockModule), sig);
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        // Check that no ModuleInstallCallbackFailed event was emitted
-        bytes32 failedSig = keccak256("ModuleInstallCallbackFailed(uint256,address)");
-        for (uint256 i = 0; i < logs.length; i++) {
-            assertTrue(logs[i].topics[0] != failedSig, "Unexpected ModuleInstallCallbackFailed event");
-        }
+        assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
     }
 }

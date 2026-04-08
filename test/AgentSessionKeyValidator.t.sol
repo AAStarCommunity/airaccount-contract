@@ -39,11 +39,12 @@ contract AgentSessionKeyValidatorTest is Test {
         });
     }
 
-    /// @dev Sign userOpHash with a wallet and return the 65-byte ECDSA signature
+    /// @dev Sign userOpHash with a wallet and return the 66-byte ALG_SESSION_KEY signature.
+    ///      Format: [0x08 algId][ECDSA(65)] — required by validateUserOp (HIGH-1 fix).
     function _sign(Vm.Wallet memory w, bytes32 opHash) internal returns (bytes memory) {
         bytes32 ethHash = opHash.toEthSignedMessageHash();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w, ethHash);
-        return abi.encodePacked(r, s, v);
+        return abi.encodePacked(uint8(0x08), r, s, v); // 0x08 prefix + 65-byte ECDSA = 66 bytes
     }
 
     /// @dev Build a default AgentSessionConfig with expiry in the future and no restrictions

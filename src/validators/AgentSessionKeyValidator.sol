@@ -56,6 +56,12 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     /// @dev account → subKey → parentKey — tracks who delegated to the sub-agent for a given account
     mapping(address account => mapping(address subKey => address parentKey)) public delegatedBy;
 
+    /// @dev Expected signature length: 1-byte algId prefix (0x08) + 65-byte ECDSA (r,s,v)
+    uint256 internal constant SESSION_SIG_LENGTH = 66;
+
+    /// @dev AlgId prefix required in UserOp signatures routed to this validator
+    uint8 internal constant ALG_SESSION_KEY = 0x08;
+
     /// @dev Maximum number of callTargets entries per session (gas-bomb prevention)
     uint256 internal constant MAX_CALL_TARGETS = 20;
 
@@ -219,10 +225,13 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     ) external override returns (uint256 validationData) {
         if (!_initialized[userOp.sender]) return 1;
 
-        // Recover signing key from signature
-        if (userOp.signature.length < 65) return 1;
+        // Require ALG_SESSION_KEY (0x08) prefix so the account stores the correct algId in
+        // transient storage via _storeValidatedAlgId(sig[0]) after nonce-key routing.
+        // Without this, sig[0] would be an arbitrary byte of r, bypassing session scope enforcement.
+        if (userOp.signature.length != SESSION_SIG_LENGTH) return 1;
+        if (uint8(userOp.signature[0]) != ALG_SESSION_KEY) return 1;
         bytes32 ethHash = userOpHash.toEthSignedMessageHash();
-        address recovered = ethHash.recover(userOp.signature[0:65]);
+        address recovered = ethHash.recover(userOp.signature[1:SESSION_SIG_LENGTH]);
 
         AgentSessionConfig storage cfg = agentSessions[userOp.sender][recovered];
         if (cfg.expiry == 0) return 1; // session not found

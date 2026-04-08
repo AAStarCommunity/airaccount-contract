@@ -556,15 +556,22 @@ contract SecurityFixes_M7_4Test is Test {
         );
     }
 
-    /// @notice If onInstall reverts, installModule still succeeds (best-effort callback)
+    /// @notice If onInstall reverts, installModule hard-reverts and module is NOT registered
     function test_M10_installModule_revertingOnInstall_reverts() public {
         trackingModule.setRevertOnInstall(true);
 
         bytes memory sig = _installSig(g0Wallet, address(account), 1, address(trackingModule));
         vm.prank(ownerWallet.addr);
-        // Best-effort: onInstall revert is swallowed; module is still registered
+        // Hard-revert: onInstall failure rolls back the entire install
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AAStarAirAccountBase.ModuleInstallCallbackFailed.selector,
+                uint256(1),
+                address(trackingModule)
+            )
+        );
         account.installModule(1, address(trackingModule), sig);
-        assertTrue(account.isModuleInstalled(1, address(trackingModule), ""));
+        assertFalse(account.isModuleInstalled(1, address(trackingModule), ""));
     }
 
     /// @notice After uninstallModule, onUninstall is called → module is de-initialized

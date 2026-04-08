@@ -224,11 +224,24 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         // LOW-1: Reject second hook install — silent overwrite would deactivate TierGuardHook without warning.
         // Caller must explicitly uninstallModule the existing hook before installing a new one.
         if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook != address(0)) revert ModuleAlreadyInstalled();
+
+        // MEDIUM-2: Only call onInstall on the first installation of this module address.
+        // If the same module is already installed under a different typeId, skip onInstall to
+        // prevent double-initialization of shared state (e.g. _initialized in AgentSessionKeyValidator).
+        bool alreadyLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
+                        || _installedModules[MODULE_TYPE_EXECUTOR][module]
+                        || _installedModules[MODULE_TYPE_HOOK][module];
+
         _installedModules[moduleTypeId][module] = true;
         if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
-        // slither-disable-next-line unused-return
-        (bool _ok,) = module.call(abi.encodeWithSelector(SEL_ON_INSTALL, moduleInitData));
-        if (!_ok) emit ModuleInstallCallbackFailed(moduleTypeId, module);
+
+        if (!alreadyLive) {
+            // MEDIUM-1: Hard-revert if onInstall fails — leaving module marked installed but
+            // uninitialized creates a stuck state where validateUserOp returns 1 forever.
+            // Revert rolls back _installedModules and _activeHook atomically.
+            (bool _ok,) = module.call(abi.encodeWithSelector(SEL_ON_INSTALL, moduleInitData));
+            if (!_ok) revert ModuleInstallCallbackFailed(moduleTypeId, module);
+        }
 
         emit ModuleInstalled(moduleTypeId, module);
     }
@@ -252,7 +265,17 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         if (!_installedModules[moduleTypeId][module]) revert ModuleNotInstalled();
         _installedModules[moduleTypeId][module] = false;
         if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook == module) _activeHook = address(0);
-        _callLifecycle(SEL_ON_UNINSTALL, module); // M-10: best-effort onUninstall(bytes)
+
+        // MEDIUM-2: Only call onUninstall when this is the last active installation of the module.
+        // If the module is still installed under another typeId, calling onUninstall would clear
+        // shared state (e.g. _initialized) and break the remaining role.
+        bool stillLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
+                      || _installedModules[MODULE_TYPE_EXECUTOR][module]
+                      || _installedModules[MODULE_TYPE_HOOK][module];
+        if (!stillLive) {
+            _callLifecycle(SEL_ON_UNINSTALL, module); // best-effort
+        }
+
         emit ModuleUninstalled(moduleTypeId, module);
     }
 

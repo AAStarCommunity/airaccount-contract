@@ -240,6 +240,8 @@ abstract contract AAStarAirAccountBase is Initializable {
     error ModuleAlreadyInstalled();
     error ModuleNotInstalled();
     error InvalidModuleType();
+    /// @dev onInstall callback failed — module not initialized; install aborted.
+    error ModuleInstallCallbackFailed(uint256 moduleTypeId, address module);
     error ModuleInvalid();
     error InstallModuleUnauthorized();
     error HookReverted();
@@ -278,7 +280,6 @@ abstract contract AAStarAirAccountBase is Initializable {
     event WeightChangeCancelled();
     event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
     event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
-    event ModuleInstallCallbackFailed(uint256 indexed moduleTypeId, address indexed module);
     event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet);
 
     // ─── Modifiers ────────────────────────────────────────────────────

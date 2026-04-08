@@ -447,9 +447,11 @@ async function buildGuardianInstallInitData(
   return guardianAccount.sign({ hash: ethSignedHash });
 }
 
-/** Build a plain 65-byte ECDSA signature from a session key for ERC-7579 nonce-key UserOps.
- *  Used with nonce key = agentValidatorAddr so account routes to AgentSessionKeyValidator.validateUserOp.
- *  AgentSessionKeyValidator reads sig[0:65] and recovers the session key address.
+/** Build a session key signature for ERC-7579 nonce-key UserOps.
+ *  Format: [0x08 algId][ECDSA sig (65 bytes)] = 66 bytes total.
+ *  AgentSessionKeyValidator.validateUserOp requires sig[0]==0x08 and recovers from sig[1:66].
+ *  The 0x08 prefix causes the account to store ALG_SESSION_KEY in transient storage so
+ *  _enforceGuard correctly enforces session scope (callTargets/selectorAllowlist).
  */
 async function buildSessionKeySig(
   agentAccount: ReturnType<typeof privateKeyToAccount>,
@@ -458,7 +460,8 @@ async function buildSessionKeySig(
   const ethHash = keccak256(
     concat(["0x19457468657265756d205369676e6564204d6573736167653a0a3332", hash])
   );
-  return agentAccount.sign({ hash: ethHash }) as Promise<Hex>;
+  const rawSig = await agentAccount.sign({ hash: ethHash });
+  return concat([toHex(0x08, { size: 1 }), rawSig]) as Hex; // [0x08][sig(65)] = 66 bytes
 }
 
 /** Get the nonce for a validator-key-routed UserOp.
@@ -550,10 +553,15 @@ async function main() {
   }
   console.log(`[Setup] M7 account: ${accountAddr} (${code.length / 2 - 1} bytes)\n`);
 
-  // ── Resolve r8-deployed module addresses from env ─────────────────────────
+  // ── Resolve module addresses from env (canonical > r9 > r8 fallback) ────────
   const r8CompositeValidator = process.env.AIRACCOUNT_M7_R8_COMPOSITE_VALIDATOR as Address | undefined;
   const r8TierGuardHook     = process.env.AIRACCOUNT_M7_R8_TIER_GUARD_HOOK as Address | undefined;
-  const r8AgentSessionValidator = process.env.AIRACCOUNT_M7_R8_AGENT_SESSION_VALIDATOR as Address | undefined;
+  // Prefer canonical AIRACCOUNT_M7_AGENT_SESSION_VALIDATOR, fall back to versioned names
+  const r8AgentSessionValidator = (
+    process.env.AIRACCOUNT_M7_AGENT_SESSION_VALIDATOR
+    ?? process.env.AIRACCOUNT_M7_R9_AGENT_SESSION_VALIDATOR
+    ?? process.env.AIRACCOUNT_M7_R8_AGENT_SESSION_VALIDATOR
+  ) as Address | undefined;
 
   // ── GROUP filter: run only the specified group (e.g. GROUP=A or GROUP=E,G,H) ─
   const groupFilter = process.env.GROUP
