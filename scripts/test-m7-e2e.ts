@@ -553,12 +553,24 @@ async function main() {
   }
   console.log(`[Setup] M7 account: ${accountAddr} (${code.length / 2 - 1} bytes)\n`);
 
-  // ── Resolve module addresses from env (canonical > r9 > r8 fallback) ────────
-  const r8CompositeValidator = process.env.AIRACCOUNT_M7_R8_COMPOSITE_VALIDATOR as Address | undefined;
-  const r8TierGuardHook     = process.env.AIRACCOUNT_M7_R8_TIER_GUARD_HOOK as Address | undefined;
+  // ── Resolve module addresses from env (canonical r10 > r9 > r8 fallback) ────
+  // Prefer canonical (r10) addresses; fall back to versioned names for older deploys.
+  const r8CompositeValidator = (
+    process.env.AIRACCOUNT_M7_COMPOSITE_VALIDATOR
+    ?? process.env.AIRACCOUNT_M7_R10_COMPOSITE_VALIDATOR
+    ?? process.env.AIRACCOUNT_M7_R9_COMPOSITE_VALIDATOR
+    ?? process.env.AIRACCOUNT_M7_R8_COMPOSITE_VALIDATOR
+  ) as Address | undefined;
+  const r8TierGuardHook = (
+    process.env.AIRACCOUNT_M7_TIER_GUARD_HOOK
+    ?? process.env.AIRACCOUNT_M7_R10_TIER_GUARD_HOOK
+    ?? process.env.AIRACCOUNT_M7_R9_TIER_GUARD_HOOK
+    ?? process.env.AIRACCOUNT_M7_R8_TIER_GUARD_HOOK
+  ) as Address | undefined;
   // Prefer canonical AIRACCOUNT_M7_AGENT_SESSION_VALIDATOR, fall back to versioned names
   const r8AgentSessionValidator = (
     process.env.AIRACCOUNT_M7_AGENT_SESSION_VALIDATOR
+    ?? process.env.AIRACCOUNT_M7_R10_AGENT_SESSION_VALIDATOR
     ?? process.env.AIRACCOUNT_M7_R9_AGENT_SESSION_VALIDATOR
     ?? process.env.AIRACCOUNT_M7_R8_AGENT_SESSION_VALIDATOR
   ) as Address | undefined;
@@ -634,11 +646,10 @@ async function main() {
   // ── A1: Install AirAccountCompositeValidator (moduleTypeId=1, Validator) ───
 
   console.log("[A1] installModule(1, AirAccountCompositeValidator, ownerSig + guardian1Sig)");
-  console.log(`  Using r8 CompositeValidator: ${r8CompositeValidator ?? "NOT SET"}`);
+  console.log(`  CompositeValidator: ${r8CompositeValidator ?? "NOT SET"}`);
 
-  // A1 uses the r8-deployed composite validator exclusively.
   if (!r8CompositeValidator) {
-    fail("A1", "AIRACCOUNT_M7_R8_COMPOSITE_VALIDATOR not set in .env.sepolia — required for A1");
+    fail("A1", "No CompositeValidator address in .env.sepolia — set AIRACCOUNT_M7_COMPOSITE_VALIDATOR");
   } else {
     try {
       const alreadyInstalled = await publicClient.readContract({
@@ -647,9 +658,8 @@ async function main() {
       });
       if (alreadyInstalled) {
         compositeValidatorAddr = r8CompositeValidator;
-        pass("A1", `r8 CompositeValidator ${r8CompositeValidator} already installed — isModuleInstalled(1)=true`);
+        pass("A1", `CompositeValidator ${r8CompositeValidator} already installed — isModuleInstalled(1)=true`);
       } else {
-        // Install the r8-deployed composite validator with 1 guardian sig
         const guardianInitData = await buildGuardianInstallInitData(
           guardian1Account, accountAddr, 1n, r8CompositeValidator,
         );
@@ -666,7 +676,7 @@ async function main() {
         });
         if (installed) {
           compositeValidatorAddr = r8CompositeValidator;
-          pass("A1", `isModuleInstalled(1, r8CompositeValidator) = true (tx: ${txHash.slice(0, 18)}...)`);
+          pass("A1", `isModuleInstalled(1, CompositeValidator) = true (tx: ${txHash.slice(0, 18)}...)`);
         } else {
           fail("A1", `installModule tx succeeded but isModuleInstalled returned false`);
         }
@@ -680,12 +690,8 @@ async function main() {
 
   console.log("\n[A2] installModule(3, TierGuardHook, guardSig)");
 
-  // A2 uses the r8-deployed hook exclusively to avoid address-mismatch issues.
-  // A fresh hook deploy conflicts with any hook already in _activeHook from previous runs.
-  // (tierGuardHookAddr hoisted to outer scope)
-
   if (!r8TierGuardHook) {
-    fail("A2", "AIRACCOUNT_M7_R8_TIER_GUARD_HOOK not set in .env.sepolia — required for A2");
+    fail("A2", "No TierGuardHook address in .env.sepolia — set AIRACCOUNT_M7_TIER_GUARD_HOOK");
   } else {
     try {
       const alreadyInstalled = await publicClient.readContract({
@@ -695,9 +701,8 @@ async function main() {
 
       if (alreadyInstalled) {
         tierGuardHookAddr = r8TierGuardHook;
-        pass("A2", `TierGuardHook ${r8TierGuardHook} already installed (from deploy/previous run) — isModuleInstalled(3)=true`);
+        pass("A2", `TierGuardHook ${r8TierGuardHook} already installed — isModuleInstalled(3)=true`);
       } else {
-        // Install the r8-deployed hook
         const guardianInitData = await buildGuardianInstallInitData(
           guardian1Account, accountAddr, 3n, r8TierGuardHook,
         );
@@ -714,7 +719,7 @@ async function main() {
         });
         if (installed) {
           tierGuardHookAddr = r8TierGuardHook;
-          pass("A2", `isModuleInstalled(3, r8TierGuardHook) = true (tx: ${txHash.slice(0, 18)}...)`);
+          pass("A2", `isModuleInstalled(3, TierGuardHook) = true (tx: ${txHash.slice(0, 18)}...)`);
         } else {
           fail("A2", `installModule(3) reverted (another hook may already be in _activeHook): tx ${txHash}`);
         }
