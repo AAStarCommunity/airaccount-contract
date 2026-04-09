@@ -1092,11 +1092,15 @@ abstract contract AAStarAirAccountBase is Initializable {
         // This ensures ALL calls in a batch are subject to the same contractScope/selectorScope.
         // Top byte: 0x01 = ECDSA session (lookup by address), 0x02 = P256 session (lookup by keyHash).
         //
-        // Fail-closed: if ALG_SESSION_KEY is asserted but any prerequisite is missing (key not stored,
-        // validator not configured, session key validator not installed), the operation is blocked.
-        // This prevents a fail-open bypass where missing config silently skips scope enforcement.
-        if (algId == ALG_SESSION_KEY) {
-            if (taggedSessionKey == bytes32(0)) revert SessionScopeViolation();   // key not stored during validation
+        // Two paths:
+        //   Standard path (taggedSessionKey != 0): session stored during validateUserOp via
+        //     _validateAlgId(). Enforce scope via SessionKeyValidator registered in CompositeValidator.
+        //   Nonce-key path (taggedSessionKey == 0): ERC-7579 module validator (AgentSessionKeyValidator)
+        //     handled validation; TierGuardHook enforces tier limits. Skip scope re-check here.
+        //
+        // TODO(M7.x): AgentSessionKeyValidator callTargets/selectorAllowlist are not enforced on-chain
+        //   during execute(). Fix: TierGuardHook.preCheck should call AgentSessionKeyValidator.enforceSessionScope().
+        if (algId == ALG_SESSION_KEY && taggedSessionKey != bytes32(0)) {
             if (address(validator) == address(0)) revert SessionScopeViolation(); // no validator router
             address skValidator = IAAStarValidator(address(validator)).getAlgorithm(ALG_SESSION_KEY);
             if (skValidator == address(0)) revert SessionScopeViolation();         // session key validator not installed

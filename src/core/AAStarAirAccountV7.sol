@@ -145,9 +145,10 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
                 // H-6: store sig[0] as algId so guard receives the correct tier.
                 // CompositeValidator may push a more-specific algId first via validateCompositeSignature;
                 // execute() reads that entry (pos 0) first, leaving this one unconsumed.
-                // Only write algId on success (validationData==0) to avoid polluting the transient queue
-                // with garbage bytes from failed validations in batched UserOp bundles.
-                if (validationData == 0 && userOp.signature.length > 0) _storeValidatedAlgId(uint8(userOp.signature[0]));
+                // Gate on "not failed" (!=1) rather than "==0" so validators returning non-zero
+                // validationData (e.g. validUntil timestamp: uint256(expiry)<<160) still queue algId.
+                // SIG_VALIDATION_FAILED = 1 is the only sentinel for rejection.
+                if (validationData != 1 && userOp.signature.length > 0) _storeValidatedAlgId(uint8(userOp.signature[0]));
             }
         } else {
             validationData = _validateSignature(userOpHash, userOp.signature);
@@ -226,8 +227,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook != address(0)) revert ModuleAlreadyInstalled();
 
         // MEDIUM-2: Only call onInstall on the first installation of this module address.
-        // If the same module is already installed under a different typeId, skip onInstall to
-        // prevent double-initialization of shared state (e.g. _initialized in AgentSessionKeyValidator).
+        // A module may legitimately implement multiple roles (e.g. validator + executor).
+        // Calling onInstall again on secondary typeId would double-initialize shared state
+        // (e.g. _initialized in AgentSessionKeyValidator) and silently discard initData.
         bool alreadyLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
                         || _installedModules[MODULE_TYPE_EXECUTOR][module]
                         || _installedModules[MODULE_TYPE_HOOK][module];

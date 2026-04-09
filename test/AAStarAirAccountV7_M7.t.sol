@@ -654,6 +654,36 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertEq(result, 0, "Installed validator should return success");
     }
 
+    function test_validateUserOp_nonceKey_nonZeroValidationData_passedThrough() public {
+        // Regression for HIGH-1 fix: validators returning non-zero validationData (e.g. AgentSessionKeyValidator
+        // returns uint256(expiry) << 160) must still write algId via _storeValidatedAlgId.
+        // The gate changed from validationData==0 to validationData!=1 (SIG_VALIDATION_FAILED sentinel).
+        _installWithG0(1, address(mockModule));
+        uint256 expiry = block.timestamp + 3600;
+        uint256 nonZeroResult = uint256(expiry) << 160; // simulates AgentSessionKeyValidator success
+        mockModule.setValidateResult(nonZeroResult);
+
+        bytes memory sig = abi.encodePacked(uint8(0x08), new bytes(65)); // sig[0]=0x08, 65 zero bytes
+        uint256 nonce = uint256(uint192(uint160(address(mockModule)))) << 64;
+
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: address(account),
+            nonce: nonce,
+            initCode: "",
+            callData: "",
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: sig
+        });
+
+        vm.prank(address(ep));
+        uint256 result = account.validateUserOp(userOp, keccak256("hash"), 0);
+        // Non-zero validationData (expiry timestamp) should be passed through unchanged
+        assertEq(result, nonZeroResult, "Non-zero validationData must be passed through");
+    }
+
     function test_validateUserOp_fromNonEntryPoint_reverts() public {
         PackedUserOperation memory userOp = PackedUserOperation({
             sender: address(account),
