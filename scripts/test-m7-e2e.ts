@@ -210,9 +210,10 @@ const AGENT_VALIDATOR_ABI = [
       { name: "sessionKey", type: "address" },
       { name: "cfg",        type: "tuple",   components: SESSION_CFG_COMPONENTS },
     ], outputs: [] },
-  // delegateSession(subKey, subCfg) — msg.sender = parentSessionKey
+  // delegateSession(account, subKey, subCfg) — msg.sender = parentSessionKey
   { name: "delegateSession", type: "function", stateMutability: "nonpayable",
     inputs: [
+      { name: "account", type: "address" },
       { name: "subKey",  type: "address" },
       { name: "subCfg",  type: "tuple",   components: SESSION_CFG_COMPONENTS },
     ], outputs: [] },
@@ -1092,10 +1093,10 @@ async function main() {
       const agentWalletClient = createWalletClient({
         account: agentAccount, chain: sepolia, transport: rpcTransport,
       });
-      // Fund the ephemeral agent wallet with a tiny amount of ETH to pay gas
+      // Fund the ephemeral agent wallet with ETH to pay gas (0.005 to cover variable testnet fees)
       const fundTx = await walletClient.sendTransaction({
         to:    agentAccount.address,
-        value: parseEther("0.001"),
+        value: parseEther("0.005"),
       });
       await waitReceipt(fundTx, "fundAgent");
       const delegateTx = await agentWalletClient.writeContract({
@@ -1103,11 +1104,12 @@ async function main() {
         abi:          AGENT_VALIDATOR_ABI,
         functionName: "delegateSession",
         args: [
+          accountAddr,           // explicit account — prevents cross-account routing confusion
           subAgentAccount.address,
           {
             expiry:            Number(subExpiry),
             velocityLimit:     1,      // <= parent limit of 2
-            velocityWindow:    60,
+            velocityWindow:    600,    // same window as parent — rate = 1/600 <= 2/600 (parent)
             spendToken:        "0x0000000000000000000000000000000000000000" as Address,
             spendCap:          parseEther("0.005"),
             revoked:           false,
@@ -1439,6 +1441,7 @@ async function main() {
           abi: AGENT_VALIDATOR_ABI,
           functionName: "delegateSession",
           args: [
+            accountAddr,
             subKeyG1.address,
             {
               expiry: escalatedExpiry,
@@ -1476,6 +1479,7 @@ async function main() {
           abi: AGENT_VALIDATOR_ABI,
           functionName: "delegateSession",
           args: [
+            accountAddr,
             subKeyG2.address,
             {
               expiry: parentExpiry - 60, // valid (< parent)
@@ -1512,6 +1516,7 @@ async function main() {
           abi: AGENT_VALIDATOR_ABI,
           functionName: "delegateSession",
           args: [
+            accountAddr,
             subKeyG3.address,
             {
               expiry: parentExpiry - 60,
