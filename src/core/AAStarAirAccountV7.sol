@@ -160,15 +160,13 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     // ─── ERC-7579 Module Management (M7.2) ────────────────────────────
 
-    /// @dev Best-effort onUninstall(bytes) call with empty data.
-    ///      Uses scratch memory (0x00) and ignores call result.
+    /// @dev Best-effort lifecycle call (onUninstall) with empty bytes data.
+    ///      Uses abi.encodeWithSelector to avoid clobbering Solidity's scratch space (0x00–0x3f)
+    ///      and free-memory pointer (0x40). Return value intentionally ignored.
     function _callLifecycle(bytes4 sel, address module) private {
-        assembly {
-            mstore(0, sel)
-            mstore(4, 0x20)
-            mstore(0x24, 0)
-            pop(call(gas(), module, 0, 0, 0x44, 0, 0))
-        }
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool _ok,) = module.call(abi.encodeWithSelector(sel, new bytes(0)));
+        _ok; // silence unused-variable warning — best-effort, failure is intentionally ignored
     }
 
     /// @dev Verify `count` sequential 65-byte ECDSA sigs from distinct guardians.
@@ -249,7 +247,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     }
 
     /// @notice ERC-7579: Uninstall a module.
-    /// @dev Always requires 2 guardian sigs regardless of installModuleThreshold.
+    /// @dev Requires min(guardianCount, 2) guardian sigs.
+    ///      Accounts with fewer than 2 real guardians use all available guardian sigs
+    ///      so that modules are never permanently locked even on minimal-guardian accounts.
     ///      Sig hash: keccak256("UNINSTALL_MODULE" || chainId || account || moduleTypeId || module).toEthSignedMessageHash()
     function uninstallModule(
         uint256 moduleTypeId,
@@ -258,10 +258,11 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     ) external onlyOwnerOrEntryPoint {
         if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
 
+        uint8 sigsRequired = _guardianCount < 2 ? _guardianCount : 2;
         _checkGuardianSigs(
             keccak256(abi.encodePacked("UNINSTALL_MODULE", block.chainid, address(this), moduleTypeId, module))
                 .toEthSignedMessageHash(),
-            deInitData, 2
+            deInitData, sigsRequired
         );
 
         if (!_installedModules[moduleTypeId][module]) revert ModuleNotInstalled();

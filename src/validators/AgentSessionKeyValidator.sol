@@ -101,6 +101,8 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     error MaxTargetsExceeded();
     /// @dev selectorAllowlist exceeds maximum allowed length
     error MaxSelectorsExceeded();
+    /// @dev velocityWindow must be > 0 when velocityLimit > 0
+    error InvalidVelocityWindow();
 
     // ─── IERC7579Module ─────────────────────────────────────────────
 
@@ -125,6 +127,8 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     /// @param cfg Session configuration (expiry, velocity, spend cap, allowlists)
     function grantAgentSession(address sessionKey, AgentSessionConfig calldata cfg) external {
         if (cfg.expiry <= block.timestamp) revert InvalidExpiry();
+        // velocityWindow=0 with velocityLimit>0 would silently disable rate limiting (window check: block.timestamp > 0+0 always true → counter reset every call)
+        if (cfg.velocityLimit > 0 && cfg.velocityWindow == 0) revert InvalidVelocityWindow();
         if (cfg.callTargets.length > MAX_CALL_TARGETS) revert MaxTargetsExceeded();
         if (cfg.selectorAllowlist.length > MAX_SELECTORS) revert MaxSelectorsExceeded();
         agentSessions[msg.sender][sessionKey] = cfg;
@@ -136,14 +140,18 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     /// @notice A session key holder can sub-delegate with equal or narrower scope.
     ///         Parent session must be valid (not expired, not revoked).
     ///         Sub-delegation CANNOT escalate scope (verified on-chain).
-    /// @param subKey  The sub-agent's EOA address
-    /// @param subCfg  Config for the sub-session — must be <= parent scope
-    function delegateSession(address subKey, AgentSessionConfig calldata subCfg) external {
+    /// @param account    The smart account under which the parent session was granted.
+    ///                   Caller must pass this explicitly to prevent cross-account routing confusion
+    ///                   when the same key is granted sessions on multiple accounts.
+    /// @param subKey     The sub-agent's EOA address
+    /// @param subCfg     Config for the sub-session — must be <= parent scope
+    function delegateSession(address account, address subKey, AgentSessionConfig calldata subCfg) external {
         address parentKey = msg.sender;
-        address parentAccount = sessionKeyOwner[parentKey];
 
-        // Verify that caller is a known session key
-        AgentSessionConfig storage parentCfg = agentSessions[parentAccount][parentKey];
+        // Verify that caller is a known session key on the specified account.
+        // Using an explicit `account` param prevents sessionKeyOwner cross-account overwrite:
+        // if the same key has sessions on multiple accounts, each account is addressed separately.
+        AgentSessionConfig storage parentCfg = agentSessions[account][parentKey];
         if (parentCfg.expiry == 0) revert CallerNotSessionKey();
 
         // Verify parent session is still valid
@@ -162,15 +170,19 @@ contract AgentSessionKeyValidator is IERC7579Validator {
             if (parentCfg.spendCap > 0 && subCfg.spendCap > parentCfg.spendCap) revert ScopeEscalationDenied();
         }
 
-        // Enforce scope: velocityLimit cannot increase
-        // sub velocityLimit=0 (unlimited) is only valid if parent velocityLimit is also 0 (unlimited)
+        // Enforce scope: velocity rate (limit/window) cannot increase.
+        // Comparing only velocityLimit ignores the window — a sub with 9 calls/1s exceeds
+        // a parent with 10 calls/60s even though 9 < 10. Cross-multiply to compare rates:
+        //   sub.limit / sub.window <= parent.limit / parent.window
+        //   ↔ sub.limit * parent.window <= parent.limit * sub.window
         if (subCfg.velocityLimit == 0) {
             // sub requests unlimited velocity — only valid if parent is also unlimited
             if (parentCfg.velocityLimit != 0) revert ScopeEscalationDenied();
         } else {
-            // sub has a finite limit — only escalates if parent has a limit and sub exceeds it
-            if (parentCfg.velocityLimit > 0 && subCfg.velocityLimit > parentCfg.velocityLimit) {
-                revert ScopeEscalationDenied();
+            if (parentCfg.velocityLimit > 0) {
+                uint256 subRate    = uint256(subCfg.velocityLimit)    * uint256(parentCfg.velocityWindow);
+                uint256 parentRate = uint256(parentCfg.velocityLimit) * uint256(subCfg.velocityWindow);
+                if (subRate > parentRate) revert ScopeEscalationDenied();
             }
         }
 
@@ -200,14 +212,16 @@ contract AgentSessionKeyValidator is IERC7579Validator {
             if (!_isSubsetSelectors(subCfg.selectorAllowlist, parentCfg.selectorAllowlist)) revert ScopeEscalationDenied();
         }
 
-        // Store sub-session under the same parent account
-        agentSessions[parentAccount][subKey] = subCfg;
+        // Store sub-session under the explicitly supplied account
+        agentSessions[account][subKey] = subCfg;
         // Track delegation chain
-        delegatedBy[parentAccount][subKey] = parentKey;
-        // Track the sub-agent's owner for potential further delegation
-        sessionKeyOwner[subKey] = parentAccount;
+        delegatedBy[account][subKey] = parentKey;
+        // Update sessionKeyOwner to the explicit account.
+        // NOTE: still last-write-wins if the same subKey is granted on multiple accounts.
+        // Callers that need per-account delegation must use the account-scoped agentSessions directly.
+        sessionKeyOwner[subKey] = account;
 
-        emit AgentSessionDelegated(parentAccount, parentKey, subKey, subCfg.expiry);
+        emit AgentSessionDelegated(account, parentKey, subKey, subCfg.expiry);
     }
 
     /// @notice Revoke an agent session key immediately.
@@ -228,7 +242,7 @@ contract AgentSessionKeyValidator is IERC7579Validator {
         // Require ALG_SESSION_KEY (0x08) prefix so the account stores the correct algId in
         // transient storage via _storeValidatedAlgId(sig[0]) after nonce-key routing.
         // Without this, sig[0] would be an arbitrary byte of r, bypassing session scope enforcement.
-        if (userOp.signature.length != SESSION_SIG_LENGTH) return 1;
+        if (userOp.signature.length < SESSION_SIG_LENGTH) return 1;
         if (uint8(userOp.signature[0]) != ALG_SESSION_KEY) return 1;
         bytes32 ethHash = userOpHash.toEthSignedMessageHash();
         address recovered = ethHash.recover(userOp.signature[1:SESSION_SIG_LENGTH]);
