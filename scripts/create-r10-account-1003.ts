@@ -15,11 +15,12 @@ import { sepolia } from "viem/chains";
 config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
 const SALT    = 1003n;
-const FACTORY = process.env.AIRACCOUNT_M7_FACTORY as Address;
-const PK      = process.env.PRIVATE_KEY as Hex;
-const G1_KEY  = process.env.PRIVATE_KEY_BOB as Hex;
-const G2_KEY  = process.env.PRIVATE_KEY_JACK as Hex;
-const RPC     = process.env.SEPOLIA_RPC_URL!;
+const FACTORY   = process.env.AIRACCOUNT_M7_FACTORY as Address;
+const PK        = process.env.PRIVATE_KEY as Hex;
+const G1_KEY    = process.env.PRIVATE_KEY_BOB as Hex;
+const G2_KEY    = process.env.PRIVATE_KEY_JACK as Hex;
+const COMMUNITY = process.env.COMMUNITY_GUARDIAN_ADDRESS as Address;
+const RPC       = process.env.SEPOLIA_RPC_URL!;
 
 const owner = privateKeyToAccount(PK);
 const g1    = privateKeyToAccount(G1_KEY);
@@ -30,7 +31,8 @@ const fABI  = JSON.parse(readFileSync(resolve(import.meta.dirname, "../out/AASta
 
 async function main() {
   const initConfig = {
-    guardians:          [g1.address, g2.address, "0x0000000000000000000000000000000000000000"] as [Address, Address, Address],
+    // guardian[0] = trusted contact, guardian[1] = user device, guardian[2] = community Safe guardian
+    guardians:          [g1.address, g2.address, COMMUNITY] as [Address, Address, Address],
     dailyLimit:         0n,
     approvedAlgIds:     [1, 2, 3, 4, 5, 6, 7, 8],
     minDailyLimit:      0n,
