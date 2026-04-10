@@ -258,11 +258,6 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     ) external onlyOwnerOrEntryPoint {
         if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
 
-        // min(_guardianCount, 2): prevents permanent module lock when account has < 2 guardians.
-        // _guardianCount=0 → sigsRequired=0: owner can uninstall without guardian approval.
-        // Intentional for 0-guardian accounts (raw createAccount path; caller accepts weaker security).
-        // Production accounts (createAccountWithDefaults) always have 3 guardians → sigsRequired=2.
-        // TODO: consider requiring _guardianCount > 0 at installModule to disallow modules on 0-guardian accounts.
         uint8 sigsRequired = _guardianCount < 2 ? _guardianCount : 2;
         _checkGuardianSigs(
             keccak256(abi.encodePacked("UNINSTALL_MODULE", block.chainid, address(this), moduleTypeId, module))
