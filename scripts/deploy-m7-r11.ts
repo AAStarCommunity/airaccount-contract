@@ -165,8 +165,10 @@ async function main() {
   const { pub, wal } = makeClients(RPC_URLS[0], owner);
   const fA = loadArtifact("AAStarAirAccountFactoryV7");
 
+  // guardian[0] = trusted contact (g1/Bob), guardian[1] = user device (g2/Jack), guardian[2] = community Safe guardian
+  // Mirrors the production createAccountWithDefaults path — 3 guardians always.
   const initConfig = {
-    guardians:          [g1.address, g2.address, "0x0000000000000000000000000000000000000000"] as [Address, Address, Address],
+    guardians:          [g1.address, g2.address, COMMUNITY] as [Address, Address, Address],
     dailyLimit:         0n,
     approvedAlgIds:     [1, 2, 3, 4, 5, 6, 7, 8],
     minDailyLimit:      0n,

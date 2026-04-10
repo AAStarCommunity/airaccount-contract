@@ -182,7 +182,8 @@ async function main() {
   // ─── 5. Deploy test account ───────────────────────────────────────────────
   console.log(`\n[5/6] Deploy test account (salt=${SALT}, guardian[2]=community)...`);
   const initConfig = {
-    guardians: [g1.address, g2.address, "0x0000000000000000000000000000000000000000"] as [Address, Address, Address],
+    // guardian[0] = trusted contact, guardian[1] = user device, guardian[2] = community Safe guardian
+    guardians: [g1.address, g2.address, COMMUNITY] as [Address, Address, Address],
     dailyLimit: 0n,
     approvedAlgIds: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08] as number[],
     minDailyLimit: 0n,

@@ -14,27 +14,33 @@ import { sepolia } from "viem/chains";
 
 config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
-const SALT    = 1003n;
-const FACTORY = process.env.AIRACCOUNT_M7_FACTORY as Address;
-const PK      = process.env.PRIVATE_KEY as Hex;
-const G1_KEY  = process.env.PRIVATE_KEY_BOB as Hex;
-const G2_KEY  = process.env.PRIVATE_KEY_JACK as Hex;
-const RPC     = process.env.SEPOLIA_RPC_URL!;
-
-const owner = privateKeyToAccount(PK);
-const g1    = privateKeyToAccount(G1_KEY);
-const g2    = privateKeyToAccount(G2_KEY);
-const pub   = createPublicClient({ chain: sepolia, transport: http(RPC, { timeout: 120_000 }) });
-const wal   = createWalletClient({ account: owner, chain: sepolia, transport: http(RPC, { timeout: 120_000 }) });
-const fABI  = JSON.parse(readFileSync(resolve(import.meta.dirname, "../out/AAStarAirAccountFactoryV7.sol/AAStarAirAccountFactoryV7.json"), "utf-8")).abi;
+const SALT      = 1003n;
+const FACTORY   = process.env.AIRACCOUNT_M7_FACTORY as Address;
+const PK        = process.env.PRIVATE_KEY as Hex;
+const G1_KEY    = process.env.PRIVATE_KEY_BOB as Hex;
+const G2_KEY    = process.env.PRIVATE_KEY_JACK as Hex;
+const COMMUNITY = process.env.COMMUNITY_GUARDIAN_ADDRESS as Address;
+const RPC       = process.env.SEPOLIA_RPC_URL!;
 
 async function main() {
+  if (!PK)        { console.error("Missing PRIVATE_KEY"); process.exit(1); }
+  if (!FACTORY)   { console.error("Missing AIRACCOUNT_M7_FACTORY"); process.exit(1); }
+  if (!COMMUNITY) { console.error("Missing COMMUNITY_GUARDIAN_ADDRESS"); process.exit(1); }
+
+  const owner = privateKeyToAccount(PK);
+  const g1    = privateKeyToAccount(G1_KEY);
+  const g2    = privateKeyToAccount(G2_KEY);
+  const pub   = createPublicClient({ chain: sepolia, transport: http(RPC, { timeout: 120_000 }) });
+  const wal   = createWalletClient({ account: owner, chain: sepolia, transport: http(RPC, { timeout: 120_000 }) });
+  const fABI  = JSON.parse(readFileSync(resolve(import.meta.dirname, "../out/AAStarAirAccountFactoryV7.sol/AAStarAirAccountFactoryV7.json"), "utf-8")).abi;
+
   const initConfig = {
-    guardians:          [g1.address, g2.address, "0x0000000000000000000000000000000000000000"] as [Address, Address, Address],
-    dailyLimit:         0n,
-    approvedAlgIds:     [1, 2, 3, 4, 5, 6, 7, 8],
-    minDailyLimit:      0n,
-    initialTokens:      [] as Address[],
+    // guardian[0] = trusted contact (g1/Bob), guardian[1] = user device (g2/Jack), guardian[2] = community Safe guardian
+    guardians:           [g1.address, g2.address, COMMUNITY] as [Address, Address, Address],
+    dailyLimit:          0n,
+    approvedAlgIds:      [1, 2, 3, 4, 5, 6, 7, 8],
+    minDailyLimit:       0n,
+    initialTokens:       [] as Address[],
     initialTokenConfigs: [] as { token: Address; dailyLimit: bigint; tier1Limit: bigint; tier2Limit: bigint }[],
   };
 
