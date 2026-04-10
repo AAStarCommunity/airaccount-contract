@@ -253,5 +253,28 @@ probability). Acting before Hegota EIP selection is confirmed = wasted migration
 
 ---
 
-*Last updated: 2026-03-20*
+---
+
+## Security / Guard
+
+### [M8] `installModule` guard for 0-guardian accounts
+**Context**: `uninstallModule` uses `min(_guardianCount, 2)` to avoid permanently locking modules
+when an account has fewer than 2 guardians. Side effect: a `_guardianCount=0` account gets
+`sigsRequired=0`, meaning owner can uninstall any module (including `TierGuardHook`) without
+guardian approval.
+**Current stance**: Intentional for 0-guardian accounts created via raw `createAccount` path
+(caller accepts weaker security). Production accounts via `createAccountWithDefaults` always
+have 3 guardians → `sigsRequired=2`.
+**Proposed fix**: Add `if (_guardianCount == 0) revert InstallModuleUnauthorized()` at the top
+of both `installModule` and `uninstallModule`, preventing 0-guardian accounts from using the
+module system entirely.
+**Why deferred**: 0-guardian accounts are a degenerate edge case with no production path.
+Fixing it changes contract bytecode → requires redeployment.
+**Watch trigger**: If `createAccount` with 0 guardians becomes an exposed API surface (SDK, UI).
+**Files**: `src/core/AAStarAirAccountV7.sol` — `installModule()`, `uninstallModule()`.
+**Raised by**: @fanhousanbu in PR #12 review (2026-04-09).
+
+---
+
+*Last updated: 2026-04-10*
 *Source analysis: `docs/gas-analysis.md` — Potential Future Optimizations*
