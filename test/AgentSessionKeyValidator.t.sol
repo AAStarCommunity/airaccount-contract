@@ -39,11 +39,12 @@ contract AgentSessionKeyValidatorTest is Test {
         });
     }
 
-    /// @dev Sign userOpHash with a wallet and return the 65-byte ECDSA signature
+    /// @dev Sign userOpHash with a wallet and return the 66-byte ALG_SESSION_KEY signature.
+    ///      Format: [0x08 algId][ECDSA(65)] — required by validateUserOp (HIGH-1 fix).
     function _sign(Vm.Wallet memory w, bytes32 opHash) internal returns (bytes memory) {
         bytes32 ethHash = opHash.toEthSignedMessageHash();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w, ethHash);
-        return abi.encodePacked(r, s, v);
+        return abi.encodePacked(uint8(0x08), r, s, v); // 0x08 prefix + 65-byte ECDSA = 66 bytes
     }
 
     /// @dev Build a default AgentSessionConfig with expiry in the future and no restrictions
@@ -590,7 +591,7 @@ contract AgentSessionKeyValidatorTest is Test {
         AgentSessionKeyValidator.AgentSessionConfig memory subCfg = _defaultConfig(parentExpiry);
 
         vm.prank(sessionWallet.addr);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
 
         // Sub-session should exist in storage
         (uint48 storedExpiry, , , , , bool revoked, ,) = _readConfig(account, subWallet.addr);
@@ -609,7 +610,7 @@ contract AgentSessionKeyValidatorTest is Test {
         );
 
         vm.prank(sessionWallet.addr);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
 
         (uint48 storedExpiry, , , , , , ,) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, uint48(block.timestamp + 1 hours));
@@ -624,7 +625,7 @@ contract AgentSessionKeyValidatorTest is Test {
         AgentSessionKeyValidator.AgentSessionConfig memory subCfg = _defaultConfig(parentExpiry);
 
         vm.prank(sessionWallet.addr);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
 
         (uint48 storedExpiry, , , , , , ,) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, parentExpiry);
@@ -644,7 +645,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(sessionWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.ParentSessionExpired.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
     function test_delegateSession_revokedParent_reverts() public {
@@ -662,7 +663,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(sessionWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.ParentSessionExpired.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
     function test_delegateSession_noParentSession_reverts() public {
@@ -676,7 +677,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(unknownWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.CallerNotSessionKey.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
     function test_delegateSession_expiryEscalation_reverts() public {
@@ -691,7 +692,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(sessionWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.ScopeEscalationDenied.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
     function test_delegateSession_spendCapEscalation_reverts() public {
@@ -731,7 +732,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(sessionWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.ScopeEscalationDenied.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
     function test_delegateSession_velocityEscalation_reverts() public {
@@ -771,7 +772,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(sessionWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.ScopeEscalationDenied.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
     function test_delegateSession_callTargetEscalation_reverts() public {
@@ -819,7 +820,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(sessionWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.ScopeEscalationDenied.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
     function test_delegateSession_subSessionIsValidatable() public {
@@ -830,7 +831,7 @@ contract AgentSessionKeyValidatorTest is Test {
         AgentSessionKeyValidator.AgentSessionConfig memory subCfg = _defaultConfig(parentExpiry);
 
         vm.prank(sessionWallet.addr);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
 
         // Sub-agent should be able to pass validateUserOp
         bytes memory sig = _sign(subWallet, USER_OP_HASH);
@@ -850,7 +851,7 @@ contract AgentSessionKeyValidatorTest is Test {
         AgentSessionKeyValidator.AgentSessionConfig memory subCfg = _defaultConfig(parentExpiry);
 
         vm.prank(sessionWallet.addr);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
 
         // delegatedBy[account][subKey] must point to parent key
         address recordedParent = validator.delegatedBy(account, subWallet.addr);
@@ -889,7 +890,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(sessionWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.ScopeEscalationDenied.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
     /// @notice Sub selector not in parent list → escalation denied.
@@ -922,7 +923,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(sessionWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.ScopeEscalationDenied.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
     /// @notice Sub can delegate with a strict subset of parent's selectorAllowlist.
@@ -956,7 +957,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         // Should NOT revert — sub is a strict subset
         vm.prank(sessionWallet.addr);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
 
         (uint48 stored, , , , , , ,) = _readConfig(account, subWallet.addr);
         assertEq(stored, parentExpiry);
@@ -971,7 +972,7 @@ contract AgentSessionKeyValidatorTest is Test {
         AgentSessionKeyValidator.AgentSessionConfig memory subCfg = _defaultConfig(parentExpiry);
 
         vm.prank(sessionWallet.addr);
-        validator.delegateSession(subWallet.addr, subCfg); // should not revert
+        validator.delegateSession(account, subWallet.addr, subCfg); // should not revert
 
         (uint48 stored, , , , , , ,) = _readConfig(account, subWallet.addr);
         assertEq(stored, parentExpiry);
@@ -985,7 +986,7 @@ contract AgentSessionKeyValidatorTest is Test {
         AgentSessionKeyValidator.AgentSessionConfig memory subCfg = _defaultConfig(parentExpiry);
 
         vm.prank(sessionWallet.addr);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
 
         // Revoke the parent session
         vm.prank(account);
@@ -1086,6 +1087,6 @@ contract AgentSessionKeyValidatorTest is Test {
 
         vm.prank(sessionWallet.addr);
         vm.expectRevert(AgentSessionKeyValidator.MaxSelectorsExceeded.selector);
-        validator.delegateSession(subWallet.addr, subCfg);
+        validator.delegateSession(account, subWallet.addr, subCfg);
     }
 }

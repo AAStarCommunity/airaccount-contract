@@ -145,9 +145,10 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
                 // H-6: store sig[0] as algId so guard receives the correct tier.
                 // CompositeValidator may push a more-specific algId first via validateCompositeSignature;
                 // execute() reads that entry (pos 0) first, leaving this one unconsumed.
-                // Only write algId on success (validationData==0) to avoid polluting the transient queue
-                // with garbage bytes from failed validations in batched UserOp bundles.
-                if (validationData == 0 && userOp.signature.length > 0) _storeValidatedAlgId(uint8(userOp.signature[0]));
+                // Gate on "not failed" (!=1) rather than "==0" so validators returning non-zero
+                // validationData (e.g. validUntil timestamp: uint256(expiry)<<160) still queue algId.
+                // SIG_VALIDATION_FAILED = 1 is the only sentinel for rejection.
+                if (validationData != 1 && userOp.signature.length > 0) _storeValidatedAlgId(uint8(userOp.signature[0]));
             }
         } else {
             validationData = _validateSignature(userOpHash, userOp.signature);
@@ -159,15 +160,13 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     // ─── ERC-7579 Module Management (M7.2) ────────────────────────────
 
-    /// @dev Best-effort onUninstall(bytes) call with empty data.
-    ///      Uses scratch memory (0x00) and ignores call result.
+    /// @dev Best-effort lifecycle call (onUninstall) with empty bytes data.
+    ///      Uses abi.encodeWithSelector to avoid clobbering Solidity's scratch space (0x00–0x3f)
+    ///      and free-memory pointer (0x40). Return value intentionally ignored.
     function _callLifecycle(bytes4 sel, address module) private {
-        assembly {
-            mstore(0, sel)
-            mstore(4, 0x20)
-            mstore(0x24, 0)
-            pop(call(gas(), module, 0, 0, 0x44, 0, 0))
-        }
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool _ok,) = module.call(abi.encodeWithSelector(sel, new bytes(0)));
+        _ok; // silence unused-variable warning — best-effort, failure is intentionally ignored
     }
 
     /// @dev Verify `count` sequential 65-byte ECDSA sigs from distinct guardians.
@@ -224,17 +223,33 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         // LOW-1: Reject second hook install — silent overwrite would deactivate TierGuardHook without warning.
         // Caller must explicitly uninstallModule the existing hook before installing a new one.
         if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook != address(0)) revert ModuleAlreadyInstalled();
+
+        // MEDIUM-2: Only call onInstall on the first installation of this module address.
+        // A module may legitimately implement multiple roles (e.g. validator + executor).
+        // Calling onInstall again on secondary typeId would double-initialize shared state
+        // (e.g. _initialized in AgentSessionKeyValidator) and silently discard initData.
+        bool alreadyLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
+                        || _installedModules[MODULE_TYPE_EXECUTOR][module]
+                        || _installedModules[MODULE_TYPE_HOOK][module];
+
         _installedModules[moduleTypeId][module] = true;
         if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
-        // slither-disable-next-line unused-return
-        (bool _ok,) = module.call(abi.encodeWithSelector(SEL_ON_INSTALL, moduleInitData));
-        if (!_ok) emit ModuleInstallCallbackFailed(moduleTypeId, module);
+
+        if (!alreadyLive) {
+            // MEDIUM-1: Hard-revert if onInstall fails — leaving module marked installed but
+            // uninitialized creates a stuck state where validateUserOp returns 1 forever.
+            // Revert rolls back _installedModules and _activeHook atomically.
+            (bool _ok,) = module.call(abi.encodeWithSelector(SEL_ON_INSTALL, moduleInitData));
+            if (!_ok) revert ModuleInstallCallbackFailed(moduleTypeId, module);
+        }
 
         emit ModuleInstalled(moduleTypeId, module);
     }
 
     /// @notice ERC-7579: Uninstall a module.
-    /// @dev Always requires 2 guardian sigs regardless of installModuleThreshold.
+    /// @dev Requires min(guardianCount, 2) guardian sigs.
+    ///      Accounts with fewer than 2 real guardians use all available guardian sigs
+    ///      so that modules are never permanently locked even on minimal-guardian accounts.
     ///      Sig hash: keccak256("UNINSTALL_MODULE" || chainId || account || moduleTypeId || module).toEthSignedMessageHash()
     function uninstallModule(
         uint256 moduleTypeId,
@@ -243,16 +258,27 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     ) external onlyOwnerOrEntryPoint {
         if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
 
+        uint8 sigsRequired = _guardianCount < 2 ? _guardianCount : 2;
         _checkGuardianSigs(
             keccak256(abi.encodePacked("UNINSTALL_MODULE", block.chainid, address(this), moduleTypeId, module))
                 .toEthSignedMessageHash(),
-            deInitData, 2
+            deInitData, sigsRequired
         );
 
         if (!_installedModules[moduleTypeId][module]) revert ModuleNotInstalled();
         _installedModules[moduleTypeId][module] = false;
         if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook == module) _activeHook = address(0);
-        _callLifecycle(SEL_ON_UNINSTALL, module); // M-10: best-effort onUninstall(bytes)
+
+        // MEDIUM-2: Only call onUninstall when this is the last active installation of the module.
+        // If the module is still installed under another typeId, calling onUninstall would clear
+        // shared state (e.g. _initialized) and break the remaining role.
+        bool stillLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
+                      || _installedModules[MODULE_TYPE_EXECUTOR][module]
+                      || _installedModules[MODULE_TYPE_HOOK][module];
+        if (!stillLive) {
+            _callLifecycle(SEL_ON_UNINSTALL, module); // best-effort
+        }
+
         emit ModuleUninstalled(moduleTypeId, module);
     }
 

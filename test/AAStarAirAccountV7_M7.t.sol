@@ -39,6 +39,21 @@ contract MockModule {
     fallback() external payable {}
 }
 
+// ─── Mock module that tracks onInstall/onUninstall call counts ───────────────
+
+contract TrackingModule {
+    uint256 public installCount;
+    uint256 public uninstallCount;
+
+    function onInstall(bytes calldata) external { installCount++; }
+    function onUninstall(bytes calldata) external { uninstallCount++; }
+
+    function validateUserOp(PackedUserOperation calldata, bytes32) external pure returns (uint256) { return 0; }
+    function isValidSignatureWithSender(address, bytes32, bytes calldata) external pure returns (bytes4) { return 0x1626ba7e; }
+    receive() external payable {}
+    fallback() external payable {}
+}
+
 // ─── Mock module that reverts on onInstall ────────────────────────────────────
 
 contract RevertingModule {
@@ -654,6 +669,36 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertEq(result, 0, "Installed validator should return success");
     }
 
+    function test_validateUserOp_nonceKey_nonZeroValidationData_passedThrough() public {
+        // Regression for HIGH-1 fix: validators returning non-zero validationData (e.g. AgentSessionKeyValidator
+        // returns uint256(expiry) << 160) must still write algId via _storeValidatedAlgId.
+        // The gate changed from validationData==0 to validationData!=1 (SIG_VALIDATION_FAILED sentinel).
+        _installWithG0(1, address(mockModule));
+        uint256 expiry = block.timestamp + 3600;
+        uint256 nonZeroResult = uint256(expiry) << 160; // simulates AgentSessionKeyValidator success
+        mockModule.setValidateResult(nonZeroResult);
+
+        bytes memory sig = abi.encodePacked(uint8(0x08), new bytes(65)); // sig[0]=0x08, 65 zero bytes
+        uint256 nonce = uint256(uint192(uint160(address(mockModule)))) << 64;
+
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: address(account),
+            nonce: nonce,
+            initCode: "",
+            callData: "",
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: sig
+        });
+
+        vm.prank(address(ep));
+        uint256 result = account.validateUserOp(userOp, keccak256("hash"), 0);
+        // Non-zero validationData (expiry timestamp) should be passed through unchanged
+        assertEq(result, nonZeroResult, "Non-zero validationData must be passed through");
+    }
+
     function test_validateUserOp_fromNonEntryPoint_reverts() public {
         PackedUserOperation memory userOp = PackedUserOperation({
             sender: address(account),
@@ -810,30 +855,76 @@ contract AAStarAirAccountV7_M7Test is Test {
         return acc;
     }
 
-    // ─── Review fix: ModuleInstallCallbackFailed event ───────────────────
+    // ─── Review fix: ModuleInstallCallbackFailed — now reverts instead of emitting event ─────
 
-    function test_installModule_onInstallReverts_emitsCallbackFailed() public {
+    function test_installModule_onInstallReverts_reverts() public {
+        // MEDIUM-1 fix: onInstall failure now hard-reverts; module is NOT marked installed
         RevertingModule badModule = new RevertingModule();
         bytes memory sig = _installSigWithData(g0Wallet, address(account), 1, address(badModule), "");
         vm.prank(ownerWallet.addr);
-        vm.expectEmit(true, true, false, false);
-        emit AAStarAirAccountBase.ModuleInstallCallbackFailed(1, address(badModule));
+        vm.expectRevert(
+            abi.encodeWithSelector(AAStarAirAccountBase.ModuleInstallCallbackFailed.selector, 1, address(badModule))
+        );
         account.installModule(1, address(badModule), sig);
-        // Module is still marked as installed (best-effort pattern)
-        assertTrue(account.isModuleInstalled(1, address(badModule), ""));
+        // Module must NOT be marked installed after revert
+        assertFalse(account.isModuleInstalled(1, address(badModule), ""));
     }
 
-    function test_installModule_onInstallSucceeds_noCallbackFailedEvent() public {
-        // Normal module install should NOT emit ModuleInstallCallbackFailed
+    function test_installModule_onInstallSucceeds_noRevert() public {
+        // Normal module install should succeed without revert
         bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        vm.recordLogs();
         account.installModule(1, address(mockModule), sig);
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        // Check that no ModuleInstallCallbackFailed event was emitted
-        bytes32 failedSig = keccak256("ModuleInstallCallbackFailed(uint256,address)");
-        for (uint256 i = 0; i < logs.length; i++) {
-            assertTrue(logs[i].topics[0] != failedSig, "Unexpected ModuleInstallCallbackFailed event");
-        }
+        assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
+    }
+
+    // ─── MEDIUM-2: cross-typeId install/uninstall lifecycle ──────────────────────
+
+    /// @notice MEDIUM-2: installing the same module as both executor (typeId=2) AND validator (typeId=1)
+    ///         must call onInstall exactly once (on first install) and onUninstall exactly once
+    ///         (only after the last typeId is removed).
+    function test_crossTypeId_onInstall_calledOnce_onUninstall_calledOnce() public {
+        TrackingModule tracker = new TrackingModule();
+
+        // Step 1: install as executor (typeId=2) — onInstall should be called once
+        bytes memory sig2 = _installSig(g0Wallet, address(account), 2, address(tracker));
+        vm.prank(ownerWallet.addr);
+        account.installModule(2, address(tracker), sig2);
+        assertTrue(account.isModuleInstalled(2, address(tracker), ""));
+        assertEq(tracker.installCount(), 1, "onInstall must be called on first install");
+
+        // Step 2: install same module as validator (typeId=1) — onInstall must NOT be called again
+        bytes memory sig1 = _installSig(g0Wallet, address(account), 1, address(tracker));
+        vm.prank(ownerWallet.addr);
+        account.installModule(1, address(tracker), sig1);
+        assertTrue(account.isModuleInstalled(1, address(tracker), ""));
+        assertTrue(account.isModuleInstalled(2, address(tracker), ""));
+        assertEq(tracker.installCount(), 1, "onInstall must NOT be called again on second typeId");
+
+        // Step 3: uninstall as validator (typeId=1) — onUninstall must NOT be called yet (still live as executor)
+        bytes memory usig0 = _uninstallSig(g0Wallet, address(account), 1, address(tracker));
+        bytes memory usig1 = _uninstallSig(g1Wallet, address(account), 1, address(tracker));
+        vm.prank(ownerWallet.addr);
+        account.uninstallModule(1, address(tracker), abi.encodePacked(usig0, usig1));
+        assertFalse(account.isModuleInstalled(1, address(tracker), ""));
+        assertTrue(account.isModuleInstalled(2, address(tracker), ""), "executor role must still be active");
+        assertEq(tracker.uninstallCount(), 0, "onUninstall must NOT be called while another typeId is still active");
+
+        // Step 4: uninstall as executor (typeId=2) — now onUninstall must be called once
+        bytes memory usig2 = _uninstallSig(g0Wallet, address(account), 2, address(tracker));
+        bytes memory usig3 = _uninstallSig(g1Wallet, address(account), 2, address(tracker));
+        vm.prank(ownerWallet.addr);
+        account.uninstallModule(2, address(tracker), abi.encodePacked(usig2, usig3));
+        assertFalse(account.isModuleInstalled(2, address(tracker), ""));
+        assertEq(tracker.uninstallCount(), 1, "onUninstall must be called exactly once after last typeId removed");
+    }
+
+    /// @notice MEDIUM-2: installing same module twice under the same typeId must still revert.
+    function test_crossTypeId_sameTypeId_reverts() public {
+        _installWithG0(1, address(mockModule));
+        bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.ModuleAlreadyInstalled.selector);
+        account.installModule(1, address(mockModule), sig);
     }
 }
