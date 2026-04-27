@@ -1,5 +1,6 @@
 # AirAccount Smart Contract
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
 > **Current milestone**: M7 ✅ Complete — 622/622 tests pass, Sepolia + OP Sepolia deployed.
@@ -205,3 +206,7 @@ forge test --summary                 # per-suite breakdown
 - **Session key revocation** — nonce-based, prior grant signatures invalidated on revoke
 - **EIP-7212 P256** — hardware-bound passkey authentication, available on OP Mainnet (Fjord)
 - **Audit reports** — see `docs/2026-03-*-audit-report.md`
+
+## License
+
+Licensed under the [Apache License, Version 2.0](https://opensource.org/licenses/Apache-2.0). See [LICENSE](./LICENSE) for details.
