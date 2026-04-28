@@ -205,3 +205,8 @@ forge test --summary                 # per-suite breakdown
 - **Session key revocation** — nonce-based, prior grant signatures invalidated on revoke
 - **EIP-7212 P256** — hardware-bound passkey authentication, available on OP Mainnet (Fjord)
 - **Audit reports** — see `docs/2026-03-*-audit-report.md`
+
+## License
+
+This project is licensed under the [Apache License, Version 2.0](LICENSE).  
+Copyright 2024-present MushroomDAO Contributors. See [NOTICE](./NOTICE) for attribution.
