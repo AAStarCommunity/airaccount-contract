@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {TierGuardHook} from "../src/core/TierGuardHook.sol";
+import {AgentSessionKeyValidator} from "../src/validators/AgentSessionKeyValidator.sol";
 
 /// @dev Minimal mock guard for TierGuardHook tests
 contract MockGuard {
@@ -58,7 +59,55 @@ contract MockAccountWithAlgId is MockAccountCaller {
     function getCurrentAlgId() external view returns (uint256) { return algId; }
 }
 
-/// @title TierGuardHookTest — Unit tests for TierGuardHook (M7.2)
+/// @dev Mock AgentSessionKeyValidator for session scope enforcement tests (M8.P2).
+///      Implements enforceSessionScope() that reverts for forbidden targets and passes for allowed ones.
+contract MockAgentSessionKeyValidator {
+    /// @dev Allowed call targets. Empty = allow all.
+    address[] public allowedTargets;
+
+    function setAllowedTargets(address[] memory targets) external {
+        delete allowedTargets;
+        for (uint256 i = 0; i < targets.length; i++) {
+            allowedTargets.push(targets[i]);
+        }
+    }
+
+    function enforceSessionScope(
+        address, /* account */
+        address, /* sessionKey */
+        address callTarget,
+        bytes4  /* selector */
+    ) external view {
+        if (allowedTargets.length == 0) return; // empty = allow all
+        for (uint256 i = 0; i < allowedTargets.length; i++) {
+            if (allowedTargets[i] == callTarget) return; // found — allowed
+        }
+        // Not found in allowlist — revert to signal forbidden target
+        revert("CallTargetForbidden");
+    }
+}
+
+/// @dev Account that exposes both getCurrentAlgId() (returning ALG_SESSION_KEY=0x08)
+///      and getCurrentSessionKey() (returning a tagged ECDSA session key address).
+///      Used to test session scope enforcement in TierGuardHook (M8.P2).
+contract MockAccountWithSessionKey is MockAccountCaller {
+    address public immutable sessionKeyAddr;
+
+    constructor(address _sessionKey) {
+        sessionKeyAddr = _sessionKey;
+    }
+
+    function getCurrentAlgId() external pure returns (uint256) {
+        return 0x08; // ALG_SESSION_KEY
+    }
+
+    function getCurrentSessionKey() external view returns (bytes32) {
+        // Tag 0x01 = ECDSA session key; lower 20 bytes = session key address
+        return bytes32(uint256(0x01) << 248 | uint256(uint160(sessionKeyAddr)));
+    }
+}
+
+/// @title TierGuardHookTest — Unit tests for TierGuardHook (M7.2, M8.P2)
 contract TierGuardHookTest is Test {
     TierGuardHook public hook;
     MockGuard     public guard;
@@ -283,5 +332,112 @@ contract TierGuardHookTest is Test {
         assertEq(hook.accountGuard(address(accountB)), address(0xBEEF));
         assertEq(hook.accountTier1(account), 1 ether);
         assertEq(hook.accountTier1(address(accountB)), 2 ether);
+    }
+
+    // ─── M8.P2: Session scope enforcement via AgentSessionKeyValidator ────────
+
+    /// @dev Build msgData that matches the execute() calldata forwarded by _dispatchHook.
+    ///      _dispatchHook uses calldatacopy(msg.data), so msgData = full execute() calldata.
+    ///
+    ///      execute(address dest, uint256 value, bytes calldata func) ABI layout:
+    ///        [0:4]    execute() selector
+    ///        [4:36]   dest (address padded to 32 bytes)
+    ///        [36:68]  value (uint256)
+    ///        [68:100] ABI offset for func bytes (= 0x60 = 96, relative to arg start)
+    ///        [100:132] func data length
+    ///        [132:]   func bytes (inner calldata)
+    function _buildExecuteMsgData(
+        address dest,
+        uint256 value,
+        bytes memory func
+    ) internal pure returns (bytes memory) {
+        bytes4 sel = bytes4(keccak256("execute(address,uint256,bytes)"));
+        bytes memory args = abi.encode(dest, value, func);
+        return abi.encodePacked(sel, args);
+    }
+
+    /// @notice M8.P2: ALG_SESSION_KEY with callTargets=[tokenA]; calling tokenB must revert.
+    function test_PreCheck_SessionKey_enforcesCallTarget_blocks_forbidden() public {
+        address tokenA = makeAddr("tokenA");
+        address tokenB = makeAddr("tokenB");
+        address sessionKey = makeAddr("sessionKey");
+
+        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
+        address[] memory targets = new address[](1);
+        targets[0] = tokenA;
+        agentValidator.setAllowedTargets(targets);
+
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
+        sessionAccount.callInstall(hook, installData);
+        guard.setShouldRevert(false);
+
+        // Attempt to call tokenB (not in the allowlist) — preCheck must revert
+        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", address(this), 100);
+        bytes memory msgData = _buildExecuteMsgData(tokenB, 0, func);
+
+        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
+        sessionAccount.callPreCheckExpectRevert(hook, address(this), 0, msgData);
+    }
+
+    /// @notice M8.P2: ALG_SESSION_KEY with callTargets=[tokenA]; calling tokenA must succeed.
+    function test_PreCheck_SessionKey_enforcesCallTarget_allows_permitted() public {
+        address tokenA = makeAddr("tokenA");
+        address sessionKey = makeAddr("sessionKey");
+
+        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
+        address[] memory targets = new address[](1);
+        targets[0] = tokenA;
+        agentValidator.setAllowedTargets(targets);
+
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
+        sessionAccount.callInstall(hook, installData);
+        guard.setShouldRevert(false);
+
+        // Call tokenA (in the allowlist) — preCheck must succeed
+        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", address(this), 100);
+        bytes memory msgData = _buildExecuteMsgData(tokenA, 0, func);
+        bytes memory result = sessionAccount.callPreCheck(hook, address(this), 0, msgData);
+        assertEq(result, "");
+    }
+
+    /// @notice M8.P2: no agentValidator set (3-param install) — session scope enforcement is skipped.
+    ///         Even though algId=ALG_SESSION_KEY, no scope check is performed without an agentValidator.
+    function test_PreCheck_SessionKey_noValidator_skipsEnforcement() public {
+        address tokenB = makeAddr("tokenB");
+        address sessionKey = makeAddr("sessionKey");
+
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        // Install with original 3-param format — no agentValidator field
+        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0));
+        sessionAccount.callInstall(hook, installData);
+        guard.setShouldRevert(false);
+
+        // Any target allowed because no agentValidator is configured
+        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", address(this), 100);
+        bytes memory msgData = _buildExecuteMsgData(tokenB, 0, func);
+        bytes memory result = sessionAccount.callPreCheck(hook, address(this), 0, msgData);
+        assertEq(result, "");
+    }
+
+    /// @notice M8.P2: empty callTargets allowlist in agentValidator means any target is allowed.
+    ///         enforceSessionScope with empty callTargets returns without reverting.
+    function test_PreCheck_SessionKey_emptyAllowlist_allowsAll() public {
+        address anyTarget = makeAddr("anyTarget");
+        address sessionKey = makeAddr("sessionKey");
+
+        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
+        // No targets set → empty allowlist → any target allowed
+
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
+        sessionAccount.callInstall(hook, installData);
+        guard.setShouldRevert(false);
+
+        bytes memory func = abi.encodeWithSignature("doSomething()");
+        bytes memory msgData = _buildExecuteMsgData(anyTarget, 0, func);
+        bytes memory result = sessionAccount.callPreCheck(hook, address(this), 0, msgData);
+        assertEq(result, "");
     }
 }

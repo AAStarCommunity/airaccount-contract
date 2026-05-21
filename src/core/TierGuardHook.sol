@@ -18,6 +18,10 @@ import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 ///      before calling preCheck. The hook calls back to the account's _consumeValidatedAlgId()
 ///      via a standardized interface. For simplicity in this implementation, algId defaults to
 ///      ALG_ECDSA if the callback is unavailable.
+///
+///      Session scope enforcement (M8.P2): When an AgentSessionKeyValidator address is configured
+///      via the extended onInstall format, preCheck additionally enforces callTargets and
+///      selectorAllowlist for ALG_SESSION_KEY operations by calling enforceSessionScope().
 contract TierGuardHook is IERC7579Hook {
     /// @dev Per-account guard address mapping (set at install time)
     mapping(address => address) public accountGuard;
@@ -25,6 +29,10 @@ contract TierGuardHook is IERC7579Hook {
     /// @dev Per-account tier1/tier2 limits (set at install time)
     mapping(address => uint256) public accountTier1;
     mapping(address => uint256) public accountTier2;
+
+    /// @dev Per-account AgentSessionKeyValidator address for session scope enforcement (M8.P2).
+    ///      If set, preCheck enforces callTargets/selectorAllowlist for ALG_SESSION_KEY ops.
+    mapping(address => address) public accountAgentValidator;
 
     error TierGuardHookUnauthorized();
     error TierViolation(uint8 required, uint8 provided);
@@ -43,19 +51,34 @@ contract TierGuardHook is IERC7579Hook {
     // ─── IERC7579Module ─────────────────────────────────────────────
 
     /// @notice Install hook for msg.sender account.
-    /// @param data abi.encode(guardAddress, tier1Limit, tier2Limit)
+    /// @param data abi.encode(guardAddress, tier1Limit, tier2Limit) — 3-param (96 bytes)
+    ///        OR abi.encode(guardAddress, tier1Limit, tier2Limit, agentSessionKeyValidator) — 4-param (128 bytes).
+    ///        The 4-param format enables session scope enforcement via AgentSessionKeyValidator (M8.P2).
     function onInstall(bytes calldata data) external override {
         if (data.length == 0) return; // no-op if no init data
-        (address guardAddr, uint256 t1, uint256 t2) = abi.decode(data, (address, uint256, uint256));
-        accountGuard[msg.sender] = guardAddr;
-        accountTier1[msg.sender] = t1;
-        accountTier2[msg.sender] = t2;
+        if (data.length >= 128) {
+            // Extended 4-param format: includes agentSessionKeyValidator address
+            (address guardAddr, uint256 t1, uint256 t2, address agentValidator) =
+                abi.decode(data, (address, uint256, uint256, address));
+            accountGuard[msg.sender] = guardAddr;
+            accountTier1[msg.sender] = t1;
+            accountTier2[msg.sender] = t2;
+            accountAgentValidator[msg.sender] = agentValidator;
+        } else {
+            // Original 3-param format (backward compatible)
+            (address guardAddr, uint256 t1, uint256 t2) = abi.decode(data, (address, uint256, uint256));
+            accountGuard[msg.sender] = guardAddr;
+            accountTier1[msg.sender] = t1;
+            accountTier2[msg.sender] = t2;
+            delete accountAgentValidator[msg.sender];
+        }
     }
 
     function onUninstall(bytes calldata /* data */) external override {
         delete accountGuard[msg.sender];
         delete accountTier1[msg.sender];
         delete accountTier2[msg.sender];
+        delete accountAgentValidator[msg.sender];
     }
 
     function isInitialized(address smartAccount) external view override returns (bool) {
@@ -64,19 +87,21 @@ contract TierGuardHook is IERC7579Hook {
 
     // ─── IERC7579Hook ────────────────────────────────────────────────
 
-    /// @notice Pre-execution check: enforce tier + daily limit.
-    /// @param msgSender The original msg.sender of the execute() call
+    /// @notice Pre-execution check: enforce tier + daily limit + session scope (M8.P2).
+    /// @param msgSender The original msg.sender of the execute() call (unused — msg.sender is the account)
     /// @param msgValue The ETH value being sent
-    /// @param msgData The calldata being executed (first 4 bytes = selector, then target+value+data)
+    /// @param msgData The full execute() calldata forwarded by the account.
+    ///        Layout: [4B execute selector][32B dest padded][32B value][32B func-offset][32B func-len][func...]
+    ///        dest  = address(uint160(uint256(bytes32(msgData[4:36]))))
+    ///        inner selector = bytes4(msgData[132:136]) when func.length >= 4
     /// @return hookData Empty bytes (no post-check state needed)
     function preCheck(
         address msgSender,
         uint256 msgValue,
         bytes calldata msgData
     ) external override returns (bytes memory hookData) {
-        // Suppress unused variable warnings
+        // Suppress unused variable warning
         msgSender;
-        msgData;
 
         address guardAddr = accountGuard[msg.sender];
         if (guardAddr == address(0)) return ""; // no guard configured
@@ -104,6 +129,47 @@ contract TierGuardHook is IERC7579Hook {
             revert TierGuardHookUnauthorized();
         }
 
+        // ── Session scope enforcement (M8.P2) ─────────────────────────────────
+        // When an AgentSessionKeyValidator is configured and the operation uses ALG_SESSION_KEY,
+        // enforce callTargets and selectorAllowlist constraints that were set at session grant time.
+        // This closes the gap where AgentSessionKeyValidator only validated during validateUserOp
+        // but did not enforce scope during execute().
+        address agentValidator = accountAgentValidator[msg.sender];
+        if (agentValidator != address(0) && algId == ALG_SESSION_KEY) {
+            bytes32 taggedSessionKey = _getSessionKeyFromAccount(msg.sender);
+            if (taggedSessionKey != bytes32(0)) {
+                uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
+                if (sessionType == 0x01) {
+                    address sessionKey = address(uint160(uint256(taggedSessionKey)));
+                    // Parse dest and inner selector from the forwarded execute() calldata.
+                    // msgData layout (full execute calldata including selector):
+                    //   [0:4]    execute() selector (bytes4)
+                    //   [4:36]   dest (address padded to 32 bytes)
+                    //   [36:68]  value (uint256)
+                    //   [68:100] offset for func bytes (= 0x60)
+                    //   [100:132] func length
+                    //   [132:]   func data
+                    // Inner call selector = first 4 bytes of func data = msgData[132:136]
+                    address dest;
+                    bytes4 selector;
+                    if (msgData.length >= 36) {
+                        dest = address(uint160(uint256(bytes32(msgData[4:36]))));
+                    }
+                    if (msgData.length >= 136) {
+                        selector = bytes4(msgData[132:136]);
+                    }
+                    // enforceSessionScope reverts if the target or selector is not in the allowlist
+                    (bool ok,) = agentValidator.staticcall(
+                        abi.encodeWithSignature(
+                            "enforceSessionScope(address,address,address,bytes4)",
+                            msg.sender, sessionKey, dest, selector
+                        )
+                    );
+                    if (!ok) revert TierGuardHookUnauthorized();
+                }
+            }
+        }
+
         return "";
     }
 
@@ -112,6 +178,19 @@ contract TierGuardHook is IERC7579Hook {
     }
 
     // ─── Internal ────────────────────────────────────────────────────
+
+    /// @dev Call back to the account to get the current tagged session key from transient storage.
+    ///      Returns bytes32(0) if the account does not implement getCurrentSessionKey() or if no
+    ///      session key is active.
+    ///      COMPATIBILITY: requires AAStarAirAccountV7 (M7+) with getCurrentSessionKey() exposed.
+    function _getSessionKeyFromAccount(address account) internal view returns (bytes32 taggedId) {
+        (bool ok, bytes memory data) = account.staticcall(
+            abi.encodeWithSignature("getCurrentSessionKey()")
+        );
+        if (ok && data.length >= 32) {
+            taggedId = abi.decode(data, (bytes32));
+        }
+    }
 
     /// @dev Read algId from account's getCurrentAlgId() helper (added in M7).
     ///      getCurrentAlgId() peeks at the transient algId queue without consuming it,
