@@ -43,6 +43,14 @@ contract AAStarAirAccountFactoryV7 {
 
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
 
+    /// @dev Emitted when an agent account is created via createAgentAccount.
+    event AgentAccountCreated(
+        address indexed account,
+        address indexed agentKey,
+        address indexed humanOwner,
+        bytes32 agentId
+    );
+
     error GuardianDidNotAccept(address guardian);
     error DuplicateGuardian();
 
@@ -203,6 +211,80 @@ contract AAStarAirAccountFactoryV7 {
         account = Clones.cloneDeterministic(implementation, cloneSalt);
         AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
         emit AccountCreated(account, owner, salt);
+    }
+
+    /// @notice Create a dedicated AirAccount for an autonomous AI agent.
+    ///         The human caller (msg.sender) becomes guardian1 — no sig needed.
+    ///         Only guardian2 must sign the guardian acceptance message.
+    ///
+    /// @param agentKey    The agent's signing key (EOA address). Becomes the account owner.
+    ///                   For autonomous agents: use a secure server-side key.
+    /// @param agentId     A bytes32 identifier for this agent (e.g. keccak256("my-agent-v1")).
+    ///                   Combined with msg.sender to derive a unique deterministic salt.
+    /// @param guardian2   Second guardian (human's personal backup key, trusted person, etc.)
+    /// @param guardian2Sig guardian2's acceptance signature. Signs:
+    ///                   keccak256("ACCEPT_GUARDIAN" || chainId || factory || agentKey || salt).toEthSignedMessageHash()
+    ///                   where salt = uint256(keccak256(abi.encodePacked(msg.sender, agentId)))
+    /// @param dailyLimit  Daily spending limit in wei for this agent account
+    /// @return account    The deployed agent account address
+    function createAgentAccount(
+        address agentKey,
+        bytes32 agentId,
+        address guardian2,
+        bytes calldata guardian2Sig,
+        uint256 dailyLimit
+    ) external returns (address account) {
+        require(agentKey != address(0), "Agent key required");
+        require(guardian2 != address(0), "Guardian2 required");
+        require(msg.sender != guardian2, "Caller cannot be guardian2");
+        require(agentKey != guardian2, "Agent key cannot be guardian2");
+        require(dailyLimit > 0, "Daily limit required");
+
+        // Derive deterministic salt from human owner + agent ID
+        uint256 salt = uint256(keccak256(abi.encodePacked(msg.sender, agentId)));
+
+        // Verify guardian2 signed the acceptance hash (guardian1 = msg.sender, auto-accepted)
+        bytes32 acceptHash = keccak256(
+            abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(this), agentKey, salt)
+        ).toEthSignedMessageHash();
+        (address recovered,,) = acceptHash.tryRecover(guardian2Sig);
+        if (recovered != guardian2) revert GuardianDidNotAccept(guardian2);
+
+        bytes32 cloneSalt = _getDefaultSalt(agentKey, salt);
+        account = Clones.predictDeterministicAddress(implementation, cloneSalt);
+        if (account.code.length > 0) {
+            return account;
+        }
+
+        // guardian1 = msg.sender (human owner, no sig needed)
+        AAStarAirAccountBase.InitConfig memory config = _buildDefaultConfig(
+            msg.sender, guardian2, dailyLimit
+        );
+        // Pre-deploy guard bound to the predicted account address before cloning.
+        address guardAddr = address(new AAStarGlobalGuard(
+            account,
+            config.dailyLimit,
+            config.approvedAlgIds,
+            config.minDailyLimit,
+            config.initialTokens,
+            config.initialTokenConfigs
+        ));
+        account = Clones.cloneDeterministic(implementation, cloneSalt);
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, agentKey, config, guardAddr);
+        emit AgentAccountCreated(account, agentKey, msg.sender, agentId);
+    }
+
+    /// @notice Predict the address of a future agent account.
+    /// @param humanOwner  The human who will call createAgentAccount (msg.sender)
+    /// @param agentKey    The agent's signing key address
+    /// @param agentId     The bytes32 agent identifier
+    function getAgentAddress(
+        address humanOwner,
+        address agentKey,
+        bytes32 agentId
+    ) public view returns (address) {
+        uint256 salt = uint256(keccak256(abi.encodePacked(humanOwner, agentId)));
+        return Clones.predictDeterministicAddress(implementation, _getDefaultSalt(agentKey, salt));
     }
 
     /// @notice Predict address for a default-config account.
