@@ -92,6 +92,12 @@ WalletBeat evaluates wallets across Stage 0, 1, 2. AirAccount is a **smart contr
 
 ## Documentation
 
+### Feature Reference
+
+| Document | Description |
+|----------|-------------|
+| [docs/feature-list.md](docs/feature-list.md) | **Complete feature list M1–M7** — per-milestone tables with characteristics, user value, and active/passive classification |
+
 ### Architecture & Design
 
 | Document | Description |
