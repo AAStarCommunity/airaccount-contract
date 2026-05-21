@@ -1052,7 +1052,6 @@ abstract contract AAStarAirAccountBase is Initializable {
             mstore(add(m,100), cdSize)      // [100:132] bytes length = calldatasize (= full execute calldata)
             calldatacopy(add(m, 132), 0, cdSize) // [132:] = full execute calldata (selector+args)
             // Total size: 4 + 32 + 32 + 32 + 32 + cdSize = 132 + cdSize
-            // Round up to 32-byte boundary for safety (required by ABI)
             let totalSize := add(132, cdSize)
             ok := call(gas(), hook, 0, m, totalSize, 0, 0)
         }
@@ -1163,7 +1162,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     }
 
     /// @notice Peek at the next session key in the transient queue without consuming it.
-    ///         Called by TierGuardHook.preCheck() for session scope enforcement.
+    ///         Called by TierGuardHook.preCheck() for session scope enforcement (M8.P2).
     ///         Returns bytes32(0) if the queue is empty (no session key stored in this batch).
     ///         Top byte of returned value: 0x01 = ECDSA session (lower 20 bytes = address),
     ///         0x02 = P256 session (lower 31 bytes = key hash).

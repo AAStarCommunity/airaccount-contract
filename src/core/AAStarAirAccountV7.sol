@@ -148,7 +148,22 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
                 // Gate on "not failed" (!=1) rather than "==0" so validators returning non-zero
                 // validationData (e.g. validUntil timestamp: uint256(expiry)<<160) still queue algId.
                 // SIG_VALIDATION_FAILED = 1 is the only sentinel for rejection.
-                if (validationData != 1 && userOp.signature.length > 0) _storeValidatedAlgId(uint8(userOp.signature[0]));
+                if (validationData != 1 && userOp.signature.length > 0) {
+                    uint8 algId = uint8(userOp.signature[0]);
+                    _storeValidatedAlgId(algId);
+                    // For ALG_SESSION_KEY (0x08), also recover and store the session key in transient
+                    // storage so TierGuardHook.preCheck() can call AgentSessionKeyValidator.enforceSessionScope().
+                    // AgentSessionKeyValidator signature format: [0x08][65-byte ECDSA sig] = 66 bytes total.
+                    if (algId == ALG_SESSION_KEY && userOp.signature.length >= 66) {
+                        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
+                        (address sessionKey, ECDSA.RecoverError err,) =
+                            ECDSA.tryRecover(ethHash, userOp.signature[1:66]);
+                        if (err == ECDSA.RecoverError.NoError && sessionKey != address(0)) {
+                            // Tag 0x01 = ECDSA session key; lower 20 bytes = session key address.
+                            _storeSessionKey(bytes32(uint256(0x01) << 248 | uint256(uint160(sessionKey))));
+                        }
+                    }
+                }
             }
         } else {
             validationData = _validateSignature(userOpHash, userOp.signature);
