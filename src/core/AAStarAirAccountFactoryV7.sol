@@ -48,7 +48,9 @@ contract AAStarAirAccountFactoryV7 {
         address indexed account,
         address indexed agentKey,
         address indexed humanOwner,
-        bytes32 agentId
+        bytes32 agentId,
+        address guardian2,
+        uint256 dailyLimit
     );
 
     error GuardianDidNotAccept(address guardian);
@@ -223,30 +225,41 @@ contract AAStarAirAccountFactoryV7 {
     ///                   Combined with msg.sender to derive a unique deterministic salt.
     /// @param guardian2   Second guardian (human's personal backup key, trusted person, etc.)
     /// @param guardian2Sig guardian2's acceptance signature. Signs:
-    ///                   keccak256("ACCEPT_AGENT_GUARDIAN" || chainId || factory || agentKey || humanOwner || agentId).toEthSignedMessageHash()
+    ///                   keccak256("ACCEPT_AGENT_GUARDIAN" || chainId || factory || agentKey || humanOwner || agentId || deadline).toEthSignedMessageHash()
     ///                   The "ACCEPT_AGENT_GUARDIAN" domain and explicit humanOwner + agentId prevent
     ///                   cross-namespace collision with createAccountWithDefaults signatures.
     /// @param dailyLimit  Daily spending limit in wei for this agent account
+    /// @param deadline    Expiry timestamp for guardian2Sig — prevents replay of stale signatures
     /// @return account    The deployed agent account address
     function createAgentAccount(
         address agentKey,
         bytes32 agentId,
         address guardian2,
         bytes calldata guardian2Sig,
-        uint256 dailyLimit
+        uint256 dailyLimit,
+        uint48 deadline
     ) external returns (address account) {
         require(agentKey != address(0), "Agent key required");
         require(guardian2 != address(0), "Guardian2 required");
         require(msg.sender != guardian2, "Caller cannot be guardian2");
         require(agentKey != guardian2, "Agent key cannot be guardian2");
         require(dailyLimit > 0, "Daily limit required");
+        require(block.timestamp <= deadline, "Guardian sig expired");
+
+        // Uniqueness prechecks: none of the three guardians may be the community guardian,
+        // preventing an attacker from using the factory's own defaultCommunityGuardian as
+        // guardian2 (or as the human caller) to trivially satisfy social-recovery thresholds.
+        require(msg.sender != defaultCommunityGuardian, "Human owner cannot be community guardian");
+        require(guardian2 != defaultCommunityGuardian, "Guardian2 cannot be community guardian");
+        require(agentKey != defaultCommunityGuardian, "Agent key cannot be community guardian");
 
         // Verify guardian2 signed the agent-specific acceptance hash.
         // Domain "ACCEPT_AGENT_GUARDIAN" (distinct from "ACCEPT_GUARDIAN" used in createAccountWithDefaults)
         // prevents signature reuse across the two creation paths.
-        // Including msg.sender (humanOwner) and agentId prevents reuse across different owners or agents.
+        // Including msg.sender (humanOwner), agentId, and deadline prevents reuse across different
+        // owners, agents, or after the signature expires.
         bytes32 acceptHash = keccak256(
-            abi.encodePacked("ACCEPT_AGENT_GUARDIAN", block.chainid, address(this), agentKey, msg.sender, agentId)
+            abi.encodePacked("ACCEPT_AGENT_GUARDIAN", block.chainid, address(this), agentKey, msg.sender, agentId, deadline)
         ).toEthSignedMessageHash();
         (address recovered,,) = acceptHash.tryRecover(guardian2Sig);
         if (recovered != guardian2) revert GuardianDidNotAccept(guardian2);
@@ -272,7 +285,7 @@ contract AAStarAirAccountFactoryV7 {
         ));
         account = Clones.cloneDeterministic(implementation, cloneSalt);
         AAStarAirAccountV7(payable(account)).initialize(entryPoint, agentKey, config, guardAddr);
-        emit AgentAccountCreated(account, agentKey, msg.sender, agentId);
+        emit AgentAccountCreated(account, agentKey, msg.sender, agentId, guardian2, dailyLimit);
     }
 
     /// @notice Predict the address of a future agent account.
