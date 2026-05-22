@@ -170,8 +170,8 @@ contract AgentRegistryTest is Test {
         vm.prank(alice);
         registry.registerAgent(agentB);
 
-        // Still 1 (balanceOf returns 1 if ANY agents registered, not the count)
-        assertEq(registry.balanceOf(alice), 1);
+        // After second registration: 2 (actual count, not capped at 1)
+        assertEq(registry.balanceOf(alice), 2);
 
         vm.prank(alice);
         registry.deregisterAgent(agentA);
@@ -181,6 +181,139 @@ contract AgentRegistryTest is Test {
 
         // After all deregistered: 0
         assertEq(registry.balanceOf(alice), 0);
+    }
+
+    function test_BalanceOf_returnsActualCount() public {
+        assertEq(registry.balanceOf(alice), 0);
+
+        vm.prank(alice);
+        registry.registerAgent(agentA);
+        assertEq(registry.balanceOf(alice), 1);
+
+        vm.prank(alice);
+        registry.registerAgent(agentB);
+        assertEq(registry.balanceOf(alice), 2);
+
+        // Bob registering does not affect alice's count
+        assertEq(registry.balanceOf(bob), 0);
+    }
+
+    // ─── ownerOf ──────────────────────────────────────────────────────────────
+
+    function test_OwnerOf_returnsZero() public view {
+        // ownerOf is an ERC-721 stub — always returns address(0) regardless of agentId
+        assertEq(registry.ownerOf(0),         address(0));
+        assertEq(registry.ownerOf(1),         address(0));
+        assertEq(registry.ownerOf(999),       address(0));
+        assertEq(registry.ownerOf(type(uint256).max), address(0));
+    }
+
+    // ─── revokeAgent ─────────────────────────────────────────────────────────
+
+    function test_RevokeAgent_success() public {
+        vm.prank(alice);
+        registry.registerAgent(agentA);
+        assertEq(registry.agentWalletOwner(agentA), alice);
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, false, false);
+        emit AgentRegistry.AgentDeregistered(alice, agentA);
+        registry.revokeAgent(agentA);
+
+        assertEq(registry.agentWalletOwner(agentA), address(0));
+        assertEq(registry.getAgentCount(alice), 0);
+        assertFalse(registry.isRegisteredAgent(agentA));
+    }
+
+    function test_RevokeAgent_notOwner_reverts() public {
+        vm.prank(alice);
+        registry.registerAgent(agentA);
+
+        vm.prank(bob);
+        vm.expectRevert(AgentRegistry.NotAgentOwner.selector);
+        registry.revokeAgent(agentA);
+    }
+
+    function test_RevokeAgent_unregistered_reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(AgentRegistry.NotAgentOwner.selector);
+        registry.revokeAgent(agentA);
+    }
+
+    function test_RevokeAgent_twoAgents_preservesOther() public {
+        vm.startPrank(alice);
+        registry.registerAgent(agentA);
+        registry.registerAgent(agentB);
+        vm.stopPrank();
+
+        assertEq(registry.getAgentCount(alice), 2);
+
+        vm.prank(alice);
+        registry.revokeAgent(agentA);
+
+        assertEq(registry.getAgentCount(alice), 1);
+        assertEq(registry.agentWalletOwner(agentA), address(0));
+        assertEq(registry.agentWalletOwner(agentB), alice);
+    }
+
+    // ─── getHumanOwner ────────────────────────────────────────────────────────
+
+    function test_GetHumanOwner() public {
+        // Unregistered returns address(0)
+        assertEq(registry.getHumanOwner(agentA), address(0));
+
+        vm.prank(alice);
+        registry.registerAgent(agentA);
+
+        assertEq(registry.getHumanOwner(agentA), alice);
+
+        vm.prank(bob);
+        registry.registerAgent(agentB);
+
+        assertEq(registry.getHumanOwner(agentB), bob);
+
+        // After deregistration returns address(0)
+        vm.prank(alice);
+        registry.deregisterAgent(agentA);
+        assertEq(registry.getHumanOwner(agentA), address(0));
+    }
+
+    // ─── getAgents ────────────────────────────────────────────────────────────
+
+    function test_GetAgents() public {
+        // Empty before registration
+        address[] memory empty = registry.getAgents(alice);
+        assertEq(empty.length, 0);
+
+        vm.startPrank(alice);
+        registry.registerAgent(agentA);
+        registry.registerAgent(agentB);
+        vm.stopPrank();
+
+        address[] memory agents = registry.getAgents(alice);
+        assertEq(agents.length, 2);
+        // Both agentA and agentB are present (order may vary after swap-and-pop)
+        bool foundA = (agents[0] == agentA || agents[1] == agentA);
+        bool foundB = (agents[0] == agentB || agents[1] == agentB);
+        assertTrue(foundA);
+        assertTrue(foundB);
+
+        // Bob's list is unaffected
+        assertEq(registry.getAgents(bob).length, 0);
+    }
+
+    function test_GetAgents_afterRevoke() public {
+        vm.startPrank(alice);
+        registry.registerAgent(agentA);
+        registry.registerAgent(agentB);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        registry.revokeAgent(agentA);
+
+        address[] memory agents = registry.getAgents(alice);
+        assertEq(agents.length, 1);
+        assertEq(agents[0], agentB);
     }
 
     // ─── setAgentWallet integration (account → registry) ─────────────────────
