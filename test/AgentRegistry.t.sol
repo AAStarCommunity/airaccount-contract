@@ -332,12 +332,10 @@ contract AgentRegistryTest is Test {
 
     // ─── ownerOf ──────────────────────────────────────────────────────────────
 
-    function test_OwnerOf_returnsZero() public view {
-        // ownerOf is an ERC-721 stub — always returns address(0) regardless of agentId
-        assertEq(registry.ownerOf(0),         address(0));
-        assertEq(registry.ownerOf(1),         address(0));
-        assertEq(registry.ownerOf(999),       address(0));
-        assertEq(registry.ownerOf(type(uint256).max), address(0));
+    function test_OwnerOf_alwaysReverts_existing() public {
+        // ownerOf is not supported — always reverts with NotSupported
+        vm.expectRevert(AgentRegistry.NotSupported.selector);
+        registry.ownerOf(0);
     }
 
     // ─── revokeAgent ─────────────────────────────────────────────────────────
@@ -502,7 +500,7 @@ contract AgentRegistryTest is Test {
 
         vm.prank(ownerAddr);
         vm.expectEmit(true, true, false, false);
-        emit AAStarAirAccountBase.AgentWalletSet(1, agentA);
+        emit AAStarAirAccountBase.AgentWalletSet(1, agentA, address(registry));
         account.setAgentWallet(1, agentA, address(registry), sig);
 
         // Verify registry recorded account as owner of agentA
@@ -560,6 +558,78 @@ contract AgentRegistryTest is Test {
         vm.prank(ownerAddr);
         vm.expectRevert(AAStarAirAccountBase.AgentRegistrationFailed.selector);
         account.setAgentWallet(1, agentA, noCodeAddr, "");
+    }
+
+    // ─── MEDIUM: self-registration forbidden ─────────────────────────────────
+
+    function test_RegisterAgent_selfRegistration_reverts() public {
+        // humanOwner tries to register their own address as the agentWallet — must revert
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, alice);
+        vm.prank(alice);
+        vm.expectRevert(AgentRegistry.SelfRegistrationForbidden.selector);
+        registry.registerAgent(alice, sig);
+    }
+
+    // ─── MEDIUM: ownerOf always reverts ──────────────────────────────────────
+
+    function test_OwnerOf_alwaysReverts() public {
+        vm.expectRevert(AgentRegistry.NotSupported.selector);
+        registry.ownerOf(0);
+        vm.expectRevert(AgentRegistry.NotSupported.selector);
+        registry.ownerOf(type(uint256).max);
+    }
+
+    // ─── LOW: getAgentsPage pagination ───────────────────────────────────────
+
+    function test_GetAgentsPage_emptyOwner() public view {
+        address[] memory page = registry.getAgentsPage(alice, 0, 10);
+        assertEq(page.length, 0);
+    }
+
+    function test_GetAgentsPage_startBeyondEnd_returnsEmpty() public {
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+        vm.prank(alice);
+        registry.registerAgent(agentA, sig);
+        address[] memory page = registry.getAgentsPage(alice, 5, 10);
+        assertEq(page.length, 0);
+    }
+
+    function test_GetAgentsPage_slicedCorrectly() public {
+        // Register 3 agents for alice
+        Vm.Wallet memory w1 = vm.createWallet("w1");
+        Vm.Wallet memory w2 = vm.createWallet("w2");
+        Vm.Wallet memory w3 = vm.createWallet("w3");
+        _registerAgent(w1, alice);
+        _registerAgent(w2, alice);
+        _registerAgent(w3, alice);
+
+        address[] memory all = registry.getAgents(alice);
+        assertEq(all.length, 3);
+
+        // Page [1, 2) — one element at index 1
+        address[] memory page = registry.getAgentsPage(alice, 1, 1);
+        assertEq(page.length, 1);
+        assertEq(page[0], all[1]);
+
+        // Page [0, 2) — first two
+        address[] memory page2 = registry.getAgentsPage(alice, 0, 2);
+        assertEq(page2.length, 2);
+        assertEq(page2[0], all[0]);
+        assertEq(page2[1], all[1]);
+
+        // Page [2, 100) — only one element remains
+        address[] memory page3 = registry.getAgentsPage(alice, 2, 100);
+        assertEq(page3.length, 1);
+        assertEq(page3[0], all[2]);
+    }
+
+    function _registerAgent(Vm.Wallet memory w, address humanOwner) internal {
+        bytes32 regHash = keccak256(
+            abi.encodePacked("REGISTER_AGENT", block.chainid, address(registry), humanOwner, w.addr)
+        ).toEthSignedMessageHash();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, regHash);
+        vm.prank(humanOwner);
+        registry.registerAgent(w.addr, abi.encodePacked(r, s, v));
     }
 
     function test_SetAgentWalletCallsRegistry_duplicateRegistration_reverts() public {

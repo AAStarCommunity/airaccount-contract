@@ -282,7 +282,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     event WeightChangeCancelled();
     event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
     event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
-    event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet);
+    event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet, address agentRegistry);
 
     // ─── Modifiers ────────────────────────────────────────────────────
 
@@ -1579,7 +1579,7 @@ abstract contract AAStarAirAccountBase is Initializable {
             abi.encodeWithSignature("registerAgent(address,bytes)", agentWallet, agentWalletSig)
         );
         if (!ok) revert AgentRegistrationFailed();
-        emit AgentWalletSet(agentId, agentWallet);
+        emit AgentWalletSet(agentId, agentWallet, agentRegistry);
     }
 
     receive() external payable {}

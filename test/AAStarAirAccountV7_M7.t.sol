@@ -769,7 +769,7 @@ contract AAStarAirAccountV7_M7Test is Test {
 
         vm.prank(ownerWallet.addr);
         vm.expectEmit(true, true, false, false);
-        emit AAStarAirAccountBase.AgentWalletSet(42, agentWallet);
+        emit AAStarAirAccountBase.AgentWalletSet(42, agentWallet, address(mockRegistry));
         // MockRegistry skips sig verification — pass empty bytes
         account.setAgentWallet(42, agentWallet, address(mockRegistry), "");
     }
