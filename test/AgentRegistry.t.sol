@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.33;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {AgentRegistry} from "../src/registries/AgentRegistry.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
@@ -18,7 +20,15 @@ contract MockEntryPoint {
 
 /// @title AgentRegistryTest — Unit + integration tests for AgentRegistry (M8.1)
 contract AgentRegistryTest is Test {
+    using MessageHashUtils for bytes32;
+
     AgentRegistry public registry;
+
+    // Named wallets with known private keys for signature tests
+    Vm.Wallet public aliceWallet;
+    Vm.Wallet public bobWallet;
+    Vm.Wallet public agentAWallet;
+    Vm.Wallet public agentBWallet;
 
     address public alice;
     address public bob;
@@ -28,57 +38,126 @@ contract AgentRegistryTest is Test {
     function setUp() public {
         registry = new AgentRegistry();
 
-        alice  = makeAddr("alice");
-        bob    = makeAddr("bob");
-        agentA = makeAddr("agentA");
-        agentB = makeAddr("agentB");
+        aliceWallet  = vm.createWallet("alice");
+        bobWallet    = vm.createWallet("bob");
+        agentAWallet = vm.createWallet("agentA");
+        agentBWallet = vm.createWallet("agentB");
+
+        alice  = aliceWallet.addr;
+        bob    = bobWallet.addr;
+        agentA = agentAWallet.addr;
+        agentB = agentBWallet.addr;
+    }
+
+    // ─── Signature helper ─────────────────────────────────────────────────────
+
+    /// @dev Build the canonical REGISTER_AGENT signature for (humanOwner, agentWallet).
+    function _buildRegSig(
+        uint256 agentPrivKey,
+        address humanOwner,
+        address agentWallet
+    ) internal view returns (bytes memory) {
+        bytes32 regHash = keccak256(
+            abi.encodePacked("REGISTER_AGENT", block.chainid, address(registry), humanOwner, agentWallet)
+        ).toEthSignedMessageHash();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(agentPrivKey, regHash);
+        return abi.encodePacked(r, s, v);
     }
 
     // ─── registerAgent ────────────────────────────────────────────────────────
 
     function test_RegisterAgent_success() public {
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+
         vm.prank(alice);
         vm.expectEmit(true, true, false, false);
         emit AgentRegistry.AgentRegistered(alice, agentA);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sig);
 
         assertEq(registry.agentWalletOwner(agentA), alice);
         assertEq(registry.getAgentCount(alice), 1);
         assertEq(registry.getAgentByIndex(alice, 0), agentA);
     }
 
+    function test_RegisterAgent_validSig_succeeds() public {
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+
+        vm.prank(alice);
+        registry.registerAgent(agentA, sig);
+
+        assertEq(registry.agentWalletOwner(agentA), alice);
+        assertTrue(registry.isRegisteredAgent(agentA));
+    }
+
+    function test_RegisterAgent_invalidSig_reverts() public {
+        // Bob's private key signs but agentA address is claimed — wrong signer
+        bytes memory wrongSig = _buildRegSig(bobWallet.privateKey, alice, agentA);
+
+        vm.prank(alice);
+        vm.expectRevert(AgentRegistry.InvalidAgentSignature.selector);
+        registry.registerAgent(agentA, wrongSig);
+    }
+
+    function test_RegisterAgent_frontRunPrevented() public {
+        // Attacker Eve tries to register agentA before Alice does
+        // Eve does not control agentA's key, so she cannot produce a valid signature
+        address eve = makeAddr("eve");
+
+        // Eve tries with her own key signing for agentA — should fail
+        Vm.Wallet memory eveWallet = vm.createWallet("eve");
+        bytes memory attackSig = _buildRegSig(eveWallet.privateKey, eve, agentA);
+
+        vm.prank(eve);
+        vm.expectRevert(AgentRegistry.InvalidAgentSignature.selector);
+        registry.registerAgent(agentA, attackSig);
+
+        // Alice can still register legitimately
+        bytes memory aliceSig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+        vm.prank(alice);
+        registry.registerAgent(agentA, aliceSig);
+        assertEq(registry.agentWalletOwner(agentA), alice);
+    }
+
     function test_RegisterAgent_zeroAddress_reverts() public {
         vm.prank(alice);
         vm.expectRevert(AgentRegistry.InvalidAddress.selector);
-        registry.registerAgent(address(0));
+        registry.registerAgent(address(0), "");
     }
 
     function test_RegisterAgent_alreadyRegistered_reverts() public {
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sig);
 
         // Same caller, same agent — should revert
         vm.prank(alice);
         vm.expectRevert(AgentRegistry.AgentAlreadyRegistered.selector);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sig);
     }
 
     function test_RegisterAgent_alreadyRegistered_differentCaller_reverts() public {
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sig);
 
         // Different caller but same agentWallet — should still revert (agent already has an owner)
+        // Bob would need a sig from agentA authorizing bob, but agentA is already registered
+        bytes memory bobSig = _buildRegSig(agentAWallet.privateKey, bob, agentA);
         vm.prank(bob);
         vm.expectRevert(AgentRegistry.AgentAlreadyRegistered.selector);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, bobSig);
     }
 
     function test_RegisterAgent_multipleAgents_success() public {
-        vm.prank(alice);
-        registry.registerAgent(agentA);
+        bytes memory sigA = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+        bytes memory sigB = _buildRegSig(agentBWallet.privateKey, alice, agentB);
 
         vm.prank(alice);
-        registry.registerAgent(agentB);
+        registry.registerAgent(agentA, sigA);
+
+        vm.prank(alice);
+        registry.registerAgent(agentB, sigB);
 
         assertEq(registry.getAgentCount(alice), 2);
         assertEq(registry.agentWalletOwner(agentA), alice);
@@ -88,8 +167,9 @@ contract AgentRegistryTest is Test {
     // ─── deregisterAgent ─────────────────────────────────────────────────────
 
     function test_DeregisterAgent_success() public {
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sig);
 
         vm.prank(alice);
         vm.expectEmit(true, true, false, false);
@@ -101,8 +181,9 @@ contract AgentRegistryTest is Test {
     }
 
     function test_DeregisterAgent_notOwner_reverts() public {
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sig);
 
         // Bob tries to deregister Alice's agent — should revert
         vm.prank(bob);
@@ -118,12 +199,17 @@ contract AgentRegistryTest is Test {
     }
 
     function test_DeregisterAgent_swapAndPop_preservesOtherAgents() public {
-        address agentC = makeAddr("agentC");
+        Vm.Wallet memory agentCWallet = vm.createWallet("agentC");
+        address agentC = agentCWallet.addr;
+
+        bytes memory sigA = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+        bytes memory sigB = _buildRegSig(agentBWallet.privateKey, alice, agentB);
+        bytes memory sigC = _buildRegSig(agentCWallet.privateKey, alice, agentC);
 
         vm.startPrank(alice);
-        registry.registerAgent(agentA);
-        registry.registerAgent(agentB);
-        registry.registerAgent(agentC);
+        registry.registerAgent(agentA, sigA);
+        registry.registerAgent(agentB, sigB);
+        registry.registerAgent(agentC, sigC);
         vm.stopPrank();
 
         assertEq(registry.getAgentCount(alice), 3);
@@ -139,13 +225,55 @@ contract AgentRegistryTest is Test {
         assertEq(registry.agentWalletOwner(agentC), alice);
     }
 
+    function test_DeregisterAgent_O1_multipleAgents() public {
+        // Verify O(1) removal correctness with 3+ agents:
+        // register [A, B, C], remove B (index 1), verify array is [A, C] with correct index tracking
+        Vm.Wallet memory agentCWallet = vm.createWallet("agentC2");
+        address agentC = agentCWallet.addr;
+
+        bytes memory sigA = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+        bytes memory sigB = _buildRegSig(agentBWallet.privateKey, alice, agentB);
+        bytes memory sigC = _buildRegSig(agentCWallet.privateKey, alice, agentC);
+
+        vm.startPrank(alice);
+        registry.registerAgent(agentA, sigA); // index 0
+        registry.registerAgent(agentB, sigB); // index 1
+        registry.registerAgent(agentC, sigC); // index 2
+        vm.stopPrank();
+
+        // Remove B (index 1) — C should swap into position 1
+        vm.prank(alice);
+        registry.deregisterAgent(agentB);
+
+        assertEq(registry.getAgentCount(alice), 2);
+        assertEq(registry.agentWalletOwner(agentB), address(0));
+        assertEq(registry.agentWalletOwner(agentA), alice);
+        assertEq(registry.agentWalletOwner(agentC), alice);
+
+        // Further: remove A — C should still be accessible
+        vm.prank(alice);
+        registry.deregisterAgent(agentA);
+
+        assertEq(registry.getAgentCount(alice), 1);
+        assertEq(registry.agentWalletOwner(agentA), address(0));
+        assertEq(registry.agentWalletOwner(agentC), alice);
+
+        // Remove C — array should be empty
+        vm.prank(alice);
+        registry.deregisterAgent(agentC);
+
+        assertEq(registry.getAgentCount(alice), 0);
+        assertEq(registry.agentWalletOwner(agentC), address(0));
+    }
+
     // ─── isRegisteredAgent ────────────────────────────────────────────────────
 
     function test_IsRegisteredAgent() public {
         assertFalse(registry.isRegisteredAgent(agentA));
 
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sig);
 
         assertTrue(registry.isRegisteredAgent(agentA));
 
@@ -161,14 +289,16 @@ contract AgentRegistryTest is Test {
         // Before registration: 0
         assertEq(registry.balanceOf(alice), 0);
 
+        bytes memory sigA = _buildRegSig(agentAWallet.privateKey, alice, agentA);
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sigA);
 
         // After first registration: 1
         assertEq(registry.balanceOf(alice), 1);
 
+        bytes memory sigB = _buildRegSig(agentBWallet.privateKey, alice, agentB);
         vm.prank(alice);
-        registry.registerAgent(agentB);
+        registry.registerAgent(agentB, sigB);
 
         // After second registration: 2 (actual count, not capped at 1)
         assertEq(registry.balanceOf(alice), 2);
@@ -186,12 +316,14 @@ contract AgentRegistryTest is Test {
     function test_BalanceOf_returnsActualCount() public {
         assertEq(registry.balanceOf(alice), 0);
 
+        bytes memory sigA = _buildRegSig(agentAWallet.privateKey, alice, agentA);
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sigA);
         assertEq(registry.balanceOf(alice), 1);
 
+        bytes memory sigB = _buildRegSig(agentBWallet.privateKey, alice, agentB);
         vm.prank(alice);
-        registry.registerAgent(agentB);
+        registry.registerAgent(agentB, sigB);
         assertEq(registry.balanceOf(alice), 2);
 
         // Bob registering does not affect alice's count
@@ -211,8 +343,9 @@ contract AgentRegistryTest is Test {
     // ─── revokeAgent ─────────────────────────────────────────────────────────
 
     function test_RevokeAgent_success() public {
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sig);
         assertEq(registry.agentWalletOwner(agentA), alice);
 
         vm.prank(alice);
@@ -226,8 +359,9 @@ contract AgentRegistryTest is Test {
     }
 
     function test_RevokeAgent_notOwner_reverts() public {
+        bytes memory sig = _buildRegSig(agentAWallet.privateKey, alice, agentA);
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sig);
 
         vm.prank(bob);
         vm.expectRevert(AgentRegistry.NotAgentOwner.selector);
@@ -241,9 +375,12 @@ contract AgentRegistryTest is Test {
     }
 
     function test_RevokeAgent_twoAgents_preservesOther() public {
+        bytes memory sigA = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+        bytes memory sigB = _buildRegSig(agentBWallet.privateKey, alice, agentB);
+
         vm.startPrank(alice);
-        registry.registerAgent(agentA);
-        registry.registerAgent(agentB);
+        registry.registerAgent(agentA, sigA);
+        registry.registerAgent(agentB, sigB);
         vm.stopPrank();
 
         assertEq(registry.getAgentCount(alice), 2);
@@ -262,13 +399,15 @@ contract AgentRegistryTest is Test {
         // Unregistered returns address(0)
         assertEq(registry.getHumanOwner(agentA), address(0));
 
+        bytes memory sigA = _buildRegSig(agentAWallet.privateKey, alice, agentA);
         vm.prank(alice);
-        registry.registerAgent(agentA);
+        registry.registerAgent(agentA, sigA);
 
         assertEq(registry.getHumanOwner(agentA), alice);
 
+        bytes memory sigB = _buildRegSig(agentBWallet.privateKey, bob, agentB);
         vm.prank(bob);
-        registry.registerAgent(agentB);
+        registry.registerAgent(agentB, sigB);
 
         assertEq(registry.getHumanOwner(agentB), bob);
 
@@ -285,9 +424,12 @@ contract AgentRegistryTest is Test {
         address[] memory empty = registry.getAgents(alice);
         assertEq(empty.length, 0);
 
+        bytes memory sigA = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+        bytes memory sigB = _buildRegSig(agentBWallet.privateKey, alice, agentB);
+
         vm.startPrank(alice);
-        registry.registerAgent(agentA);
-        registry.registerAgent(agentB);
+        registry.registerAgent(agentA, sigA);
+        registry.registerAgent(agentB, sigB);
         vm.stopPrank();
 
         address[] memory agents = registry.getAgents(alice);
@@ -303,9 +445,12 @@ contract AgentRegistryTest is Test {
     }
 
     function test_GetAgents_afterRevoke() public {
+        bytes memory sigA = _buildRegSig(agentAWallet.privateKey, alice, agentA);
+        bytes memory sigB = _buildRegSig(agentBWallet.privateKey, alice, agentB);
+
         vm.startPrank(alice);
-        registry.registerAgent(agentA);
-        registry.registerAgent(agentB);
+        registry.registerAgent(agentA, sigA);
+        registry.registerAgent(agentB, sigB);
         vm.stopPrank();
 
         vm.prank(alice);
@@ -317,6 +462,19 @@ contract AgentRegistryTest is Test {
     }
 
     // ─── setAgentWallet integration (account → registry) ─────────────────────
+
+    /// @dev Build sig for setAgentWallet integration tests where humanOwner = address(account).
+    function _buildRegSigForAccount(
+        uint256 agentPrivKey,
+        address humanOwner,
+        address agentWallet
+    ) internal view returns (bytes memory) {
+        bytes32 regHash = keccak256(
+            abi.encodePacked("REGISTER_AGENT", block.chainid, address(registry), humanOwner, agentWallet)
+        ).toEthSignedMessageHash();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(agentPrivKey, regHash);
+        return abi.encodePacked(r, s, v);
+    }
 
     function test_SetAgentWalletCallsRegistry() public {
         MockEntryPoint ep = new MockEntryPoint();
@@ -339,16 +497,17 @@ contract AgentRegistryTest is Test {
             })
         );
 
-        address agentWallet = makeAddr("agentWallet");
+        // Build signature: humanOwner = address(account), agentWallet = agentAWallet.addr
+        bytes memory sig = _buildRegSigForAccount(agentAWallet.privateKey, address(account), agentA);
 
         vm.prank(ownerAddr);
         vm.expectEmit(true, true, false, false);
-        emit AAStarAirAccountBase.AgentWalletSet(1, agentWallet);
-        account.setAgentWallet(1, agentWallet, address(registry));
+        emit AAStarAirAccountBase.AgentWalletSet(1, agentA);
+        account.setAgentWallet(1, agentA, address(registry), sig);
 
-        // Verify registry recorded account as owner of agentWallet
-        assertEq(registry.agentWalletOwner(agentWallet), address(account));
-        assertTrue(registry.isRegisteredAgent(agentWallet));
+        // Verify registry recorded account as owner of agentA
+        assertEq(registry.agentWalletOwner(agentA), address(account));
+        assertTrue(registry.isRegisteredAgent(agentA));
     }
 
     function test_SetAgentWalletCallsRegistry_notOwner_reverts() public {
@@ -373,7 +532,7 @@ contract AgentRegistryTest is Test {
 
         vm.prank(makeAddr("notOwner"));
         vm.expectRevert(AAStarAirAccountBase.NotOwner.selector);
-        account.setAgentWallet(1, makeAddr("agentWallet"), address(registry));
+        account.setAgentWallet(1, agentA, address(registry), "");
     }
 
     function test_SetAgentWalletCallsRegistry_failingRegistry_reverts() public {
@@ -396,12 +555,11 @@ contract AgentRegistryTest is Test {
             })
         );
 
-        address agentWallet = makeAddr("agentWallet");
         address noCodeAddr  = makeAddr("noCodeAddr"); // EOA with no code
 
         vm.prank(ownerAddr);
         vm.expectRevert(AAStarAirAccountBase.AgentRegistrationFailed.selector);
-        account.setAgentWallet(1, agentWallet, noCodeAddr);
+        account.setAgentWallet(1, agentA, noCodeAddr, "");
     }
 
     function test_SetAgentWalletCallsRegistry_duplicateRegistration_reverts() public {
@@ -424,14 +582,14 @@ contract AgentRegistryTest is Test {
             })
         );
 
-        address agentWallet = makeAddr("agentWallet");
+        bytes memory sig = _buildRegSigForAccount(agentAWallet.privateKey, address(account), agentA);
 
         vm.prank(ownerAddr);
-        account.setAgentWallet(1, agentWallet, address(registry));
+        account.setAgentWallet(1, agentA, address(registry), sig);
 
         // Second call with same agentWallet should revert (AgentAlreadyRegistered propagated as AgentRegistrationFailed)
         vm.prank(ownerAddr);
         vm.expectRevert(AAStarAirAccountBase.AgentRegistrationFailed.selector);
-        account.setAgentWallet(2, agentWallet, address(registry));
+        account.setAgentWallet(2, agentA, address(registry), sig);
     }
 }

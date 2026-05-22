@@ -76,7 +76,8 @@ contract MockTarget {
 
 contract MockRegistry {
     mapping(address => address) public agentWalletOwner;
-    function registerAgent(address agentWallet) external {
+    // Accept the new (address, bytes) signature — MockRegistry skips signature verification
+    function registerAgent(address agentWallet, bytes calldata /* agentWalletSig */) external {
         agentWalletOwner[agentWallet] = msg.sender;
     }
 }
@@ -769,14 +770,16 @@ contract AAStarAirAccountV7_M7Test is Test {
         vm.prank(ownerWallet.addr);
         vm.expectEmit(true, true, false, false);
         emit AAStarAirAccountBase.AgentWalletSet(42, agentWallet);
-        account.setAgentWallet(42, agentWallet, address(mockRegistry));
+        // MockRegistry skips sig verification — pass empty bytes
+        account.setAgentWallet(42, agentWallet, address(mockRegistry), "");
     }
 
     function test_setAgentWallet_registersWithRegistry() public {
         address agentWallet = makeAddr("agentWallet");
 
         vm.prank(ownerWallet.addr);
-        account.setAgentWallet(7, agentWallet, address(mockRegistry));
+        // MockRegistry skips sig verification — pass empty bytes
+        account.setAgentWallet(7, agentWallet, address(mockRegistry), "");
 
         // Registry should have recorded agentWallet → account as owner
         assertEq(mockRegistry.agentWalletOwner(agentWallet), address(account));
@@ -785,19 +788,19 @@ contract AAStarAirAccountV7_M7Test is Test {
     function test_setAgentWallet_notOwner_reverts() public {
         vm.prank(randomWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.NotOwner.selector);
-        account.setAgentWallet(1, makeAddr("agent"), address(mockRegistry));
+        account.setAgentWallet(1, makeAddr("agent"), address(mockRegistry), "");
     }
 
     function test_setAgentWallet_zeroWallet_reverts() public {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(); // require("Invalid agent wallet")
-        account.setAgentWallet(1, address(0), address(mockRegistry));
+        account.setAgentWallet(1, address(0), address(mockRegistry), "");
     }
 
     function test_setAgentWallet_zeroRegistry_reverts() public {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(); // require("Invalid registry")
-        account.setAgentWallet(1, makeAddr("agent"), address(0));
+        account.setAgentWallet(1, makeAddr("agent"), address(0), "");
     }
 
     function test_setAgentWallet_failingRegistry_reverts() public {
@@ -807,7 +810,7 @@ contract AAStarAirAccountV7_M7Test is Test {
 
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.AgentRegistrationFailed.selector);
-        account.setAgentWallet(99, agentWallet, brokenRegistry);
+        account.setAgentWallet(99, agentWallet, brokenRegistry, "");
     }
 
     // ─── Round-trip: install + reinstall after uninstall ─────────────────────
