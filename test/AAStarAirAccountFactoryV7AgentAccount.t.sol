@@ -49,17 +49,18 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
     /// @dev Computes the guardian2 acceptance signature for createAgentAccount.
     ///      The acceptance hash binds:
-    ///        "ACCEPT_AGENT_GUARDIAN" + chainId + factory + agentKey + humanOwner + agentId
-    ///      The distinct domain and explicit humanOwner + agentId prevent signature reuse
-    ///      across createAccountWithDefaults (which uses "ACCEPT_GUARDIAN" + owner + uint256_salt).
+    ///        "ACCEPT_AGENT_GUARDIAN" + chainId + factory + agentKey + humanOwner + agentId + deadline
+    ///      The distinct domain, explicit humanOwner + agentId, and deadline prevent signature reuse
+    ///      across createAccountWithDefaults and after expiry.
     function _guardian2Sig(
         Vm.Wallet memory g2,
         address humanOwner,
         address agentKey,
-        bytes32 agentId
+        bytes32 agentId,
+        uint48 deadline
     ) internal view returns (bytes memory) {
         bytes32 raw = keccak256(
-            abi.encodePacked("ACCEPT_AGENT_GUARDIAN", block.chainid, address(factory), agentKey, humanOwner, agentId)
+            abi.encodePacked("ACCEPT_AGENT_GUARDIAN", block.chainid, address(factory), agentKey, humanOwner, agentId, deadline)
         );
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(g2.privateKey, ethHash);
@@ -86,7 +87,8 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
     /// @notice Full happy path: deploy agent account, verify owner and guardians.
     function test_CreateAgentAccount_success() public {
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
         address account = factory.createAgentAccount(
@@ -94,7 +96,8 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
             AGENT_ID_1,
             guardian2Wallet.addr,
             sig2,
-            DAILY_LIMIT
+            DAILY_LIMIT,
+            deadline
         );
 
         assertTrue(account.code.length > 0, "Account not deployed");
@@ -123,17 +126,18 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
     /// @notice Calling createAgentAccount twice with the same params returns the same address.
     function test_CreateAgentAccount_idempotent() public {
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
         address a1 = factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
         );
 
         // Second call with same params — sig must be re-provided but result is deterministic
         vm.prank(humanWallet.addr);
         address a2 = factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
         );
 
         assertEq(a1, a2, "Second call must return same address");
@@ -143,6 +147,7 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
     /// @notice Wrong guardian2 signature must revert with GuardianDidNotAccept.
     function test_CreateAgentAccount_wrongGuardian2Sig_reverts() public {
+        uint48 deadline = uint48(block.timestamp + 1 days);
         bytes memory badSig = abi.encodePacked(bytes32(0), bytes32(0), uint8(27));
 
         vm.prank(humanWallet.addr);
@@ -150,22 +155,23 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
             abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, guardian2Wallet.addr)
         );
         factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, badSig, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, badSig, DAILY_LIMIT, deadline
         );
     }
 
     /// @notice Acceptance sig signed for wrong agentKey must be rejected.
     function test_CreateAgentAccount_sigForWrongAgentKey_reverts() public {
+        uint48 deadline = uint48(block.timestamp + 1 days);
         Vm.Wallet memory anotherAgent = vm.createWallet("anotherAgent");
         // Sign for anotherAgent, but pass agentWallet as the agentKey
-        bytes memory wrongSig = _guardian2Sig(guardian2Wallet, humanWallet.addr, anotherAgent.addr, AGENT_ID_1);
+        bytes memory wrongSig = _guardian2Sig(guardian2Wallet, humanWallet.addr, anotherAgent.addr, AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
         vm.expectRevert(
             abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, guardian2Wallet.addr)
         );
         factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, wrongSig, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, wrongSig, DAILY_LIMIT, deadline
         );
     }
 
@@ -173,58 +179,63 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
     /// @notice Zero agentKey must revert.
     function test_CreateAgentAccount_zeroAgentKey_reverts() public {
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, address(0), AGENT_ID_1);
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, address(0), AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
         vm.expectRevert("Agent key required");
         factory.createAgentAccount(
-            address(0), AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT
+            address(0), AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
         );
     }
 
     /// @notice Zero guardian2 must revert.
     function test_CreateAgentAccount_zeroGuardian2_reverts() public {
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
         vm.expectRevert("Guardian2 required");
         factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, address(0), sig2, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, address(0), sig2, DAILY_LIMIT, deadline
         );
     }
 
     /// @notice Zero daily limit must revert.
     function test_CreateAgentAccount_zeroDailyLimit_reverts() public {
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
         vm.expectRevert("Daily limit required");
         factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, 0
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, 0, deadline
         );
     }
 
     /// @notice Caller (human) cannot also be guardian2.
     function test_CreateAgentAccount_callerEqualsGuardian2_reverts() public {
+        uint48 deadline = uint48(block.timestamp + 1 days);
         // Human tries to be guardian2 as well
-        bytes memory sig2 = _guardian2Sig(humanWallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        bytes memory sig2 = _guardian2Sig(humanWallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
         vm.expectRevert("Caller cannot be guardian2");
         factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, humanWallet.addr, sig2, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, humanWallet.addr, sig2, DAILY_LIMIT, deadline
         );
     }
 
     /// @notice agentKey cannot equal guardian2.
     function test_CreateAgentAccount_agentKeyEqualsGuardian2_reverts() public {
+        uint48 deadline = uint48(block.timestamp + 1 days);
         // agentKey == guardian2Wallet.addr — agent's key is also the backup guardian
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, guardian2Wallet.addr, AGENT_ID_1);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, guardian2Wallet.addr, AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
         vm.expectRevert("Agent key cannot be guardian2");
         factory.createAgentAccount(
-            guardian2Wallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT
+            guardian2Wallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
         );
     }
 
@@ -234,10 +245,11 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
     function test_GetAgentAddress_matchesDeployed() public {
         address predicted = factory.getAgentAddress(humanWallet.addr, agentWallet.addr, AGENT_ID_1);
 
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
         vm.prank(humanWallet.addr);
         address deployed = factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
         );
 
         assertEq(predicted, deployed, "Predicted address must match deployed");
@@ -245,22 +257,25 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
     // ─── Event emission ────────────────────────────────────────────────────
 
-    /// @notice AgentAccountCreated event must be emitted with correct indexed fields.
+    /// @notice AgentAccountCreated event must be emitted with correct indexed and non-indexed fields.
     function test_AgentAccountCreated_event() public {
         address predicted = factory.getAgentAddress(humanWallet.addr, agentWallet.addr, AGENT_ID_1);
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
 
         vm.expectEmit(true, true, true, true);
         emit AAStarAirAccountFactoryV7.AgentAccountCreated(
             predicted,
             agentWallet.addr,
             humanWallet.addr,
-            AGENT_ID_1
+            AGENT_ID_1,
+            guardian2Wallet.addr,
+            DAILY_LIMIT
         );
 
         vm.prank(humanWallet.addr);
         factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
         );
     }
 
@@ -268,16 +283,17 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
     /// @notice Same human + different agentId → different account addresses.
     function test_AgentAccount_differentAgentIds_differentAddresses() public {
-        bytes memory sig2a = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2a = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
         vm.prank(humanWallet.addr);
         address a1 = factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2a, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2a, DAILY_LIMIT, deadline
         );
 
-        bytes memory sig2b = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_2);
+        bytes memory sig2b = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_2, deadline);
         vm.prank(humanWallet.addr);
         address a2 = factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_2, guardian2Wallet.addr, sig2b, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_2, guardian2Wallet.addr, sig2b, DAILY_LIMIT, deadline
         );
 
         assertTrue(a1 != a2, "Different agentIds must produce different addresses");
@@ -285,18 +301,19 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
     /// @notice Same agentId but different humanOwner → different account addresses.
     function test_AgentAccount_differentHumans_differentAddresses() public {
+        uint48 deadline = uint48(block.timestamp + 1 days);
         Vm.Wallet memory anotherHuman = vm.createWallet("anotherHuman");
 
-        bytes memory sig2a = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        bytes memory sig2a = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
         vm.prank(humanWallet.addr);
         address a1 = factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2a, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2a, DAILY_LIMIT, deadline
         );
 
-        bytes memory sig2b = _guardian2Sig(guardian2Wallet, anotherHuman.addr, agentWallet.addr, AGENT_ID_1);
+        bytes memory sig2b = _guardian2Sig(guardian2Wallet, anotherHuman.addr, agentWallet.addr, AGENT_ID_1, deadline);
         vm.prank(anotherHuman.addr);
         address a2 = factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2b, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2b, DAILY_LIMIT, deadline
         );
 
         assertTrue(a1 != a2, "Different humans must produce different addresses for same agentId");
@@ -311,10 +328,11 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
     ///         This is a security feature: the owner key cannot also be a guardian (prevents
     ///         a compromised owner key from short-circuiting 2-of-3 social recovery).
     function test_CreateAgentAccount_agentKeyEqualsCaller_reverts() public {
+        uint48 deadline = uint48(block.timestamp + 1 days);
         // Human uses their own address as the agent signing key — will be rejected
         // because agentKey becomes the owner, and msg.sender (== agentKey) becomes guardian1,
         // violating the owner != guardian invariant in AAStarAirAccountBase.
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, humanWallet.addr, AGENT_ID_1);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, humanWallet.addr, AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
         // Revert due to InvalidGuardian() in account initialize() — owner == guardian1
@@ -324,7 +342,8 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
             AGENT_ID_1,
             guardian2Wallet.addr,
             sig2,
-            DAILY_LIMIT
+            DAILY_LIMIT,
+            deadline
         );
     }
 
@@ -385,12 +404,70 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
         );
 
         // Step 4: The legitimate createAgentAccount still succeeds and lands at the predicted address.
-        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
         vm.prank(humanWallet.addr);
         address legitimateDeployed = factory.createAgentAccount(
-            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
         );
 
         assertEq(legitimateDeployed, agentAddr, "Legitimate createAgentAccount must land at predicted address");
+    }
+
+    // ─── Deadline expiry ───────────────────────────────────────────────────
+
+    /// @notice A guardian2 signature with an already-expired deadline must be rejected.
+    function test_CreateAgentAccount_expiredDeadline_reverts() public {
+        // deadline is already in the past
+        uint48 deadline = uint48(block.timestamp - 1);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline);
+
+        vm.prank(humanWallet.addr);
+        vm.expectRevert("Guardian sig expired");
+        factory.createAgentAccount(
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
+        );
+    }
+
+    // ─── Uniqueness prechecks ──────────────────────────────────────────────
+
+    /// @notice Human owner (msg.sender) cannot be the community guardian.
+    function test_CreateAgentAccount_humanIsCommunityGuardian_reverts() public {
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        // communityGuardian acts as the human caller
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, communityGuardian, agentWallet.addr, AGENT_ID_1, deadline);
+
+        vm.prank(communityGuardian);
+        vm.expectRevert("Human owner cannot be community guardian");
+        factory.createAgentAccount(
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
+        );
+    }
+
+    /// @notice guardian2 cannot be the community guardian.
+    function test_CreateAgentAccount_guardian2IsCommunityGuardian_reverts() public {
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(
+            vm.createWallet("communityGuardianWallet"),
+            humanWallet.addr, agentWallet.addr, AGENT_ID_1, deadline
+        );
+
+        vm.prank(humanWallet.addr);
+        vm.expectRevert("Guardian2 cannot be community guardian");
+        factory.createAgentAccount(
+            agentWallet.addr, AGENT_ID_1, communityGuardian, sig2, DAILY_LIMIT, deadline
+        );
+    }
+
+    /// @notice agentKey cannot be the community guardian.
+    function test_CreateAgentAccount_agentKeyIsCommunityGuardian_reverts() public {
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, communityGuardian, AGENT_ID_1, deadline);
+
+        vm.prank(humanWallet.addr);
+        vm.expectRevert("Agent key cannot be community guardian");
+        factory.createAgentAccount(
+            communityGuardian, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT, deadline
+        );
     }
 }
