@@ -440,4 +440,73 @@ contract TierGuardHookTest is Test {
         bytes memory result = sessionAccount.callPreCheck(hook, address(this), 0, msgData);
         assertEq(result, "");
     }
+
+    // ─── HIGH-1: non-standard ABI offset cannot bypass scope enforcement ──────
+
+    /// @notice HIGH-1 fix: craft calldata where the `bytes func` ABI offset pointer is non-standard
+    ///         (points past the canonical position) but still within bounds. The fixed-offset
+    ///         parser would read from offset 132 and see a decoy "safe" selector, but
+    ///         _parseExecuteCalldata follows the offset pointer and finds the real (forbidden) selector.
+    ///
+    ///         ABI encoding of execute(address dest, uint256 value, bytes func):
+    ///           outer selector (4 bytes)
+    ///           params[0:32]  = dest (address)
+    ///           params[32:64] = value (uint256)
+    ///           params[64:96] = offset pointer to func bytes (relative to params start)
+    ///
+    ///         Normal encoding: offset = 0x60 (96), func starts at params[96].
+    ///         Non-standard: offset = 0x80 (128), func starts at params[128].
+    ///         In this case, params[96:128] is padding/decoy data (which would be read as the
+    ///         selector by the old fixed-offset code at msgData[132:136]).
+    ///
+    ///         We place a "safe" (address(0) / 0x00000000) decoy at the standard position
+    ///         and the real forbidden selector at the non-standard position pointed to by offset.
+    function test_PreCheck_SessionKey_nonStandardABIOffset_cannotBypass() public {
+        address tokenA = makeAddr("tokenA");
+        address tokenB = makeAddr("tokenB");
+        address sessionKey = makeAddr("sessionKey");
+
+        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
+        address[] memory targets = new address[](1);
+        targets[0] = tokenA;
+        agentValidator.setAllowedTargets(targets);
+
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
+        sessionAccount.callInstall(hook, installData);
+        guard.setShouldRevert(false);
+
+        // Build non-standard ABI calldata manually:
+        //   outer selector (4 bytes)
+        //   params[0:32]   = tokenB (dest — forbidden)
+        //   params[32:64]  = 0 (value)
+        //   params[64:96]  = 0x80 (128) — non-standard offset pointer, func starts at params[128]
+        //   params[96:128] = decoy: 32-byte length=4 followed by a "safe" selector 0x00000000
+        //                    (old fixed-offset code would read params[96:100] as func length
+        //                     and params[100:104] as the selector — but we abuse the region)
+        //   params[128:160] = func length = 4
+        //   params[160:164] = real forbidden selector (e.g. transfer(address,uint256) = 0xa9059cbb)
+        bytes4 outerSel = bytes4(keccak256("execute(address,uint256,bytes)"));
+        // Build the non-standard calldata byte by byte
+        bytes memory msgData = abi.encodePacked(
+            outerSel,                           // [0:4]   outer selector
+            bytes32(uint256(uint160(tokenB))),  // [4:36]  dest = tokenB (forbidden target)
+            bytes32(uint256(0)),                // [36:68] value = 0
+            bytes32(uint256(0x80)),             // [68:100] offset = 128 (non-standard)
+            // params[96:128] = decoy region — fixed-offset code (now removed) would have read
+            // msgData[132:136] = params[128:132] as the selector. We put 0x00000000 there so
+            // the old code would have seen an "empty" selector and possibly bypassed the check.
+            bytes32(uint256(0)),                // [100:132] decoy: "func length=0" at standard pos
+            // The real func data starts at params[128] (offset 128 from params start):
+            bytes32(uint256(4)),                // [132:164] real func length = 4
+            bytes4(0xa9059cbb),                 // [164:168] real selector: transfer(address,uint256)
+            bytes28(0)                          // [168:196] padding to 32 bytes
+        );
+
+        // With _parseExecuteCalldata (HIGH-1 fix), the hook follows the offset pointer (0x80=128)
+        // and reads the real func data: dest=tokenB (forbidden), selector=0xa9059cbb.
+        // tokenB is not in the allowlist — enforceSessionScope reverts — TierGuardHookUnauthorized.
+        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
+        sessionAccount.callPreCheckExpectRevert(hook, address(this), 0, msgData);
+    }
 }

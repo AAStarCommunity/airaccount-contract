@@ -87,12 +87,13 @@ contract TierGuardHook is IERC7579Hook {
     // ─── IERC7579Hook ────────────────────────────────────────────────
 
     /// @notice Pre-execution check: enforce tier + daily limit + session scope (M8.P2).
+    ///         HIGH-1 fix: uses _parseExecuteCalldata to follow the ABI offset pointer for the
+    ///         `bytes func` parameter instead of relying on fixed offsets that can be bypassed.
     /// @param msgSender The original msg.sender of the execute() call (unused — msg.sender is the account)
     /// @param msgValue The ETH value being sent
     /// @param msgData The full execute() calldata forwarded by the account.
-    ///        Layout: [4B execute selector][32B dest padded][32B value][32B func-offset][32B func-len][func...]
-    ///        dest  = address(uint160(uint256(bytes32(msgData[4:36]))))
-    ///        inner selector = bytes4(msgData[132:136]) when func.length >= 4
+    ///        Layout: [4B execute selector][32B dest][32B value][32B func-offset pointer][32B func-len][func...]
+    ///        dest and inner selector are extracted via _parseExecuteCalldata (offset-pointer-safe).
     /// @return hookData Empty bytes (no post-check state needed)
     function preCheck(
         address msgSender,
@@ -140,23 +141,13 @@ contract TierGuardHook is IERC7579Hook {
                 uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
                 if (sessionType == 0x01) {
                     address sessionKey = address(uint160(uint256(taggedSessionKey)));
-                    // Parse dest and inner selector from the forwarded execute() calldata.
-                    // msgData = full execute() calldata (including the 4-byte selector):
-                    //   [0:4]    execute() selector (bytes4)
-                    //   [4:36]   dest (address padded to 32 bytes)
-                    //   [36:68]  value (uint256)
-                    //   [68:100] ABI offset for func bytes (= 0x60 relative to arg start = 96)
-                    //   [100:132] func data length
-                    //   [132:]   func bytes (inner calldata)
-                    // Inner call selector = first 4 bytes of func: msgData[132:136]
-                    address dest;
-                    bytes4 selector;
-                    if (msgData.length >= 36) {
-                        dest = address(uint160(uint256(bytes32(msgData[4:36]))));
-                    }
-                    if (msgData.length >= 136) {
-                        selector = bytes4(msgData[132:136]);
-                    }
+                    // Parse dest and inner selector from the forwarded execute() calldata using
+                    // _parseExecuteCalldata, which follows the ABI offset pointer for the `bytes func`
+                    // parameter. Fixed-offset parsing (e.g. msgData[132:136]) is UNSAFE because ABI
+                    // encoding allows non-standard offsets: an attacker could craft calldata where the
+                    // real func data is at a non-standard position but the hook reads a decoy selector
+                    // at the standard position. We use the offset pointer at params[64:96] instead.
+                    (address dest, bytes4 selector) = _parseExecuteCalldata(msgData);
                     // enforceSessionScope reverts if the target or selector is not in the allowlist
                     (bool ok,) = agentValidator.staticcall(
                         abi.encodeWithSignature(
@@ -209,6 +200,47 @@ contract TierGuardHook is IERC7579Hook {
         if (ok && data.length >= 32) {
             taggedId = abi.decode(data, (bytes32));
         }
+    }
+
+    /// @dev Safely parse execute(address dest, uint256 value, bytes func) calldata to extract
+    ///      the call target address and the first 4 bytes of func (the inner call selector).
+    ///
+    ///      HIGH-1 FIX: Fixed-offset parsing (e.g. dest at [4:36], selector at [132:136]) is
+    ///      unsafe because ABI encoding allows non-standard offsets for dynamic `bytes` params.
+    ///      An attacker can craft calldata where the real func data is at a non-standard position
+    ///      but the hook reads a decoy selector from the hardcoded offset. This function follows
+    ///      the ABI offset pointer stored at params[64:96] to find where func actually starts.
+    ///
+    ///      msgData layout (full execute() calldata forwarded by _dispatchHook):
+    ///        [0:4]    execute() outer selector
+    ///        params = [4:] (everything after the outer selector)
+    ///        params[0:32]   dest (address, zero-padded to 32 bytes)
+    ///        params[32:64]  value (uint256)
+    ///        params[64:96]  ABI offset to func bytes (relative to start of params, in bytes)
+    ///        params[offset:offset+32]  length of func bytes
+    ///        params[offset+32:offset+32+length]  func bytes
+    ///
+    ///      Returns (address(0), bytes4(0)) on any decode error, which is safe because
+    ///      enforceSessionScope with a zero dest will fail the allowlist check.
+    function _parseExecuteCalldata(bytes calldata msgData)
+        internal pure returns (address dest, bytes4 innerSelector)
+    {
+        // Minimum: outer selector(4) + dest(32) + value(32) + offset(32) = 100 bytes
+        if (msgData.length < 100) return (address(0), bytes4(0));
+        bytes calldata params = msgData[4:];  // strip outer selector
+        // params[0:32] = dest
+        dest = address(uint160(uint256(bytes32(params[0:32]))));
+        // params[32:64] = value (ignored here)
+        // params[64:96] = ABI offset pointer (relative to params start) to the func bytes data
+        uint256 offset = uint256(bytes32(params[64:96]));
+        // offset+32 must be within params (length slot at params[offset:offset+32])
+        if (offset + 32 > params.length) return (dest, bytes4(0));
+        uint256 funcLen = uint256(bytes32(params[offset:offset + 32]));
+        // Need at least 4 bytes of func to extract a selector
+        if (funcLen < 4) return (dest, bytes4(0));
+        // offset+32+funcLen must be within params
+        if (offset + 32 + funcLen > params.length) return (dest, bytes4(0));
+        innerSelector = bytes4(params[offset + 32:offset + 36]);
     }
 
     function _algTier(uint8 algId) internal pure returns (uint8) {

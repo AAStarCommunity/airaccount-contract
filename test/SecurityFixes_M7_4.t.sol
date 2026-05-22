@@ -7,6 +7,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
+import {TierGuardHook} from "../src/core/TierGuardHook.sol";
 import {AirAccountCompositeValidator} from "../src/validators/AirAccountCompositeValidator.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 
@@ -695,5 +696,61 @@ contract SecurityFixes_M7_4Test is Test {
 
         assertTrue(trackingModule.isInitialized(address(account)));
         assertEq(trackingModule.lastInitData(address(account)), bytes(""), "empty initData passed to onInstall");
+    }
+
+    // ─── HIGH-2: executeBatch with ALG_SESSION_KEY + active hook reverts ────────
+
+    /// @notice HIGH-2 fix: executeBatch does not call preCheck, so TierGuardHook's session scope
+    ///         enforcement (callTargets/selectorAllowlist) would be bypassed entirely for batched
+    ///         calls. When a hook module is installed and the operation uses ALG_SESSION_KEY,
+    ///         executeBatch now reverts with AgentSessionBatchNotSupported.
+    ///
+    ///         Test flow:
+    ///           1. Install TierGuardHook as hook module (moduleTypeId=3)
+    ///           2. Simulate a UserOp with signature[0] = ALG_SESSION_KEY (0x08) via nonce-key routing
+    ///           3. Call executeBatch — must revert with AgentSessionBatchNotSupported
+    function test_ExecuteBatch_sessionKey_reverts() public {
+        // Deploy and install TierGuardHook as hook module (typeId=3)
+        TierGuardHook tierHook = new TierGuardHook();
+        // Guardian sig for installModule (typeId=3, module=tierHook, no extra initData → empty moduleInitData)
+        bytes memory hookSig = _installSigWithData(g0Wallet, address(account), 3, address(tierHook), "");
+        // hookSig (65 bytes) prepended, no additional initData → onInstall called with empty bytes
+        vm.prank(ownerWallet.addr);
+        account.installModule(3, address(tierHook), hookSig);
+
+        // Simulate a UserOp routed via nonce-key path with ALG_SESSION_KEY sig prefix
+        // trackingModule is used as the validator module (already ERC-7579 compatible)
+        _installTracking();
+        trackingModule.setValidateResult(0); // pass validation
+
+        bytes memory sig = abi.encodePacked(uint8(ALG_SESSION_KEY), bytes32(0), bytes32(0));
+        uint192 validatorId = uint192(uint160(address(trackingModule)));
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: address(account),
+            nonce: uint256(validatorId) << 64,
+            initCode: "",
+            callData: "",
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: sig
+        });
+
+        // validateUserOp queues ALG_SESSION_KEY in transient storage
+        vm.prank(address(ep));
+        account.validateUserOp(userOp, keccak256("h2test"), 0);
+
+        // Now call executeBatch — should revert with AgentSessionBatchNotSupported
+        address[] memory dests = new address[](1);
+        dests[0] = recipient;
+        uint256[] memory values = new uint256[](1);
+        values[0] = 0;
+        bytes[] memory funcs = new bytes[](1);
+        funcs[0] = "";
+
+        vm.expectRevert(AAStarAirAccountBase.AgentSessionBatchNotSupported.selector);
+        vm.prank(address(ep));
+        account.executeBatch(dests, values, funcs);
     }
 }

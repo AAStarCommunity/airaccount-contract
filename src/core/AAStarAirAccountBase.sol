@@ -236,6 +236,13 @@ abstract contract AAStarAirAccountBase is Initializable {
     error InvalidGuardianSignature();
     error SessionScopeViolation();
     error InvalidTierConfig();
+    /// @dev HIGH-2: Agent session keys must use execute(), not executeBatch(), when a hook module
+    ///      (TierGuardHook) is installed. executeBatch does not invoke preCheck, so the hook's
+    ///      session scope enforcement (callTargets / selectorAllowlist) would be bypassed.
+    ///      Until per-call scope enforcement is implemented for batched calls, agent session ops
+    ///      are restricted to single execute() calls.
+    ///      TODO: implement per-call scope enforcement for executeBatch (tracking issue).
+    error AgentSessionBatchNotSupported();
     // M7.2 ERC-7579 Module Management
     error ModuleAlreadyInstalled();
     error ModuleNotInstalled();
@@ -1000,6 +1007,15 @@ abstract contract AAStarAirAccountBase is Initializable {
         // Fix: previously _consumeSessionKey() was called inside _enforceGuard (per-call),
         // so calls 2+ in the batch got bytes32(0) and skipped scope enforcement entirely.
         bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
+        // HIGH-2: Agent session keys must NOT use executeBatch when a TierGuardHook is active.
+        // executeBatch does not invoke preCheck, so TierGuardHook's callTargets/selectorAllowlist
+        // enforcement is bypassed for the entire batch. Until per-call scope enforcement for
+        // batched calls is implemented, agent session ops are restricted to single execute() calls.
+        // The standard-path session scope (taggedSessionKey != 0) is still enforced per-call via
+        // _enforceGuard below; this guard only blocks the hook-validator path.
+        if (algId == ALG_SESSION_KEY && _activeHook != address(0)) {
+            revert AgentSessionBatchNotSupported();
+        }
         // Note: hook dispatch is NOT called for executeBatch — preCheck is single-execute only.
         // The built-in guard still enforces limits per-call via _enforceGuard.
         for (uint256 i = 0; i < dest.length; i++) {
@@ -1112,8 +1128,9 @@ abstract contract AAStarAirAccountBase is Initializable {
         //   Nonce-key path (taggedSessionKey == 0): ERC-7579 module validator (AgentSessionKeyValidator)
         //     handled validation; TierGuardHook enforces tier limits. Skip scope re-check here.
         //
-        // TODO(M7.x): AgentSessionKeyValidator callTargets/selectorAllowlist are not enforced on-chain
-        //   during execute(). Fix: TierGuardHook.preCheck should call AgentSessionKeyValidator.enforceSessionScope().
+        // M8.P2 FIX: AgentSessionKeyValidator callTargets/selectorAllowlist are now enforced on-chain
+        //   via TierGuardHook.preCheck() calling enforceSessionScope() (HIGH-1 fix applied).
+        //   executeBatch with ALG_SESSION_KEY + active hook reverts (HIGH-2 fix applied).
         if (algId == ALG_SESSION_KEY && taggedSessionKey != bytes32(0)) {
             if (address(validator) == address(0)) revert SessionScopeViolation(); // no validator router
             address skValidator = IAAStarValidator(address(validator)).getAlgorithm(ALG_SESSION_KEY);
@@ -1185,6 +1202,16 @@ abstract contract AAStarAirAccountBase is Initializable {
 
     /// @dev Pop validated algId from transient storage queue.
     ///      Called during execute/executeBatch (execution phase).
+    ///
+    ///      HIGH-3 KNOWN LIMITATION — transient queue pollution on failed UserOp:
+    ///      When UserOp N's execution reverts, this increment is also reverted, leaving the
+    ///      readIdx unchanged. If a subsequent UserOp M from the same account is in the same
+    ///      bundle, it reads the algId that was queued for N (queue corruption). This is
+    ///      uncommon (same account, same bundle, first op fails during execution) but not zero.
+    ///      Proper fix: use userOpHash as the transient storage key instead of a shared FIFO
+    ///      index, so each UserOp's algId is keyed uniquely and cannot bleed into another.
+    ///      TODO: implement userOpHash-keyed transient storage to eliminate cross-UserOp
+    ///      queue pollution on execution revert (see tracking issue).
     function _consumeValidatedAlgId() internal returns (uint8 algId) {
         assembly {
             let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
