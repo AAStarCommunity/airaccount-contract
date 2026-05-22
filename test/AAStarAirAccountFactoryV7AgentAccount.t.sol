@@ -48,20 +48,37 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
     // ─── Helper: build guardian2 acceptance signature ──────────────────────
 
     /// @dev Computes the guardian2 acceptance signature for createAgentAccount.
-    ///      The acceptance hash binds: "ACCEPT_GUARDIAN" + chainId + factory + agentKey + salt
-    ///      where salt = uint256(keccak256(abi.encodePacked(humanOwner, agentId)))
+    ///      The acceptance hash binds:
+    ///        "ACCEPT_AGENT_GUARDIAN" + chainId + factory + agentKey + humanOwner + agentId
+    ///      The distinct domain and explicit humanOwner + agentId prevent signature reuse
+    ///      across createAccountWithDefaults (which uses "ACCEPT_GUARDIAN" + owner + uint256_salt).
     function _guardian2Sig(
         Vm.Wallet memory g2,
         address humanOwner,
         address agentKey,
         bytes32 agentId
     ) internal view returns (bytes memory) {
-        uint256 salt = uint256(keccak256(abi.encodePacked(humanOwner, agentId)));
         bytes32 raw = keccak256(
-            abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(factory), agentKey, salt)
+            abi.encodePacked("ACCEPT_AGENT_GUARDIAN", block.chainid, address(factory), agentKey, humanOwner, agentId)
         );
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(g2.privateKey, ethHash);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// @dev Computes a guardian acceptance signature for createAccountWithDefaults.
+    ///      Uses the OLD domain "ACCEPT_GUARDIAN" + chainId + factory + owner + uint256_salt.
+    ///      Used in the front-run test to prove the two domains cannot collide.
+    function _defaultGuardianSig(
+        Vm.Wallet memory g,
+        address owner,
+        uint256 salt
+    ) internal view returns (bytes memory) {
+        bytes32 raw = keccak256(
+            abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(factory), owner, salt)
+        );
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(g.privateKey, ethHash);
         return abi.encodePacked(r, s, v);
     }
 
@@ -309,5 +326,71 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
             sig2,
             DAILY_LIMIT
         );
+    }
+
+    // ─── Front-run resistance: cross-namespace salt collision ──────────────
+
+    /// @notice An attacker who intercepts a createAgentAccount mempool transaction CANNOT
+    ///         pre-deploy the same address via createAccountWithDefaults.
+    ///
+    ///         Security proof:
+    ///         - createAgentAccount clone salt = keccak256("AASTAR_AGENT_V1" || agentKey || humanOwner || agentId)
+    ///         - createAccountWithDefaults clone salt = keccak256(owner || uint256_salt)
+    ///         These two salt functions NEVER produce the same bytes32 value because the
+    ///         "AASTAR_AGENT_V1" prefix cannot appear in the unprefixed (owner, salt) encoding.
+    ///
+    ///         Additionally, guardian2Sig cannot be reused across paths because:
+    ///         - createAgentAccount domain: "ACCEPT_AGENT_GUARDIAN" || chainId || factory || agentKey || humanOwner || agentId
+    ///         - createAccountWithDefaults domain: "ACCEPT_GUARDIAN" || chainId || factory || owner || uint256_salt
+    ///         Different string prefixes produce different hashes even if all numeric fields overlap.
+    function test_CreateAgentAccount_cannotBeFrontRunByCreateAccountWithDefaults() public {
+        // Attacker observes: createAgentAccount(agentKey, agentId, guardian2, guardian2Sig, dailyLimit)
+        // called by humanWallet.addr.
+
+        // Step 1: Compute what createAgentAccount would use for its clone salt.
+        address agentAddr = factory.getAgentAddress(humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+
+        // Step 2: Compute the derived salt that the OLD code used (before the fix):
+        //         uint256 salt = keccak256(msg.sender || agentId). An attacker who knows
+        //         humanOwner and agentId can compute this.
+        uint256 derivedSalt = uint256(keccak256(abi.encodePacked(humanWallet.addr, AGENT_ID_1)));
+
+        // Step 3: Attacker attempts to use createAccountWithDefaults with agentKey as owner
+        //         and derivedSalt, providing old-style guardian2Sig (ACCEPT_GUARDIAN domain).
+        //         With the fix, this targets a DIFFERENT clone salt and therefore a
+        //         DIFFERENT address, so it cannot occupy the agent account's address.
+        Vm.Wallet memory attackerWallet = vm.createWallet("attacker");
+
+        // Build ACCEPT_GUARDIAN-domain sigs for createAccountWithDefaults
+        bytes memory g1Sig = _defaultGuardianSig(attackerWallet, agentWallet.addr, derivedSalt);
+        bytes memory g2Sig = _defaultGuardianSig(guardian2Wallet, agentWallet.addr, derivedSalt);
+
+        // Attacker deploys via createAccountWithDefaults
+        address attackerDeployed = factory.createAccountWithDefaults(
+            agentWallet.addr,
+            derivedSalt,
+            attackerWallet.addr,
+            g1Sig,
+            guardian2Wallet.addr,
+            g2Sig,
+            DAILY_LIMIT
+        );
+
+        // KEY ASSERTION: The address deployed by the attacker via createAccountWithDefaults
+        // is DIFFERENT from the address getAgentAddress predicts. The fix ensures the two
+        // creation paths use distinct salt namespaces.
+        assertTrue(
+            attackerDeployed != agentAddr,
+            "Front-run must not collide: createAccountWithDefaults must land at a different address"
+        );
+
+        // Step 4: The legitimate createAgentAccount still succeeds and lands at the predicted address.
+        bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, AGENT_ID_1);
+        vm.prank(humanWallet.addr);
+        address legitimateDeployed = factory.createAgentAccount(
+            agentWallet.addr, AGENT_ID_1, guardian2Wallet.addr, sig2, DAILY_LIMIT
+        );
+
+        assertEq(legitimateDeployed, agentAddr, "Legitimate createAgentAccount must land at predicted address");
     }
 }

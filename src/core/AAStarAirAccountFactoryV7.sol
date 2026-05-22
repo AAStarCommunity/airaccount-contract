@@ -223,8 +223,9 @@ contract AAStarAirAccountFactoryV7 {
     ///                   Combined with msg.sender to derive a unique deterministic salt.
     /// @param guardian2   Second guardian (human's personal backup key, trusted person, etc.)
     /// @param guardian2Sig guardian2's acceptance signature. Signs:
-    ///                   keccak256("ACCEPT_GUARDIAN" || chainId || factory || agentKey || salt).toEthSignedMessageHash()
-    ///                   where salt = uint256(keccak256(abi.encodePacked(msg.sender, agentId)))
+    ///                   keccak256("ACCEPT_AGENT_GUARDIAN" || chainId || factory || agentKey || humanOwner || agentId).toEthSignedMessageHash()
+    ///                   The "ACCEPT_AGENT_GUARDIAN" domain and explicit humanOwner + agentId prevent
+    ///                   cross-namespace collision with createAccountWithDefaults signatures.
     /// @param dailyLimit  Daily spending limit in wei for this agent account
     /// @return account    The deployed agent account address
     function createAgentAccount(
@@ -240,17 +241,17 @@ contract AAStarAirAccountFactoryV7 {
         require(agentKey != guardian2, "Agent key cannot be guardian2");
         require(dailyLimit > 0, "Daily limit required");
 
-        // Derive deterministic salt from human owner + agent ID
-        uint256 salt = uint256(keccak256(abi.encodePacked(msg.sender, agentId)));
-
-        // Verify guardian2 signed the acceptance hash (guardian1 = msg.sender, auto-accepted)
+        // Verify guardian2 signed the agent-specific acceptance hash.
+        // Domain "ACCEPT_AGENT_GUARDIAN" (distinct from "ACCEPT_GUARDIAN" used in createAccountWithDefaults)
+        // prevents signature reuse across the two creation paths.
+        // Including msg.sender (humanOwner) and agentId prevents reuse across different owners or agents.
         bytes32 acceptHash = keccak256(
-            abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(this), agentKey, salt)
+            abi.encodePacked("ACCEPT_AGENT_GUARDIAN", block.chainid, address(this), agentKey, msg.sender, agentId)
         ).toEthSignedMessageHash();
         (address recovered,,) = acceptHash.tryRecover(guardian2Sig);
         if (recovered != guardian2) revert GuardianDidNotAccept(guardian2);
 
-        bytes32 cloneSalt = _getDefaultSalt(agentKey, salt);
+        bytes32 cloneSalt = _getAgentSalt(agentKey, msg.sender, agentId);
         account = Clones.predictDeterministicAddress(implementation, cloneSalt);
         if (account.code.length > 0) {
             return account;
@@ -283,8 +284,7 @@ contract AAStarAirAccountFactoryV7 {
         address agentKey,
         bytes32 agentId
     ) public view returns (address) {
-        uint256 salt = uint256(keccak256(abi.encodePacked(humanOwner, agentId)));
-        return Clones.predictDeterministicAddress(implementation, _getDefaultSalt(agentKey, salt));
+        return Clones.predictDeterministicAddress(implementation, _getAgentSalt(agentKey, humanOwner, agentId));
     }
 
     /// @notice Predict address for a default-config account.
@@ -354,6 +354,13 @@ contract AAStarAirAccountFactoryV7 {
     ///      (guardian acceptance signatures already prevent front-running for this path).
     function _getDefaultSalt(address owner, uint256 salt) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(owner, salt));
+    }
+
+    /// @dev Agent account salt: namespaced with "AASTAR_AGENT_V1" to prevent cross-namespace
+    ///      collision with createAccountWithDefaults which uses _getDefaultSalt(owner, salt).
+    ///      Including humanOwner and agentId ensures each (human, agent, agentId) triple is unique.
+    function _getAgentSalt(address agentKey, address humanOwner, bytes32 agentId) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked("AASTAR_AGENT_V1", agentKey, humanOwner, agentId));
     }
 
     // ─── ERC-7828 Chain-Specific Address (M7.4) ─────────────────────
