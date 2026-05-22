@@ -282,6 +282,8 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     ) external view {
         AgentSessionConfig storage cfg = agentSessions[account][sessionKey];
         if (cfg.expiry == 0) revert SessionNotFound();
+        if (cfg.revoked) revert SessionRevoked();
+        if (block.timestamp > cfg.expiry) revert SessionExpired();
 
         // Check call target allowlist
         if (cfg.callTargets.length > 0 && !_containsAddress(cfg.callTargets, callTarget)) {

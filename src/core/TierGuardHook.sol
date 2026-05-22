@@ -37,6 +37,7 @@ contract TierGuardHook is IERC7579Hook {
     error TierGuardHookUnauthorized();
     error TierViolation(uint8 required, uint8 provided);
     error UnknownAlgId(uint8 algId);
+    error AlreadyInstalled();
 
     // ALG constants (mirrors AAStarAirAccountBase)
     uint8 internal constant ALG_ECDSA          = 0x02;
@@ -55,6 +56,7 @@ contract TierGuardHook is IERC7579Hook {
     ///        OR abi.encode(guardAddress, tier1Limit, tier2Limit, agentSessionKeyValidator) — 4-param (128 bytes).
     ///        The 4-param format enables session scope enforcement via AgentSessionKeyValidator (M8.P2).
     function onInstall(bytes calldata data) external override {
+        if (accountGuard[msg.sender] != address(0)) revert AlreadyInstalled();
         if (data.length == 0) return; // no-op if no init data
         if (data.length >= 128) {
             // Extended 4-param format: includes agentSessionKeyValidator address
@@ -137,26 +139,26 @@ contract TierGuardHook is IERC7579Hook {
         address agentValidator = accountAgentValidator[msg.sender];
         if (agentValidator != address(0) && algId == ALG_SESSION_KEY) {
             bytes32 taggedSessionKey = _getSessionKeyFromAccount(msg.sender);
-            if (taggedSessionKey != bytes32(0)) {
-                uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
-                if (sessionType == 0x01) {
-                    address sessionKey = address(uint160(uint256(taggedSessionKey)));
-                    // Parse dest and inner selector from the forwarded execute() calldata using
-                    // _parseExecuteCalldata, which follows the ABI offset pointer for the `bytes func`
-                    // parameter. Fixed-offset parsing (e.g. msgData[132:136]) is UNSAFE because ABI
-                    // encoding allows non-standard offsets: an attacker could craft calldata where the
-                    // real func data is at a non-standard position but the hook reads a decoy selector
-                    // at the standard position. We use the offset pointer at params[64:96] instead.
-                    (address dest, bytes4 selector) = _parseExecuteCalldata(msgData);
-                    // enforceSessionScope reverts if the target or selector is not in the allowlist
-                    (bool ok,) = agentValidator.staticcall(
-                        abi.encodeWithSignature(
-                            "enforceSessionScope(address,address,address,bytes4)",
-                            msg.sender, sessionKey, dest, selector
-                        )
-                    );
-                    if (!ok) revert TierGuardHookUnauthorized();
-                }
+            // fail-closed: session key expected but not found in transient storage → revert
+            if (taggedSessionKey == bytes32(0)) revert TierGuardHookUnauthorized();
+            uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
+            if (sessionType == 0x01) {
+                address sessionKey = address(uint160(uint256(taggedSessionKey)));
+                // Parse dest and inner selector from the forwarded execute() calldata using
+                // _parseExecuteCalldata, which follows the ABI offset pointer for the `bytes func`
+                // parameter. Fixed-offset parsing (e.g. msgData[132:136]) is UNSAFE because ABI
+                // encoding allows non-standard offsets: an attacker could craft calldata where the
+                // real func data is at a non-standard position but the hook reads a decoy selector
+                // at the standard position. We use the offset pointer at params[64:96] instead.
+                (address dest, bytes4 selector) = _parseExecuteCalldata(msgData);
+                // enforceSessionScope reverts if the target or selector is not in the allowlist
+                (bool ok,) = agentValidator.staticcall(
+                    abi.encodeWithSignature(
+                        "enforceSessionScope(address,address,address,bytes4)",
+                        msg.sender, sessionKey, dest, selector
+                    )
+                );
+                if (!ok) revert TierGuardHookUnauthorized();
             }
         }
 

@@ -87,6 +87,20 @@ contract MockAgentSessionKeyValidator {
     }
 }
 
+/// @dev Account that returns ALG_SESSION_KEY from getCurrentAlgId() but bytes32(0) from
+///      getCurrentSessionKey() — simulates a missing session key in transient storage.
+///      Used to test MEDIUM-2 fail-closed behavior: preCheck must revert when agentValidator
+///      is configured + algId=ALG_SESSION_KEY but no session key is present.
+contract MockAccountWithSessionKeyMissing is MockAccountCaller {
+    function getCurrentAlgId() external pure returns (uint256) {
+        return 0x08; // ALG_SESSION_KEY
+    }
+
+    function getCurrentSessionKey() external pure returns (bytes32) {
+        return bytes32(0); // no session key in transient storage
+    }
+}
+
 /// @dev Account that exposes both getCurrentAlgId() (returning ALG_SESSION_KEY=0x08)
 ///      and getCurrentSessionKey() (returning a tagged ECDSA session key address).
 ///      Used to test session scope enforcement in TierGuardHook (M8.P2).
@@ -439,6 +453,42 @@ contract TierGuardHookTest is Test {
         bytes memory msgData = _buildExecuteMsgData(anyTarget, 0, func);
         bytes memory result = sessionAccount.callPreCheck(hook, address(this), 0, msgData);
         assertEq(result, "");
+    }
+
+    // ─── MEDIUM-2: fail-closed when agentValidator configured but no session key ─
+
+    /// @notice MEDIUM-2 fix: when agentValidator is configured and algId=ALG_SESSION_KEY but
+    ///         getCurrentSessionKey() returns bytes32(0) (no session key in transient storage),
+    ///         preCheck must revert with TierGuardHookUnauthorized rather than silently skipping
+    ///         scope enforcement. This closes the window where an attacker could omit the session
+    ///         key from transient storage to bypass scope checks entirely.
+    function test_preCheck_sessionKey_missingSessionKey_reverts() public {
+        address agentValidatorAddr = address(new MockAgentSessionKeyValidator());
+
+        MockAccountWithSessionKeyMissing missingKeyAccount = new MockAccountWithSessionKeyMissing();
+        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), agentValidatorAddr);
+        missingKeyAccount.callInstall(hook, installData);
+        guard.setShouldRevert(false);
+
+        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", address(this), 100);
+        bytes memory msgData = _buildExecuteMsgData(makeAddr("anyTarget"), 0, func);
+
+        // agentValidator is configured + algId=ALG_SESSION_KEY + no session key → must revert
+        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
+        missingKeyAccount.callPreCheckExpectRevert(hook, address(this), 0, msgData);
+    }
+
+    // ─── MEDIUM-1: onInstall idempotency ──────────────────────────────
+
+    /// @notice MEDIUM-1 fix: calling onInstall twice on the same account must revert with
+    ///         AlreadyInstalled on the second call, preventing config overwrite.
+    function test_onInstall_alreadyInstalled_reverts() public {
+        _install(address(guard), 1 ether, 10 ether);
+
+        // Second install attempt on the same account — must revert
+        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(10 ether));
+        vm.expectRevert(TierGuardHook.AlreadyInstalled.selector);
+        accountContract.callInstall(hook, data);
     }
 
     // ─── HIGH-1: non-standard ABI offset cannot bypass scope enforcement ──────
