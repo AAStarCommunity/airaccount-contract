@@ -2,87 +2,52 @@
 pragma solidity ^0.8.33;
 
 import {IERC7579Hook} from "../interfaces/IERC7579Module.sol";
-import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 
-/// @title TierGuardHook — ERC-7579 Hook module wrapping AirAccount's tier/guard enforcement
-/// @notice When installed as a Hook(3) module on an AAStarAirAccountV7, this hook reads the
-///         account's guard contract and algId from transient storage, then enforces spending limits.
+/// @title TierGuardHook — ERC-7579 Hook for session-scope enforcement on AirAccount
+/// @notice When installed as a Hook(3) module on an AAStarAirAccountV7, this hook enforces
+///         session key call-target and selector restrictions for ALG_SESSION_KEY operations.
 /// @dev The hook is called by the account in execute() BEFORE the actual call.
-///      For accounts using this hook, guard enforcement moves from inline _enforceGuard to this module.
-///
-///      Architecture note: This hook is complementary to the account's built-in guard.
-///      If both are active, both will enforce. The account should disable its own inline guard
-///      enforcement when this hook is active (not yet implemented — M7.2+).
-///
-///      algId reading: The account stores algId in transient storage (ALG_ID_SLOT_BASE queue)
-///      before calling preCheck. The hook calls back to the account's _consumeValidatedAlgId()
-///      via a standardized interface. For simplicity in this implementation, algId defaults to
-///      ALG_ECDSA if the callback is unavailable.
+///      ETH tier and daily limit enforcement is NOT done here — those are enforced directly
+///      by the account's _enforceGuard (guard.checkTransaction has onlyAccount, the hook cannot
+///      call it). The account's skipEthCheck is always false so limits are always enforced inline.
 ///
 ///      Session scope enforcement (M8.P2): When an AgentSessionKeyValidator address is configured
-///      via the extended onInstall format, preCheck additionally enforces callTargets and
-///      selectorAllowlist for ALG_SESSION_KEY operations by calling enforceSessionScope().
+///      via onInstall, preCheck enforces callTargets and selectorAllowlist for ALG_SESSION_KEY ops.
 contract TierGuardHook is IERC7579Hook {
-    /// @dev Per-account guard address mapping (set at install time)
-    mapping(address => address) public accountGuard;
-
-    /// @dev Per-account tier1/tier2 limits (set at install time)
-    mapping(address => uint256) public accountTier1;
-    mapping(address => uint256) public accountTier2;
+    /// @dev Tracks which accounts have installed this hook (prevents bypass via zero-guard).
+    mapping(address => bool) private _initialized;
 
     /// @dev Per-account AgentSessionKeyValidator address for session scope enforcement (M8.P2).
     ///      If set, preCheck enforces callTargets/selectorAllowlist for ALG_SESSION_KEY ops.
     mapping(address => address) public accountAgentValidator;
 
     error TierGuardHookUnauthorized();
-    error TierViolation(uint8 required, uint8 provided);
-    error UnknownAlgId(uint8 algId);
+    error AlreadyInstalled();
+    error NotInstalled();
 
-    // ALG constants (mirrors AAStarAirAccountBase)
-    uint8 internal constant ALG_ECDSA          = 0x02;
-    uint8 internal constant ALG_P256           = 0x03;
-    uint8 internal constant ALG_CUMULATIVE_T2  = 0x04;
-    uint8 internal constant ALG_CUMULATIVE_T3  = 0x05;
-    uint8 internal constant ALG_WEIGHTED       = 0x07;
-    uint8 internal constant ALG_BLS            = 0x01;
-    uint8 internal constant ALG_COMBINED_T1    = 0x06;
-    uint8 internal constant ALG_SESSION_KEY    = 0x08;
+    uint8 internal constant ALG_SESSION_KEY = 0x08;
 
     // ─── IERC7579Module ─────────────────────────────────────────────
 
     /// @notice Install hook for msg.sender account.
-    /// @param data abi.encode(guardAddress, tier1Limit, tier2Limit) — 3-param (96 bytes)
-    ///        OR abi.encode(guardAddress, tier1Limit, tier2Limit, agentSessionKeyValidator) — 4-param (128 bytes).
-    ///        The 4-param format enables session scope enforcement via AgentSessionKeyValidator (M8.P2).
+    /// @param data abi.encode(agentSessionKeyValidator) — 32 bytes (address).
+    ///        Pass address(0) or empty bytes to install without session scope enforcement.
     function onInstall(bytes calldata data) external override {
-        if (data.length == 0) return; // no-op if no init data
-        if (data.length >= 128) {
-            // Extended 4-param format: includes agentSessionKeyValidator address
-            (address guardAddr, uint256 t1, uint256 t2, address agentValidator) =
-                abi.decode(data, (address, uint256, uint256, address));
-            accountGuard[msg.sender] = guardAddr;
-            accountTier1[msg.sender] = t1;
-            accountTier2[msg.sender] = t2;
+        if (_initialized[msg.sender]) revert AlreadyInstalled();
+        _initialized[msg.sender] = true;
+        if (data.length >= 32) {
+            address agentValidator = abi.decode(data, (address));
             accountAgentValidator[msg.sender] = agentValidator;
-        } else {
-            // Original 3-param format (backward compatible)
-            (address guardAddr, uint256 t1, uint256 t2) = abi.decode(data, (address, uint256, uint256));
-            accountGuard[msg.sender] = guardAddr;
-            accountTier1[msg.sender] = t1;
-            accountTier2[msg.sender] = t2;
-            delete accountAgentValidator[msg.sender];
         }
     }
 
     function onUninstall(bytes calldata /* data */) external override {
-        delete accountGuard[msg.sender];
-        delete accountTier1[msg.sender];
-        delete accountTier2[msg.sender];
+        delete _initialized[msg.sender];
         delete accountAgentValidator[msg.sender];
     }
 
     function isInitialized(address smartAccount) external view override returns (bool) {
-        return accountGuard[smartAccount] != address(0);
+        return _initialized[smartAccount];
     }
 
     // ─── IERC7579Hook ────────────────────────────────────────────────
@@ -100,41 +65,20 @@ contract TierGuardHook is IERC7579Hook {
         uint256 msgValue,
         bytes calldata msgData
     ) external override returns (bytes memory hookData) {
-        // Suppress unused variable warning
         msgSender;
-
-        address guardAddr = accountGuard[msg.sender];
-        if (guardAddr == address(0)) return ""; // no guard configured
-
-        // Get algId from account's transient storage via callback
-        uint8 algId = _getAlgIdFromAccount(msg.sender);
-        uint8 tier = _algTier(algId);
-
-        // ETH tier check
-        uint256 t1 = accountTier1[msg.sender];
-        uint256 t2 = accountTier2[msg.sender];
-        if (t1 > 0 || t2 > 0) {
-            uint256 alreadySpent;
-            try AAStarGlobalGuard(guardAddr).todaySpent() returns (uint256 spent) {
-                alreadySpent = spent;
-            } catch {}
-            uint8 required = _requiredTier(alreadySpent + msgValue, t1, t2);
-            if (required > 0 && tier < required) {
-                revert TierViolation(required, tier);
-            }
-        }
-
-        // Daily limit check
-        try AAStarGlobalGuard(guardAddr).checkTransaction(msgValue, algId) {} catch {
-            revert TierGuardHookUnauthorized();
-        }
+        msgValue;
 
         // ── Session scope enforcement (M8.P2) ─────────────────────────────────
+        // ETH tier / daily-limit enforcement is intentionally NOT done here.
+        // AAStarGlobalGuard.checkTransaction() carries onlyAccount (msg.sender == account),
+        // so calling it from the hook (a separate contract) would always revert.
+        // The account's _enforceGuard handles tier + daily limits directly with skipEthCheck=false.
+        //
+        // This hook's sole responsibility is session-scope enforcement (call targets + selectors).
         // When an AgentSessionKeyValidator is configured and the operation uses ALG_SESSION_KEY,
         // enforce callTargets and selectorAllowlist constraints that were set at session grant time.
-        // This closes the gap where AgentSessionKeyValidator only validated during validateUserOp
-        // but did not enforce scope during execute().
         address agentValidator = accountAgentValidator[msg.sender];
+        uint8 algId = _getAlgIdFromAccount(msg.sender);
         if (agentValidator != address(0) && algId == ALG_SESSION_KEY) {
             bytes32 taggedSessionKey = _getSessionKeyFromAccount(msg.sender);
             if (taggedSessionKey != bytes32(0)) {
@@ -209,21 +153,7 @@ contract TierGuardHook is IERC7579Hook {
         if (ok && data.length >= 32) {
             algId = uint8(abi.decode(data, (uint256)));
         } else {
-            algId = ALG_ECDSA; // fallback: Tier 1 limits — see compatibility note above
+            algId = 0x01; // fallback: ALG_ECDSA (not a session key) — see compatibility note above
         }
-    }
-
-    function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == ALG_CUMULATIVE_T3 || algId == ALG_BLS) return 3;
-        if (algId == ALG_CUMULATIVE_T2 || algId == ALG_WEIGHTED) return 2; // weighted multisig = at least Tier 2
-        if (algId == ALG_ECDSA || algId == ALG_P256 || algId == ALG_COMBINED_T1 || algId == ALG_SESSION_KEY) return 1;
-        revert UnknownAlgId(algId);
-    }
-
-    function _requiredTier(uint256 amount, uint256 t1, uint256 t2) internal pure returns (uint8) {
-        if (t1 == 0 && t2 == 0) return 0;
-        if (amount <= t1) return 1;
-        if (amount <= t2) return 2;
-        return 3;
     }
 }

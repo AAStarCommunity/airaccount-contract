@@ -992,7 +992,11 @@ abstract contract AAStarAirAccountBase is Initializable {
         // Consume session key once per execute invocation (mirrors algId consumption).
         // Passed into _enforceGuard to prevent scope bypass in executeBatch.
         bytes32 taggedSessionKey = (algId == ALG_SESSION_KEY) ? _consumeSessionKey() : bytes32(0);
-        _enforceGuard(value, algId, guardAlgId, taggedSessionKey, dest, func, hookActive);
+        // skipEthCheck is always false: the account calls guard.checkTransaction() directly.
+        // TierGuardHook cannot call it because guard.checkTransaction has onlyAccount (msg.sender==account),
+        // and the hook is a separate contract. Passing false here ensures daily limits are enforced
+        // regardless of whether a hook is active.
+        _enforceGuard(value, algId, guardAlgId, taggedSessionKey, dest, func, false);
         _call(dest, value, func);
     }
 
@@ -1111,10 +1115,8 @@ abstract contract AAStarAirAccountBase is Initializable {
         // guardAlgId: pre-resolution algId so guard whitelist sees ALG_WEIGHTED(0x07) when that's what
         // was approved — approving 0x07 should not require separately approving resolved 0x02/0x04/0x05.
         //
-        // skipEthCheck=true when an ERC-7579 Hook is active (execute() passes hookActive as skipEthCheck).
-        // The hook's preCheck() is responsible for calling guard.checkTransaction() to enforce daily
-        // limits. Skipping here prevents double-counting (hook + inline guard both charging the same op).
-        // TierGuardHook fulfils this contract by calling guard.checkTransaction() in its preCheck().
+        // skipEthCheck is always false from execute() — the account holds the correct msg.sender for
+        // guard.checkTransaction's onlyAccount modifier. TierGuardHook cannot call it directly.
         if (guardAddr != address(0) && !skipEthCheck) {
             guard.checkTransaction(value, guardAlgId);
         }
