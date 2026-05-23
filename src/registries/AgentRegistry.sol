@@ -27,21 +27,49 @@ contract AgentRegistry {
     error InvalidAgentSignature();
     error SelfRegistrationForbidden();
     error NotSupported();
+    /// @dev HIGH-1: msg.sender is not a known AirAccount (no accountId() or wrong prefix).
+    error CallerNotAirAccount();
 
     /// @notice Register msg.sender (AirAccount) as the human owner of agentWallet.
     ///         agentWalletSig proves the caller controls agentWallet, preventing front-run griefing.
-    /// @param agentWallet The agent's EOA address
-    /// @param agentWalletSig ECDSA sig from agentWallet over:
+    ///         Supports both EOA (ECDSA) and smart-contract (ERC-1271) agent wallets.
+    /// @param agentWallet The agent's wallet address (EOA or smart contract)
+    /// @param agentWalletSig Signature from agentWallet over:
     ///        keccak256(abi.encodePacked("REGISTER_AGENT", chainId, address(this), msg.sender, agentWallet)).toEthSignedMessageHash()
     function registerAgent(address agentWallet, bytes calldata agentWalletSig) external {
+        // HIGH-1: Only AirAccount contracts may register agents.
+        // This prevents plain EOAs and unrelated contracts from obtaining SuperPaymaster sponsorship.
+        (bool ok, bytes memory data) = msg.sender.staticcall(
+            abi.encodeWithSignature("accountId()")
+        );
+        if (!ok || data.length < 32) revert CallerNotAirAccount();
+        if (!_startsWith(abi.decode(data, (string)), "airaccount.")) revert CallerNotAirAccount();
+
         if (agentWallet == address(0)) revert InvalidAddress();
         if (agentWallet == msg.sender) revert SelfRegistrationForbidden();
         if (agentWalletOwner[agentWallet] != address(0)) revert AgentAlreadyRegistered();
-        // Verify agentWallet signed acceptance — prevents front-run griefing
+
+        // HIGH-2: Verify agentWallet signed acceptance — supports EOA (ECDSA) and smart contract (ERC-1271).
+        // Prevents front-run griefing by requiring the agent's explicit consent.
         bytes32 hash = keccak256(
             abi.encodePacked("REGISTER_AGENT", block.chainid, address(this), msg.sender, agentWallet)
         ).toEthSignedMessageHash();
-        if (ECDSA.recover(hash, agentWalletSig) != agentWallet) revert InvalidAgentSignature();
+
+        bool sigValid;
+        uint256 codeSize;
+        assembly { codeSize := extcodesize(agentWallet) }
+        if (codeSize == 0) {
+            // EOA: ECDSA recovery
+            sigValid = (ECDSA.recover(hash, agentWalletSig) == agentWallet);
+        } else {
+            // Smart contract: ERC-1271
+            (bool callOk, bytes memory result) = agentWallet.staticcall(
+                abi.encodeWithSignature("isValidSignature(bytes32,bytes)", hash, agentWalletSig)
+            );
+            sigValid = callOk && result.length >= 32 && bytes4(result) == bytes4(0x1626ba7e);
+        }
+        if (!sigValid) revert InvalidAgentSignature();
+
         agentWalletOwner[agentWallet] = msg.sender;
         ownerAgents[msg.sender].push(agentWallet);
         _agentIndexPlusOne[msg.sender][agentWallet] = ownerAgents[msg.sender].length;
@@ -100,12 +128,13 @@ contract AgentRegistry {
     {
         address[] storage all = ownerAgents[owner];
         uint256 total = all.length;
-        if (start >= total) return new address[](0);
-        uint256 end = start + count;
-        if (end > total) end = total;
-        page = new address[](end - start);
-        for (uint256 i = start; i < end; i++) {
-            page[i - start] = all[i];
+        // LOW-1: overflow-safe bounds check — avoids start+count wraparound.
+        if (start >= total || count == 0) return new address[](0);
+        uint256 remaining = total - start; // safe: start < total
+        uint256 size = count > remaining ? remaining : count;
+        page = new address[](size);
+        for (uint256 i = 0; i < size; i++) {
+            page[i] = all[start + i];
         }
     }
 
@@ -117,6 +146,17 @@ contract AgentRegistry {
     /// @notice Returns count of agent wallets registered by this owner.
     function getAgentCount(address owner) external view returns (uint256) {
         return ownerAgents[owner].length;
+    }
+
+    /// @dev Returns true if `str` starts with `prefix`.
+    function _startsWith(string memory str, string memory prefix) private pure returns (bool) {
+        bytes memory s = bytes(str);
+        bytes memory p = bytes(prefix);
+        if (s.length < p.length) return false;
+        for (uint256 i = 0; i < p.length; i++) {
+            if (s[i] != p[i]) return false;
+        }
+        return true;
     }
 
     /// @dev O(1) swap-and-pop removal using the index mapping.
