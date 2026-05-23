@@ -34,6 +34,9 @@ contract TierGuardHook is IERC7579Hook {
     ///      If set, preCheck enforces callTargets/selectorAllowlist for ALG_SESSION_KEY ops.
     mapping(address => address) public accountAgentValidator;
 
+    /// @dev MEDIUM-1: separate initialized sentinel so guardAddr==0 still marks as installed.
+    mapping(address => bool) private _initialized;
+
     error TierGuardHookUnauthorized();
     error TierViolation(uint8 required, uint8 provided);
     error UnknownAlgId(uint8 algId);
@@ -56,7 +59,8 @@ contract TierGuardHook is IERC7579Hook {
     ///        OR abi.encode(guardAddress, tier1Limit, tier2Limit, agentSessionKeyValidator) — 4-param (128 bytes).
     ///        The 4-param format enables session scope enforcement via AgentSessionKeyValidator (M8.P2).
     function onInstall(bytes calldata data) external override {
-        if (accountGuard[msg.sender] != address(0)) revert AlreadyInstalled();
+        if (_initialized[msg.sender]) revert AlreadyInstalled();
+        _initialized[msg.sender] = true;
         if (data.length == 0) return; // no-op if no init data
         if (data.length >= 128) {
             // Extended 4-param format: includes agentSessionKeyValidator address
@@ -80,10 +84,11 @@ contract TierGuardHook is IERC7579Hook {
         delete accountTier1[msg.sender];
         delete accountTier2[msg.sender];
         delete accountAgentValidator[msg.sender];
+        delete _initialized[msg.sender];
     }
 
     function isInitialized(address smartAccount) external view override returns (bool) {
-        return accountGuard[smartAccount] != address(0);
+        return _initialized[smartAccount];
     }
 
     // ─── IERC7579Hook ────────────────────────────────────────────────
@@ -142,24 +147,24 @@ contract TierGuardHook is IERC7579Hook {
             // fail-closed: session key expected but not found in transient storage → revert
             if (taggedSessionKey == bytes32(0)) revert TierGuardHookUnauthorized();
             uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
-            if (sessionType == 0x01) {
-                address sessionKey = address(uint160(uint256(taggedSessionKey)));
-                // Parse dest and inner selector from the forwarded execute() calldata using
-                // _parseExecuteCalldata, which follows the ABI offset pointer for the `bytes func`
-                // parameter. Fixed-offset parsing (e.g. msgData[132:136]) is UNSAFE because ABI
-                // encoding allows non-standard offsets: an attacker could craft calldata where the
-                // real func data is at a non-standard position but the hook reads a decoy selector
-                // at the standard position. We use the offset pointer at params[64:96] instead.
-                (address dest, bytes4 selector) = _parseExecuteCalldata(msgData);
-                // enforceSessionScope reverts if the target or selector is not in the allowlist
-                (bool ok,) = agentValidator.staticcall(
-                    abi.encodeWithSignature(
-                        "enforceSessionScope(address,address,address,bytes4)",
-                        msg.sender, sessionKey, dest, selector
-                    )
-                );
-                if (!ok) revert TierGuardHookUnauthorized();
-            }
+            // MEDIUM-2: fail-closed — only 0x01 (normal session key) is supported; any other tag reverts.
+            if (sessionType != 0x01) revert TierGuardHookUnauthorized();
+            address sessionKey = address(uint160(uint256(taggedSessionKey)));
+            // Parse dest and inner selector from the forwarded execute() calldata using
+            // _parseExecuteCalldata, which follows the ABI offset pointer for the `bytes func`
+            // parameter. Fixed-offset parsing (e.g. msgData[132:136]) is UNSAFE because ABI
+            // encoding allows non-standard offsets: an attacker could craft calldata where the
+            // real func data is at a non-standard position but the hook reads a decoy selector
+            // at the standard position. We use the offset pointer at params[64:96] instead.
+            (address dest, bytes4 selector) = _parseExecuteCalldata(msgData);
+            // enforceSessionScope reverts if the target or selector is not in the allowlist
+            (bool ok,) = agentValidator.staticcall(
+                abi.encodeWithSignature(
+                    "enforceSessionScope(address,address,address,bytes4)",
+                    msg.sender, sessionKey, dest, selector
+                )
+            );
+            if (!ok) revert TierGuardHookUnauthorized();
         }
 
         return "";

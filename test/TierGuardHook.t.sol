@@ -121,6 +121,23 @@ contract MockAccountWithSessionKey is MockAccountCaller {
     }
 }
 
+/// @dev Like MockAccountWithSessionKey but accepts an arbitrary tagged bytes32 (for MEDIUM-2 tests)
+contract MockAccountWithSessionKey2 is MockAccountCaller {
+    bytes32 public immutable taggedKey;
+
+    constructor(bytes32 _taggedKey) {
+        taggedKey = _taggedKey;
+    }
+
+    function getCurrentAlgId() external pure returns (uint256) {
+        return 0x08; // ALG_SESSION_KEY
+    }
+
+    function getCurrentSessionKey() external view returns (bytes32) {
+        return taggedKey;
+    }
+}
+
 /// @title TierGuardHookTest — Unit tests for TierGuardHook (M7.2, M8.P2)
 contract TierGuardHookTest is Test {
     TierGuardHook public hook;
@@ -556,6 +573,63 @@ contract TierGuardHookTest is Test {
         // With _parseExecuteCalldata (HIGH-1 fix), the hook follows the offset pointer (0x80=128)
         // and reads the real func data: dest=tokenB (forbidden), selector=0xa9059cbb.
         // tokenB is not in the allowlist — enforceSessionScope reverts — TierGuardHookUnauthorized.
+        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
+        sessionAccount.callPreCheckExpectRevert(hook, address(this), 0, msgData);
+    }
+
+    // ─── MEDIUM-1: guardAddr==0 still marks as initialized ────────────────────
+
+    /// @notice MEDIUM-1: onInstall with guardAddr=0 must still set the initialized flag,
+    ///         so a second install attempt reverts with AlreadyInstalled.
+    function test_onInstall_guardAddrZero_alreadyInstalled_reverts() public {
+        bytes memory data = abi.encode(address(0), uint256(0), uint256(0));
+        accountContract.callInstall(hook, data);
+
+        // Even though guardAddr==0, re-install must revert
+        vm.expectRevert(TierGuardHook.AlreadyInstalled.selector);
+        accountContract.callInstall(hook, data);
+    }
+
+    /// @notice MEDIUM-1: isInitialized returns true after install with guardAddr=0.
+    function test_isInitialized_afterZeroGuard_isTrue() public {
+        bytes memory data = abi.encode(address(0), uint256(0), uint256(0));
+        accountContract.callInstall(hook, data);
+        assertTrue(hook.isInitialized(address(accountContract)));
+    }
+
+    /// @notice MEDIUM-1: uninstall then re-install must succeed after prior zero-guard install.
+    function test_onUninstall_then_reinstall_succeeds() public {
+        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(10 ether));
+        accountContract.callInstall(hook, data);
+        accountContract.callUninstall(hook);
+        assertFalse(hook.isInitialized(address(accountContract)));
+        // Should succeed after uninstall
+        accountContract.callInstall(hook, data);
+        assertTrue(hook.isInitialized(address(accountContract)));
+    }
+
+    // ─── MEDIUM-2: non-0x01 session key tag reverts ───────────────────────────
+
+    /// @notice MEDIUM-2: session key tagged as 0x02 (unknown type) must cause TierGuardHookUnauthorized.
+    function test_preCheck_sessionKey_unknownTag_reverts() public {
+        address sessionKey = makeAddr("sessionKey");
+        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
+        address[] memory targets = new address[](1);
+        targets[0] = makeAddr("target");
+        agentValidator.setAllowedTargets(targets);
+
+        // Tag the session key with type 0x02 (not 0x01)
+        bytes32 tagged = bytes32((uint256(0x02) << 248) | uint256(uint160(sessionKey)));
+        MockAccountWithSessionKey2 sessionAccount = new MockAccountWithSessionKey2(tagged);
+        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
+        sessionAccount.callInstall(hook, installData);
+        guard.setShouldRevert(false);
+
+        bytes4 outerSel = bytes4(keccak256("execute(address,uint256,bytes)"));
+        address target = targets[0];
+        bytes memory msgData = abi.encodeWithSelector(outerSel, target, 0,
+            abi.encodePacked(bytes4(0x12345678)));
+
         vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
         sessionAccount.callPreCheckExpectRevert(hook, address(this), 0, msgData);
     }
