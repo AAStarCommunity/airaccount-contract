@@ -1312,18 +1312,23 @@ abstract contract AAStarAirAccountBase is Initializable {
     /// @param index   Guardian slot to remove (0-indexed)
     /// @param guardianSigs At least RECOVERY_THRESHOLD guardian signatures over the removal hash
     function removeGuardian(uint8 index, bytes[] calldata guardianSigs) external onlyOwner {
+        // Removal during active recovery would let a compromised owner cancel recovery with
+        // pre-collected guardian sigs — bypassing the guardian-only cancelRecovery() guard.
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
         if (_guardianCount <= 2) revert MinGuardianRequired();
         if (index >= _guardianCount) revert InvalidGuardian();
-        if (guardianSigs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+        if (guardianSigs.length < RECOVERY_THRESHOLD || guardianSigs.length > _guardianCount)
+            revert InsufficientGuardianApprovals();
 
-        // Hash = keccak256(account || chainId || nonce || "REMOVE_GUARDIAN" || index)
-        // Nonce prevents replay of the same guardian signatures for a different removal.
+        address guardianToRemove = _getGuardian(index);
+        // Hash binds to the actual guardian address (not just index) to prevent mismatch
+        // if slot order ever changes without incrementing the nonce.
         bytes32 removalHash = keccak256(abi.encode(
             address(this),
             block.chainid,
             _guardianRemovalNonce,
             "REMOVE_GUARDIAN",
-            uint256(index)
+            guardianToRemove
         ));
         bytes32 ethHash = removalHash.toEthSignedMessageHash();
 
@@ -1339,19 +1344,13 @@ abstract contract AAStarAirAccountBase is Initializable {
 
         _guardianRemovalNonce++;
 
-        address removed = _getGuardian(index);
         for (uint8 i = index; i < _guardianCount - 1; i++) {
             _setGuardian(i, _getGuardian(uint8(i + 1)));
         }
         _setGuardian(_guardianCount - 1, address(0));
         _guardianCount--;
 
-        if (activeRecovery.newOwner != address(0)) {
-            delete activeRecovery;
-            emit RecoveryCancelled();
-        }
-
-        emit GuardianRemoved(index, removed);
+        emit GuardianRemoved(index, guardianToRemove);
     }
 
     /// @notice Propose a recovery: change owner to a new address.
