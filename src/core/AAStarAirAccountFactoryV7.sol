@@ -41,6 +41,10 @@ contract AAStarAirAccountFactoryV7 {
     ///      Typically TierGuardHook to enforce tier-based spending limits via ERC-7579 hooks.
     address public immutable defaultHookModule;
 
+    /// @dev Maximum allowed TTL for guardian2 (and agentKey) signatures in createAgentAccount.
+    ///      Prevents a long-lived signature from being replayed far in the future.
+    uint48 internal constant MAX_GUARDIAN_SIG_TTL = 30 days;
+
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
 
     /// @dev Emitted when an agent account is created via createAgentAccount.
@@ -55,6 +59,7 @@ contract AAStarAirAccountFactoryV7 {
 
     error GuardianDidNotAccept(address guardian);
     error DuplicateGuardian();
+    error AgentKeyDidNotAccept();
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
@@ -228,16 +233,21 @@ contract AAStarAirAccountFactoryV7 {
     ///                   keccak256("ACCEPT_AGENT_GUARDIAN" || chainId || factory || agentKey || humanOwner || agentId || deadline).toEthSignedMessageHash()
     ///                   The "ACCEPT_AGENT_GUARDIAN" domain and explicit humanOwner + agentId prevent
     ///                   cross-namespace collision with createAccountWithDefaults signatures.
+    /// @param agentKeySig agentKey's consent signature. Signs:
+    ///                   keccak256("ACCEPT_AGENT_KEY" || chainId || factory || agentKey || humanOwner || agentId || deadline).toEthSignedMessageHash()
+    ///                   Proves the KMS/agent key holder explicitly authorized this creation;
+    ///                   prevents a human from setting an arbitrary EOA as the account owner.
+    /// @param deadline    Expiry timestamp for guardian2Sig and agentKeySig — prevents replay of stale signatures
     /// @param dailyLimit  Daily spending limit in wei for this agent account
-    /// @param deadline    Expiry timestamp for guardian2Sig — prevents replay of stale signatures
     /// @return account    The deployed agent account address
     function createAgentAccount(
         address agentKey,
         bytes32 agentId,
         address guardian2,
         bytes calldata guardian2Sig,
-        uint256 dailyLimit,
-        uint48 deadline
+        bytes calldata agentKeySig,
+        uint48 deadline,
+        uint256 dailyLimit
     ) external returns (address account) {
         require(agentKey != address(0), "Agent key required");
         require(guardian2 != address(0), "Guardian2 required");
@@ -245,6 +255,7 @@ contract AAStarAirAccountFactoryV7 {
         require(agentKey != guardian2, "Agent key cannot be guardian2");
         require(dailyLimit > 0, "Daily limit required");
         require(block.timestamp <= deadline, "Guardian sig expired");
+        require(deadline <= block.timestamp + MAX_GUARDIAN_SIG_TTL, "Deadline too far in future");
 
         // Uniqueness prechecks: none of the three guardians may be the community guardian,
         // preventing an attacker from using the factory's own defaultCommunityGuardian as
@@ -252,6 +263,15 @@ contract AAStarAirAccountFactoryV7 {
         require(msg.sender != defaultCommunityGuardian, "Human owner cannot be community guardian");
         require(guardian2 != defaultCommunityGuardian, "Guardian2 cannot be community guardian");
         require(agentKey != defaultCommunityGuardian, "Agent key cannot be community guardian");
+
+        // Verify agentKey consents to becoming this account's owner.
+        // This proves the agentKey holder (KMS) authorized this creation,
+        // preventing a human from setting an arbitrary EOA as agentKey.
+        bytes32 agentKeyHash = keccak256(
+            abi.encodePacked("ACCEPT_AGENT_KEY", block.chainid, address(this), agentKey, msg.sender, agentId, deadline)
+        ).toEthSignedMessageHash();
+        (address recoveredAgentKey,,) = agentKeyHash.tryRecover(agentKeySig);
+        if (recoveredAgentKey != agentKey) revert AgentKeyDidNotAccept();
 
         // Verify guardian2 signed the agent-specific acceptance hash.
         // Domain "ACCEPT_AGENT_GUARDIAN" (distinct from "ACCEPT_GUARDIAN" used in createAccountWithDefaults)
