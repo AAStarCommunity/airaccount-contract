@@ -282,7 +282,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     event WeightChangeCancelled();
     event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
     event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
-    event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet);
+    event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet, address indexed agentRegistry);
 
     // ─── Modifiers ────────────────────────────────────────────────────
 
@@ -1558,13 +1558,15 @@ abstract contract AAStarAirAccountBase is Initializable {
     /// @param agentId Logical agent identifier (used for event indexing only)
     /// @param agentWallet Execution wallet address that the agent uses for transactions
     /// @param agentRegistry AgentRegistry contract address (M8.1)
+    /// @param agentWalletSig ECDSA/ERC-1271 sig from agentWallet authorizing this registration
     /// @dev Only owner can set agent wallet bindings. Calls AgentRegistry.registerAgent()
     ///      which records msg.sender (this account) as the human owner of agentWallet.
     ///      Reverts if the registry call fails (e.g. already registered).
     function setAgentWallet(
         uint256 agentId,
         address agentWallet,
-        address agentRegistry
+        address agentRegistry,
+        bytes calldata agentWalletSig
     ) external onlyOwner {
         if (agentWallet == address(0) || agentRegistry == address(0)) revert InvalidGuardian();
         // Require agentRegistry to be a deployed contract (extcodesize > 0).
@@ -1573,10 +1575,10 @@ abstract contract AAStarAirAccountBase is Initializable {
         assembly { codeSize := extcodesize(agentRegistry) }
         if (codeSize == 0) revert AgentRegistrationFailed();
         (bool ok,) = agentRegistry.call(
-            abi.encodeWithSignature("registerAgent(address)", agentWallet)
+            abi.encodeWithSignature("registerAgent(address,bytes)", agentWallet, agentWalletSig)
         );
         if (!ok) revert AgentRegistrationFailed();
-        emit AgentWalletSet(agentId, agentWallet);
+        emit AgentWalletSet(agentId, agentWallet, agentRegistry);
     }
 
     receive() external payable {}
