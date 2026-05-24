@@ -10,9 +10,10 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 /// @title AAStarAirAccountFactoryV7AgentAccountTest
 /// @notice Tests for createAgentAccount() and getAgentAddress() on AAStarAirAccountFactoryV7.
 ///         An agent account has:
-///           - owner = agentKey (the AI agent's signing EOA)
-///           - guardian1 = msg.sender (the human who creates the account, auto-accepted)
+///           - owner = humanAirAccount (msg.sender, the human who creates the account)
+///           - guardian1 = msg.sender (same as owner, double protection)
 ///           - guardian2 = provided separately, must sign acceptance message
+///           - agentKey = authorized as session key only, NOT the account owner
 ///           - salt = uint256(keccak256(abi.encodePacked(humanOwner, agentId)))
 contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
     AAStarAirAccountFactoryV7 public factory;
@@ -21,7 +22,7 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
     // Human owner wallet — the caller who creates agent accounts
     Vm.Wallet public humanWallet;
-    // Agent key wallet — the AI agent's signing key, becomes the account owner
+    // Agent key wallet — the AI agent's signing key, authorized as session key only (NOT owner)
     Vm.Wallet public agentWallet;
     // Guardian2 wallet — the human's backup/trusted person
     Vm.Wallet public guardian2Wallet;
@@ -125,14 +126,13 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
 
         AAStarAirAccountV7 acc = AAStarAirAccountV7(payable(account));
 
-        // Owner must be the agent key, not the human
-        assertEq(acc.owner(), agentWallet.addr, "Owner must be agentKey");
+        // Owner must be humanAirAccount (msg.sender), not agentKey
+        assertEq(acc.owner(), humanWallet.addr, "Owner must be humanAirAccount");
 
-        // guardian1 = human (msg.sender), guardian2 = guardian2Wallet, guardian3 = communityGuardian
-        assertEq(acc.guardianCount(), 3, "Should have 3 guardians");
-        assertEq(acc.guardians(0), humanWallet.addr,     "guardian1 must be human");
-        assertEq(acc.guardians(1), guardian2Wallet.addr, "guardian2 must be guardian2Wallet");
-        assertEq(acc.guardians(2), communityGuardian,    "guardian3 must be communityGuardian");
+        // Contract forbids owner == guardian, so guardian[0]=guardian2, guardian[1]=communityGuardian
+        assertEq(acc.guardianCount(), 2, "Should have 2 guardians");
+        assertEq(acc.guardians(0), guardian2Wallet.addr, "guardian1 must be guardian2Wallet");
+        assertEq(acc.guardians(1), communityGuardian,    "guardian2 must be communityGuardian");
 
         // Guard should be configured with the specified daily limit
         AAStarGlobalGuard g = acc.guard();
@@ -362,19 +362,17 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
     ///         the account initialization reverts at line 344 of AAStarAirAccountBase.sol.
     ///         This is a security feature: the owner key cannot also be a guardian (prevents
     ///         a compromised owner key from short-circuiting 2-of-3 social recovery).
-    function test_CreateAgentAccount_agentKeyEqualsCaller_reverts() public {
+    function test_CreateAgentAccount_agentKeyEqualsCaller_succeeds() public {
+        // With owner=humanAirAccount (not agentKey), setting agentKey==msg.sender is now legal.
+        // The human's EOA acts as both the account owner and the agent signing key.
+        // agentKey is still only authorized as session key via grantAgentSession() — not elevated.
         uint48 deadline = uint48(block.timestamp + 1 days);
-        // Human uses their own address as the agent signing key — will be rejected
-        // because agentKey becomes the owner, and msg.sender (== agentKey) becomes guardian1,
-        // violating the owner != guardian invariant in AAStarAirAccountBase.
         bytes memory sig2 = _guardian2Sig(guardian2Wallet, humanWallet.addr, humanWallet.addr, AGENT_ID_1, deadline);
         bytes memory agentSig = _agentKeySig(humanWallet.privateKey, humanWallet.addr, humanWallet.addr, AGENT_ID_1, deadline);
 
         vm.prank(humanWallet.addr);
-        // Revert due to InvalidGuardian() in account initialize() — owner == guardian1
-        vm.expectRevert();
-        factory.createAgentAccount(
-            humanWallet.addr,   // agentKey == msg.sender — violates owner != guardian invariant
+        address account = factory.createAgentAccount(
+            humanWallet.addr,
             AGENT_ID_1,
             guardian2Wallet.addr,
             sig2,
@@ -382,6 +380,8 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
             deadline,
             DAILY_LIMIT
         );
+        assertTrue(account.code.length > 0, "Account must be deployed");
+        assertEq(AAStarAirAccountV7(payable(account)).owner(), humanWallet.addr);
     }
 
     // ─── Front-run resistance: cross-namespace salt collision ──────────────

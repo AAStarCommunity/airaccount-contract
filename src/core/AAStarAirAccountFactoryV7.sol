@@ -290,9 +290,11 @@ contract AAStarAirAccountFactoryV7 {
             return account;
         }
 
-        // guardian1 = msg.sender (human owner, no sig needed)
+        // owner = msg.sender (humanAirAccount). Contract forbids owner == guardian, so guardian[0]
+        // is guardian2 (the human's personal backup), guardian[1] is communityGuardian.
+        // agentKey is authorized as session key separately via grantAgentSession() — NOT the owner.
         AAStarAirAccountBase.InitConfig memory config = _buildDefaultConfig(
-            msg.sender, guardian2, dailyLimit
+            guardian2, address(0), dailyLimit
         );
         // Pre-deploy guard bound to the predicted account address before cloning.
         address guardAddr = address(new AAStarGlobalGuard(
@@ -304,7 +306,7 @@ contract AAStarAirAccountFactoryV7 {
             config.initialTokenConfigs
         ));
         account = Clones.cloneDeterministic(implementation, cloneSalt);
-        AAStarAirAccountV7(payable(account)).initialize(entryPoint, agentKey, config, guardAddr);
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, msg.sender, config, guardAddr);
         emit AgentAccountCreated(account, agentKey, msg.sender, agentId, guardian2, dailyLimit);
     }
 
