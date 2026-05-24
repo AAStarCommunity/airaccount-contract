@@ -58,7 +58,13 @@ contract TierGuardHook is IERC7579Hook {
     /// @param msgData The full execute() calldata forwarded by the account.
     ///        Layout: [4B execute selector][32B dest padded][32B value][32B func-offset][32B func-len][func...]
     ///        dest  = address(uint160(uint256(bytes32(msgData[4:36]))))
-    ///        inner selector = bytes4(msgData[132:136]) when func.length >= 4
+    ///        func offset pointer at msgData[68:100] — read this, do NOT assume 0x60.
+    ///        func data starts at: 4 + offset + 32  (4=execute selector, 32=length word)
+    ///        inner selector = first 4 bytes of func data
+    ///
+    ///        Security: fixed-offset [132:136] is bypassable with non-canonical ABI encoding.
+    ///        Attacker could put a fake allowed selector at offset 132 while actual func runs
+    ///        at a different ABI-decoded position. Always derive position from the offset pointer.
     /// @return hookData Empty bytes (no post-check state needed)
     function preCheck(
         address msgSender,
@@ -85,22 +91,27 @@ contract TierGuardHook is IERC7579Hook {
                 uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
                 if (sessionType == 0x01) {
                     address sessionKey = address(uint160(uint256(taggedSessionKey)));
-                    // Parse dest and inner selector from the forwarded execute() calldata.
-                    // msgData layout (full execute calldata including selector):
-                    //   [0:4]    execute() selector (bytes4)
-                    //   [4:36]   dest (address padded to 32 bytes)
-                    //   [36:68]  value (uint256)
-                    //   [68:100] offset for func bytes (= 0x60)
-                    //   [100:132] func length
-                    //   [132:]   func data
-                    // Inner call selector = first 4 bytes of func data = msgData[132:136]
+                    // Parse dest and inner selector from execute() calldata.
+                    // dest: msgData[4:36] (always at fixed position — it's a value type, not a pointer).
+                    // selector: derived from the ABI offset pointer at msgData[68:100].
+                    //   offset is relative to args start (msgData[4:]).
+                    //   func data starts at: 4 + offset + 32  (32 = func length word).
+                    //   We MUST read the offset from msgData[68:100] rather than assuming 0x60
+                    //   to prevent non-canonical ABI bypass (fake selector at fixed position 132).
                     address dest;
                     bytes4 selector;
                     if (msgData.length >= 36) {
                         dest = address(uint160(uint256(bytes32(msgData[4:36]))));
                     }
-                    if (msgData.length >= 136) {
-                        selector = bytes4(msgData[132:136]);
+                    if (msgData.length >= 100) {
+                        uint256 funcOffset = uint256(bytes32(msgData[68:100]));
+                        // Guard against overflow: funcOffset must leave room for 4+32 header bytes
+                        if (funcOffset <= type(uint256).max - 36) {
+                            uint256 funcDataStart = 4 + funcOffset + 32;
+                            if (msgData.length >= funcDataStart + 4) {
+                                selector = bytes4(msgData[funcDataStart:funcDataStart + 4]);
+                            }
+                        }
                     }
                     // enforceSessionScope reverts if the target or selector is not in the allowlist
                     (bool ok,) = agentValidator.staticcall(

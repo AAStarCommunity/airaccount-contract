@@ -328,4 +328,53 @@ contract TierGuardHookTest is Test {
         assertFalse(hook.isInitialized(account));
         assertTrue(hook.isInitialized(address(accountB)));
     }
+
+    // ─── Security: non-canonical ABI offset bypass prevention ────────────────
+
+    /// @notice Attacker crafts calldata with non-canonical bytes offset so the real func
+    ///         is at a different position while a fake "allowed" selector sits at offset 132.
+    ///         The hook must read the actual offset pointer and block the real (forbidden) selector.
+    function test_preCheck_sessionKey_nonCanonicalOffset_blocksRealSelector() public {
+        address tokenA = makeAddr("tokenA");
+        address tokenB = makeAddr("tokenB");
+        address sessionKey = makeAddr("sessionKey");
+
+        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
+        address[] memory targets = new address[](1);
+        targets[0] = tokenA; // only tokenA is allowed
+        agentValidator.setAllowedTargets(targets);
+
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        sessionAccount.callInstall(hook, abi.encode(address(agentValidator)));
+
+        // Build non-canonical msgData: offset = 0x80 (128) instead of 0x60 (96).
+        // Forbidden func (transfer to tokenB) is at the non-canonical position.
+        // Fake allowed selector is planted at fixed offset 132 (the old vulnerable position).
+        bytes4 executeSelector = bytes4(keccak256("execute(address,uint256,bytes)"));
+        bytes4 allowedFakeSelector = bytes4(keccak256("doSomething()")); // not in forbidden list
+        bytes4 forbiddenSelector   = bytes4(keccak256("transfer(address,uint256)"));
+
+        // non-canonical offset = 0x80 = 128
+        // args layout (starting after executeSelector):
+        //   [0:32]   dest = tokenB (padded)
+        //   [32:64]  value = 0
+        //   [64:96]  offset = 0x80 (non-canonical, was 0x60)
+        //   [96:128] 32 bytes of padding / filler (old "length" position — now contains fake selector)
+        //   [128:160] func length = 4
+        //   [160:192] func data = forbiddenSelector padded
+        bytes memory args = abi.encodePacked(
+            bytes32(uint256(uint160(tokenB))),  // dest
+            bytes32(uint256(0)),                 // value
+            bytes32(uint256(0x80)),              // non-canonical offset: 128 bytes into args
+            bytes32(uint256(uint32(allowedFakeSelector))), // fake selector at canonical-offset position
+            bytes32(uint256(4)),                 // func length
+            bytes32(uint256(uint32(forbiddenSelector)))    // real func: transfer() — forbidden
+        );
+        bytes memory msgData = abi.encodePacked(executeSelector, args);
+
+        // Hook must follow the offset pointer (0x80) and read the real forbidden selector,
+        // NOT read at the canonical fixed position (args[96:100] = fake selector).
+        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
+        sessionAccount.callPreCheckExpectRevert(hook, other, 0, msgData);
+    }
 }
