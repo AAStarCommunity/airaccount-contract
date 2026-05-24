@@ -1,0 +1,41 @@
+# CLA Assistant GitHub Action
+# Copy this file to: .github/workflows/cla.yml in each repo
+#
+# Prerequisites:
+#   1. Go to repo Settings → Secrets → add secret named CLA_TOKEN
+#      (a Personal Access Token with repo scope from an org admin account)
+#   2. The CLA text lives at:
+#      https://github.com/AAStarCommunity/Brood/blob/main/protocol/CLA.md
+
+name: CLA Assistant
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  contents: write          # write only to cla-signatures branch
+  pull-requests: write     # post CLA comment on PRs
+  statuses: write          # set commit status check
+  # actions: write removed — not required by contributor-assistant
+
+jobs:
+  cla-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CLA Assistant
+        # Pinned to commit SHA for supply-chain safety (tag v2.6.1 = ca4a40a7d1)
+        # Re-pin when upgrading: check https://github.com/contributor-assistant/github-action/releases
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_TOKEN }}
+        with:
+          path-to-signatures: 'signatures/cla.json'
+          path-to-document: 'https://github.com/AAStarCommunity/Brood/blob/main/protocol/CLA.md'
+          branch: 'cla-signatures'
+          allowlist: bot*,dependabot[bot],github-actions[bot]
+          remote-organization-name: AAStarCommunity
+          remote-repository-name: Brood
