@@ -139,6 +139,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     address private _guardian1;
     address private _guardian2;
     uint256 private _guardianRemovalNonce;
+    uint256 private _tierLimitNonce;
 
     struct RecoveryProposal {
         address newOwner;
@@ -237,6 +238,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     error InvalidGuardianSignature();
     error SessionScopeViolation();
     error InvalidTierConfig();
+    error CannotIncreaseTierLimit();
     /// @dev HIGH-2: Agent session keys must use execute(), not executeBatch(), when a hook module
     ///      (TierGuardHook) is installed. executeBatch does not invoke preCheck, so the hook's
     ///      session scope enforcement (callTargets / selectorAllowlist) would be bypassed.
@@ -400,9 +402,44 @@ abstract contract AAStarAirAccountBase is Initializable {
         emit P256KeySet(_x, _y);
     }
 
+    /// @notice Set tier thresholds. After initial configuration (from 0), limits may only decrease.
+    ///         To raise previously set limits, use increaseTierLimits() which requires guardian sigs.
     function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwner {
         if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
-        if (_tier1 > 0 && _tier2 == 0) revert InvalidTierConfig();
+        if ((tier1Limit > 0 && _tier1 > tier1Limit) || (tier2Limit > 0 && _tier2 > tier2Limit)) {
+            revert CannotIncreaseTierLimit();
+        }
+        tier1Limit = _tier1;
+        tier2Limit = _tier2;
+        emit TierLimitsSet(_tier1, _tier2);
+    }
+
+    /// @notice Increase tier limits — requires RECOVERY_THRESHOLD guardian signatures.
+    ///         Security principle: the authorization level to loosen a spending limit must match
+    ///         the tier level being loosened (spending at T2 requires a guardian; so does raising T2).
+    function increaseTierLimits(
+        uint256 _tier1,
+        uint256 _tier2,
+        bytes[] calldata guardianSigs
+    ) external onlyOwner {
+        if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
+        if (guardianSigs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        bytes32 changeHash = keccak256(abi.encode(
+            address(this), block.chainid, _tierLimitNonce, "INCREASE_TIER_LIMITS", _tier1, _tier2
+        )).toEthSignedMessageHash();
+
+        uint256 approvalBitmap = 0;
+        for (uint256 i = 0; i < guardianSigs.length; i++) {
+            address recovered = changeHash.recover(guardianSigs[i]);
+            uint8 gIdx = _guardianIndex(recovered);
+            uint256 bit = uint256(1) << gIdx;
+            if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
+            approvalBitmap |= bit;
+        }
+        if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        _tierLimitNonce++;
         tier1Limit = _tier1;
         tier2Limit = _tier2;
         emit TierLimitsSet(_tier1, _tier2);
