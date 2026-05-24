@@ -62,6 +62,8 @@ contract TierGuardHook is IERC7579Hook {
         if (_initialized[msg.sender]) revert AlreadyInstalled();
         _initialized[msg.sender] = true;
         if (data.length == 0) return; // no-op if no init data
+        // Discriminant: 3-param=(address,uint256,uint256)=96 bytes; 4-param adds address=128 bytes.
+        // Static ABI encoding means a 3-param call is always exactly 96 bytes — never 128.
         if (data.length >= 128) {
             // Extended 4-param format: includes agentSessionKeyValidator address
             (address guardAddr, uint256 t1, uint256 t2, address agentValidator) =
