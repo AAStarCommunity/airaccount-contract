@@ -84,6 +84,7 @@ contract ForceExitModule is IERC7579Module {
     error InvalidGuardianSig();
     error UnsupportedL2Type();
     error NotOwner();
+    error NotInstalled();
 
     // ─── Events ────────────────────────────────────────────────────────────
 
@@ -126,6 +127,7 @@ contract ForceExitModule is IERC7579Module {
      * @param data    Calldata to forward to target on L1
      */
     function proposeForceExit(address target, uint256 value, bytes calldata data) external {
+        if (!_initialized[msg.sender]) revert NotInstalled();
         ExitProposal storage proposal = pendingExit[msg.sender];
         if (proposal.proposedAt != 0) revert AlreadyProposed();
 

@@ -401,7 +401,8 @@ abstract contract AAStarAirAccountBase is Initializable {
     }
 
     function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwner {
-        if (_tier1 > _tier2 && _tier2 > 0) revert InvalidTierConfig();
+        if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
+        if (_tier1 > 0 && _tier2 == 0) revert InvalidTierConfig();
         tier1Limit = _tier1;
         tier2Limit = _tier2;
         emit TierLimitsSet(_tier1, _tier2);
@@ -1359,6 +1360,9 @@ abstract contract AAStarAirAccountBase is Initializable {
     ///         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals.
     function proposeRecovery(address _newOwner) external {
         if (_newOwner == address(0) || _newOwner == owner) revert InvalidNewOwner();
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_getGuardian(i) == _newOwner) revert InvalidNewOwner();
+        }
         if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
 
         uint8 guardianIndex = _guardianIndex(msg.sender);

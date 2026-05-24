@@ -261,7 +261,7 @@ contract AgentSessionKeyValidator is IERC7579Validator {
                 state.callCount = 0;
             }
             if (state.callCount >= cfg.velocityLimit) {
-                revert VelocityLimitExceeded(cfg.velocityLimit, state.callCount);
+                return 1; // SIG_VALIDATION_FAILED — velocity limit exceeded
             }
             state.callCount++;
         }

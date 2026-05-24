@@ -333,7 +333,7 @@ contract AgentSessionKeyValidatorTest is Test {
         assertEq(result, 1);
     }
 
-    function test_validateUserOp_velocityLimit_exceeded_reverts() public {
+    function test_validateUserOp_velocityLimit_exceeded_returns1() public {
         uint16 limit = 2;
         uint32 window = 3600;
         _setupSession(uint48(block.timestamp + 1 hours), limit, window);
@@ -345,15 +345,9 @@ contract AgentSessionKeyValidatorTest is Test {
         validator.validateUserOp(op, USER_OP_HASH);
         // Second call — OK
         validator.validateUserOp(op, USER_OP_HASH);
-        // Third call — exceeds limit=2, should revert
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                AgentSessionKeyValidator.VelocityLimitExceeded.selector,
-                limit,
-                uint256(limit)
-            )
-        );
-        validator.validateUserOp(op, USER_OP_HASH);
+        // Third call — exceeds limit=2, should return SIG_VALIDATION_FAILED
+        uint256 result = validator.validateUserOp(op, USER_OP_HASH);
+        assertEq(result, 1);
     }
 
     function test_validateUserOp_velocityWindow_resets() public {
