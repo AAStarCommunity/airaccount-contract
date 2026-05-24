@@ -70,12 +70,4 @@ contract IdentityRegistry is ERC721, IIdentityRegistry {
     function safeTransferFrom(address, address, uint256, bytes memory) public pure override {
         revert TransferNotAllowed();
     }
-
-    function approve(address, uint256) public pure override {
-        revert TransferNotAllowed();
-    }
-
-    function setApprovalForAll(address, bool) public pure override {
-        revert TransferNotAllowed();
-    }
 }
