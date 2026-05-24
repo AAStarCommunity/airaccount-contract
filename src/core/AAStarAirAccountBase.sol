@@ -256,6 +256,8 @@ abstract contract AAStarAirAccountBase is Initializable {
     error WeightChangeNotApproved();
     error NoWeightChangeProposal();
     error WeightChangeAlreadyApproved();
+    // M8.1 AgentRegistry
+    error AgentRegistrationFailed();
 
     // ─── Events ───────────────────────────────────────────────────────
 
@@ -280,7 +282,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     event WeightChangeCancelled();
     event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
     event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
-    event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet);
+    event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet, address agentRegistry);
 
     // ─── Modifiers ────────────────────────────────────────────────────
 
@@ -1026,20 +1028,33 @@ abstract contract AAStarAirAccountBase is Initializable {
     bytes4 private constant _PRECHECK_SEL = bytes4(keccak256("preCheck(address,uint256,bytes)"));
 
     /// @dev Dispatch ERC-7579 preCheck to the active hook module (if any).
-    ///      Uses compact assembly encoding to avoid abi.encodeWithSignature bytecode cost.
+    ///      Forwards the full execute() calldata (msg.data) as the `bytes msgData` parameter so
+    ///      hook modules can inspect call target and inner selector for scope enforcement.
+    ///      msg.data layout for execute(address,uint256,bytes):
+    ///        [0:4]   execute() selector
+    ///        [4:36]  dest (address padded)
+    ///        [36:68] value (uint256)
+    ///        [68:100] offset for func bytes param (= 0x60 relative to args start)
+    ///        [100:132] func length
+    ///        [132:]   func data
     ///      Reverts HookReverted() if hook call fails.
     function _dispatchHook(uint256 ethValue) private {
         address hook = _activeHook;
         bytes4 sel = _PRECHECK_SEL;
         bool ok;
         assembly {
+            let cdSize := calldatasize()
             let m := mload(0x40)
-            mstore(m,          sel)       // selector at [0:4]
-            mstore(add(m,  4), caller())  // address at [4:36]
-            mstore(add(m, 36), ethValue)  // value at [36:68]
-            mstore(add(m, 68), 0x60)      // bytes offset = 96
-            mstore(add(m,100), 0)         // bytes length = 0
-            ok := call(gas(), hook, 0, m, 132, 0, 0)
+            mstore(m,          sel)         // [0:4]   preCheck selector
+            mstore(add(m,  4), caller())    // [4:36]  msgSender
+            mstore(add(m, 36), ethValue)    // [36:68] msgValue
+            mstore(add(m, 68), 0x60)        // [68:100] bytes offset = 96 (relative to args start)
+            mstore(add(m,100), cdSize)      // [100:132] bytes length = calldatasize (= full execute calldata)
+            calldatacopy(add(m, 132), 0, cdSize) // [132:] = full execute calldata (selector+args)
+            // Total size: 4 + 32 + 32 + 32 + 32 + cdSize = 132 + cdSize
+            // Round up to 32-byte boundary for safety (required by ABI)
+            let totalSize := add(132, cdSize)
+            ok := call(gas(), hook, 0, m, totalSize, 0, 0)
         }
         if (!ok) revert HookReverted();
     }
@@ -1144,6 +1159,18 @@ abstract contract AAStarAirAccountBase is Initializable {
         assembly {
             let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
             algId := tload(add(add(ALG_ID_SLOT_BASE, 2), readIdx))
+        }
+    }
+
+    /// @notice Peek at the next session key in the transient queue without consuming it.
+    ///         Called by TierGuardHook.preCheck() for session scope enforcement.
+    ///         Returns bytes32(0) if the queue is empty (no session key stored in this batch).
+    ///         Top byte of returned value: 0x01 = ECDSA session (lower 20 bytes = address),
+    ///         0x02 = P256 session (lower 31 bytes = key hash).
+    function getCurrentSessionKey() external view returns (bytes32 taggedId) {
+        assembly {
+            let readIdx := tload(add(SESSION_KEY_SLOT_BASE, 1))
+            taggedId := tload(add(add(SESSION_KEY_SLOT_BASE, 2), readIdx))
         }
     }
 
@@ -1527,25 +1554,32 @@ abstract contract AAStarAirAccountBase is Initializable {
 
     // ─── ERC-8004 Agent Identity Binding (M7.16) ─────────────────────────
 
-    /// @notice Link an ERC-8004 agent NFT to a session key address on this account.
-    /// @param agentId ERC-8004 agent NFT token ID
-    /// @param agentWallet Session key address that this agent uses for transactions
-    /// @param erc8004Registry ERC-8004 Identity Registry contract address
-    /// @dev Only owner can set agent wallet bindings. This is a metadata operation —
-    ///      the actual spending limits are still enforced by session key scopes.
+    /// @notice Link an agent wallet to this AirAccount by registering it in AgentRegistry.
+    /// @param agentId Logical agent identifier (used for event indexing only)
+    /// @param agentWallet Execution wallet address that the agent uses for transactions
+    /// @param agentRegistry AgentRegistry contract address (M8.1)
+    /// @param agentWalletSig ECDSA signature from agentWallet proving it consents to registration
+    ///        (prevents front-run griefing — see AgentRegistry.registerAgent for hash construction)
+    /// @dev Only owner can set agent wallet bindings. Calls AgentRegistry.registerAgent()
+    ///      which records msg.sender (this account) as the human owner of agentWallet.
+    ///      Reverts if the registry call fails (e.g. already registered or invalid signature).
     function setAgentWallet(
         uint256 agentId,
         address agentWallet,
-        address erc8004Registry
+        address agentRegistry,
+        bytes calldata agentWalletSig
     ) external onlyOwner {
-        if (agentWallet == address(0) || erc8004Registry == address(0)) revert InvalidGuardian();
-        // Register the agent wallet with the ERC-8004 registry
-        // setAgentWallet(agentId, wallet) — best-effort, non-blocking
-        (bool ok,) = erc8004Registry.call(
-            abi.encodeWithSignature("setAgentWallet(uint256,address)", agentId, agentWallet)
+        if (agentWallet == address(0) || agentRegistry == address(0)) revert InvalidGuardian();
+        // Require agentRegistry to be a deployed contract (extcodesize > 0).
+        // Low-level calls to EOAs succeed silently — we must reject them explicitly.
+        uint256 codeSize;
+        assembly { codeSize := extcodesize(agentRegistry) }
+        if (codeSize == 0) revert AgentRegistrationFailed();
+        (bool ok,) = agentRegistry.call(
+            abi.encodeWithSignature("registerAgent(address,bytes)", agentWallet, agentWalletSig)
         );
-        (ok); // silence unused variable warning
-        emit AgentWalletSet(agentId, agentWallet);
+        if (!ok) revert AgentRegistrationFailed();
+        emit AgentWalletSet(agentId, agentWallet, agentRegistry);
     }
 
     receive() external payable {}
