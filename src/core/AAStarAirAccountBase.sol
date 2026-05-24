@@ -263,8 +263,9 @@ abstract contract AAStarAirAccountBase is Initializable {
     error WeightChangeNotApproved();
     error NoWeightChangeProposal();
     error WeightChangeAlreadyApproved();
-    // M8.1 AgentRegistry
+    // M8.1 AgentRegistry / ERC-8004
     error AgentRegistrationFailed();
+    error IdentityRegistrationFailed();
 
     // ─── Events ───────────────────────────────────────────────────────
 
@@ -290,6 +291,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
     event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
     event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet, address agentRegistry);
+    event AgentIdentityMinted(uint256 indexed agentId, address indexed identityRegistry, string agentURI);
 
     // ─── Modifiers ────────────────────────────────────────────────────
 
@@ -1606,6 +1608,31 @@ abstract contract AAStarAirAccountBase is Initializable {
         );
         if (!ok) revert AgentRegistrationFailed();
         emit AgentWalletSet(agentId, agentWallet, agentRegistry);
+    }
+
+    // ─── ERC-8004 Identity NFT (M8.ERC8004) ──────────────────────────────────
+
+    /// @notice Mint an ERC-8004 agent identity NFT to this AirAccount.
+    ///         After minting, ownerOf(agentId) == address(this).
+    /// @param identityRegistry IdentityRegistry contract address
+    /// @param agentURI Metadata URI for the agent (name, description, capabilities)
+    /// @return agentId The newly minted NFT token ID
+    /// @dev Call this before or after setAgentWallet to complete the full ERC-8004 registration.
+    ///      The returned agentId can be passed to setAgentWallet for a linked identity+wallet record.
+    function mintAgentIdentity(
+        address identityRegistry,
+        string calldata agentURI
+    ) external onlyOwner returns (uint256 agentId) {
+        if (identityRegistry == address(0)) revert IdentityRegistrationFailed();
+        uint256 codeSize;
+        assembly { codeSize := extcodesize(identityRegistry) }
+        if (codeSize == 0) revert IdentityRegistrationFailed();
+        (bool ok, bytes memory data) = identityRegistry.call(
+            abi.encodeWithSignature("register(string)", agentURI)
+        );
+        if (!ok || data.length < 32) revert IdentityRegistrationFailed();
+        agentId = abi.decode(data, (uint256));
+        emit AgentIdentityMinted(agentId, identityRegistry, agentURI);
     }
 
     receive() external payable {}
