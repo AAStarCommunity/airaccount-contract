@@ -138,6 +138,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     uint8 internal _guardianCount;  // packed with _guardian0 in same 32-byte slot
     address private _guardian1;
     address private _guardian2;
+    uint256 private _guardianRemovalNonce;
 
     struct RecoveryProposal {
         address newOwner;
@@ -248,6 +249,10 @@ abstract contract AAStarAirAccountBase is Initializable {
 
     // M6.1 / M6.2
     error WeightConfigNotInitialized();
+
+    error MinGuardianRequired();
+    error InsufficientGuardianApprovals();
+    error DuplicateGuardianSig();
     error InsecureWeightConfig();
     error InsufficientWeight(uint8 tier, uint8 provided, uint8 required);
     error WeakeningRequiresProposal();
@@ -1274,25 +1279,50 @@ abstract contract AAStarAirAccountBase is Initializable {
     }
 
     /// @notice Remove a guardian by index.
-    function removeGuardian(uint8 index) external onlyOwner {
+    ///         Requires >= RECOVERY_THRESHOLD distinct guardian signatures to prevent unilateral removal.
+    ///         Cannot remove when only 2 guardians remain (minimum 2 must be kept).
+    /// @param index   Guardian slot to remove (0-indexed)
+    /// @param guardianSigs At least RECOVERY_THRESHOLD guardian signatures over the removal hash
+    function removeGuardian(uint8 index, bytes[] calldata guardianSigs) external onlyOwner {
+        // Removal during active recovery would let a compromised owner cancel recovery with
+        // pre-collected guardian sigs — bypassing the guardian-only cancelRecovery() guard.
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+        if (_guardianCount <= 2) revert MinGuardianRequired();
         if (index >= _guardianCount) revert InvalidGuardian();
+        if (guardianSigs.length < RECOVERY_THRESHOLD || guardianSigs.length > _guardianCount)
+            revert InsufficientGuardianApprovals();
 
-        address removed = _getGuardian(index);
+        address guardianToRemove = _getGuardian(index);
+        // Hash binds to the actual guardian address (not just index) to prevent mismatch
+        // if slot order ever changes without incrementing the nonce.
+        bytes32 removalHash = keccak256(abi.encode(
+            address(this),
+            block.chainid,
+            _guardianRemovalNonce,
+            "REMOVE_GUARDIAN",
+            guardianToRemove
+        ));
+        bytes32 ethHash = removalHash.toEthSignedMessageHash();
 
-        // Shift remaining guardians
+        uint256 approvalBitmap = 0;
+        for (uint256 i = 0; i < guardianSigs.length; i++) {
+            address recovered = ethHash.recover(guardianSigs[i]);
+            uint8 gIdx = _guardianIndex(recovered); // reverts NotGuardian if not a guardian
+            uint256 bit = uint256(1) << gIdx;
+            if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
+            approvalBitmap |= bit;
+        }
+        if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        _guardianRemovalNonce++;
+
         for (uint8 i = index; i < _guardianCount - 1; i++) {
             _setGuardian(i, _getGuardian(uint8(i + 1)));
         }
         _setGuardian(_guardianCount - 1, address(0));
         _guardianCount--;
 
-        // Cancel any active recovery (guardian set changed)
-        if (activeRecovery.newOwner != address(0)) {
-            delete activeRecovery;
-            emit RecoveryCancelled();
-        }
-
-        emit GuardianRemoved(index, removed);
+        emit GuardianRemoved(index, guardianToRemove);
     }
 
     /// @notice Propose a recovery: change owner to a new address.
