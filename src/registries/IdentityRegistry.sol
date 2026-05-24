@@ -4,10 +4,18 @@ pragma solidity ^0.8.33;
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {IIdentityRegistry} from "../interfaces/IIdentityRegistry.sol";
 
-/// @title IdentityRegistry — ERC-8004 agent identity NFT registry
-/// @notice Each NFT represents an on-chain agent identity.
+/// @title IdentityRegistry — Agent identity NFT registry
+/// @notice Each NFT represents an on-chain agent identity bound to a human AirAccount.
 ///         The NFT owner is the human AirAccount that registered the agent.
 ///         Token IDs start at 1; ID 0 is reserved as "unregistered".
+///
+///         STANDARD NOTE: "ERC-8004" is an internal AAstar draft standard for agent identity
+///         and is NOT an official EIP. External integrators should depend on `IIdentityRegistry`
+///         rather than this implementation directly.
+///
+///         RECOVERY NOTE: If the human AirAccount undergoes social recovery to a new address,
+///         the agentId NFT becomes stranded (non-transferable). A future `migrate(agentId, newOwner)`
+///         function — callable only via the social recovery flow — will handle re-assignment.
 ///
 /// @dev Non-transferable by design: once an agent identity is minted to a human
 ///      AirAccount, it should not be tradeable. Transfer functions are disabled.
@@ -24,6 +32,10 @@ contract IdentityRegistry is ERC721, IIdentityRegistry {
     }
 
     /// @inheritdoc IIdentityRegistry
+    /// @param agentURI Metadata URI for agent identity.
+    ///        Recommended format: `ipfs://<CID>` (content-addressed) or `did:web:<domain>` (DID).
+    ///        Suggested metadata schema: { "name": string, "description": string,
+    ///          "agentKey": address (hex), "capabilities": string[] }
     function register(string calldata agentURI) external returns (uint256 agentId) {
         agentId = _nextTokenId++;
         _mint(msg.sender, agentId);
