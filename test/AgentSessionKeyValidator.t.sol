@@ -479,6 +479,43 @@ contract AgentSessionKeyValidatorTest is Test {
         validator.enforceSessionScope(account, sessionWallet.addr, target, forbiddenSel);
     }
 
+    // ─── E-extra: MEDIUM-3 — enforceSessionScope revoked + expiry checks ─────
+
+    /// @notice MEDIUM-3 fix: enforceSessionScope must revert with SessionRevoked when
+    ///         cfg.revoked=true, even if callTarget and selector are in the allowlist.
+    ///         Previously, enforceSessionScope only checked allowlists — a revoked session
+    ///         could still pass scope enforcement and execute.
+    function test_enforceSessionScope_revokedSession_reverts() public {
+        address[] memory targets = new address[](0);
+        bytes4[]  memory sels    = new bytes4[](0);
+        _grantSessionWithTargets(targets, sels, uint48(block.timestamp + 1 hours));
+
+        // Revoke the session
+        vm.prank(account);
+        validator.revokeAgentSession(sessionWallet.addr);
+
+        // enforceSessionScope must revert with SessionRevoked
+        vm.expectRevert(AgentSessionKeyValidator.SessionRevoked.selector);
+        validator.enforceSessionScope(account, sessionWallet.addr, address(0x1234), bytes4(0xDEADBEEF));
+    }
+
+    /// @notice MEDIUM-3 fix: enforceSessionScope must revert with SessionExpired when
+    ///         block.timestamp > cfg.expiry, even if the session is not revoked.
+    ///         Previously, scope enforcement would happily allow expired sessions.
+    function test_enforceSessionScope_expiredSession_reverts() public {
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        address[] memory targets = new address[](0);
+        bytes4[]  memory sels    = new bytes4[](0);
+        _grantSessionWithTargets(targets, sels, expiry);
+
+        // Warp past expiry
+        vm.warp(block.timestamp + 2 hours);
+
+        // enforceSessionScope must revert with SessionExpired
+        vm.expectRevert(AgentSessionKeyValidator.SessionExpired.selector);
+        validator.enforceSessionScope(account, sessionWallet.addr, address(0x1234), bytes4(0xDEADBEEF));
+    }
+
     // ─── F. recordSpend ────────────────────────────────────────────────
 
     function _grantSessionWithCap(uint256 cap) internal {
