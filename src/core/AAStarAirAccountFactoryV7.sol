@@ -41,10 +41,25 @@ contract AAStarAirAccountFactoryV7 {
     ///      Typically TierGuardHook to enforce tier-based spending limits via ERC-7579 hooks.
     address public immutable defaultHookModule;
 
+    /// @dev Maximum allowed TTL for guardian2 (and agentKey) signatures in createAgentAccount.
+    ///      Prevents a long-lived signature from being replayed far in the future.
+    uint48 internal constant MAX_GUARDIAN_SIG_TTL = 30 days;
+
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
+
+    /// @dev Emitted when an agent account is created via createAgentAccount.
+    event AgentAccountCreated(
+        address indexed account,
+        address indexed agentKey,
+        address indexed humanOwner,
+        bytes32 agentId,
+        address guardian2,
+        uint256 dailyLimit
+    );
 
     error GuardianDidNotAccept(address guardian);
     error DuplicateGuardian();
+    error AgentKeyDidNotAccept();
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
@@ -205,6 +220,109 @@ contract AAStarAirAccountFactoryV7 {
         emit AccountCreated(account, owner, salt);
     }
 
+    /// @notice Create a dedicated AirAccount for an autonomous AI agent.
+    ///         The human caller (msg.sender) becomes guardian1 — no sig needed.
+    ///         Only guardian2 must sign the guardian acceptance message.
+    ///
+    /// @param agentKey    The agent's signing key (EOA address). Becomes the account owner.
+    ///                   For autonomous agents: use a secure server-side key.
+    /// @param agentId     A bytes32 identifier for this agent (e.g. keccak256("my-agent-v1")).
+    ///                   Combined with msg.sender to derive a unique deterministic salt.
+    /// @param guardian2   Second guardian (human's personal backup key, trusted person, etc.)
+    /// @param guardian2Sig guardian2's acceptance signature. Signs:
+    ///                   keccak256("ACCEPT_AGENT_GUARDIAN" || chainId || factory || agentKey || humanOwner || agentId || deadline).toEthSignedMessageHash()
+    ///                   The "ACCEPT_AGENT_GUARDIAN" domain and explicit humanOwner + agentId prevent
+    ///                   cross-namespace collision with createAccountWithDefaults signatures.
+    /// @param agentKeySig agentKey's consent signature. Signs:
+    ///                   keccak256("ACCEPT_AGENT_KEY" || chainId || factory || agentKey || humanOwner || agentId || deadline).toEthSignedMessageHash()
+    ///                   Proves the KMS/agent key holder explicitly authorized this creation;
+    ///                   prevents a human from setting an arbitrary EOA as the account owner.
+    /// @param deadline    Expiry timestamp for guardian2Sig and agentKeySig — prevents replay of stale signatures
+    /// @param dailyLimit  Daily spending limit in wei for this agent account
+    /// @return account    The deployed agent account address
+    function createAgentAccount(
+        address agentKey,
+        bytes32 agentId,
+        address guardian2,
+        bytes calldata guardian2Sig,
+        bytes calldata agentKeySig,
+        uint48 deadline,
+        uint256 dailyLimit
+    ) external returns (address account) {
+        require(agentKey != address(0), "Agent key required");
+        require(guardian2 != address(0), "Guardian2 required");
+        require(msg.sender != guardian2, "Caller cannot be guardian2");
+        require(agentKey != guardian2, "Agent key cannot be guardian2");
+        require(dailyLimit > 0, "Daily limit required");
+        require(block.timestamp <= deadline, "Guardian sig expired");
+        require(deadline <= block.timestamp + MAX_GUARDIAN_SIG_TTL, "Deadline too far in future");
+
+        // Uniqueness prechecks: none of the three guardians may be the community guardian,
+        // preventing an attacker from using the factory's own defaultCommunityGuardian as
+        // guardian2 (or as the human caller) to trivially satisfy social-recovery thresholds.
+        require(msg.sender != defaultCommunityGuardian, "Human owner cannot be community guardian");
+        require(guardian2 != defaultCommunityGuardian, "Guardian2 cannot be community guardian");
+        require(agentKey != defaultCommunityGuardian, "Agent key cannot be community guardian");
+
+        // Verify agentKey consents to becoming this account's owner.
+        // This proves the agentKey holder (KMS) authorized this creation,
+        // preventing a human from setting an arbitrary EOA as agentKey.
+        bytes32 agentKeyHash = keccak256(
+            abi.encodePacked("ACCEPT_AGENT_KEY", block.chainid, address(this), agentKey, msg.sender, agentId, deadline)
+        ).toEthSignedMessageHash();
+        (address recoveredAgentKey,,) = agentKeyHash.tryRecover(agentKeySig);
+        if (recoveredAgentKey != agentKey) revert AgentKeyDidNotAccept();
+
+        // Verify guardian2 signed the agent-specific acceptance hash.
+        // Domain "ACCEPT_AGENT_GUARDIAN" (distinct from "ACCEPT_GUARDIAN" used in createAccountWithDefaults)
+        // prevents signature reuse across the two creation paths.
+        // Including msg.sender (humanOwner), agentId, and deadline prevents reuse across different
+        // owners, agents, or after the signature expires.
+        bytes32 acceptHash = keccak256(
+            abi.encodePacked("ACCEPT_AGENT_GUARDIAN", block.chainid, address(this), agentKey, msg.sender, agentId, deadline)
+        ).toEthSignedMessageHash();
+        (address recovered,,) = acceptHash.tryRecover(guardian2Sig);
+        if (recovered != guardian2) revert GuardianDidNotAccept(guardian2);
+
+        bytes32 cloneSalt = _getAgentSalt(agentKey, msg.sender, agentId);
+        account = Clones.predictDeterministicAddress(implementation, cloneSalt);
+        if (account.code.length > 0) {
+            return account;
+        }
+
+        // owner = msg.sender (humanAirAccount), NOT agentKey.
+        // agentKey is authorized as a session key separately via grantAgentSession() after deployment.
+        // Guardians: [guardian2, communityGuardian] — 2-of-2.
+        // humanAirAccount is the owner but NOT a guardian (avoids owner==guardian constraint).
+        AAStarAirAccountBase.InitConfig memory config = _buildDefaultConfig(
+            guardian2, address(0), dailyLimit
+        );
+        // Pre-deploy guard bound to the predicted account address before cloning.
+        address guardAddr = address(new AAStarGlobalGuard(
+            account,
+            config.dailyLimit,
+            config.approvedAlgIds,
+            config.minDailyLimit,
+            config.initialTokens,
+            config.initialTokenConfigs
+        ));
+        account = Clones.cloneDeterministic(implementation, cloneSalt);
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, msg.sender, config, guardAddr);
+        emit AgentAccountCreated(account, agentKey, msg.sender, agentId, guardian2, dailyLimit);
+    }
+
+    /// @notice Predict the address of a future agent account.
+    /// @param humanOwner  The human who will call createAgentAccount (msg.sender)
+    /// @param agentKey    The agent's signing key address
+    /// @param agentId     The bytes32 agent identifier
+    function getAgentAddress(
+        address humanOwner,
+        address agentKey,
+        bytes32 agentId
+    ) public view returns (address) {
+        return Clones.predictDeterministicAddress(implementation, _getAgentSalt(agentKey, humanOwner, agentId));
+    }
+
     /// @notice Predict address for a default-config account.
     /// @dev With the clone pattern, the address depends only on implementation + salt (not guardian config).
     function getAddressWithDefaults(
@@ -272,6 +390,13 @@ contract AAStarAirAccountFactoryV7 {
     ///      (guardian acceptance signatures already prevent front-running for this path).
     function _getDefaultSalt(address owner, uint256 salt) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(owner, salt));
+    }
+
+    /// @dev Agent account salt: namespaced with "AASTAR_AGENT_V1" to prevent cross-namespace
+    ///      collision with createAccountWithDefaults which uses _getDefaultSalt(owner, salt).
+    ///      Including humanOwner and agentId ensures each (human, agent, agentId) triple is unique.
+    function _getAgentSalt(address agentKey, address humanOwner, bytes32 agentId) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked("AASTAR_AGENT_V1", agentKey, humanOwner, agentId));
     }
 
     // ─── ERC-7828 Chain-Specific Address (M7.4) ─────────────────────

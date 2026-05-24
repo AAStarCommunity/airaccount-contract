@@ -1,6 +1,12 @@
 {
+  "lib/SuperPaymaster": {
+    "rev": "17f30a8ea527b432074864bee183e9a2ff1548ab"
+  },
   "lib/YetAnotherAA-Validator": {
     "rev": "f90de3393615f04bd12879ff8ef5a573937a4a44"
+  },
+  "lib/aastar-sdk": {
+    "rev": "9fa832298d001102fb1341857286df34eafd1991"
   },
   "lib/account-abstraction": {
     "rev": "1c6b669d0eea734e09a87e095ba15e076151718a"
@@ -19,6 +25,12 @@
   },
   "lib/kernel": {
     "rev": "6a098bc8f9a7001fe7ae801368e96a5ee635ddb1"
+  },
+  "lib/kohaku": {
+    "rev": "2bdedf393fbd93b533514f890c00e12ae28e71d2"
+  },
+  "lib/kohaku-extension": {
+    "rev": "c67b0c7547680fb7a17408a716774c6fc5c30e97"
   },
   "lib/light-account": {
     "rev": "9368be5c9d627c4b8710f5a4c66e4cbff61399a0"

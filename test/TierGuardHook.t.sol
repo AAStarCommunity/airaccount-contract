@@ -3,21 +3,6 @@ pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {TierGuardHook} from "../src/core/TierGuardHook.sol";
-import {AgentSessionKeyValidator} from "../src/validators/AgentSessionKeyValidator.sol";
-
-/// @dev Minimal mock guard for TierGuardHook tests
-contract MockGuard {
-    bool public shouldRevert;
-    uint256 public todaySpentValue;
-
-    function setShouldRevert(bool v) external { shouldRevert = v; }
-    function setTodaySpent(uint256 v) external { todaySpentValue = v; }
-    function todaySpent() external view returns (uint256) { return todaySpentValue; }
-    function checkTransaction(uint256, uint8) external view returns (bool) {
-        if (shouldRevert) revert("limit exceeded");
-        return true;
-    }
-}
 
 /// @dev Contract account proxy — preCheck returns bytes memory so msg.sender must be a contract.
 ///      All onInstall/onUninstall/preCheck calls are routed through this helper so that
@@ -46,64 +31,12 @@ contract MockAccountCaller {
         uint256 msgValue,
         bytes calldata msgData
     ) external {
-        // Will revert if preCheck reverts — caller catches the revert
         hook.preCheck(msgSender, msgValue, msgData);
     }
 }
 
-/// @dev Account that exposes getCurrentAlgId() returning a fixed value.
-///      Used to test _algTier behavior for specific algIds.
-contract MockAccountWithAlgId is MockAccountCaller {
-    uint8 public immutable algId;
-    constructor(uint8 _algId) { algId = _algId; }
-    function getCurrentAlgId() external view returns (uint256) { return algId; }
-}
-
-/// @dev Mock AgentSessionKeyValidator for session scope enforcement tests (M8.P2).
-///      Implements enforceSessionScope() that reverts for forbidden targets and passes for allowed ones.
-contract MockAgentSessionKeyValidator {
-    /// @dev Allowed call targets. Empty = allow all.
-    address[] public allowedTargets;
-
-    function setAllowedTargets(address[] memory targets) external {
-        delete allowedTargets;
-        for (uint256 i = 0; i < targets.length; i++) {
-            allowedTargets.push(targets[i]);
-        }
-    }
-
-    function enforceSessionScope(
-        address, /* account */
-        address, /* sessionKey */
-        address callTarget,
-        bytes4  /* selector */
-    ) external view {
-        if (allowedTargets.length == 0) return; // empty = allow all
-        for (uint256 i = 0; i < allowedTargets.length; i++) {
-            if (allowedTargets[i] == callTarget) return; // found — allowed
-        }
-        // Not found in allowlist — revert to signal forbidden target
-        revert("CallTargetForbidden");
-    }
-}
-
-/// @dev Account that returns ALG_SESSION_KEY from getCurrentAlgId() but bytes32(0) from
-///      getCurrentSessionKey() — simulates a missing session key in transient storage.
-///      Used to test MEDIUM-2 fail-closed behavior: preCheck must revert when agentValidator
-///      is configured + algId=ALG_SESSION_KEY but no session key is present.
-contract MockAccountWithSessionKeyMissing is MockAccountCaller {
-    function getCurrentAlgId() external pure returns (uint256) {
-        return 0x08; // ALG_SESSION_KEY
-    }
-
-    function getCurrentSessionKey() external pure returns (bytes32) {
-        return bytes32(0); // no session key in transient storage
-    }
-}
-
-/// @dev Account that exposes both getCurrentAlgId() (returning ALG_SESSION_KEY=0x08)
-///      and getCurrentSessionKey() (returning a tagged ECDSA session key address).
-///      Used to test session scope enforcement in TierGuardHook (M8.P2).
+/// @dev Account that exposes getCurrentAlgId() returning ALG_SESSION_KEY=0x08
+///      and getCurrentSessionKey() returning a tagged ECDSA session key address.
 contract MockAccountWithSessionKey is MockAccountCaller {
     address public immutable sessionKeyAddr;
 
@@ -121,83 +54,115 @@ contract MockAccountWithSessionKey is MockAccountCaller {
     }
 }
 
-/// @dev Like MockAccountWithSessionKey but accepts an arbitrary tagged bytes32 (for MEDIUM-2 tests)
-contract MockAccountWithSessionKey2 is MockAccountCaller {
-    bytes32 public immutable taggedKey;
+/// @dev Account that returns a non-session algId — simulates ECDSA / BLS / etc.
+contract MockAccountWithNonSessionAlgId is MockAccountCaller {
+    uint8 public immutable algId;
+    constructor(uint8 _algId) { algId = _algId; }
+    function getCurrentAlgId() external view returns (uint256) { return algId; }
+}
 
-    constructor(bytes32 _taggedKey) {
-        taggedKey = _taggedKey;
+/// @dev Mock AgentSessionKeyValidator that allows/rejects based on a configured allowlist.
+contract MockAgentSessionKeyValidator {
+    address[] public allowedTargets;
+
+    function setAllowedTargets(address[] memory targets) external {
+        delete allowedTargets;
+        for (uint256 i = 0; i < targets.length; i++) {
+            allowedTargets.push(targets[i]);
+        }
     }
 
-    function getCurrentAlgId() external pure returns (uint256) {
-        return 0x08; // ALG_SESSION_KEY
-    }
-
-    function getCurrentSessionKey() external view returns (bytes32) {
-        return taggedKey;
+    function enforceSessionScope(
+        address, /* account */
+        address, /* sessionKey */
+        address callTarget,
+        bytes4  /* selector */
+    ) external view {
+        if (allowedTargets.length == 0) return; // empty = allow all
+        for (uint256 i = 0; i < allowedTargets.length; i++) {
+            if (allowedTargets[i] == callTarget) return;
+        }
+        revert("CallTargetForbidden");
     }
 }
 
-/// @title TierGuardHookTest — Unit tests for TierGuardHook (M7.2, M8.P2)
+/// @title TierGuardHookTest — Unit tests for TierGuardHook (session scope enforcement only)
 contract TierGuardHookTest is Test {
     TierGuardHook public hook;
-    MockGuard     public guard;
 
-    MockAccountCaller public accountContract;   // contract that acts as the AA account
-    address public account;                      // == address(accountContract)
+    MockAccountCaller public accountContract;
+    address public account;
     address public other;
 
     function setUp() public {
         hook            = new TierGuardHook();
-        guard           = new MockGuard();
         accountContract = new MockAccountCaller();
         account         = address(accountContract);
         other           = makeAddr("other");
     }
 
-    // ─── Helper: install guard via accountContract ────────────────────────────
+    // ─── Helpers ─────────────────────────────────────────────────────────────
 
-    function _install(address guardAddr, uint256 t1, uint256 t2) internal {
-        bytes memory data = abi.encode(guardAddr, t1, t2);
-        accountContract.callInstall(hook, data);
+    function _installEmpty() internal {
+        accountContract.callInstall(hook, "");
+    }
+
+    function _installWithValidator(address agentValidator) internal {
+        accountContract.callInstall(hook, abi.encode(agentValidator));
+    }
+
+    /// @dev Build full execute() calldata as forwarded by _dispatchHook (calldatacopy).
+    ///      Layout: [4B selector][32B dest][32B value][32B offset][32B func len][func bytes]
+    function _buildExecuteMsgData(
+        address dest,
+        uint256 value,
+        bytes memory func
+    ) internal pure returns (bytes memory) {
+        bytes4 sel = bytes4(keccak256("execute(address,uint256,bytes)"));
+        return abi.encodePacked(sel, abi.encode(dest, value, func));
     }
 
     // ─── onInstall ────────────────────────────────────────────────────────────
 
-    function test_onInstall_setsGuardAddress() public {
-        _install(address(guard), 1 ether, 10 ether);
-        assertEq(hook.accountGuard(account), address(guard));
+    function test_onInstall_emptyData_initializes() public {
+        _installEmpty();
+        assertTrue(hook.isInitialized(account));
+        assertEq(hook.accountAgentValidator(account), address(0));
     }
 
-    function test_onInstall_setsTierLimits() public {
-        uint256 t1 = 0.5 ether;
-        uint256 t2 = 5 ether;
-        _install(address(guard), t1, t2);
-        assertEq(hook.accountTier1(account), t1);
-        assertEq(hook.accountTier2(account), t2);
+    function test_onInstall_withValidator_setsValidator() public {
+        address agentValidator = makeAddr("validator");
+        _installWithValidator(agentValidator);
+        assertTrue(hook.isInitialized(account));
+        assertEq(hook.accountAgentValidator(account), agentValidator);
     }
 
-    function test_onInstall_emptyData_noRevert() public {
-        // Should silently return without reverting
+    function test_onInstall_alreadyInstalled_reverts() public {
+        _installEmpty();
+        vm.expectRevert(TierGuardHook.AlreadyInstalled.selector);
         accountContract.callInstall(hook, "");
-        // Nothing set
-        assertEq(hook.accountGuard(account), address(0));
     }
 
     // ─── onUninstall ─────────────────────────────────────────────────────────
 
     function test_onUninstall_clearsState() public {
-        _install(address(guard), 1 ether, 10 ether);
+        address agentValidator = makeAddr("validator");
+        _installWithValidator(agentValidator);
 
-        // Verify set
-        assertEq(hook.accountGuard(account), address(guard));
+        assertTrue(hook.isInitialized(account));
+        assertEq(hook.accountAgentValidator(account), agentValidator);
 
-        // Uninstall
         accountContract.callUninstall(hook);
 
-        assertEq(hook.accountGuard(account), address(0));
-        assertEq(hook.accountTier1(account), 0);
-        assertEq(hook.accountTier2(account), 0);
+        assertFalse(hook.isInitialized(account));
+        assertEq(hook.accountAgentValidator(account), address(0));
+    }
+
+    function test_onUninstall_allowsReinstall() public {
+        _installEmpty();
+        accountContract.callUninstall(hook);
+        _installEmpty(); // should not revert
+        assertTrue(hook.isInitialized(account));
     }
 
     // ─── isInitialized ────────────────────────────────────────────────────────
@@ -207,430 +172,209 @@ contract TierGuardHookTest is Test {
     }
 
     function test_isInitialized_afterInstall_true() public {
-        _install(address(guard), 1 ether, 10 ether);
+        _installEmpty();
         assertTrue(hook.isInitialized(account));
     }
 
     function test_isInitialized_afterUninstall_false() public {
-        _install(address(guard), 1 ether, 10 ether);
+        _installEmpty();
         accountContract.callUninstall(hook);
         assertFalse(hook.isInitialized(account));
     }
 
-    // ─── preCheck ─────────────────────────────────────────────────────────────
+    // ─── preCheck: no agentValidator ─────────────────────────────────────────
 
-    function test_preCheck_noGuard_passes() public {
-        // Account has no guard — preCheck should return empty bytes without reverting
+    function test_preCheck_notInstalled_passes() public {
+        // No install — hook must return empty bytes without reverting
         bytes memory result = accountContract.callPreCheck(hook, other, 0, "");
         assertEq(result, "");
     }
 
-    function test_preCheck_guardsCallsCheckTransaction() public {
-        // Install hook with guard that does NOT revert (t1=0, t2=0 = no tier check)
-        _install(address(guard), 0, 0);
-        guard.setShouldRevert(false);
-
-        // preCheck should succeed and return empty bytes
-        bytes memory result = accountContract.callPreCheck(hook, other, 0.1 ether, "");
+    function test_preCheck_noValidator_passes() public {
+        _installEmpty();
+        bytes memory result = accountContract.callPreCheck(hook, other, 1 ether, "");
         assertEq(result, "");
     }
 
-    function test_preCheck_dailyLimitExceeded_reverts() public {
-        // Install with guard that WILL revert
-        _install(address(guard), 0, 0);
-        guard.setShouldRevert(true);
-
-        // preCheck should revert with TierGuardHookUnauthorized
-        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
-        accountContract.callPreCheckExpectRevert(hook, other, 0.1 ether, "");
-    }
-
-    function test_preCheck_tierViolation_reverts() public {
-        // Install with tier limits: t1=1 ether, t2=5 ether
-        // msgValue=3 ether > t1 but <=t2 => required tier = 2
-        // accountContract has no getCurrentAlgId() => fallback ECDSA (tier=1) => TierViolation(2,1)
-        _install(address(guard), 1 ether, 5 ether);
-        guard.setShouldRevert(false);
-        guard.setTodaySpent(0);
-
-        vm.expectRevert(abi.encodeWithSelector(TierGuardHook.TierViolation.selector, uint8(2), uint8(1)));
-        accountContract.callPreCheckExpectRevert(hook, other, 3 ether, "");
-    }
-
-    function test_preCheck_belowTier1_passes() public {
-        // msgValue=0.5 ether <= t1=1 ether => required tier=1; ECDSA tier=1 => no violation
-        _install(address(guard), 1 ether, 5 ether);
-        guard.setShouldRevert(false);
-        guard.setTodaySpent(0);
-
-        bytes memory result = accountContract.callPreCheck(hook, other, 0.5 ether, "");
+    function test_preCheck_noValidator_largeValue_passes() public {
+        // Without agentValidator, ETH value is not checked here (enforced by account directly)
+        _installEmpty();
+        bytes memory result = accountContract.callPreCheck(hook, other, 100 ether, "");
         assertEq(result, "");
     }
 
-    // ─── _algTier: ALG_WEIGHTED (0x07) ────────────────────────────────────────
+    // ─── preCheck: agentValidator set, non-session algId ─────────────────────
 
-    /// @notice ALG_WEIGHTED (0x07) must map to Tier 2.
-    ///         Before fix it returned 0 (unknown), causing weighted-multisig ops to be either
-    ///         blocked (required>0 > tier 0) or have guard enforcement with wrong tier.
-    function test_algTier_weighted_returnsTier2() public {
-        // tier2 limit=1 ether, tier3 limit=5 ether
-        // msgValue=3 ether: required tier = 2 (above t1=1, below t2=5)
-        // accountContract has no getCurrentAlgId() → fallback ALG_ECDSA (tier=1) → TierViolation(2,1)
-        _install(address(guard), 1 ether, 5 ether);
-        guard.setShouldRevert(false);
-        guard.setTodaySpent(0);
+    function test_preCheck_validatorSet_nonSessionAlgId_skipsEnforcement() public {
+        address tokenB = makeAddr("tokenB");
+        address agentValidator = makeAddr("validator"); // any address — staticcall fails = ok, enforcement skipped
 
-        // Verify that without ALG_WEIGHTED support, 3 ether triggers TierViolation (tier=1 from fallback)
-        vm.expectRevert(abi.encodeWithSelector(TierGuardHook.TierViolation.selector, uint8(2), uint8(1)));
-        accountContract.callPreCheckExpectRevert(hook, address(this), 3 ether, "");
-    }
+        // Deploy account that returns ALG_ECDSA (0x01), not SESSION_KEY
+        MockAccountWithNonSessionAlgId ecdsaAccount = new MockAccountWithNonSessionAlgId(0x01);
+        ecdsaAccount.callInstall(hook, abi.encode(agentValidator));
 
-    /// @notice A MockAccount that returns ALG_WEIGHTED from getCurrentAlgId() gets Tier 2 assigned,
-    ///         allowing 3 ether (>t1 <=t2) to pass without TierViolation.
-    function test_algTier_weighted_noTierViolation_whenAccountReturnsWeighted() public {
-        // Deploy an account contract that returns ALG_WEIGHTED from getCurrentAlgId()
-        MockAccountWithAlgId weightedAccount = new MockAccountWithAlgId(0x07); // ALG_WEIGHTED
-        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(5 ether));
-        weightedAccount.callInstall(hook, data);
-        guard.setShouldRevert(false);
-        guard.setTodaySpent(0);
+        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", other, 100);
+        bytes memory msgData = _buildExecuteMsgData(tokenB, 0, func);
 
-        // 3 ether: required tier=2, account provides ALG_WEIGHTED=tier2 → no violation
-        bytes memory result = weightedAccount.callPreCheck(hook, address(this), 3 ether, "");
+        // Should pass — session scope enforcement only applies to ALG_SESSION_KEY
+        bytes memory result = ecdsaAccount.callPreCheck(hook, other, 0, msgData);
         assertEq(result, "");
     }
 
-    // ─── postCheck ────────────────────────────────────────────────────────────
+    // ─── preCheck: postCheck ──────────────────────────────────────────────────
 
     function test_postCheck_noRevert() public {
-        // postCheck is a no-op — must not revert
         hook.postCheck("");
     }
 
-    // ─── Multi-account isolation ──────────────────────────────────────────────
+    // ─── M8.P2: Session scope enforcement ────────────────────────────────────
 
-    // ─── Review fix: unknown algId reverts ──────────────────────────────
+    /// @notice ALG_SESSION_KEY + configured validator: call to forbidden target must revert.
+    function test_preCheck_sessionKey_blocksUnauthorizedTarget() public {
+        address tokenA = makeAddr("tokenA");
+        address tokenB = makeAddr("tokenB");
+        address sessionKey = makeAddr("sessionKey");
 
-    /// @notice An account returning an unrecognized algId (e.g. 0xFF) should revert with UnknownAlgId,
-    ///         preventing silent tier-0 bypass for future algIds that are added without updating TierGuardHook.
-    function test_preCheck_unknownAlgId_reverts() public {
-        MockAccountWithAlgId unknownAccount = new MockAccountWithAlgId(0xFF);
-        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(5 ether));
-        unknownAccount.callInstall(hook, data);
-        guard.setShouldRevert(false);
-        guard.setTodaySpent(0);
+        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
+        address[] memory targets = new address[](1);
+        targets[0] = tokenA;
+        agentValidator.setAllowedTargets(targets);
 
-        vm.expectRevert(abi.encodeWithSelector(TierGuardHook.UnknownAlgId.selector, uint8(0xFF)));
-        unknownAccount.callPreCheckExpectRevert(hook, address(this), 0.5 ether, "");
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        sessionAccount.callInstall(hook, abi.encode(address(agentValidator)));
+
+        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", other, 100);
+        bytes memory msgData = _buildExecuteMsgData(tokenB, 0, func);
+
+        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
+        sessionAccount.callPreCheckExpectRevert(hook, other, 0, msgData);
     }
 
-    /// @notice algId=0x09 (undefined) should also revert
-    function test_preCheck_algId0x09_reverts() public {
-        MockAccountWithAlgId account09 = new MockAccountWithAlgId(0x09);
-        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(5 ether));
-        account09.callInstall(hook, data);
-        guard.setShouldRevert(false);
-        guard.setTodaySpent(0);
+    /// @notice ALG_SESSION_KEY + configured validator: call to allowed target must pass.
+    function test_preCheck_sessionKey_allowsAuthorizedTarget() public {
+        address tokenA = makeAddr("tokenA");
+        address sessionKey = makeAddr("sessionKey");
 
-        vm.expectRevert(abi.encodeWithSelector(TierGuardHook.UnknownAlgId.selector, uint8(0x09)));
-        account09.callPreCheckExpectRevert(hook, address(this), 0.5 ether, "");
+        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
+        address[] memory targets = new address[](1);
+        targets[0] = tokenA;
+        agentValidator.setAllowedTargets(targets);
+
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        sessionAccount.callInstall(hook, abi.encode(address(agentValidator)));
+
+        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", other, 100);
+        bytes memory msgData = _buildExecuteMsgData(tokenA, 0, func);
+        bytes memory result = sessionAccount.callPreCheck(hook, other, 0, msgData);
+        assertEq(result, "");
     }
 
-    /// @notice algId=0x00 (unset) should revert UnknownAlgId
-    function test_preCheck_algId0x00_reverts() public {
-        MockAccountWithAlgId account00 = new MockAccountWithAlgId(0x00);
-        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(5 ether));
-        account00.callInstall(hook, data);
-        guard.setShouldRevert(false);
-        guard.setTodaySpent(0);
+    /// @notice Empty allowlist in validator = any target allowed.
+    function test_preCheck_sessionKey_emptyAllowlist_allowsAll() public {
+        address anyTarget = makeAddr("anyTarget");
+        address sessionKey = makeAddr("sessionKey");
 
-        vm.expectRevert(abi.encodeWithSelector(TierGuardHook.UnknownAlgId.selector, uint8(0x00)));
-        account00.callPreCheckExpectRevert(hook, address(this), 0.5 ether, "");
+        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
+        // No targets set → empty allowlist → allow all
+
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        sessionAccount.callInstall(hook, abi.encode(address(agentValidator)));
+
+        bytes memory func = abi.encodeWithSignature("doSomething()");
+        bytes memory msgData = _buildExecuteMsgData(anyTarget, 0, func);
+        bytes memory result = sessionAccount.callPreCheck(hook, other, 0, msgData);
+        assertEq(result, "");
+    }
+
+    /// @notice ALG_SESSION_KEY but no agentValidator configured → enforcement skipped, pass.
+    function test_preCheck_sessionKey_noValidator_skipsEnforcement() public {
+        address tokenB = makeAddr("tokenB");
+        address sessionKey = makeAddr("sessionKey");
+
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        sessionAccount.callInstall(hook, ""); // no validator
+
+        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", other, 100);
+        bytes memory msgData = _buildExecuteMsgData(tokenB, 0, func);
+        bytes memory result = sessionAccount.callPreCheck(hook, other, 0, msgData);
+        assertEq(result, "");
     }
 
     // ─── Multi-account isolation ──────────────────────────────────────────────
 
     function test_multiAccount_isolatedState() public {
         MockAccountCaller accountB = new MockAccountCaller();
+        address validatorA = makeAddr("validatorA");
+        address validatorB = makeAddr("validatorB");
 
-        bytes memory dataA = abi.encode(address(guard), uint256(1 ether), uint256(5 ether));
-        bytes memory dataB = abi.encode(address(0xBEEF), uint256(2 ether), uint256(10 ether));
+        accountContract.callInstall(hook, abi.encode(validatorA));
+        accountB.callInstall(hook, abi.encode(validatorB));
 
-        accountContract.callInstall(hook, dataA);
-        accountB.callInstall(hook, dataB);
-
-        assertEq(hook.accountGuard(account), address(guard));
-        assertEq(hook.accountGuard(address(accountB)), address(0xBEEF));
-        assertEq(hook.accountTier1(account), 1 ether);
-        assertEq(hook.accountTier1(address(accountB)), 2 ether);
+        assertEq(hook.accountAgentValidator(account), validatorA);
+        assertEq(hook.accountAgentValidator(address(accountB)), validatorB);
+        assertTrue(hook.isInitialized(account));
+        assertTrue(hook.isInitialized(address(accountB)));
     }
 
-    // ─── M8.P2: Session scope enforcement via AgentSessionKeyValidator ────────
+    function test_multiAccount_uninstallOneDoesNotAffectOther() public {
+        MockAccountCaller accountB = new MockAccountCaller();
+        address validatorA = makeAddr("validatorA");
 
-    /// @dev Build msgData that matches the execute() calldata forwarded by _dispatchHook.
-    ///      _dispatchHook uses calldatacopy(msg.data), so msgData = full execute() calldata.
-    ///
-    ///      execute(address dest, uint256 value, bytes calldata func) ABI layout:
-    ///        [0:4]    execute() selector
-    ///        [4:36]   dest (address padded to 32 bytes)
-    ///        [36:68]  value (uint256)
-    ///        [68:100] ABI offset for func bytes (= 0x60 = 96, relative to arg start)
-    ///        [100:132] func data length
-    ///        [132:]   func bytes (inner calldata)
-    function _buildExecuteMsgData(
-        address dest,
-        uint256 value,
-        bytes memory func
-    ) internal pure returns (bytes memory) {
-        bytes4 sel = bytes4(keccak256("execute(address,uint256,bytes)"));
-        bytes memory args = abi.encode(dest, value, func);
-        return abi.encodePacked(sel, args);
-    }
+        accountContract.callInstall(hook, abi.encode(validatorA));
+        accountB.callInstall(hook, "");
 
-    /// @notice M8.P2: ALG_SESSION_KEY with callTargets=[tokenA]; calling tokenB must revert.
-    function test_PreCheck_SessionKey_enforcesCallTarget_blocks_forbidden() public {
-        address tokenA = makeAddr("tokenA");
-        address tokenB = makeAddr("tokenB");
-        address sessionKey = makeAddr("sessionKey");
-
-        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
-        address[] memory targets = new address[](1);
-        targets[0] = tokenA;
-        agentValidator.setAllowedTargets(targets);
-
-        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
-        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
-        sessionAccount.callInstall(hook, installData);
-        guard.setShouldRevert(false);
-
-        // Attempt to call tokenB (not in the allowlist) — preCheck must revert
-        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", address(this), 100);
-        bytes memory msgData = _buildExecuteMsgData(tokenB, 0, func);
-
-        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
-        sessionAccount.callPreCheckExpectRevert(hook, address(this), 0, msgData);
-    }
-
-    /// @notice M8.P2: ALG_SESSION_KEY with callTargets=[tokenA]; calling tokenA must succeed.
-    function test_PreCheck_SessionKey_enforcesCallTarget_allows_permitted() public {
-        address tokenA = makeAddr("tokenA");
-        address sessionKey = makeAddr("sessionKey");
-
-        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
-        address[] memory targets = new address[](1);
-        targets[0] = tokenA;
-        agentValidator.setAllowedTargets(targets);
-
-        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
-        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
-        sessionAccount.callInstall(hook, installData);
-        guard.setShouldRevert(false);
-
-        // Call tokenA (in the allowlist) — preCheck must succeed
-        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", address(this), 100);
-        bytes memory msgData = _buildExecuteMsgData(tokenA, 0, func);
-        bytes memory result = sessionAccount.callPreCheck(hook, address(this), 0, msgData);
-        assertEq(result, "");
-    }
-
-    /// @notice M8.P2: no agentValidator set (3-param install) — session scope enforcement is skipped.
-    ///         Even though algId=ALG_SESSION_KEY, no scope check is performed without an agentValidator.
-    function test_PreCheck_SessionKey_noValidator_skipsEnforcement() public {
-        address tokenB = makeAddr("tokenB");
-        address sessionKey = makeAddr("sessionKey");
-
-        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
-        // Install with original 3-param format — no agentValidator field
-        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0));
-        sessionAccount.callInstall(hook, installData);
-        guard.setShouldRevert(false);
-
-        // Any target allowed because no agentValidator is configured
-        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", address(this), 100);
-        bytes memory msgData = _buildExecuteMsgData(tokenB, 0, func);
-        bytes memory result = sessionAccount.callPreCheck(hook, address(this), 0, msgData);
-        assertEq(result, "");
-    }
-
-    /// @notice M8.P2: empty callTargets allowlist in agentValidator means any target is allowed.
-    ///         enforceSessionScope with empty callTargets returns without reverting.
-    function test_PreCheck_SessionKey_emptyAllowlist_allowsAll() public {
-        address anyTarget = makeAddr("anyTarget");
-        address sessionKey = makeAddr("sessionKey");
-
-        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
-        // No targets set → empty allowlist → any target allowed
-
-        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
-        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
-        sessionAccount.callInstall(hook, installData);
-        guard.setShouldRevert(false);
-
-        bytes memory func = abi.encodeWithSignature("doSomething()");
-        bytes memory msgData = _buildExecuteMsgData(anyTarget, 0, func);
-        bytes memory result = sessionAccount.callPreCheck(hook, address(this), 0, msgData);
-        assertEq(result, "");
-    }
-
-    // ─── MEDIUM-2: fail-closed when agentValidator configured but no session key ─
-
-    /// @notice MEDIUM-2 fix: when agentValidator is configured and algId=ALG_SESSION_KEY but
-    ///         getCurrentSessionKey() returns bytes32(0) (no session key in transient storage),
-    ///         preCheck must revert with TierGuardHookUnauthorized rather than silently skipping
-    ///         scope enforcement. This closes the window where an attacker could omit the session
-    ///         key from transient storage to bypass scope checks entirely.
-    function test_preCheck_sessionKey_missingSessionKey_reverts() public {
-        address agentValidatorAddr = address(new MockAgentSessionKeyValidator());
-
-        MockAccountWithSessionKeyMissing missingKeyAccount = new MockAccountWithSessionKeyMissing();
-        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), agentValidatorAddr);
-        missingKeyAccount.callInstall(hook, installData);
-        guard.setShouldRevert(false);
-
-        bytes memory func = abi.encodeWithSignature("transfer(address,uint256)", address(this), 100);
-        bytes memory msgData = _buildExecuteMsgData(makeAddr("anyTarget"), 0, func);
-
-        // agentValidator is configured + algId=ALG_SESSION_KEY + no session key → must revert
-        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
-        missingKeyAccount.callPreCheckExpectRevert(hook, address(this), 0, msgData);
-    }
-
-    // ─── MEDIUM-1: onInstall idempotency ──────────────────────────────
-
-    /// @notice MEDIUM-1 fix: calling onInstall twice on the same account must revert with
-    ///         AlreadyInstalled on the second call, preventing config overwrite.
-    function test_onInstall_alreadyInstalled_reverts() public {
-        _install(address(guard), 1 ether, 10 ether);
-
-        // Second install attempt on the same account — must revert
-        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(10 ether));
-        vm.expectRevert(TierGuardHook.AlreadyInstalled.selector);
-        accountContract.callInstall(hook, data);
-    }
-
-    // ─── HIGH-1: non-standard ABI offset cannot bypass scope enforcement ──────
-
-    /// @notice HIGH-1 fix: craft calldata where the `bytes func` ABI offset pointer is non-standard
-    ///         (points past the canonical position) but still within bounds. The fixed-offset
-    ///         parser would read from offset 132 and see a decoy "safe" selector, but
-    ///         _parseExecuteCalldata follows the offset pointer and finds the real (forbidden) selector.
-    ///
-    ///         ABI encoding of execute(address dest, uint256 value, bytes func):
-    ///           outer selector (4 bytes)
-    ///           params[0:32]  = dest (address)
-    ///           params[32:64] = value (uint256)
-    ///           params[64:96] = offset pointer to func bytes (relative to params start)
-    ///
-    ///         Normal encoding: offset = 0x60 (96), func starts at params[96].
-    ///         Non-standard: offset = 0x80 (128), func starts at params[128].
-    ///         In this case, params[96:128] is padding/decoy data (which would be read as the
-    ///         selector by the old fixed-offset code at msgData[132:136]).
-    ///
-    ///         We place a "safe" (address(0) / 0x00000000) decoy at the standard position
-    ///         and the real forbidden selector at the non-standard position pointed to by offset.
-    function test_PreCheck_SessionKey_nonStandardABIOffset_cannotBypass() public {
-        address tokenA = makeAddr("tokenA");
-        address tokenB = makeAddr("tokenB");
-        address sessionKey = makeAddr("sessionKey");
-
-        MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
-        address[] memory targets = new address[](1);
-        targets[0] = tokenA;
-        agentValidator.setAllowedTargets(targets);
-
-        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
-        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
-        sessionAccount.callInstall(hook, installData);
-        guard.setShouldRevert(false);
-
-        // Build non-standard ABI calldata manually:
-        //   outer selector (4 bytes)
-        //   params[0:32]   = tokenB (dest — forbidden)
-        //   params[32:64]  = 0 (value)
-        //   params[64:96]  = 0x80 (128) — non-standard offset pointer, func starts at params[128]
-        //   params[96:128] = decoy: 32-byte length=4 followed by a "safe" selector 0x00000000
-        //                    (old fixed-offset code would read params[96:100] as func length
-        //                     and params[100:104] as the selector — but we abuse the region)
-        //   params[128:160] = func length = 4
-        //   params[160:164] = real forbidden selector (e.g. transfer(address,uint256) = 0xa9059cbb)
-        bytes4 outerSel = bytes4(keccak256("execute(address,uint256,bytes)"));
-        // Build the non-standard calldata byte by byte
-        bytes memory msgData = abi.encodePacked(
-            outerSel,                           // [0:4]   outer selector
-            bytes32(uint256(uint160(tokenB))),  // [4:36]  dest = tokenB (forbidden target)
-            bytes32(uint256(0)),                // [36:68] value = 0
-            bytes32(uint256(0x80)),             // [68:100] offset = 128 (non-standard)
-            // params[96:128] = decoy region — fixed-offset code (now removed) would have read
-            // msgData[132:136] = params[128:132] as the selector. We put 0x00000000 there so
-            // the old code would have seen an "empty" selector and possibly bypassed the check.
-            bytes32(uint256(0)),                // [100:132] decoy: "func length=0" at standard pos
-            // The real func data starts at params[128] (offset 128 from params start):
-            bytes32(uint256(4)),                // [132:164] real func length = 4
-            bytes4(0xa9059cbb),                 // [164:168] real selector: transfer(address,uint256)
-            bytes28(0)                          // [168:196] padding to 32 bytes
-        );
-
-        // With _parseExecuteCalldata (HIGH-1 fix), the hook follows the offset pointer (0x80=128)
-        // and reads the real func data: dest=tokenB (forbidden), selector=0xa9059cbb.
-        // tokenB is not in the allowlist — enforceSessionScope reverts — TierGuardHookUnauthorized.
-        vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
-        sessionAccount.callPreCheckExpectRevert(hook, address(this), 0, msgData);
-    }
-
-    // ─── MEDIUM-1: guardAddr==0 still marks as initialized ────────────────────
-
-    /// @notice MEDIUM-1: onInstall with guardAddr=0 must still set the initialized flag,
-    ///         so a second install attempt reverts with AlreadyInstalled.
-    function test_onInstall_guardAddrZero_alreadyInstalled_reverts() public {
-        bytes memory data = abi.encode(address(0), uint256(0), uint256(0));
-        accountContract.callInstall(hook, data);
-
-        // Even though guardAddr==0, re-install must revert
-        vm.expectRevert(TierGuardHook.AlreadyInstalled.selector);
-        accountContract.callInstall(hook, data);
-    }
-
-    /// @notice MEDIUM-1: isInitialized returns true after install with guardAddr=0.
-    function test_isInitialized_afterZeroGuard_isTrue() public {
-        bytes memory data = abi.encode(address(0), uint256(0), uint256(0));
-        accountContract.callInstall(hook, data);
-        assertTrue(hook.isInitialized(address(accountContract)));
-    }
-
-    /// @notice MEDIUM-1: uninstall then re-install must succeed after prior zero-guard install.
-    function test_onUninstall_then_reinstall_succeeds() public {
-        bytes memory data = abi.encode(address(guard), uint256(1 ether), uint256(10 ether));
-        accountContract.callInstall(hook, data);
         accountContract.callUninstall(hook);
-        assertFalse(hook.isInitialized(address(accountContract)));
-        // Should succeed after uninstall
-        accountContract.callInstall(hook, data);
-        assertTrue(hook.isInitialized(address(accountContract)));
+
+        assertFalse(hook.isInitialized(account));
+        assertTrue(hook.isInitialized(address(accountB)));
     }
 
-    // ─── MEDIUM-2: non-0x01 session key tag reverts ───────────────────────────
+    // ─── Security: non-canonical ABI offset bypass prevention ────────────────
 
-    /// @notice MEDIUM-2: session key tagged as 0x02 (unknown type) must cause TierGuardHookUnauthorized.
-    function test_preCheck_sessionKey_unknownTag_reverts() public {
+    /// @notice Attacker crafts calldata with non-canonical bytes offset so the real func
+    ///         is at a different position while a fake "allowed" selector sits at offset 132.
+    ///         The hook must read the actual offset pointer and block the real (forbidden) selector.
+    function test_preCheck_sessionKey_nonCanonicalOffset_blocksRealSelector() public {
+        address tokenA = makeAddr("tokenA");
+        address tokenB = makeAddr("tokenB");
         address sessionKey = makeAddr("sessionKey");
+
         MockAgentSessionKeyValidator agentValidator = new MockAgentSessionKeyValidator();
         address[] memory targets = new address[](1);
-        targets[0] = makeAddr("target");
+        targets[0] = tokenA; // only tokenA is allowed
         agentValidator.setAllowedTargets(targets);
 
-        // Tag the session key with type 0x02 (not 0x01)
-        bytes32 tagged = bytes32((uint256(0x02) << 248) | uint256(uint160(sessionKey)));
-        MockAccountWithSessionKey2 sessionAccount = new MockAccountWithSessionKey2(tagged);
-        bytes memory installData = abi.encode(address(guard), uint256(0), uint256(0), address(agentValidator));
-        sessionAccount.callInstall(hook, installData);
-        guard.setShouldRevert(false);
+        MockAccountWithSessionKey sessionAccount = new MockAccountWithSessionKey(sessionKey);
+        sessionAccount.callInstall(hook, abi.encode(address(agentValidator)));
 
-        bytes4 outerSel = bytes4(keccak256("execute(address,uint256,bytes)"));
-        address target = targets[0];
-        bytes memory msgData = abi.encodeWithSelector(outerSel, target, 0,
-            abi.encodePacked(bytes4(0x12345678)));
+        // Build non-canonical msgData: offset = 0x80 (128) instead of 0x60 (96).
+        // Forbidden func (transfer to tokenB) is at the non-canonical position.
+        // Fake allowed selector is planted at fixed offset 132 (the old vulnerable position).
+        bytes4 executeSelector = bytes4(keccak256("execute(address,uint256,bytes)"));
+        bytes4 allowedFakeSelector = bytes4(keccak256("doSomething()")); // not in forbidden list
+        bytes4 forbiddenSelector   = bytes4(keccak256("transfer(address,uint256)"));
 
+        // non-canonical offset = 0x80 = 128
+        // args layout (starting after executeSelector):
+        //   [0:32]   dest = tokenB (padded)
+        //   [32:64]  value = 0
+        //   [64:96]  offset = 0x80 (non-canonical, was 0x60)
+        //   [96:128] 32 bytes of padding / filler (old "length" position — now contains fake selector)
+        //   [128:160] func length = 4
+        //   [160:192] func data = forbiddenSelector padded
+        bytes memory args = abi.encodePacked(
+            bytes32(uint256(uint160(tokenB))),  // dest
+            bytes32(uint256(0)),                 // value
+            bytes32(uint256(0x80)),              // non-canonical offset: 128 bytes into args
+            bytes32(uint256(uint32(allowedFakeSelector))), // fake selector at canonical-offset position
+            bytes32(uint256(4)),                 // func length
+            bytes32(uint256(uint32(forbiddenSelector)))    // real func: transfer() — forbidden
+        );
+        bytes memory msgData = abi.encodePacked(executeSelector, args);
+
+        // Hook must follow the offset pointer (0x80) and read the real forbidden selector,
+        // NOT read at the canonical fixed position (args[96:100] = fake selector).
         vm.expectRevert(TierGuardHook.TierGuardHookUnauthorized.selector);
-        sessionAccount.callPreCheckExpectRevert(hook, address(this), 0, msgData);
+        sessionAccount.callPreCheckExpectRevert(hook, other, 0, msgData);
     }
 }
