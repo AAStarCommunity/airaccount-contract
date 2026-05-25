@@ -5,6 +5,16 @@
 
 ---
 
+## ❄️ This codebase is FROZEN at v0.17.0
+
+The AirAccount contracts are **frozen** at tag `v0.17.0` (`freeze/m9-v0.17.0`) following M8 + M9.
+
+- ✅ **Issues welcome** — if you find a bug, security concern, or gap, please [open an issue](https://github.com/AAStarCommunity/airaccount-contract/issues). It will be triaged, reproduced, and documented.
+- 🚫 **No contract PRs against the frozen line** — the v0.17.0 contracts will not be modified. Reported problems are recorded but not patched in this version; any fixes land in a future, separately-versioned codebase.
+- Documentation, scripts, and tooling fixes may still be accepted at maintainer discretion.
+
+---
+
 ## Apache 2.0 — 2 分钟白话版
 
 本项目使用 Apache License 2.0，对所有人开放：

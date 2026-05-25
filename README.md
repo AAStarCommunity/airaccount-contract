@@ -3,7 +3,11 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-> **Current milestone**: M7 ✅ Complete — 622/622 tests pass, Sepolia + OP Sepolia deployed.
+> ## ❄️ Status: FROZEN at v0.17.0
+>
+> This contract codebase is **frozen** at tag [`v0.17.0`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.0) (freeze marker `freeze/m9-v0.17.0`), completing **M8** (ERC-8004 official integration + autonomous agent accounts) and **M9** (security hardening: factory front-run, ERC-1271, BLS/tier checks, ERC-7579 hook typeId, executor Tier-1 ceiling). Full test suite green (788 tests); deployed on Sepolia + OP Sepolia.
+>
+> **No further contract changes will be made in this version.** If you find a problem, please [open an issue](https://github.com/AAStarCommunity/airaccount-contract/issues) — it will be triaged and documented, but the frozen v0.17.0 contracts will **not** be modified. Any fixes will land in a future, separately-versioned line.
 
 ---
 
