@@ -314,6 +314,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     ///         guard.checkTransaction) applies the cumulative ETH tier check too: an executor op whose value
     ///         pushes today's spend above tier1Limit reverts InsufficientTier. The account owner controls what
     ///         counts as "small" by tuning tier1Limit.
+    /// @dev    NOTE: the tier check is only active when tiering is configured (tier1Limit or tier2Limit > 0).
+    ///         If both are 0, tiering is disabled and an executor is bounded only by the guard's daily limit
+    ///         (and token limits) — it is NOT implicitly capped. Set tier1Limit to enforce a per-op ETH ceiling.
     /// @param mode    ModeCode (bytes32): byte[0] must be 0x00 (single call). Batch mode not supported in M7.
     /// @param executionCalldata abi.encodePacked(target(20), value(32), calldata)
     /// @return returnData Single-element array with the call's return bytes
