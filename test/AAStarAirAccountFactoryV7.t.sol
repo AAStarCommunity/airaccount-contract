@@ -32,15 +32,25 @@ contract AAStarAirAccountFactoryV7Test is Test {
         factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs, address(0), address(0));
     }
 
-    /// @dev Sign the domain-separated guardian acceptance message for setUp factory + owner + salt.
+    /// @dev Sign the guardian acceptance message for setUp factory + owner + salt at TEST_DAILY_LIMIT.
     function _guardianSig(Vm.Wallet memory w, address owner, uint256 salt) internal view returns (bytes memory) {
-        return _guardianSigFor(w, address(factory), owner, salt);
+        return _guardianSigFor(w, address(factory), owner, salt, TEST_DAILY_LIMIT);
     }
 
-    /// @dev Sign the domain-separated guardian acceptance message for an explicit factory address.
-    ///      Mirrors: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
+    /// @dev Variant binding an explicit dailyLimit (C-3: acceptance sig binds dailyLimit).
+    function _guardianSig(Vm.Wallet memory w, address owner, uint256 salt, uint256 dailyLimit) internal view returns (bytes memory) {
+        return _guardianSigFor(w, address(factory), owner, salt, dailyLimit);
+    }
+
+    /// @dev Sign the guardian acceptance message for an explicit factory address at TEST_DAILY_LIMIT.
     function _guardianSigFor(Vm.Wallet memory w, address factoryAddr, address owner, uint256 salt) internal view returns (bytes memory) {
-        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, factoryAddr, owner, salt));
+        return _guardianSigFor(w, factoryAddr, owner, salt, TEST_DAILY_LIMIT);
+    }
+
+    /// @dev Sign the domain-separated guardian acceptance message.
+    ///      Mirrors: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt, dailyLimit)).toEthSignedMessageHash()
+    function _guardianSigFor(Vm.Wallet memory w, address factoryAddr, address owner, uint256 salt, uint256 dailyLimit) internal view returns (bytes memory) {
+        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, factoryAddr, owner, salt, dailyLimit));
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
         return abi.encodePacked(r, s, v);
@@ -101,14 +111,14 @@ contract AAStarAirAccountFactoryV7Test is Test {
     }
 
     function test_createAccountWithDefaults_differentLimits() public {
-        bytes memory sig1a = _guardianSig(g1Wallet, ownerA, 0);
-        bytes memory sig2a = _guardianSig(g2Wallet, ownerA, 0);
+        bytes memory sig1a = _guardianSig(g1Wallet, ownerA, 0, 0.1 ether);
+        bytes memory sig2a = _guardianSig(g2Wallet, ownerA, 0, 0.1 ether);
         address a1 = factory.createAccountWithDefaults(ownerA, 0, g1Wallet.addr, sig1a, g2Wallet.addr, sig2a, 0.1 ether);
 
         // With clone pattern: address depends on owner+salt only (not config).
-        
-        bytes memory sig1b = _guardianSig(g1Wallet, ownerA, 1);
-        bytes memory sig2b = _guardianSig(g2Wallet, ownerA, 1);
+
+        bytes memory sig1b = _guardianSig(g1Wallet, ownerA, 1, 1 ether);
+        bytes memory sig2b = _guardianSig(g2Wallet, ownerA, 1, 1 ether);
         address a2 = factory.createAccountWithDefaults(ownerA, 1, g1Wallet.addr, sig1b, g2Wallet.addr, sig2b, 1 ether);
         assertTrue(a1 != a2);
     }
@@ -342,8 +352,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
     ///      Prevents replay of acceptance signatures across chains.
     function test_guardian_wrongChainId_reverts() public {
         uint256 wrongChain = block.chainid + 1;
-        // Sign for wrong chainId manually
-        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", wrongChain, address(factory), ownerA, uint256(0)));
+        // Sign for wrong chainId manually — same format as a valid sig (incl. dailyLimit) so the
+        // ONLY difference is chainId; this isolates the chain-domain-separation check.
+        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", wrongChain, address(factory), ownerA, uint256(0), TEST_DAILY_LIMIT));
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(g1Wallet.privateKey, ethHash);
         bytes memory badSig = abi.encodePacked(r, s, v);
@@ -556,5 +567,52 @@ contract AAStarAirAccountFactoryV7Test is Test {
         });
         address acc = factory.createAccount(ownerA, 51, config);
         assertTrue(acc.code.length > 0);
+    }
+
+    // ─── C-2 / C-3: front-run config-weakening prevention ───────────────────
+
+    /// @notice C-2: _getConfigHash binds the FULL InitConfig. A front-runner keeping guardians +
+    ///         dailyLimit identical but weakening another field (here: an irreversible high
+    ///         minDailyLimit floor) now maps to a DIFFERENT counterfactual address, so it can no
+    ///         longer collide with and hijack the victim's address.
+    function test_C2_configHash_bindsFullConfig_weakenedConfigCannotCollide() public {
+        uint8[] memory algs = new uint8[](1);
+        algs[0] = 0x02;
+        AAStarAirAccountBase.InitConfig memory victimCfg = AAStarAirAccountBase.InitConfig({
+            guardians: [g1Wallet.addr, g2Wallet.addr, address(0)],
+            dailyLimit: 1 ether,
+            approvedAlgIds: algs,
+            minDailyLimit: 0, // victim wants no floor (can tighten later)
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+        address victimAddr = factory.getAddress(ownerA, 7, victimCfg);
+
+        // Attacker keeps guardians + dailyLimit identical, but pins an irreversible minDailyLimit floor.
+        AAStarAirAccountBase.InitConfig memory attackCfg = victimCfg;
+        attackCfg.minDailyLimit = 1 ether;
+        address attackAddr = factory.getAddress(ownerA, 7, attackCfg);
+
+        assertTrue(victimAddr != attackAddr, "weakened config must not collide with victim address");
+
+        // And stripping the algorithm whitelist (DoS vector) also yields a different address.
+        AAStarAirAccountBase.InitConfig memory emptyAlgCfg = victimCfg;
+        emptyAlgCfg.approvedAlgIds = new uint8[](0);
+        assertTrue(factory.getAddress(ownerA, 7, emptyAlgCfg) != victimAddr, "empty-alg config must not collide");
+    }
+
+    /// @notice C-3: guardian acceptance sig is bound to dailyLimit. Sigs collected for one
+    ///         dailyLimit cannot be replayed by a front-runner with a larger (weaker) limit.
+    function test_C3_acceptanceSig_boundToDailyLimit_cannotReplayWithWeakerLimit() public {
+        bytes memory sig1 = _guardianSig(g1Wallet, ownerA, 3, 0.5 ether);
+        bytes memory sig2 = _guardianSig(g2Wallet, ownerA, 3, 0.5 ether);
+
+        // Replaying the 0.5-ether sigs with a 100-ether limit must fail guardian verification.
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.GuardianDidNotAccept.selector, g1Wallet.addr));
+        factory.createAccountWithDefaults(ownerA, 3, g1Wallet.addr, sig1, g2Wallet.addr, sig2, 100 ether);
+
+        // The same sigs with the correct 0.5-ether limit succeed.
+        address account = factory.createAccountWithDefaults(ownerA, 3, g1Wallet.addr, sig1, g2Wallet.addr, sig2, 0.5 ether);
+        assertTrue(account.code.length > 0, "matching dailyLimit must deploy");
     }
 }

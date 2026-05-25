@@ -192,10 +192,18 @@ contract M5ScenarioTests is Test {
 
     }
 
+    /// @dev Defaults to 1 ether dailyLimit (matches the success-case createAccountWithDefaults calls).
     function _guardianAcceptSig(Vm.Wallet memory w, address owner, uint256 salt)
         internal view returns (bytes memory)
     {
-        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(factory), owner, salt));
+        return _guardianAcceptSig(w, owner, salt, 1 ether);
+    }
+
+    /// @dev C-3: acceptance sig binds dailyLimit so it cannot be replayed with a weaker limit.
+    function _guardianAcceptSig(Vm.Wallet memory w, address owner, uint256 salt, uint256 dailyLimit)
+        internal view returns (bytes memory)
+    {
+        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(factory), owner, salt, dailyLimit));
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
         return abi.encodePacked(r, s, v);
@@ -649,8 +657,8 @@ contract M5ScenarioTests is Test {
      * Any positive value is accepted - forces intentional choice.
      */
     function test_M57_scenario_minimalNonZeroLimit_accepted() public {
-        bytes memory sig1 = _guardianAcceptSig(g1Wallet, aliceWallet.addr, 0);
-        bytes memory sig2 = _guardianAcceptSig(g2Wallet, aliceWallet.addr, 0);
+        bytes memory sig1 = _guardianAcceptSig(g1Wallet, aliceWallet.addr, 0, 1);
+        bytes memory sig2 = _guardianAcceptSig(g2Wallet, aliceWallet.addr, 0, 1);
 
         address account = factory.createAccountWithDefaults(
             aliceWallet.addr, 0,

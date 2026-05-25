@@ -98,9 +98,11 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     ///         The caller is responsible for passing the correct hash (may be pre-EIP-191).
     /// @return magicValue 0x1626ba7e if valid, 0xffffffff otherwise
     function isValidSignature(bytes32 hash, bytes calldata sig) external view returns (bytes4) {
-        // Standard ERC-1271: recover directly from hash, no additional prefix
-        address signer = ECDSA.recover(hash, sig);
-        if (signer == owner) return 0x1626ba7e;
+        // Standard ERC-1271: recover directly from hash, no additional prefix.
+        // tryRecover returns address(0) on a malformed signature instead of reverting, so a bad
+        // signature yields the failure magic value rather than bubbling a revert to integrators.
+        (address signer,,) = ECDSA.tryRecover(hash, sig);
+        if (signer != address(0) && signer == owner) return 0x1626ba7e;
         return 0xffffffff;
     }
 

@@ -326,6 +326,24 @@ contract AAStarAirAccountV7Test is Test {
         assertEq(result, bytes4(0xffffffff));
     }
 
+    /// @notice M-8: a malformed signature must return the ERC-1271 failure magic value,
+    ///         NOT revert (tryRecover instead of recover). Integrators expect a bytes4 result.
+    function test_M8_isValidSignature_malformedSig_returnsFailureNotRevert() public view {
+        bytes32 hash = keccak256("some message");
+        bytes memory tooShort = hex"1234"; // not 65 bytes — would revert under ECDSA.recover
+        bytes4 result = account.isValidSignature(hash, tooShort);
+        assertEq(result, bytes4(0xffffffff));
+    }
+
+    /// @notice M-8: a 65-byte sig with an invalid v that recovers to address(0) must also
+    ///         return failure rather than matching owner by accident.
+    function test_M8_isValidSignature_zeroRecovery_returnsFailure() public view {
+        bytes32 hash = keccak256("some message");
+        bytes memory badV = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(1)), uint8(0)); // invalid v
+        bytes4 result = account.isValidSignature(hash, badV);
+        assertEq(result, bytes4(0xffffffff));
+    }
+
     function test_erc165_supportsInterface_erc165() public view {
         assertTrue(account.supportsInterface(0x01ffc9a7)); // ERC-165 itself
     }
