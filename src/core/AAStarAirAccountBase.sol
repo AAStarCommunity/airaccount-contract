@@ -139,6 +139,12 @@ abstract contract AAStarAirAccountBase is Initializable {
     address private _guardian1;
     address private _guardian2;
     uint256 private _guardianRemovalNonce;
+    uint256 private _tierLimitNonce;
+    /// @dev Latches true the first time tier limits are ever configured (via setTierLimits OR
+    ///      modifyTierLimitsWithGuardians). Never resets — so once configured, setTierLimits is
+    ///      permanently locked out even after a guardian reset to (0,0). Prevents an owner from
+    ///      regaining unilateral tier control by laundering through a (0,0) reset.
+    bool private _tierLimitsInitialized;
 
     struct RecoveryProposal {
         address newOwner;
@@ -237,6 +243,8 @@ abstract contract AAStarAirAccountBase is Initializable {
     error InvalidGuardianSignature();
     error SessionScopeViolation();
     error InvalidTierConfig();
+    error CannotIncreaseTierLimit();
+    error TierLimitSigExpired();
     /// @dev HIGH-2: Agent session keys must use execute(), not executeBatch(), when a hook module
     ///      (TierGuardHook) is installed. executeBatch does not invoke preCheck, so the hook's
     ///      session scope enforcement (callTargets / selectorAllowlist) would be bypassed.
@@ -400,8 +408,57 @@ abstract contract AAStarAirAccountBase is Initializable {
         emit P256KeySet(_x, _y);
     }
 
+    /// @notice Set tier thresholds — INITIAL SETUP ONLY.
+    ///         Callable exactly once, ever. After the first configuration (here or via
+    ///         modifyTierLimitsWithGuardians), this function is permanently locked.
+    ///         Any subsequent modification (increase, decrease, or disable) must go through
+    ///         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current
+    ///         limit values closes the bypass where a guardian reset to (0,0) would otherwise
+    ///         re-open owner-only configuration.
     function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwner {
-        if (_tier1 > _tier2 && _tier2 > 0) revert InvalidTierConfig();
+        if (_tierLimitsInitialized) revert CannotIncreaseTierLimit();
+        if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
+        _tierLimitsInitialized = true;
+        tier1Limit = _tier1;
+        tier2Limit = _tier2;
+        emit TierLimitsSet(_tier1, _tier2);
+    }
+
+    /// @notice Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.
+    ///         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.
+    ///         Security principle: the authorization level to change a spending guard must match
+    ///         the tier level being guarded (spending at T2 requires a guardian; modifying T2 does too).
+    /// @param _tier1        New Tier 1 threshold (single-factor limit).
+    /// @param _tier2        New Tier 2 threshold (dual-factor limit). 0 = T2 not used.
+    /// @param deadline      Signature expiry timestamp — guardians must sign within this window.
+    ///                      Prevents long-term signature hoarding and delayed replay attacks.
+    /// @param guardianSigs  ECDSA signatures from RECOVERY_THRESHOLD distinct guardians.
+    function modifyTierLimitsWithGuardians(
+        uint256 _tier1,
+        uint256 _tier2,
+        uint256 deadline,
+        bytes[] calldata guardianSigs
+    ) external onlyOwner {
+        if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
+        if (block.timestamp > deadline) revert TierLimitSigExpired();
+        if (guardianSigs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        bytes32 changeHash = keccak256(abi.encode(
+            address(this), block.chainid, _tierLimitNonce, "MODIFY_TIER_LIMITS", _tier1, _tier2, deadline
+        )).toEthSignedMessageHash();
+
+        uint256 approvalBitmap = 0;
+        for (uint256 i = 0; i < guardianSigs.length; i++) {
+            address recovered = changeHash.recover(guardianSigs[i]);
+            uint8 gIdx = _guardianIndex(recovered);
+            uint256 bit = uint256(1) << gIdx;
+            if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
+            approvalBitmap |= bit;
+        }
+        if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        _tierLimitNonce++;
+        _tierLimitsInitialized = true; // lock out setTierLimits even if guardians configure tiers first
         tier1Limit = _tier1;
         tier2Limit = _tier2;
         emit TierLimitsSet(_tier1, _tier2);
@@ -1359,6 +1416,9 @@ abstract contract AAStarAirAccountBase is Initializable {
     ///         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals.
     function proposeRecovery(address _newOwner) external {
         if (_newOwner == address(0) || _newOwner == owner) revert InvalidNewOwner();
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_getGuardian(i) == _newOwner) revert InvalidNewOwner();
+        }
         if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
 
         uint8 guardianIndex = _guardianIndex(msg.sender);

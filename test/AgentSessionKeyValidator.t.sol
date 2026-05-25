@@ -55,8 +55,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: expiry,
             velocityLimit: 0,
             velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: targets,
             selectorAllowlist: selectors
@@ -138,7 +136,6 @@ contract AgentSessionKeyValidatorTest is Test {
         uint48 expiry = uint48(block.timestamp + 2 hours);
         uint16 velLimit = 10;
         uint32 velWindow = 3600;
-        uint256 cap = 500 ether;
 
         address[] memory targets = new address[](0);
         bytes4[]  memory sels    = new bytes4[](0);
@@ -147,8 +144,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: expiry,
             velocityLimit: velLimit,
             velocityWindow: velWindow,
-            spendToken: address(0),
-            spendCap: cap,
             revoked: false,
             callTargets: targets,
             selectorAllowlist: sels
@@ -162,24 +157,18 @@ contract AgentSessionKeyValidatorTest is Test {
             uint48 storedExpiry,
             uint16 storedVelLimit,
             uint32 storedVelWindow,
-            address storedToken,
-            uint256 storedCap,
-            bool storedRevoked,
-            ,
-
+            bool storedRevoked
         ) = _readConfig(account, sessionWallet.addr);
 
         assertEq(storedExpiry,   expiry);
         assertEq(storedVelLimit, velLimit);
         assertEq(storedVelWindow, velWindow);
-        assertEq(storedToken,    address(0));
-        assertEq(storedCap,      cap);
         assertFalse(storedRevoked);
     }
 
     /// @dev Helper to read the packed config from public mapping.
     ///      Solidity auto-generated getters for structs with dynamic arrays return only non-array fields.
-    ///      The getter returns (expiry, velocityLimit, velocityWindow, spendToken, spendCap, revoked).
+    ///      The getter returns (expiry, velocityLimit, velocityWindow, revoked).
     function _readConfig(address acct, address key)
         internal
         view
@@ -187,19 +176,12 @@ contract AgentSessionKeyValidatorTest is Test {
             uint48 expiry,
             uint16 velocityLimit,
             uint32 velocityWindow,
-            address spendToken,
-            uint256 spendCap,
-            bool revoked,
-            address[] memory callTargets,
-            bytes4[]  memory selectorAllowlist
+            bool revoked
         )
     {
         // Note: auto-generated getter for struct with dynamic array fields only returns
         // the non-array fields (Solidity strips dynamic arrays from public getters).
-        (expiry, velocityLimit, velocityWindow, spendToken, spendCap, revoked) =
-            validator.agentSessions(acct, key);
-        callTargets = new address[](0);
-        selectorAllowlist = new bytes4[](0);
+        (expiry, velocityLimit, velocityWindow, revoked) = validator.agentSessions(acct, key);
     }
 
     // ─── C. revokeAgentSession ────────────────────────────────────────
@@ -217,7 +199,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(account);
         validator.revokeAgentSession(sessionWallet.addr);
 
-        (, , , , , bool revoked, ,) = _readConfig(account, sessionWallet.addr);
+        (, , , bool revoked) = _readConfig(account, sessionWallet.addr);
         assertTrue(revoked);
     }
 
@@ -250,8 +232,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: expiry,
             velocityLimit: velLimit,
             velocityWindow: velWindow,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: targets,
             selectorAllowlist: sels
@@ -333,7 +313,7 @@ contract AgentSessionKeyValidatorTest is Test {
         assertEq(result, 1);
     }
 
-    function test_validateUserOp_velocityLimit_exceeded_reverts() public {
+    function test_validateUserOp_velocityLimit_exceeded_returns1() public {
         uint16 limit = 2;
         uint32 window = 3600;
         _setupSession(uint48(block.timestamp + 1 hours), limit, window);
@@ -345,15 +325,9 @@ contract AgentSessionKeyValidatorTest is Test {
         validator.validateUserOp(op, USER_OP_HASH);
         // Second call — OK
         validator.validateUserOp(op, USER_OP_HASH);
-        // Third call — exceeds limit=2, should revert
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                AgentSessionKeyValidator.VelocityLimitExceeded.selector,
-                limit,
-                uint256(limit)
-            )
-        );
-        validator.validateUserOp(op, USER_OP_HASH);
+        // Third call — exceeds limit=2, should return SIG_VALIDATION_FAILED
+        uint256 result = validator.validateUserOp(op, USER_OP_HASH);
+        assertEq(result, 1);
     }
 
     function test_validateUserOp_velocityWindow_resets() public {
@@ -406,8 +380,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: expiry,
             velocityLimit: 0,
             velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: targets,
             selectorAllowlist: sels
@@ -516,99 +488,6 @@ contract AgentSessionKeyValidatorTest is Test {
         validator.enforceSessionScope(account, sessionWallet.addr, address(0x1234), bytes4(0xDEADBEEF));
     }
 
-    // ─── F. recordSpend ────────────────────────────────────────────────
-
-    function _grantSessionWithCap(uint256 cap) internal {
-        vm.prank(account);
-        validator.onInstall(bytes(""));
-
-        address[] memory targets = new address[](0);
-        bytes4[]  memory sels    = new bytes4[](0);
-        AgentSessionKeyValidator.AgentSessionConfig memory cfg = AgentSessionKeyValidator.AgentSessionConfig({
-            expiry: uint48(block.timestamp + 1 hours),
-            velocityLimit: 0,
-            velocityWindow: 0,
-            spendToken: address(0x1111),
-            spendCap: cap,
-            revoked: false,
-            callTargets: targets,
-            selectorAllowlist: sels
-        });
-        vm.prank(account);
-        validator.grantAgentSession(sessionWallet.addr, cfg);
-    }
-
-    function test_recordSpend_belowCap_passes() public {
-        uint256 cap = 1000 ether;
-        _grantSessionWithCap(cap);
-
-        // Only account may call recordSpend
-        vm.prank(account);
-        validator.recordSpend(account, sessionWallet.addr, 500 ether);
-    }
-
-    function test_recordSpend_exactCap_passes() public {
-        uint256 cap = 1000 ether;
-        _grantSessionWithCap(cap);
-
-        vm.prank(account);
-        validator.recordSpend(account, sessionWallet.addr, 1000 ether);
-    }
-
-    function test_recordSpend_exceedsCap_reverts() public {
-        uint256 cap = 1000 ether;
-        _grantSessionWithCap(cap);
-
-        vm.prank(account);
-        validator.recordSpend(account, sessionWallet.addr, 600 ether);
-        // Spend another 500 → cumulative 1100 > cap 1000
-        vm.prank(account);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                AgentSessionKeyValidator.SpendCapExceeded.selector,
-                cap,
-                uint256(1100 ether)
-            )
-        );
-        validator.recordSpend(account, sessionWallet.addr, 500 ether);
-    }
-
-    function test_recordSpend_noCap_passes() public {
-        // spendCap = 0 means unlimited
-        vm.prank(account);
-        validator.onInstall(bytes(""));
-
-        address[] memory targets = new address[](0);
-        bytes4[]  memory sels    = new bytes4[](0);
-        AgentSessionKeyValidator.AgentSessionConfig memory cfg = AgentSessionKeyValidator.AgentSessionConfig({
-            expiry: uint48(block.timestamp + 1 hours),
-            velocityLimit: 0,
-            velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 0, // no cap
-            revoked: false,
-            callTargets: targets,
-            selectorAllowlist: sels
-        });
-        vm.prank(account);
-        validator.grantAgentSession(sessionWallet.addr, cfg);
-
-        // Spend any amount — should not revert (skips tracking entirely)
-        vm.startPrank(account);
-        validator.recordSpend(account, sessionWallet.addr, type(uint256).max / 2);
-        validator.recordSpend(account, sessionWallet.addr, type(uint256).max / 2);
-        vm.stopPrank();
-    }
-
-    function test_recordSpend_nonAccount_reverts() public {
-        uint256 cap = 1000 ether;
-        _grantSessionWithCap(cap);
-
-        // Attacker (address(this)) tries to grief by exhausting spend cap
-        vm.expectRevert(AgentSessionKeyValidator.OnlyAccountOwner.selector);
-        validator.recordSpend(account, sessionWallet.addr, cap);
-    }
-
     // ─── G. delegateSession ────────────────────────────────────────────
 
     /// @dev Grant a parent session from `account` to `sessionWallet`, then return a sub-key wallet
@@ -631,7 +510,7 @@ contract AgentSessionKeyValidatorTest is Test {
         validator.delegateSession(account, subWallet.addr, subCfg);
 
         // Sub-session should exist in storage
-        (uint48 storedExpiry, , , , , bool revoked, ,) = _readConfig(account, subWallet.addr);
+        (uint48 storedExpiry, , , bool revoked) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, parentExpiry);
         assertFalse(revoked);
     }
@@ -649,7 +528,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(sessionWallet.addr);
         validator.delegateSession(account, subWallet.addr, subCfg);
 
-        (uint48 storedExpiry, , , , , , ,) = _readConfig(account, subWallet.addr);
+        (uint48 storedExpiry, , ,) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, uint48(block.timestamp + 1 hours));
     }
 
@@ -664,7 +543,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(sessionWallet.addr);
         validator.delegateSession(account, subWallet.addr, subCfg);
 
-        (uint48 storedExpiry, , , , , , ,) = _readConfig(account, subWallet.addr);
+        (uint48 storedExpiry, , ,) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, parentExpiry);
     }
 
@@ -732,46 +611,6 @@ contract AgentSessionKeyValidatorTest is Test {
         validator.delegateSession(account, subWallet.addr, subCfg);
     }
 
-    function test_delegateSession_spendCapEscalation_reverts() public {
-        uint48 parentExpiry = uint48(block.timestamp + 2 hours);
-
-        vm.prank(account);
-        validator.onInstall(bytes(""));
-
-        address[] memory targets = new address[](0);
-        bytes4[]  memory sels    = new bytes4[](0);
-        // Parent has a spend cap of 100 ether
-        AgentSessionKeyValidator.AgentSessionConfig memory parentCfg = AgentSessionKeyValidator.AgentSessionConfig({
-            expiry: parentExpiry,
-            velocityLimit: 0,
-            velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 100 ether,
-            revoked: false,
-            callTargets: targets,
-            selectorAllowlist: sels
-        });
-        vm.prank(account);
-        validator.grantAgentSession(sessionWallet.addr, parentCfg);
-
-        Vm.Wallet memory subWallet = vm.createWallet("subAgent7");
-        // Sub spend cap > parent spend cap — escalation
-        AgentSessionKeyValidator.AgentSessionConfig memory subCfg = AgentSessionKeyValidator.AgentSessionConfig({
-            expiry: parentExpiry,
-            velocityLimit: 0,
-            velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 200 ether,
-            revoked: false,
-            callTargets: targets,
-            selectorAllowlist: sels
-        });
-
-        vm.prank(sessionWallet.addr);
-        vm.expectRevert(AgentSessionKeyValidator.ScopeEscalationDenied.selector);
-        validator.delegateSession(account, subWallet.addr, subCfg);
-    }
-
     function test_delegateSession_velocityEscalation_reverts() public {
         uint48 parentExpiry = uint48(block.timestamp + 2 hours);
 
@@ -785,8 +624,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: parentExpiry,
             velocityLimit: 5,
             velocityWindow: 3600,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: targets,
             selectorAllowlist: sels
@@ -800,8 +637,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: parentExpiry,
             velocityLimit: 10,
             velocityWindow: 3600,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: targets,
             selectorAllowlist: sels
@@ -828,8 +663,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: parentExpiry,
             velocityLimit: 0,
             velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: parentTargets,
             selectorAllowlist: sels
@@ -848,8 +681,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: parentExpiry,
             velocityLimit: 0,
             velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: subTargets,
             selectorAllowlist: sels
@@ -911,7 +742,7 @@ contract AgentSessionKeyValidatorTest is Test {
         // Parent has restricted selectorAllowlist: [0xAABBCCDD]
         AgentSessionKeyValidator.AgentSessionConfig memory parentCfg = AgentSessionKeyValidator.AgentSessionConfig({
             expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
-            spendToken: address(0), spendCap: 0, revoked: false,
+            revoked: false,
             callTargets: targets, selectorAllowlist: parentSels
         });
         vm.prank(account);
@@ -921,7 +752,7 @@ contract AgentSessionKeyValidatorTest is Test {
         bytes4[] memory emptySels = new bytes4[](0); // sub wants all selectors — escalation
         AgentSessionKeyValidator.AgentSessionConfig memory subCfg = AgentSessionKeyValidator.AgentSessionConfig({
             expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
-            spendToken: address(0), spendCap: 0, revoked: false,
+            revoked: false,
             callTargets: targets, selectorAllowlist: emptySels
         });
 
@@ -942,7 +773,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         AgentSessionKeyValidator.AgentSessionConfig memory parentCfg = AgentSessionKeyValidator.AgentSessionConfig({
             expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
-            spendToken: address(0), spendCap: 0, revoked: false,
+            revoked: false,
             callTargets: targets, selectorAllowlist: parentSels
         });
         vm.prank(account);
@@ -954,7 +785,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         AgentSessionKeyValidator.AgentSessionConfig memory subCfg = AgentSessionKeyValidator.AgentSessionConfig({
             expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
-            spendToken: address(0), spendCap: 0, revoked: false,
+            revoked: false,
             callTargets: targets, selectorAllowlist: subSels
         });
 
@@ -976,7 +807,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         AgentSessionKeyValidator.AgentSessionConfig memory parentCfg = AgentSessionKeyValidator.AgentSessionConfig({
             expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
-            spendToken: address(0), spendCap: 0, revoked: false,
+            revoked: false,
             callTargets: targets, selectorAllowlist: parentSels
         });
         vm.prank(account);
@@ -988,7 +819,7 @@ contract AgentSessionKeyValidatorTest is Test {
 
         AgentSessionKeyValidator.AgentSessionConfig memory subCfg = AgentSessionKeyValidator.AgentSessionConfig({
             expiry: parentExpiry, velocityLimit: 0, velocityWindow: 0,
-            spendToken: address(0), spendCap: 0, revoked: false,
+            revoked: false,
             callTargets: targets, selectorAllowlist: subSels
         });
 
@@ -996,7 +827,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(sessionWallet.addr);
         validator.delegateSession(account, subWallet.addr, subCfg);
 
-        (uint48 stored, , , , , , ,) = _readConfig(account, subWallet.addr);
+        (uint48 stored, , ,) = _readConfig(account, subWallet.addr);
         assertEq(stored, parentExpiry);
     }
 
@@ -1011,7 +842,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(sessionWallet.addr);
         validator.delegateSession(account, subWallet.addr, subCfg); // should not revert
 
-        (uint48 stored, , , , , , ,) = _readConfig(account, subWallet.addr);
+        (uint48 stored, , ,) = _readConfig(account, subWallet.addr);
         assertEq(stored, parentExpiry);
     }
 
@@ -1036,7 +867,7 @@ contract AgentSessionKeyValidatorTest is Test {
         assertEq(parentResult, 1);
 
         // Sub-session still exists in storage (not automatically revoked)
-        (uint48 storedExpiry, , , , , bool revoked, ,) = _readConfig(account, subWallet.addr);
+        (uint48 storedExpiry, , , bool revoked) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, parentExpiry);
         assertFalse(revoked);
     }
@@ -1057,8 +888,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: expiry,
             velocityLimit: 0,
             velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: targets,
             selectorAllowlist: selectors
@@ -1083,8 +912,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: expiry,
             velocityLimit: 0,
             velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: targets,
             selectorAllowlist: selectors
@@ -1115,8 +942,6 @@ contract AgentSessionKeyValidatorTest is Test {
             expiry: parentExpiry,
             velocityLimit: 0,
             velocityWindow: 0,
-            spendToken: address(0),
-            spendCap: 0,
             revoked: false,
             callTargets: new address[](0),
             selectorAllowlist: selectors
