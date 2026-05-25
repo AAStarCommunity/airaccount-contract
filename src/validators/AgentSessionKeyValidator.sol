@@ -11,7 +11,13 @@ import {IERC7579Validator} from "../interfaces/IERC7579Module.sol";
 ///   - velocityLimit: max N calls per time window (prevents runaway agents)
 ///   - callTargetAllowlist: agent can only call pre-approved contracts (prompt injection defense)
 ///   - selectorAllowlist: per-target selector restrictions (M7.18)
-///   - spendCap: per-session cumulative token spend limit
+///
+/// @dev Spend control is intentionally NOT a per-session concern. Session keys are Tier-1
+///      (ALG_SESSION_KEY) and inherit the account's T1/T2/T3 tier model + global daily limit:
+///      any amount above tier1Limit already requires higher-tier multi-factor sigs a session
+///      key cannot produce, and cumulative spend is bounded by the guard's daily limit + the
+///      session expiry. A separate per-session spendCap would duplicate that logic without
+///      adding protection, so it is omitted.
 ///
 /// @dev Maps to ERC-7715 wallet_grantPermissions and ERC-7710 Delegation standards.
 ///      Install as Validator module (type 1) via account.installModule(1, agentValidator, guardianSig).
@@ -25,8 +31,6 @@ contract AgentSessionKeyValidator is IERC7579Validator {
         uint48  expiry;              // Unix timestamp — session expires after this
         uint16  velocityLimit;       // Max calls per velocityWindow (0 = unlimited)
         uint32  velocityWindow;      // Window in seconds for velocity limiting
-        address spendToken;          // ERC-20 token for spend cap (address(0) = ETH)
-        uint256 spendCap;            // Max cumulative spend this session (0 = unlimited)
         bool    revoked;             // Owner can revoke at any time
         address[] callTargets;       // Allowlisted contracts (empty = all allowed)
         bytes4[]  selectorAllowlist; // Allowed selectors (empty = all selectors allowed for any target)
@@ -35,7 +39,6 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     struct AgentSessionState {
         uint256 callCount;     // Total calls in current window
         uint256 windowStart;   // When current velocity window started
-        uint256 totalSpent;    // Cumulative spend this session
     }
 
     // ─── Storage ─────────────────────────────────────────────────────
@@ -86,11 +89,9 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     error SessionRevoked();
     error SessionNotFound();
     error VelocityLimitExceeded(uint16 limit, uint256 count);
-    error SpendCapExceeded(uint256 cap, uint256 spent);
     error CallTargetForbidden(address target);
     error SelectorForbidden(address target, bytes4 selector);
     error InvalidExpiry();
-    error OnlyAccountOwner();
     /// @dev Caller has no valid (non-revoked, non-expired) session on any account
     error CallerNotSessionKey();
     /// @dev Sub-session scope exceeds the parent session scope
@@ -124,7 +125,7 @@ contract AgentSessionKeyValidator is IERC7579Validator {
     /// @dev Called by the account owner (or via EntryPoint UserOp signed by owner).
     ///      The account calls this directly — msg.sender = account.
     /// @param sessionKey The agent's EOA signing address
-    /// @param cfg Session configuration (expiry, velocity, spend cap, allowlists)
+    /// @param cfg Session configuration (expiry, velocity, allowlists)
     function grantAgentSession(address sessionKey, AgentSessionConfig calldata cfg) external {
         if (cfg.expiry <= block.timestamp) revert InvalidExpiry();
         // velocityWindow=0 with velocityLimit>0 would silently disable rate limiting (window check: block.timestamp > 0+0 always true → counter reset every call)
@@ -159,16 +160,6 @@ contract AgentSessionKeyValidator is IERC7579Validator {
 
         // Enforce scope: expiry cannot extend beyond parent
         if (subCfg.expiry > parentCfg.expiry) revert ScopeEscalationDenied();
-
-        // Enforce scope: spendCap cannot increase
-        // sub cap=0 (unlimited) is only allowed if parent cap is also 0 (unlimited)
-        if (subCfg.spendCap == 0) {
-            // sub requests unlimited spend — only valid if parent also has unlimited
-            if (parentCfg.spendCap != 0) revert ScopeEscalationDenied();
-        } else {
-            // sub has a finite cap — parent must also have a finite cap and sub cap <= parent cap
-            if (parentCfg.spendCap > 0 && subCfg.spendCap > parentCfg.spendCap) revert ScopeEscalationDenied();
-        }
 
         // Enforce scope: velocity rate (limit/window) cannot increase.
         // Comparing only velocityLimit ignores the window — a sub with 9 calls/1s exceeds
@@ -293,21 +284,6 @@ contract AgentSessionKeyValidator is IERC7579Validator {
         // Check selector allowlist
         if (cfg.selectorAllowlist.length > 0 && !_containsSelector(cfg.selectorAllowlist, selector)) {
             revert SelectorForbidden(callTarget, selector);
-        }
-    }
-
-    /// @notice Update cumulative spend tracking.
-    /// @dev Called by account after each spend to track against spendCap.
-    ///      Only the account itself may call this — prevents griefing via artificial cap exhaustion.
-    function recordSpend(address account, address sessionKey, uint256 amount) external {
-        if (msg.sender != account) revert OnlyAccountOwner();
-        AgentSessionConfig storage cfg = agentSessions[account][sessionKey];
-        if (cfg.spendCap == 0) return; // no cap — skip tracking
-
-        AgentSessionState storage state = sessionStates[account][sessionKey];
-        state.totalSpent += amount;
-        if (state.totalSpent > cfg.spendCap) {
-            revert SpendCapExceeded(cfg.spendCap, state.totalSpent);
         }
     }
 
