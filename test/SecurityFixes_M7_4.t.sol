@@ -641,14 +641,14 @@ contract SecurityFixes_M7_4Test is Test {
         bytes memory extra1 = bytes("data-for-module1");
         bytes memory extra2 = bytes("data-for-module2");
         bytes memory sig1 = _installSigWithData(g0Wallet, address(account), 2, address(trackingModule), extra1);
-        bytes memory sig2 = _installSigWithData(g0Wallet, address(account), 3, address(trackingModule2), extra2);
+        bytes memory sig2 = _installSigWithData(g0Wallet, address(account), 4, address(trackingModule2), extra2);
         bytes memory initData1 = abi.encodePacked(sig1, extra1);
         bytes memory initData2 = abi.encodePacked(sig2, extra2);
 
         vm.prank(ownerWallet.addr);
         account.installModule(2, address(trackingModule), initData1);
         vm.prank(ownerWallet.addr);
-        account.installModule(3, address(trackingModule2), initData2);
+        account.installModule(4, address(trackingModule2), initData2);
 
         // After HIGH-2 fix: onInstall receives actual initData (bytes after guardian sigs)
         assertTrue(trackingModule.isInitialized(address(account)),  "module1 must be initialized");
@@ -706,17 +706,17 @@ contract SecurityFixes_M7_4Test is Test {
     ///         executeBatch now reverts with AgentSessionBatchNotSupported.
     ///
     ///         Test flow:
-    ///           1. Install TierGuardHook as hook module (moduleTypeId=3)
+    ///           1. Install TierGuardHook as hook module (moduleTypeId=4)
     ///           2. Simulate a UserOp with signature[0] = ALG_SESSION_KEY (0x08) via nonce-key routing
     ///           3. Call executeBatch — must revert with AgentSessionBatchNotSupported
     function test_ExecuteBatch_sessionKey_reverts() public {
-        // Deploy and install TierGuardHook as hook module (typeId=3)
+        // Deploy and install TierGuardHook as hook module (typeId=4)
         TierGuardHook tierHook = new TierGuardHook();
-        // Guardian sig for installModule (typeId=3, module=tierHook, no extra initData → empty moduleInitData)
-        bytes memory hookSig = _installSigWithData(g0Wallet, address(account), 3, address(tierHook), "");
+        // Guardian sig for installModule (typeId=4, module=tierHook, no extra initData → empty moduleInitData)
+        bytes memory hookSig = _installSigWithData(g0Wallet, address(account), 4, address(tierHook), "");
         // hookSig (65 bytes) prepended, no additional initData → onInstall called with empty bytes
         vm.prank(ownerWallet.addr);
-        account.installModule(3, address(tierHook), hookSig);
+        account.installModule(4, address(tierHook), hookSig);
 
         // Simulate a UserOp routed via nonce-key path with ALG_SESSION_KEY sig prefix
         // trackingModule is used as the validator module (already ERC-7579 compatible)

@@ -60,10 +60,11 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────
 
-    // Module type IDs (ERC-7579 §2)
+    // Module type IDs (ERC-7579 §2): 1=validator, 2=executor, 3=fallback, 4=hook.
+    // We support validator/executor/hook; fallback (3) is intentionally unsupported.
     uint256 internal constant MODULE_TYPE_VALIDATOR = 1;
     uint256 internal constant MODULE_TYPE_EXECUTOR  = 2;
-    uint256 internal constant MODULE_TYPE_HOOK     = 3;
+    uint256 internal constant MODULE_TYPE_HOOK      = 4;
 
     // ERC-7579 module lifecycle selectors
     bytes4 private constant SEL_ON_INSTALL   = 0x6d61fe70; // onInstall(bytes)
@@ -76,20 +77,24 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     }
 
     /// @notice ERC-7579: declare which module types this account supports.
-    ///         M7 declares validator(1), executor(2), and hook(3) support.
+    ///         Declares validator(1), executor(2), and hook(4). Fallback(3) is not supported.
     function supportsModule(uint256 moduleTypeId) external pure returns (bool) {
-        unchecked { return moduleTypeId - 1 < 3; } // 1,2,3=valid; 0 wraps to MAX→false
+        return moduleTypeId == MODULE_TYPE_VALIDATOR
+            || moduleTypeId == MODULE_TYPE_EXECUTOR
+            || moduleTypeId == MODULE_TYPE_HOOK;
     }
 
     /// @notice ERC-7579: check whether a module is installed.
-    ///         Checks the unified module registry for types 1-3.
+    ///         Checks the unified module registry for supported types (1,2,4).
     ///         Note: the built-in ECDSA validator is registered at initialize time.
     function isModuleInstalled(
         uint256 moduleTypeId,
         address module,
         bytes calldata /* additionalContext */
     ) external view returns (bool) {
-        if (moduleTypeId == 0 || moduleTypeId > 3) return false;
+        if (moduleTypeId != MODULE_TYPE_VALIDATOR
+            && moduleTypeId != MODULE_TYPE_EXECUTOR
+            && moduleTypeId != MODULE_TYPE_HOOK) return false;
         return _installedModules[moduleTypeId][module];
     }
 
@@ -211,7 +216,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         bytes calldata initData
     ) external onlyOwnerOrEntryPoint {
         if (module == address(0) || module.code.length == 0) revert ModuleInvalid();
-        if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
+        if (moduleTypeId != MODULE_TYPE_VALIDATOR
+            && moduleTypeId != MODULE_TYPE_EXECUTOR
+            && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
 
         uint8 threshold = _installModuleThreshold == 0 ? 70 : _installModuleThreshold;
         uint8 sigsRequired = threshold >= 100 ? 2 : (threshold >= 70 ? 1 : 0);
@@ -271,7 +278,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         address module,
         bytes calldata deInitData
     ) external onlyOwnerOrEntryPoint {
-        if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
+        if (moduleTypeId != MODULE_TYPE_VALIDATOR
+            && moduleTypeId != MODULE_TYPE_EXECUTOR
+            && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
 
         uint8 sigsRequired = _guardianCount < 2 ? _guardianCount : 2;
         _checkGuardianSigs(
