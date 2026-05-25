@@ -308,7 +308,12 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     /// @notice ERC-7579: Execute a single call on behalf of this account, called by an installed executor module.
     ///         Executor modules are installed via guardians (installModule requires guardian sig), providing
-    ///         authentication. The guard is still enforced here for ETH value AND ERC20 token limits.
+    ///         authentication. The full guard is enforced here at Tier 1 (ALG_ECDSA).
+    /// @dev    C-4: executors run at Tier 1 and cannot supply higher-tier (multi-factor) signatures, so they
+    ///         are bound to the account's Tier-1 ceiling. Routing through _enforceGuard (rather than a bare
+    ///         guard.checkTransaction) applies the cumulative ETH tier check too: an executor op whose value
+    ///         pushes today's spend above tier1Limit reverts InsufficientTier. The account owner controls what
+    ///         counts as "small" by tuning tier1Limit.
     /// @param mode    ModeCode (bytes32): byte[0] must be 0x00 (single call). Batch mode not supported in M7.
     /// @param executionCalldata abi.encodePacked(target(20), value(32), calldata)
     /// @return returnData Single-element array with the call's return bytes
@@ -326,12 +331,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         uint256 value  = uint256(bytes32(executionCalldata[20:52]));
         bytes calldata data = executionCalldata[52:];
 
-        // Enforce ETH + token daily limits at ALG_ECDSA tier.
-        // Executor install required guardian approval, but guard still applies per-op limits.
-        if (address(guard) != address(0)) {
-            guard.checkTransaction(value, ALG_ECDSA);
-            if (data.length >= 4) _checkTokenGuard(target, data, ALG_ECDSA);
-        }
+        // Full guard enforcement at Tier 1: cumulative ETH tier + daily limit + algorithm
+        // whitelist + ERC20/token limits. skipEthCheck=false (executor path holds correct msg.sender).
+        _enforceGuard(value, ALG_ECDSA, ALG_ECDSA, bytes32(0), target, data, false);
 
         returnData = new bytes[](1);
         (bool success, bytes memory result) = target.call{value: value}(data);

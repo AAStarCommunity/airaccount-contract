@@ -519,6 +519,33 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertEq(mockTarget.value(), 99);
     }
 
+    /// @notice C-4: an executor runs at Tier 1 and cannot supply higher-tier sigs, so an ETH
+    ///         transfer above tier1Limit must revert InsufficientTier. The owner defines "small"
+    ///         via tier1Limit.
+    function test_C4_executeFromExecutor_aboveTier1_reverts() public {
+        _installWithG0(2, address(mockModule)); // install as executor
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether); // tier1Limit = 0.1 ether
+
+        // 0.2 ether is a Tier-2 amount; executor (Tier 1) must be rejected.
+        bytes memory calldata_ = abi.encodePacked(address(mockTarget), uint256(0.2 ether), bytes(""));
+        vm.prank(address(mockModule));
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountBase.InsufficientTier.selector, uint8(2), uint8(1)));
+        account.executeFromExecutor(bytes32(0), calldata_);
+    }
+
+    /// @notice C-4: an ETH transfer at or below tier1Limit is allowed for an executor.
+    function test_C4_executeFromExecutor_withinTier1_succeeds() public {
+        _installWithG0(2, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        bytes memory calldata_ = abi.encodePacked(address(mockTarget), uint256(0.05 ether), bytes(""));
+        vm.prank(address(mockModule));
+        account.executeFromExecutor(bytes32(0), calldata_);
+        assertEq(address(mockTarget).balance, 0.05 ether);
+    }
+
     function test_executeFromExecutor_batch_reverts_unsupportedMode() public {
         // Batch mode (callType=0x01) not supported in M7 — reverts with InvalidModuleType
         _installWithG0(2, address(mockModule));
