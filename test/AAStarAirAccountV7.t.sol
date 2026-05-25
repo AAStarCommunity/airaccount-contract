@@ -294,7 +294,7 @@ contract AAStarAirAccountV7Test is Test {
     }
 
     function test_erc7579_supportsModule_hook_true() public view {
-        assertTrue(account.supportsModule(3)); // MODULE_TYPE_HOOK — now M7
+        assertTrue(account.supportsModule(4)); // MODULE_TYPE_HOOK (ERC-7579 type 4)
     }
 
     function test_erc7579_isModuleInstalled_noValidator_false() public view {

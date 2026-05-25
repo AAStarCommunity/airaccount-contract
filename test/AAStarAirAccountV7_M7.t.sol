@@ -182,12 +182,14 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertTrue(account.supportsModule(2));
     }
 
-    function test_supportsModule_hook_type3_true() public view {
-        assertTrue(account.supportsModule(3));
+    function test_supportsModule_hook_type4_true() public view {
+        // ERC-7579: hook is module type 4
+        assertTrue(account.supportsModule(4));
     }
 
-    function test_supportsModule_fallback_type4_false() public view {
-        assertFalse(account.supportsModule(4));
+    function test_supportsModule_fallback_type3_false() public view {
+        // ERC-7579: fallback handler is module type 3 — not supported by this account
+        assertFalse(account.supportsModule(3));
     }
 
     function test_supportsModule_type0_false() public view {
@@ -211,10 +213,10 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_installModule_hook_withGuardianSig_succeeds() public {
-        bytes memory sig = _installSig(g0Wallet, address(account), 3, address(mockModule));
+        bytes memory sig = _installSig(g0Wallet, address(account), 4, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.installModule(3, address(mockModule), sig);
-        assertTrue(account.isModuleInstalled(3, address(mockModule), ""));
+        account.installModule(4, address(mockModule), sig);
+        assertTrue(account.isModuleInstalled(4, address(mockModule), ""));
     }
 
     function test_installModule_emitsModuleInstalled_event() public {
@@ -252,11 +254,19 @@ contract AAStarAirAccountV7_M7Test is Test {
         account.installModule(0, address(mockModule), sig);
     }
 
-    function test_installModule_invalidType4_reverts() public {
-        bytes memory sig = _installSig(g0Wallet, address(account), 4, address(mockModule));
+    function test_installModule_invalidType3_fallback_reverts() public {
+        // ERC-7579 type 3 is fallback handler — not supported by this account.
+        bytes memory sig = _installSig(g0Wallet, address(account), 3, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InvalidModuleType.selector);
-        account.installModule(4, address(mockModule), sig);
+        account.installModule(3, address(mockModule), sig);
+    }
+
+    function test_installModule_invalidType5_reverts() public {
+        bytes memory sig = _installSig(g0Wallet, address(account), 5, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.InvalidModuleType.selector);
+        account.installModule(5, address(mockModule), sig);
     }
 
     function test_installModule_alreadyInstalled_reverts() public {
@@ -269,31 +279,31 @@ contract AAStarAirAccountV7_M7Test is Test {
 
     function test_installModule_secondHook_reverts() public {
         // LOW-1 fix: installing a second hook must revert, not silently overwrite
-        _installWithG0(3, address(mockModule));
+        _installWithG0(4, address(mockModule));
         // deploy a second distinct mock module
         MockModule mockModule2 = new MockModule();
-        bytes memory sig2 = _installSig(g0Wallet, address(account), 3, address(mockModule2));
+        bytes memory sig2 = _installSig(g0Wallet, address(account), 4, address(mockModule2));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.ModuleAlreadyInstalled.selector);
-        account.installModule(3, address(mockModule2), sig2);
+        account.installModule(4, address(mockModule2), sig2);
     }
 
     function test_installModule_hookAfterUninstall_succeeds() public {
         // After uninstalling the first hook, a new hook can be installed
-        _installWithG0(3, address(mockModule));
+        _installWithG0(4, address(mockModule));
         // uninstall requires 2 guardian sigs
         bytes memory unSig = abi.encodePacked(
-            _uninstallSig(g0Wallet, address(account), 3, address(mockModule)),
-            _uninstallSig(g1Wallet, address(account), 3, address(mockModule))
+            _uninstallSig(g0Wallet, address(account), 4, address(mockModule)),
+            _uninstallSig(g1Wallet, address(account), 4, address(mockModule))
         );
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(3, address(mockModule), unSig);
+        account.uninstallModule(4, address(mockModule), unSig);
         // now install a second hook — should succeed
         MockModule mockModule2 = new MockModule();
-        bytes memory sig2 = _installSig(g0Wallet, address(account), 3, address(mockModule2));
+        bytes memory sig2 = _installSig(g0Wallet, address(account), 4, address(mockModule2));
         vm.prank(ownerWallet.addr);
-        account.installModule(3, address(mockModule2), sig2);
-        assertTrue(account.isModuleInstalled(3, address(mockModule2), ""));
+        account.installModule(4, address(mockModule2), sig2);
+        assertTrue(account.isModuleInstalled(4, address(mockModule2), ""));
     }
 
     /// @notice Default threshold is 70 → 1 guardian sig required. No sig → should revert.
@@ -389,12 +399,12 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_uninstallModule_hook_withTwoGuardianSigs_succeeds() public {
-        _installWithG0(3, address(mockModule));
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 3, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 3, address(mockModule));
+        _installWithG0(4, address(mockModule));
+        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 4, address(mockModule));
+        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 4, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(3, address(mockModule), abi.encodePacked(sig0, sig1));
-        assertFalse(account.isModuleInstalled(3, address(mockModule), ""));
+        account.uninstallModule(4, address(mockModule), abi.encodePacked(sig0, sig1));
+        assertFalse(account.isModuleInstalled(4, address(mockModule), ""));
     }
 
     function test_uninstallModule_emitsModuleUninstalled_event() public {
@@ -507,6 +517,81 @@ contract AAStarAirAccountV7_M7Test is Test {
         bytes[] memory results = account.executeFromExecutor(mode, calldata_);
         assertEq(results.length, 1);
         assertEq(mockTarget.value(), 99);
+    }
+
+    /// @notice C-4: an executor runs at Tier 1 and cannot supply higher-tier sigs, so an ETH
+    ///         transfer above tier1Limit must revert InsufficientTier. The owner defines "small"
+    ///         via tier1Limit.
+    function test_C4_executeFromExecutor_aboveTier1_reverts() public {
+        _installWithG0(2, address(mockModule)); // install as executor
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether); // tier1Limit = 0.1 ether
+
+        // 0.2 ether is a Tier-2 amount; executor (Tier 1) must be rejected.
+        bytes memory calldata_ = abi.encodePacked(address(mockTarget), uint256(0.2 ether), bytes(""));
+        vm.prank(address(mockModule));
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountBase.InsufficientTier.selector, uint8(2), uint8(1)));
+        account.executeFromExecutor(bytes32(0), calldata_);
+    }
+
+    /// @notice C-4: an ETH transfer at or below tier1Limit is allowed for an executor.
+    function test_C4_executeFromExecutor_withinTier1_succeeds() public {
+        _installWithG0(2, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        bytes memory calldata_ = abi.encodePacked(address(mockTarget), uint256(0.05 ether), bytes(""));
+        vm.prank(address(mockModule));
+        account.executeFromExecutor(bytes32(0), calldata_);
+        assertEq(address(mockTarget).balance, 0.05 ether);
+    }
+
+    /// @notice C-4 boundary: the M7 account has NO guard and NO tier limits (tier1Limit==0).
+    ///         Per the C-4 doc, with tiering disabled the executor is NOT implicitly capped —
+    ///         a large ETH transfer must succeed (no InsufficientTier, no guard revert).
+    function test_C4_executeFromExecutor_noGuardNoTier_allowsLargeEth() public {
+        _installWithG0(2, address(mockModule));
+        address recipient = makeAddr("c4_recipient");
+        bytes memory calldata_ = abi.encodePacked(recipient, uint256(5 ether), bytes(""));
+        vm.prank(address(mockModule));
+        account.executeFromExecutor(bytes32(0), calldata_);
+        assertEq(recipient.balance, 5 ether);
+    }
+
+    /// @notice C-4 boundary: with a guard configured but tiering disabled (tier1Limit==0),
+    ///         an executor is bounded by the daily limit, NOT by tier. Within the daily limit
+    ///         a large op succeeds; over it reverts DailyLimitExceeded (not InsufficientTier).
+    function test_C4_executeFromExecutor_guardedButTierDisabled_boundedByDailyLimit() public {
+        uint8[] memory algs = new uint8[](1);
+        algs[0] = 0x02; // ECDSA approved
+        AAStarAirAccountV7 gacct = new AAStarAirAccountV7();
+        AAStarGlobalGuard guard = new AAStarGlobalGuard(
+            address(gacct), 2 ether, algs, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
+        );
+        gacct.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
+            guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
+            dailyLimit: 2 ether,
+            approvedAlgIds: algs,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        }), address(guard));
+        vm.deal(address(gacct), 10 ether);
+
+        bytes memory sig = _installSig(g0Wallet, address(gacct), 2, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        gacct.installModule(2, address(mockModule), sig);
+
+        address recipient = makeAddr("c4_recipient2");
+        // 1 ether: no tier limits set, within 2 ether daily limit → succeeds (no tier check)
+        vm.prank(address(mockModule));
+        gacct.executeFromExecutor(bytes32(0), abi.encodePacked(recipient, uint256(1 ether), bytes("")));
+        assertEq(recipient.balance, 1 ether);
+
+        // 3 ether: exceeds remaining daily limit → reverts DailyLimitExceeded, NOT InsufficientTier
+        vm.prank(address(mockModule));
+        vm.expectRevert(abi.encodeWithSelector(AAStarGlobalGuard.DailyLimitExceeded.selector, uint256(3 ether), uint256(1 ether)));
+        gacct.executeFromExecutor(bytes32(0), abi.encodePacked(recipient, uint256(3 ether), bytes("")));
     }
 
     function test_executeFromExecutor_batch_reverts_unsupportedMode() public {
@@ -723,7 +808,7 @@ contract AAStarAirAccountV7_M7Test is Test {
     function test_isModuleInstalled_beforeInstall_false() public view {
         assertFalse(account.isModuleInstalled(1, address(mockModule), ""));
         assertFalse(account.isModuleInstalled(2, address(mockModule), ""));
-        assertFalse(account.isModuleInstalled(3, address(mockModule), ""));
+        assertFalse(account.isModuleInstalled(4, address(mockModule), ""));
     }
 
     function test_isModuleInstalled_afterInstallValidator_true() public {
@@ -731,7 +816,7 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
         // Other types should remain false
         assertFalse(account.isModuleInstalled(2, address(mockModule), ""));
-        assertFalse(account.isModuleInstalled(3, address(mockModule), ""));
+        assertFalse(account.isModuleInstalled(4, address(mockModule), ""));
     }
 
     function test_isModuleInstalled_afterInstallExecutor_true() public {
@@ -741,8 +826,8 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_isModuleInstalled_afterInstallHook_true() public {
-        _installWithG0(3, address(mockModule));
-        assertTrue(account.isModuleInstalled(3, address(mockModule), ""));
+        _installWithG0(4, address(mockModule));
+        assertTrue(account.isModuleInstalled(4, address(mockModule), ""));
         assertFalse(account.isModuleInstalled(2, address(mockModule), ""));
     }
 
@@ -760,6 +845,13 @@ contract AAStarAirAccountV7_M7Test is Test {
 
     function test_isModuleInstalled_unknownType_false() public view {
         assertFalse(account.isModuleInstalled(99, address(mockModule), ""));
+    }
+
+    /// @notice ERC-7579 type 3 = fallback handler — unsupported by this account, so
+    ///         isModuleInstalled(3, ...) returns false for any address (the rejected path).
+    function test_isModuleInstalled_fallbackType3_false() public view {
+        assertFalse(account.isModuleInstalled(3, address(mockModule), ""));
+        assertFalse(account.isModuleInstalled(3, address(0), ""));
     }
 
     // ─── setAgentWallet ───────────────────────────────────────────────────────

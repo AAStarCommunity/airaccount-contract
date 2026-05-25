@@ -60,10 +60,11 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────
 
-    // Module type IDs (ERC-7579 §2)
+    // Module type IDs (ERC-7579 §2): 1=validator, 2=executor, 3=fallback, 4=hook.
+    // We support validator/executor/hook; fallback (3) is intentionally unsupported.
     uint256 internal constant MODULE_TYPE_VALIDATOR = 1;
     uint256 internal constant MODULE_TYPE_EXECUTOR  = 2;
-    uint256 internal constant MODULE_TYPE_HOOK     = 3;
+    uint256 internal constant MODULE_TYPE_HOOK      = 4;
 
     // ERC-7579 module lifecycle selectors
     bytes4 private constant SEL_ON_INSTALL   = 0x6d61fe70; // onInstall(bytes)
@@ -76,20 +77,24 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     }
 
     /// @notice ERC-7579: declare which module types this account supports.
-    ///         M7 declares validator(1), executor(2), and hook(3) support.
+    ///         Declares validator(1), executor(2), and hook(4). Fallback(3) is not supported.
     function supportsModule(uint256 moduleTypeId) external pure returns (bool) {
-        unchecked { return moduleTypeId - 1 < 3; } // 1,2,3=valid; 0 wraps to MAX→false
+        return moduleTypeId == MODULE_TYPE_VALIDATOR
+            || moduleTypeId == MODULE_TYPE_EXECUTOR
+            || moduleTypeId == MODULE_TYPE_HOOK;
     }
 
     /// @notice ERC-7579: check whether a module is installed.
-    ///         Checks the unified module registry for types 1-3.
+    ///         Checks the unified module registry for supported types (1,2,4).
     ///         Note: the built-in ECDSA validator is registered at initialize time.
     function isModuleInstalled(
         uint256 moduleTypeId,
         address module,
         bytes calldata /* additionalContext */
     ) external view returns (bool) {
-        if (moduleTypeId == 0 || moduleTypeId > 3) return false;
+        if (moduleTypeId != MODULE_TYPE_VALIDATOR
+            && moduleTypeId != MODULE_TYPE_EXECUTOR
+            && moduleTypeId != MODULE_TYPE_HOOK) return false;
         return _installedModules[moduleTypeId][module];
     }
 
@@ -220,7 +225,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         bytes calldata initData
     ) external onlyOwnerOrEntryPoint {
         if (module == address(0) || module.code.length == 0) revert ModuleInvalid();
-        if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
+        if (moduleTypeId != MODULE_TYPE_VALIDATOR
+            && moduleTypeId != MODULE_TYPE_EXECUTOR
+            && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
 
         uint8 threshold = _installModuleThreshold == 0 ? 70 : _installModuleThreshold;
         uint8 sigsRequired = threshold >= 100 ? 2 : (threshold >= 70 ? 1 : 0);
@@ -280,7 +287,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         address module,
         bytes calldata deInitData
     ) external onlyOwnerOrEntryPoint {
-        if (moduleTypeId == 0 || moduleTypeId > 3) revert InvalidModuleType();
+        if (moduleTypeId != MODULE_TYPE_VALIDATOR
+            && moduleTypeId != MODULE_TYPE_EXECUTOR
+            && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
 
         uint8 sigsRequired = _guardianCount < 2 ? _guardianCount : 2;
         _checkGuardianSigs(
@@ -308,7 +317,15 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     /// @notice ERC-7579: Execute a single call on behalf of this account, called by an installed executor module.
     ///         Executor modules are installed via guardians (installModule requires guardian sig), providing
-    ///         authentication. The guard is still enforced here for ETH value AND ERC20 token limits.
+    ///         authentication. The full guard is enforced here at Tier 1 (ALG_ECDSA).
+    /// @dev    C-4: executors run at Tier 1 and cannot supply higher-tier (multi-factor) signatures, so they
+    ///         are bound to the account's Tier-1 ceiling. Routing through _enforceGuard (rather than a bare
+    ///         guard.checkTransaction) applies the cumulative ETH tier check too: an executor op whose value
+    ///         pushes today's spend above tier1Limit reverts InsufficientTier. The account owner controls what
+    ///         counts as "small" by tuning tier1Limit.
+    /// @dev    NOTE: the tier check is only active when tiering is configured (tier1Limit or tier2Limit > 0).
+    ///         If both are 0, tiering is disabled and an executor is bounded only by the guard's daily limit
+    ///         (and token limits) — it is NOT implicitly capped. Set tier1Limit to enforce a per-op ETH ceiling.
     /// @param mode    ModeCode (bytes32): byte[0] must be 0x00 (single call). Batch mode not supported in M7.
     /// @param executionCalldata abi.encodePacked(target(20), value(32), calldata)
     /// @return returnData Single-element array with the call's return bytes
@@ -326,12 +343,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         uint256 value  = uint256(bytes32(executionCalldata[20:52]));
         bytes calldata data = executionCalldata[52:];
 
-        // Enforce ETH + token daily limits at ALG_ECDSA tier.
-        // Executor install required guardian approval, but guard still applies per-op limits.
-        if (address(guard) != address(0)) {
-            guard.checkTransaction(value, ALG_ECDSA);
-            if (data.length >= 4) _checkTokenGuard(target, data, ALG_ECDSA);
-        }
+        // Full guard enforcement at Tier 1: cumulative ETH tier + daily limit + algorithm
+        // whitelist + ERC20/token limits. skipEthCheck=false (executor path holds correct msg.sender).
+        _enforceGuard(value, ALG_ECDSA, ALG_ECDSA, bytes32(0), target, data, false);
 
         returnData = new bytes[](1);
         (bool success, bytes memory result) = target.call{value: value}(data);
