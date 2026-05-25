@@ -111,6 +111,24 @@ contract AAStarAirAccountV7M3Test is Test {
         account.setTierLimits(0.1 ether, 1 ether);
     }
 
+    // C-1: setTierLimits is initial-setup-only; second call must revert
+    function test_setTierLimits_alreadyInitialized_reverts() public {
+        vm.startPrank(ownerAddr);
+        account.setTierLimits(0.1 ether, 1 ether);
+        vm.expectRevert(AAStarAirAccountBase.CannotIncreaseTierLimit.selector);
+        account.setTierLimits(0.05 ether, 0.5 ether); // even a decrease is blocked
+        vm.stopPrank();
+    }
+
+    // C-1: setTierLimits(0,0) must revert when already initialized
+    function test_setTierLimits_resetToZero_reverts() public {
+        vm.startPrank(ownerAddr);
+        account.setTierLimits(0.1 ether, 1 ether);
+        vm.expectRevert(AAStarAirAccountBase.CannotIncreaseTierLimit.selector);
+        account.setTierLimits(0, 0); // bypass attempt via (0,0)
+        vm.stopPrank();
+    }
+
     function test_requiredTier_notConfigured() public view {
         // No tiers configured → returns 0
         assertEq(account.requiredTier(1 ether), 0);

@@ -12,13 +12,6 @@ import {IERC7579Validator} from "../interfaces/IERC7579Module.sol";
 ///   - callTargetAllowlist: agent can only call pre-approved contracts (prompt injection defense)
 ///   - selectorAllowlist: per-target selector restrictions (M7.18)
 ///
-/// @dev Spend control is intentionally NOT a per-session concern. Session keys are Tier-1
-///      (ALG_SESSION_KEY) and inherit the account's T1/T2/T3 tier model + global daily limit:
-///      any amount above tier1Limit already requires higher-tier multi-factor sigs a session
-///      key cannot produce, and cumulative spend is bounded by the guard's daily limit + the
-///      session expiry. A separate per-session spendCap would duplicate that logic without
-///      adding protection, so it is omitted.
-///
 /// @dev Maps to ERC-7715 wallet_grantPermissions and ERC-7710 Delegation standards.
 ///      Install as Validator module (type 1) via account.installModule(1, agentValidator, guardianSig).
 contract AgentSessionKeyValidator is IERC7579Validator {
@@ -252,7 +245,7 @@ contract AgentSessionKeyValidator is IERC7579Validator {
                 state.callCount = 0;
             }
             if (state.callCount >= cfg.velocityLimit) {
-                revert VelocityLimitExceeded(cfg.velocityLimit, state.callCount);
+                return 1; // SIG_VALIDATION_FAILED — velocity limit exceeded
             }
             state.callCount++;
         }

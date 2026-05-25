@@ -163,7 +163,7 @@ contract AAStarAirAccountFactoryV7 {
 
     /// @notice Deploy account with default community guardian as third guardian.
     /// @dev User provides 2 personal guardians with acceptance signatures.
-    ///      Each guardian must sign: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
+    ///      Each guardian must sign: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt, dailyLimit)).toEthSignedMessageHash()
     ///      Guard is initialized with user-specified dailyLimit and all 3 standard algorithms.
     /// @param owner Account owner
     /// @param salt CREATE2 salt
@@ -173,8 +173,9 @@ contract AAStarAirAccountFactoryV7 {
     /// @param guardian2Sig guardian2's acceptance signature
     /// @param dailyLimit Daily spending limit in wei (user chooses based on their needs)
     /// @dev Guardian acceptance hash is domain-separated:
-    ///      keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt)).toEthSignedMessageHash()
-    ///      Including chainId and address(this) prevents cross-chain and cross-factory replay.
+    ///      keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt, dailyLimit)).toEthSignedMessageHash()
+    ///      Including chainId and address(this) prevents cross-chain and cross-factory replay;
+    ///      dailyLimit prevents front-run with a weaker limit on the same address.
     function createAccountWithDefaults(
         address owner,
         uint256 salt,
@@ -189,8 +190,10 @@ contract AAStarAirAccountFactoryV7 {
         require(dailyLimit > 0, "Daily limit required"); // F72: guard must be configured
 
         // Verify both guardians signed the domain-separated acceptance message (F56 — M5.3)
-        // chainId + address(this) prevent replay across chains and factories with same owner+salt
-        bytes32 acceptHash = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(this), owner, salt))
+        // chainId + address(this) prevent replay across chains and factories with same owner+salt.
+        // dailyLimit is bound so a front-runner cannot replay these guardian sigs with a larger
+        // (weaker) dailyLimit on the same counterfactual address (_getDefaultSalt = owner+salt only).
+        bytes32 acceptHash = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(this), owner, salt, dailyLimit))
             .toEthSignedMessageHash();
         (address recovered1,,) = acceptHash.tryRecover(guardian1Sig);
         if (recovered1 != guardian1) revert GuardianDidNotAccept(guardian1);
@@ -375,10 +378,20 @@ contract AAStarAirAccountFactoryV7 {
         });
     }
 
-    /// @dev Hash the security-critical fields of a config that determine account identity.
-    ///      guardians + dailyLimit are the fields an attacker would change in a front-run.
+    /// @dev Hash ALL config fields that determine account security posture.
+    ///      Binding the full InitConfig prevents a front-runner from pre-deploying the same
+    ///      counterfactual address with a weakened config (e.g. an irreversible high
+    ///      minDailyLimit floor, an empty approvedAlgIds whitelist, or stripped token limits)
+    ///      while keeping guardians + dailyLimit identical to collide on the address.
     function _getConfigHash(AAStarAirAccountBase.InitConfig memory config) internal pure returns (bytes32) {
-        return keccak256(abi.encode(config.guardians, config.dailyLimit));
+        return keccak256(abi.encode(
+            config.guardians,
+            config.dailyLimit,
+            config.approvedAlgIds,
+            config.minDailyLimit,
+            config.initialTokens,
+            config.initialTokenConfigs
+        ));
     }
 
     /// @dev Internal salt for createAccount/getAddress: binds address to owner + salt + configHash.

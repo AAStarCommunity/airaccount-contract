@@ -157,9 +157,7 @@ contract AgentSessionKeyValidatorTest is Test {
             uint48 storedExpiry,
             uint16 storedVelLimit,
             uint32 storedVelWindow,
-            bool storedRevoked,
-            ,
-
+            bool storedRevoked
         ) = _readConfig(account, sessionWallet.addr);
 
         assertEq(storedExpiry,   expiry);
@@ -178,17 +176,12 @@ contract AgentSessionKeyValidatorTest is Test {
             uint48 expiry,
             uint16 velocityLimit,
             uint32 velocityWindow,
-            bool revoked,
-            address[] memory callTargets,
-            bytes4[]  memory selectorAllowlist
+            bool revoked
         )
     {
         // Note: auto-generated getter for struct with dynamic array fields only returns
         // the non-array fields (Solidity strips dynamic arrays from public getters).
-        (expiry, velocityLimit, velocityWindow, revoked) =
-            validator.agentSessions(acct, key);
-        callTargets = new address[](0);
-        selectorAllowlist = new bytes4[](0);
+        (expiry, velocityLimit, velocityWindow, revoked) = validator.agentSessions(acct, key);
     }
 
     // ─── C. revokeAgentSession ────────────────────────────────────────
@@ -206,7 +199,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(account);
         validator.revokeAgentSession(sessionWallet.addr);
 
-        (, , , bool revoked, ,) = _readConfig(account, sessionWallet.addr);
+        (, , , bool revoked) = _readConfig(account, sessionWallet.addr);
         assertTrue(revoked);
     }
 
@@ -320,7 +313,7 @@ contract AgentSessionKeyValidatorTest is Test {
         assertEq(result, 1);
     }
 
-    function test_validateUserOp_velocityLimit_exceeded_reverts() public {
+    function test_validateUserOp_velocityLimit_exceeded_returns1() public {
         uint16 limit = 2;
         uint32 window = 3600;
         _setupSession(uint48(block.timestamp + 1 hours), limit, window);
@@ -332,15 +325,9 @@ contract AgentSessionKeyValidatorTest is Test {
         validator.validateUserOp(op, USER_OP_HASH);
         // Second call — OK
         validator.validateUserOp(op, USER_OP_HASH);
-        // Third call — exceeds limit=2, should revert
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                AgentSessionKeyValidator.VelocityLimitExceeded.selector,
-                limit,
-                uint256(limit)
-            )
-        );
-        validator.validateUserOp(op, USER_OP_HASH);
+        // Third call — exceeds limit=2, should return SIG_VALIDATION_FAILED
+        uint256 result = validator.validateUserOp(op, USER_OP_HASH);
+        assertEq(result, 1);
     }
 
     function test_validateUserOp_velocityWindow_resets() public {
@@ -523,7 +510,7 @@ contract AgentSessionKeyValidatorTest is Test {
         validator.delegateSession(account, subWallet.addr, subCfg);
 
         // Sub-session should exist in storage
-        (uint48 storedExpiry, , , bool revoked, ,) = _readConfig(account, subWallet.addr);
+        (uint48 storedExpiry, , , bool revoked) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, parentExpiry);
         assertFalse(revoked);
     }
@@ -541,7 +528,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(sessionWallet.addr);
         validator.delegateSession(account, subWallet.addr, subCfg);
 
-        (uint48 storedExpiry, , , , ,) = _readConfig(account, subWallet.addr);
+        (uint48 storedExpiry, , ,) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, uint48(block.timestamp + 1 hours));
     }
 
@@ -556,7 +543,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(sessionWallet.addr);
         validator.delegateSession(account, subWallet.addr, subCfg);
 
-        (uint48 storedExpiry, , , , ,) = _readConfig(account, subWallet.addr);
+        (uint48 storedExpiry, , ,) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, parentExpiry);
     }
 
@@ -840,7 +827,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(sessionWallet.addr);
         validator.delegateSession(account, subWallet.addr, subCfg);
 
-        (uint48 stored, , , , ,) = _readConfig(account, subWallet.addr);
+        (uint48 stored, , ,) = _readConfig(account, subWallet.addr);
         assertEq(stored, parentExpiry);
     }
 
@@ -855,7 +842,7 @@ contract AgentSessionKeyValidatorTest is Test {
         vm.prank(sessionWallet.addr);
         validator.delegateSession(account, subWallet.addr, subCfg); // should not revert
 
-        (uint48 stored, , , , ,) = _readConfig(account, subWallet.addr);
+        (uint48 stored, , ,) = _readConfig(account, subWallet.addr);
         assertEq(stored, parentExpiry);
     }
 
@@ -880,7 +867,7 @@ contract AgentSessionKeyValidatorTest is Test {
         assertEq(parentResult, 1);
 
         // Sub-session still exists in storage (not automatically revoked)
-        (uint48 storedExpiry, , , bool revoked, ,) = _readConfig(account, subWallet.addr);
+        (uint48 storedExpiry, , , bool revoked) = _readConfig(account, subWallet.addr);
         assertEq(storedExpiry, parentExpiry);
         assertFalse(revoked);
     }
