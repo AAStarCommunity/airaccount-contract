@@ -876,4 +876,36 @@ contract SecurityFixes_M7_4Test is Test {
         vm.expectRevert(AAStarAirAccountBase.NotOwner.selector);
         account.modifyTierLimitsWithGuardians(0.2 ether, 2 ether, dl, sigs);
     }
+
+    /// Regression: a guardian reset to (0,0) must NOT re-open owner-only setTierLimits.
+    /// Before the _tierLimitsInitialized latch, setTierLimits gated on "limits == 0", so a
+    /// guardian-authorized reset handed unilateral tier control back to the owner.
+    function test_modifyTierLimits_resetToZero_doesNotReopenSetTierLimits() public {
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        // Guardians legitimately disable tiering (0,0).
+        uint256 dl = block.timestamp + 1 hours;
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _tierSig(g0Wallet, 0, 0, dl, 0);
+        sigs[1] = _tierSig(g1Wallet, 0, 0, dl, 0);
+        vm.prank(ownerWallet.addr);
+        account.modifyTierLimitsWithGuardians(0, 0, dl, sigs);
+        assertEq(account.tier1Limit(), 0);
+        assertEq(account.tier2Limit(), 0);
+
+        // Owner must NOT be able to reconfigure unilaterally — the latch stays set.
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.CannotIncreaseTierLimit.selector);
+        account.setTierLimits(5 ether, 10 ether);
+    }
+
+    /// setTierLimits is callable exactly once even with no guardian involvement.
+    function test_setTierLimits_callableOnlyOnce() public {
+        vm.startPrank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+        vm.expectRevert(AAStarAirAccountBase.CannotIncreaseTierLimit.selector);
+        account.setTierLimits(0.2 ether, 2 ether);
+        vm.stopPrank();
+    }
 }

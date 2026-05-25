@@ -140,6 +140,11 @@ abstract contract AAStarAirAccountBase is Initializable {
     address private _guardian2;
     uint256 private _guardianRemovalNonce;
     uint256 private _tierLimitNonce;
+    /// @dev Latches true the first time tier limits are ever configured (via setTierLimits OR
+    ///      modifyTierLimitsWithGuardians). Never resets — so once configured, setTierLimits is
+    ///      permanently locked out even after a guardian reset to (0,0). Prevents an owner from
+    ///      regaining unilateral tier control by laundering through a (0,0) reset.
+    bool private _tierLimitsInitialized;
 
     struct RecoveryProposal {
         address newOwner;
@@ -404,12 +409,16 @@ abstract contract AAStarAirAccountBase is Initializable {
     }
 
     /// @notice Set tier thresholds — INITIAL SETUP ONLY.
-    ///         Can only be called when both limits are currently 0 (fresh account).
-    ///         Any subsequent modification (increase OR decrease) must use modifyTierLimitsWithGuardians().
-    ///         This prevents a compromised owner key from silently disabling tier protection via (0,0).
+    ///         Callable exactly once, ever. After the first configuration (here or via
+    ///         modifyTierLimitsWithGuardians), this function is permanently locked.
+    ///         Any subsequent modification (increase, decrease, or disable) must go through
+    ///         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current
+    ///         limit values closes the bypass where a guardian reset to (0,0) would otherwise
+    ///         re-open owner-only configuration.
     function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwner {
-        if (tier1Limit != 0 || tier2Limit != 0) revert CannotIncreaseTierLimit();
+        if (_tierLimitsInitialized) revert CannotIncreaseTierLimit();
         if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
+        _tierLimitsInitialized = true;
         tier1Limit = _tier1;
         tier2Limit = _tier2;
         emit TierLimitsSet(_tier1, _tier2);
@@ -449,6 +458,7 @@ abstract contract AAStarAirAccountBase is Initializable {
         if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
 
         _tierLimitNonce++;
+        _tierLimitsInitialized = true; // lock out setTierLimits even if guardians configure tiers first
         tier1Limit = _tier1;
         tier2Limit = _tier2;
         emit TierLimitsSet(_tier1, _tier2);
