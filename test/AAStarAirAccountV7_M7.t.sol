@@ -546,6 +546,54 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertEq(address(mockTarget).balance, 0.05 ether);
     }
 
+    /// @notice C-4 boundary: the M7 account has NO guard and NO tier limits (tier1Limit==0).
+    ///         Per the C-4 doc, with tiering disabled the executor is NOT implicitly capped —
+    ///         a large ETH transfer must succeed (no InsufficientTier, no guard revert).
+    function test_C4_executeFromExecutor_noGuardNoTier_allowsLargeEth() public {
+        _installWithG0(2, address(mockModule));
+        address recipient = makeAddr("c4_recipient");
+        bytes memory calldata_ = abi.encodePacked(recipient, uint256(5 ether), bytes(""));
+        vm.prank(address(mockModule));
+        account.executeFromExecutor(bytes32(0), calldata_);
+        assertEq(recipient.balance, 5 ether);
+    }
+
+    /// @notice C-4 boundary: with a guard configured but tiering disabled (tier1Limit==0),
+    ///         an executor is bounded by the daily limit, NOT by tier. Within the daily limit
+    ///         a large op succeeds; over it reverts DailyLimitExceeded (not InsufficientTier).
+    function test_C4_executeFromExecutor_guardedButTierDisabled_boundedByDailyLimit() public {
+        uint8[] memory algs = new uint8[](1);
+        algs[0] = 0x02; // ECDSA approved
+        AAStarAirAccountV7 gacct = new AAStarAirAccountV7();
+        AAStarGlobalGuard guard = new AAStarGlobalGuard(
+            address(gacct), 2 ether, algs, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
+        );
+        gacct.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
+            guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
+            dailyLimit: 2 ether,
+            approvedAlgIds: algs,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        }), address(guard));
+        vm.deal(address(gacct), 10 ether);
+
+        bytes memory sig = _installSig(g0Wallet, address(gacct), 2, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        gacct.installModule(2, address(mockModule), sig);
+
+        address recipient = makeAddr("c4_recipient2");
+        // 1 ether: no tier limits set, within 2 ether daily limit → succeeds (no tier check)
+        vm.prank(address(mockModule));
+        gacct.executeFromExecutor(bytes32(0), abi.encodePacked(recipient, uint256(1 ether), bytes("")));
+        assertEq(recipient.balance, 1 ether);
+
+        // 3 ether: exceeds remaining daily limit → reverts DailyLimitExceeded, NOT InsufficientTier
+        vm.prank(address(mockModule));
+        vm.expectRevert(abi.encodeWithSelector(AAStarGlobalGuard.DailyLimitExceeded.selector, uint256(3 ether), uint256(1 ether)));
+        gacct.executeFromExecutor(bytes32(0), abi.encodePacked(recipient, uint256(3 ether), bytes("")));
+    }
+
     function test_executeFromExecutor_batch_reverts_unsupportedMode() public {
         // Batch mode (callType=0x01) not supported in M7 — reverts with InvalidModuleType
         _installWithG0(2, address(mockModule));
@@ -797,6 +845,13 @@ contract AAStarAirAccountV7_M7Test is Test {
 
     function test_isModuleInstalled_unknownType_false() public view {
         assertFalse(account.isModuleInstalled(99, address(mockModule), ""));
+    }
+
+    /// @notice ERC-7579 type 3 = fallback handler — unsupported by this account, so
+    ///         isModuleInstalled(3, ...) returns false for any address (the rejected path).
+    function test_isModuleInstalled_fallbackType3_false() public view {
+        assertFalse(account.isModuleInstalled(3, address(mockModule), ""));
+        assertFalse(account.isModuleInstalled(3, address(0), ""));
     }
 
     // ─── setAgentWallet ───────────────────────────────────────────────────────

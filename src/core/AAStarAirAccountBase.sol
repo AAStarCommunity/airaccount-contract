@@ -113,7 +113,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     uint8 internal _installModuleThreshold;
 
     /// @dev Active ERC-7579 hook module address (at most one active hook per account).
-    ///      Set when a hook (moduleTypeId=3) is installed; cleared on uninstall.
+    ///      Set when a hook (moduleTypeId=4, ERC-7579 hook type) is installed; cleared on uninstall.
     ///      When non-zero, execute/executeBatch dispatch preCheck() here and skip the
     ///      inline guard.checkTransaction call to avoid double-counting daily limits.
     address internal _activeHook;
