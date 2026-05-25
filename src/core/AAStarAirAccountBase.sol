@@ -9,6 +9,9 @@ import {IAAStarValidator} from "../interfaces/IAAStarValidator.sol";
 import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
 import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 import {ICalldataParser, ICalldataParserRegistry} from "../interfaces/ICalldataParser.sol";
+import {IERC8004IdentityRegistry} from "../interfaces/IERC8004IdentityRegistry.sol";
+import {IERC8004ReputationRegistry} from "../interfaces/IERC8004ReputationRegistry.sol";
+import {ERC8004Addresses} from "../config/ERC8004Addresses.sol";
 
 /**
  * @title AAStarAirAccountBase
@@ -279,6 +282,9 @@ abstract contract AAStarAirAccountBase is Initializable {
     // M8.1 AgentRegistry / ERC-8004
     error AgentRegistrationFailed();
     error IdentityRegistrationFailed();
+    error ReputationRegistryFailed();
+    /// @dev Passed registry is not the official ERC-8004 deployment for this chain.
+    error UnauthorizedRegistry();
 
     // ─── Events ───────────────────────────────────────────────────────
 
@@ -305,6 +311,8 @@ abstract contract AAStarAirAccountBase is Initializable {
     event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
     event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet, address agentRegistry);
     event AgentIdentityMinted(uint256 indexed agentId, address indexed identityRegistry, string agentURI);
+    event ERC8004WalletBound(uint256 indexed agentId, address indexed agentWallet, address indexed identityRegistry);
+    event AgentReputationSubmitted(uint256 indexed agentId, address indexed reputationRegistry, int128 value, string tag1);
 
     // ─── Modifiers ────────────────────────────────────────────────────
 
@@ -1704,27 +1712,99 @@ abstract contract AAStarAirAccountBase is Initializable {
 
     // ─── ERC-8004 Identity NFT (M8.ERC8004) ──────────────────────────────────
 
-    /// @notice Mint an ERC-8004 agent identity NFT to this AirAccount.
+    /// @notice Mint an ERC-8004 agent identity NFT to this AirAccount via the official registry.
     ///         After minting, ownerOf(agentId) == address(this).
-    /// @param identityRegistry IdentityRegistry contract address
-    /// @param agentURI Metadata URI for the agent (name, description, capabilities)
-    /// @return agentId The newly minted NFT token ID
-    /// @dev Call this before or after setAgentWallet to complete the full ERC-8004 registration.
-    ///      The returned agentId can be passed to setAgentWallet for a linked identity+wallet record.
+    ///         The NFT's initial agentWallet is set to address(this) by the registry.
+    ///         Call bindERC8004AgentWallet() afterwards to link the actual execution wallet.
+    /// @param identityRegistry Official ERC-8004 IdentityRegistry (use ERC8004Addresses lib).
+    /// @param agentURI Metadata URI for the agent — recommended: `ipfs://<CID>` or `did:web:<domain>`.
+    ///                 Suggested schema: { "name": string, "description": string,
+    ///                   "agentKey": address, "capabilities": string[] }
+    /// @return agentId Newly minted NFT token ID (starts at 0 per ERC-8004 spec).
     function mintAgentIdentity(
         address identityRegistry,
         string calldata agentURI
-    ) external onlyOwner returns (uint256 agentId) {
-        if (identityRegistry == address(0)) revert IdentityRegistrationFailed();
-        uint256 codeSize;
-        assembly { codeSize := extcodesize(identityRegistry) }
-        if (codeSize == 0) revert IdentityRegistrationFailed();
-        (bool ok, bytes memory data) = identityRegistry.call(
-            abi.encodeWithSignature("register(string)", agentURI)
-        );
-        if (!ok || data.length < 32) revert IdentityRegistrationFailed();
-        agentId = abi.decode(data, (uint256));
+    ) external onlyOwner nonReentrant returns (uint256 agentId) {
+        if (identityRegistry != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
+        agentId = IERC8004IdentityRegistry(identityRegistry).register(agentURI);
         emit AgentIdentityMinted(agentId, identityRegistry, agentURI);
+    }
+
+    /// @notice Bind an execution wallet to an ERC-8004 agent identity NFT.
+    ///         Requires an EIP-712 `AgentWalletSet(uint256,address,address,uint256)` signature
+    ///         from `agentWallet` proving it consents to the binding.
+    ///         The deadline must be within the next 5 minutes (enforced by the registry).
+    /// @param identityRegistry Official ERC-8004 IdentityRegistry address.
+    /// @param agentId          Token ID returned by mintAgentIdentity().
+    /// @param agentWallet      Execution wallet (session key) to bind.
+    /// @param deadline         Unix timestamp; must be <= block.timestamp + 300.
+    /// @param signature        EIP-712 consent signature from agentWallet.
+    function bindERC8004AgentWallet(
+        address identityRegistry,
+        uint256 agentId,
+        address agentWallet,
+        uint256 deadline,
+        bytes calldata signature
+    ) external onlyOwner nonReentrant {
+        if (identityRegistry != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
+        if (agentWallet == address(0)) revert IdentityRegistrationFailed();
+        IERC8004IdentityRegistry(identityRegistry).setAgentWallet(agentId, agentWallet, deadline, signature);
+        emit ERC8004WalletBound(agentId, agentWallet, identityRegistry);
+    }
+
+    /// @notice Submit reputation feedback for an agent interaction via the official registry.
+    ///         This AirAccount (as the caller/client) posts feedback about the agent's work.
+    ///         Self-feedback (when this account IS the agent) is rejected by the registry.
+    /// @param reputationRegistry  Official ERC-8004 ReputationRegistry address.
+    /// @param agentId             ERC-8004 agent token ID.
+    /// @param value               Signed fixed-point score (e.g. 95 with decimals=2 → 0.95).
+    /// @param valueDecimals       Decimal places for value.
+    /// @param tag1                Primary category (e.g. "quality", "accuracy").
+    /// @param tag2                Secondary tag (e.g. "task:summarize").
+    /// @param endpoint            Agent endpoint / API that served the request.
+    /// @param feedbackURI         URI to detailed feedback data (IPFS recommended).
+    /// @param feedbackHash        keccak256 of the off-chain feedback payload.
+    function submitAgentReputation(
+        address reputationRegistry,
+        uint256 agentId,
+        int128 value,
+        uint8 valueDecimals,
+        string calldata tag1,
+        string calldata tag2,
+        string calldata endpoint,
+        string calldata feedbackURI,
+        bytes32 feedbackHash
+    ) external onlyOwner nonReentrant {
+        if (reputationRegistry != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
+        IERC8004ReputationRegistry(reputationRegistry).giveFeedback(
+            agentId, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash
+        );
+        emit AgentReputationSubmitted(agentId, reputationRegistry, value, tag1);
+    }
+
+    /// @notice Query aggregated reputation for an agent across a set of clients.
+    /// @param reputationRegistry  Official ERC-8004 ReputationRegistry address.
+    /// @param agentId             ERC-8004 agent token ID.
+    /// @param clientAddresses     Array of client addresses to include in summary.
+    /// @param tag1                Filter by primary tag (empty = any).
+    /// @param tag2                Filter by secondary tag (empty = any).
+    /// @return count              Number of feedback entries matching the filter.
+    /// @return summaryValue       Aggregated score value.
+    /// @return summaryDecimals    Decimal places for summaryValue.
+    function queryAgentReputation(
+        address reputationRegistry,
+        uint256 agentId,
+        address[] calldata clientAddresses,
+        string calldata tag1,
+        string calldata tag2
+    ) external view returns (uint64 count, int128 summaryValue, uint8 summaryDecimals) {
+        // Read-only and free of side effects, so onlyOwner is unnecessary; reputation data is
+        // public on-chain. We still pin the registry to the official deployment so callers cannot
+        // be fed summaries from a spoofed contract.
+        if (reputationRegistry != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
+        return IERC8004ReputationRegistry(reputationRegistry).getSummary(
+            agentId, clientAddresses, tag1, tag2
+        );
     }
 
     receive() external payable {}

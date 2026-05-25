@@ -113,12 +113,19 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         return _validateSignature(hash, sig);
     }
 
+    /// @notice ERC-721 receiver — required because official ERC-8004 IdentityRegistry uses _safeMint.
+    ///         Without this, minting an agent identity NFT directly to this account would revert.
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return 0x150b7a02; // IERC721Receiver.onERC721Received.selector
+    }
+
     /// @notice ERC-165: interface detection.
-    ///         Signals support for ERC-1271 (isValidSignature) and ERC-7579 minimum surface.
+    ///         Signals support for ERC-1271 (isValidSignature), ERC-4337, and ERC-721 receiver.
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
         return
             interfaceId == 0x01ffc9a7 ||  // ERC-165 itself
             interfaceId == 0x1626ba7e ||  // ERC-1271 isValidSignature
+            interfaceId == 0x150b7a02 ||  // IERC721Receiver
             interfaceId == type(IAccount).interfaceId; // ERC-4337 IAccount
     }
 
