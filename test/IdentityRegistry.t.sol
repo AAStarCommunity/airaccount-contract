@@ -20,7 +20,7 @@ contract MockERC8004Identity is IERC8004IdentityRegistry {
     // IERC165 / IERC721 stubs
     function supportsInterface(bytes4) external pure returns (bool) { return false; }
     function balanceOf(address) external pure returns (uint256) { return 0; }
-    function ownerOf(uint256 id) external view returns (address o) {
+    function ownerOf(uint256 id) external view virtual returns (address o) {
         o = _owners[id]; require(o != address(0), "not minted");
     }
     function safeTransferFrom(address, address, uint256, bytes calldata) external pure { revert("soulbound"); }
@@ -34,7 +34,7 @@ contract MockERC8004Identity is IERC8004IdentityRegistry {
     function register() external returns (uint256 id) {
         id = _next++; _owners[id] = msg.sender; _wallets[id] = msg.sender;
     }
-    function register(string calldata uri) external returns (uint256 id) {
+    function register(string calldata uri) external virtual returns (uint256 id) {
         id = _next++; _owners[id] = msg.sender; _wallets[id] = msg.sender; _uris[id] = uri;
     }
     function register(string calldata uri, IERC8004IdentityRegistry.MetadataEntry[] calldata)
@@ -92,10 +92,44 @@ contract MockERC8004Reputation is IERC8004ReputationRegistry {
     function getLastIndex(uint256, address) external pure returns (uint64) { return 0; }
 }
 
+// ─── Safe-minting mock — simulates official ERC-8004 _safeMint behaviour ──────
+// Official IdentityRegistryUpgradeable calls _safeMint, which invokes onERC721Received
+// on contract recipients.  This mock replicates that check so the test suite catches
+// any regression where AirAccount stops implementing IERC721Receiver.
+
+contract SafeMintMockRegistry is MockERC8004Identity {
+    mapping(uint256 => address) private _smOwners;
+    uint256 private _smNext;
+
+    bytes4 private constant _ERC721_RECEIVED = 0x150b7a02;
+
+    function register(string calldata uri) external override returns (uint256 id) {
+        id = _smNext++;
+        _smOwners[id] = msg.sender;
+        // simulate _safeMint: call onERC721Received if recipient is a contract
+        if (msg.sender.code.length > 0) {
+            bytes4 retval = IERC721ReceiverMini(msg.sender).onERC721Received(
+                address(this), address(0), id, ""
+            );
+            require(retval == _ERC721_RECEIVED, "ERC721: transfer to non ERC721Receiver");
+        }
+    }
+
+    function ownerOf(uint256 id) external view override returns (address o) {
+        o = _smOwners[id];
+        require(o != address(0), "not minted");
+    }
+}
+
+interface IERC721ReceiverMini {
+    function onERC721Received(address, address, uint256, bytes calldata) external returns (bytes4);
+}
+
 // ─── Test suite ────────────────────────────────────────────────────────────
 
 contract ERC8004IntegrationTest is Test {
     MockERC8004Identity   public idReg;
+    SafeMintMockRegistry  public safeMintReg;
     MockERC8004Reputation public repReg;
     AAStarAirAccountV7    public account;
 
@@ -103,8 +137,9 @@ contract ERC8004IntegrationTest is Test {
     address   agent;
 
     function setUp() public {
-        idReg  = new MockERC8004Identity();
-        repReg = new MockERC8004Reputation();
+        idReg      = new MockERC8004Identity();
+        safeMintReg = new SafeMintMockRegistry();
+        repReg     = new MockERC8004Reputation();
         agent  = makeAddr("agent");
 
         ownerWallet = vm.createWallet("owner");
@@ -343,5 +378,31 @@ contract ERC8004IntegrationTest is Test {
         assertEq(val, 90);
         assertEq(dec, 2);
         vm.stopPrank();
+    }
+
+    // ─── C-2: onERC721Received / IERC721Receiver ─────────────────────────────
+
+    /// Official ERC-8004 IdentityRegistry uses _safeMint. Verify AirAccount accepts the NFT.
+    function test_safeMint_accountReceivesNFT() public {
+        vm.prank(ownerWallet.addr);
+        uint256 id = account.mintAgentIdentity(address(safeMintReg), "ipfs://QmSafeMint");
+        assertEq(safeMintReg.ownerOf(id), address(account));
+    }
+
+    /// onERC721Received must return the ERC-721 magic value.
+    function test_onERC721Received_returnsMagicValue() public view {
+        bytes4 ret = account.onERC721Received(address(0), address(0), 0, "");
+        assertEq(ret, bytes4(0x150b7a02));
+    }
+
+    /// supportsInterface must advertise IERC721Receiver support.
+    function test_supportsInterface_erc721Receiver() public view {
+        assertTrue(account.supportsInterface(0x150b7a02));
+    }
+
+    /// supportsInterface still returns true for ERC-165 and ERC-1271.
+    function test_supportsInterface_erc165AndERC1271() public view {
+        assertTrue(account.supportsInterface(0x01ffc9a7)); // ERC-165
+        assertTrue(account.supportsInterface(0x1626ba7e)); // ERC-1271
     }
 }
