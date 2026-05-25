@@ -239,6 +239,7 @@ abstract contract AAStarAirAccountBase is Initializable {
     error SessionScopeViolation();
     error InvalidTierConfig();
     error CannotIncreaseTierLimit();
+    error TierLimitSigExpired();
     /// @dev HIGH-2: Agent session keys must use execute(), not executeBatch(), when a hook module
     ///      (TierGuardHook) is installed. executeBatch does not invoke preCheck, so the hook's
     ///      session scope enforcement (callTargets / selectorAllowlist) would be bypassed.
@@ -402,31 +403,39 @@ abstract contract AAStarAirAccountBase is Initializable {
         emit P256KeySet(_x, _y);
     }
 
-    /// @notice Set tier thresholds. After initial configuration (from 0), limits may only decrease.
-    ///         To raise previously set limits, use increaseTierLimits() which requires guardian sigs.
+    /// @notice Set tier thresholds — INITIAL SETUP ONLY.
+    ///         Can only be called when both limits are currently 0 (fresh account).
+    ///         Any subsequent modification (increase OR decrease) must use modifyTierLimitsWithGuardians().
+    ///         This prevents a compromised owner key from silently disabling tier protection via (0,0).
     function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwner {
+        if (tier1Limit != 0 || tier2Limit != 0) revert CannotIncreaseTierLimit();
         if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
-        if ((tier1Limit > 0 && _tier1 > tier1Limit) || (tier2Limit > 0 && _tier2 > tier2Limit)) {
-            revert CannotIncreaseTierLimit();
-        }
         tier1Limit = _tier1;
         tier2Limit = _tier2;
         emit TierLimitsSet(_tier1, _tier2);
     }
 
-    /// @notice Increase tier limits — requires RECOVERY_THRESHOLD guardian signatures.
-    ///         Security principle: the authorization level to loosen a spending limit must match
-    ///         the tier level being loosened (spending at T2 requires a guardian; so does raising T2).
-    function increaseTierLimits(
+    /// @notice Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.
+    ///         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.
+    ///         Security principle: the authorization level to change a spending guard must match
+    ///         the tier level being guarded (spending at T2 requires a guardian; modifying T2 does too).
+    /// @param _tier1        New Tier 1 threshold (single-factor limit).
+    /// @param _tier2        New Tier 2 threshold (dual-factor limit). 0 = T2 not used.
+    /// @param deadline      Signature expiry timestamp — guardians must sign within this window.
+    ///                      Prevents long-term signature hoarding and delayed replay attacks.
+    /// @param guardianSigs  ECDSA signatures from RECOVERY_THRESHOLD distinct guardians.
+    function modifyTierLimitsWithGuardians(
         uint256 _tier1,
         uint256 _tier2,
+        uint256 deadline,
         bytes[] calldata guardianSigs
     ) external onlyOwner {
         if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
+        if (block.timestamp > deadline) revert TierLimitSigExpired();
         if (guardianSigs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
 
         bytes32 changeHash = keccak256(abi.encode(
-            address(this), block.chainid, _tierLimitNonce, "INCREASE_TIER_LIMITS", _tier1, _tier2
+            address(this), block.chainid, _tierLimitNonce, "MODIFY_TIER_LIMITS", _tier1, _tier2, deadline
         )).toEthSignedMessageHash();
 
         uint256 approvalBitmap = 0;

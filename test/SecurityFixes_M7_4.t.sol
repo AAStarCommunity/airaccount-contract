@@ -753,4 +753,127 @@ contract SecurityFixes_M7_4Test is Test {
         vm.prank(address(ep));
         account.executeBatch(dests, values, funcs);
     }
+
+    // ─── modifyTierLimitsWithGuardians (C-1 + H-1 fixes) ─────────────────────
+
+    /// @dev Build guardian sigs for modifyTierLimitsWithGuardians.
+    function _tierSig(
+        Vm.Wallet memory gw,
+        uint256 tier1, uint256 tier2,
+        uint256 deadline, uint256 nonce
+    ) internal view returns (bytes memory) {
+        bytes32 h = keccak256(abi.encode(
+            address(account), block.chainid, nonce, "MODIFY_TIER_LIMITS", tier1, tier2, deadline
+        )).toEthSignedMessageHash();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(gw.privateKey, h);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_modifyTierLimits_requiresGuardianSigs() public {
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        uint256 dl = block.timestamp + 1 hours;
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _tierSig(g0Wallet, 0.2 ether, 2 ether, dl, 0);
+        sigs[1] = _tierSig(g1Wallet, 0.2 ether, 2 ether, dl, 0);
+
+        vm.prank(ownerWallet.addr);
+        account.modifyTierLimitsWithGuardians(0.2 ether, 2 ether, dl, sigs);
+
+        assertEq(account.tier1Limit(), 0.2 ether);
+        assertEq(account.tier2Limit(), 2 ether);
+    }
+
+    function test_modifyTierLimits_canDecrease() public {
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(1 ether, 10 ether);
+
+        uint256 dl = block.timestamp + 1 hours;
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _tierSig(g0Wallet, 0.1 ether, 1 ether, dl, 0);
+        sigs[1] = _tierSig(g1Wallet, 0.1 ether, 1 ether, dl, 0);
+
+        vm.prank(ownerWallet.addr);
+        account.modifyTierLimitsWithGuardians(0.1 ether, 1 ether, dl, sigs);
+
+        assertEq(account.tier1Limit(), 0.1 ether);
+        assertEq(account.tier2Limit(), 1 ether);
+    }
+
+    function test_modifyTierLimits_canResetToZero() public {
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        uint256 dl = block.timestamp + 1 hours;
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _tierSig(g0Wallet, 0, 0, dl, 0);
+        sigs[1] = _tierSig(g1Wallet, 0, 0, dl, 0);
+
+        vm.prank(ownerWallet.addr);
+        account.modifyTierLimitsWithGuardians(0, 0, dl, sigs);
+
+        assertEq(account.tier1Limit(), 0);
+        assertEq(account.tier2Limit(), 0);
+    }
+
+    function test_modifyTierLimits_expiredDeadline_reverts() public {
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        uint256 dl = block.timestamp - 1; // already expired
+        bytes[] memory sigs = new bytes[](1);
+        sigs[0] = _tierSig(g0Wallet, 0.2 ether, 2 ether, dl, 0);
+
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.TierLimitSigExpired.selector);
+        account.modifyTierLimitsWithGuardians(0.2 ether, 2 ether, dl, sigs);
+    }
+
+    function test_modifyTierLimits_wrongSig_reverts() public {
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        uint256 dl = block.timestamp + 1 hours;
+        // Two sigs from a non-guardian — passes length check, fails in the loop
+        Vm.Wallet memory rando = vm.createWallet("rando");
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _tierSig(rando, 0.2 ether, 2 ether, dl, 0);
+        sigs[1] = _tierSig(rando, 0.2 ether, 2 ether, dl, 0);
+
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
+        account.modifyTierLimitsWithGuardians(0.2 ether, 2 ether, dl, sigs);
+    }
+
+    function test_modifyTierLimits_nonceIncrements_prevSigInvalid() public {
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        uint256 dl = block.timestamp + 2 hours;
+        bytes[] memory sigs0 = new bytes[](2);
+        sigs0[0] = _tierSig(g0Wallet, 0.2 ether, 2 ether, dl, 0); // nonce=0
+        sigs0[1] = _tierSig(g1Wallet, 0.2 ether, 2 ether, dl, 0); // nonce=0
+
+        vm.prank(ownerWallet.addr);
+        account.modifyTierLimitsWithGuardians(0.2 ether, 2 ether, dl, sigs0); // nonce becomes 1
+
+        // Replay old nonce=0 sigs — hash mismatch, recovered addr is not a guardian
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
+        account.modifyTierLimitsWithGuardians(0.2 ether, 2 ether, dl, sigs0);
+    }
+
+    function test_modifyTierLimits_notOwner_reverts() public {
+        vm.prank(ownerWallet.addr);
+        account.setTierLimits(0.1 ether, 1 ether);
+
+        uint256 dl = block.timestamp + 1 hours;
+        bytes[] memory sigs = new bytes[](1);
+        sigs[0] = _tierSig(g0Wallet, 0.2 ether, 2 ether, dl, 0);
+
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(AAStarAirAccountBase.NotOwner.selector);
+        account.modifyTierLimitsWithGuardians(0.2 ether, 2 ether, dl, sigs);
+    }
 }
