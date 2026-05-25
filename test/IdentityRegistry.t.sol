@@ -136,11 +136,25 @@ contract ERC8004IntegrationTest is Test {
     Vm.Wallet ownerWallet;
     address   agent;
 
+    // Official ERC-8004 Sepolia addresses — the account pins registry calls to these.
+    address constant OFFICIAL_IDENTITY   = 0x8004A818BFB912233c491871b3d84c89A494BD9e;
+    address constant OFFICIAL_REPUTATION = 0x8004B663056A597Dffe9eCcC1965A193B7388713;
+
     function setUp() public {
-        idReg      = new MockERC8004Identity();
-        safeMintReg = new SafeMintMockRegistry();
-        repReg     = new MockERC8004Reputation();
+        // Run on Sepolia so ERC8004Addresses resolves to the official testnet deployment.
+        vm.chainId(11155111);
         agent  = makeAddr("agent");
+
+        // Place mock bytecode at the official addresses the contract validates against.
+        // Storage at the etched address starts fresh, which is what the mocks expect.
+        vm.etch(OFFICIAL_IDENTITY, address(new MockERC8004Identity()).code);
+        idReg = MockERC8004Identity(OFFICIAL_IDENTITY);
+
+        vm.etch(OFFICIAL_REPUTATION, address(new MockERC8004Reputation()).code);
+        repReg = MockERC8004Reputation(OFFICIAL_REPUTATION);
+
+        // safeMintReg shares the single official identity slot; tests that need it etch it in-place.
+        safeMintReg = new SafeMintMockRegistry();
 
         ownerWallet = vm.createWallet("owner");
         account     = new AAStarAirAccountV7();
@@ -257,14 +271,15 @@ contract ERC8004IntegrationTest is Test {
 
     function test_mintAgentIdentity_zeroRegistry_reverts() public {
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.IdentityRegistrationFailed.selector);
+        vm.expectRevert(AAStarAirAccountBase.UnauthorizedRegistry.selector);
         account.mintAgentIdentity(address(0), "ipfs://Qm");
     }
 
-    function test_mintAgentIdentity_noCode_reverts() public {
+    function test_mintAgentIdentity_nonOfficialRegistry_reverts() public {
+        // Any address other than the official ERC-8004 registry for this chain is rejected.
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.IdentityRegistrationFailed.selector);
-        account.mintAgentIdentity(makeAddr("eoa"), "ipfs://Qm");
+        vm.expectRevert(AAStarAirAccountBase.UnauthorizedRegistry.selector);
+        account.mintAgentIdentity(makeAddr("rogueRegistry"), "ipfs://Qm");
     }
 
     // ─── bindERC8004AgentWallet ───────────────────────────────────────────────
@@ -342,8 +357,14 @@ contract ERC8004IntegrationTest is Test {
 
     function test_reputation_zeroRegistry_reverts() public {
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.ReputationRegistryFailed.selector);
+        vm.expectRevert(AAStarAirAccountBase.UnauthorizedRegistry.selector);
         account.submitAgentReputation(address(0), 0, 95, 2, "quality", "", "", "", bytes32(0));
+    }
+
+    function test_reputation_nonOfficialRegistry_reverts() public {
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.UnauthorizedRegistry.selector);
+        account.submitAgentReputation(makeAddr("rogueRep"), 0, 95, 2, "quality", "", "", "", bytes32(0));
     }
 
     // ─── Full ERC-8004 flow ───────────────────────────────────────────────────
@@ -384,9 +405,12 @@ contract ERC8004IntegrationTest is Test {
 
     /// Official ERC-8004 IdentityRegistry uses _safeMint. Verify AirAccount accepts the NFT.
     function test_safeMint_accountReceivesNFT() public {
+        // Place the _safeMint-simulating mock at the official identity address for this test.
+        vm.etch(OFFICIAL_IDENTITY, address(safeMintReg).code);
+        SafeMintMockRegistry reg = SafeMintMockRegistry(OFFICIAL_IDENTITY);
         vm.prank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(address(safeMintReg), "ipfs://QmSafeMint");
-        assertEq(safeMintReg.ownerOf(id), address(account));
+        uint256 id = account.mintAgentIdentity(OFFICIAL_IDENTITY, "ipfs://QmSafeMint");
+        assertEq(reg.ownerOf(id), address(account));
     }
 
     /// onERC721Received must return the ERC-721 magic value.

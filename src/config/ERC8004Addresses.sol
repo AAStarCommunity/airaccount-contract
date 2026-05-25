@@ -10,6 +10,10 @@ pragma solidity ^0.8.33;
 ///
 ///         Source: https://github.com/erc-8004/erc-8004-contracts (scripts/addresses.ts)
 library ERC8004Addresses {
+    /// @dev Reverts when queried for a chain that has no known official ERC-8004 deployment.
+    ///      Prevents silently returning testnet addresses on an unsupported chain.
+    error UnsupportedChain(uint256 chainId);
+
     // ─── Mainnet (Ethereum, OP Mainnet, Base, Arbitrum, Polygon, etc.) ────────
 
     address internal constant MAINNET_IDENTITY_REGISTRY   = 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432;
@@ -24,19 +28,30 @@ library ERC8004Addresses {
 
     // ─── Per-chain lookup ─────────────────────────────────────────────────────
 
-    /// @notice Return identity registry address for the given chain.
+    /// @notice Return identity registry address for the given chain. Reverts on unsupported chains.
     function identityRegistry(uint256 chainId) internal pure returns (address) {
-        return _isMainnet(chainId) ? MAINNET_IDENTITY_REGISTRY : TESTNET_IDENTITY_REGISTRY;
+        if (_isMainnet(chainId)) return MAINNET_IDENTITY_REGISTRY;
+        if (_isTestnet(chainId)) return TESTNET_IDENTITY_REGISTRY;
+        revert UnsupportedChain(chainId);
     }
 
-    /// @notice Return reputation registry address for the given chain.
+    /// @notice Return reputation registry address for the given chain. Reverts on unsupported chains.
     function reputationRegistry(uint256 chainId) internal pure returns (address) {
-        return _isMainnet(chainId) ? MAINNET_REPUTATION_REGISTRY : TESTNET_REPUTATION_REGISTRY;
+        if (_isMainnet(chainId)) return MAINNET_REPUTATION_REGISTRY;
+        if (_isTestnet(chainId)) return TESTNET_REPUTATION_REGISTRY;
+        revert UnsupportedChain(chainId);
     }
 
-    /// @notice Return validation registry address for the given chain.
+    /// @notice Return validation registry address for the given chain. Reverts on unsupported chains.
     function validationRegistry(uint256 chainId) internal pure returns (address) {
-        return _isMainnet(chainId) ? MAINNET_VALIDATION_REGISTRY : TESTNET_VALIDATION_REGISTRY;
+        if (_isMainnet(chainId)) return MAINNET_VALIDATION_REGISTRY;
+        if (_isTestnet(chainId)) return TESTNET_VALIDATION_REGISTRY;
+        revert UnsupportedChain(chainId);
+    }
+
+    /// @notice True when the chain has a known official ERC-8004 deployment (mainnet or testnet).
+    function isSupported(uint256 chainId) internal pure returns (bool) {
+        return _isMainnet(chainId) || _isTestnet(chainId);
     }
 
     // ─── Internal ─────────────────────────────────────────────────────────────
@@ -57,5 +72,14 @@ library ERC8004Addresses {
             chainId == 5000    ||  // Mantle
             chainId == 167000  ||  // Taiko
             chainId == 360;        // Shape
+    }
+
+    function _isTestnet(uint256 chainId) private pure returns (bool) {
+        return
+            chainId == 11155111 ||  // Ethereum Sepolia
+            chainId == 11155420 ||  // OP Sepolia
+            chainId == 84532    ||  // Base Sepolia
+            chainId == 421614   ||  // Arbitrum Sepolia
+            chainId == 80002;       // Polygon Amoy
     }
 }

@@ -11,6 +11,7 @@ import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 import {ICalldataParser, ICalldataParserRegistry} from "../interfaces/ICalldataParser.sol";
 import {IERC8004IdentityRegistry} from "../interfaces/IERC8004IdentityRegistry.sol";
 import {IERC8004ReputationRegistry} from "../interfaces/IERC8004ReputationRegistry.sol";
+import {ERC8004Addresses} from "../config/ERC8004Addresses.sol";
 
 /**
  * @title AAStarAirAccountBase
@@ -274,6 +275,8 @@ abstract contract AAStarAirAccountBase is Initializable {
     error AgentRegistrationFailed();
     error IdentityRegistrationFailed();
     error ReputationRegistryFailed();
+    /// @dev Passed registry is not the official ERC-8004 deployment for this chain.
+    error UnauthorizedRegistry();
 
     // ─── Events ───────────────────────────────────────────────────────
 
@@ -1661,11 +1664,8 @@ abstract contract AAStarAirAccountBase is Initializable {
     function mintAgentIdentity(
         address identityRegistry,
         string calldata agentURI
-    ) external onlyOwner returns (uint256 agentId) {
-        if (identityRegistry == address(0)) revert IdentityRegistrationFailed();
-        uint256 codeSize;
-        assembly { codeSize := extcodesize(identityRegistry) }
-        if (codeSize == 0) revert IdentityRegistrationFailed();
+    ) external onlyOwner nonReentrant returns (uint256 agentId) {
+        if (identityRegistry != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
         agentId = IERC8004IdentityRegistry(identityRegistry).register(agentURI);
         emit AgentIdentityMinted(agentId, identityRegistry, agentURI);
     }
@@ -1685,11 +1685,9 @@ abstract contract AAStarAirAccountBase is Initializable {
         address agentWallet,
         uint256 deadline,
         bytes calldata signature
-    ) external onlyOwner {
-        if (identityRegistry == address(0) || agentWallet == address(0)) revert IdentityRegistrationFailed();
-        uint256 codeSize;
-        assembly { codeSize := extcodesize(identityRegistry) }
-        if (codeSize == 0) revert IdentityRegistrationFailed();
+    ) external onlyOwner nonReentrant {
+        if (identityRegistry != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
+        if (agentWallet == address(0)) revert IdentityRegistrationFailed();
         IERC8004IdentityRegistry(identityRegistry).setAgentWallet(agentId, agentWallet, deadline, signature);
         emit ERC8004WalletBound(agentId, agentWallet, identityRegistry);
     }
@@ -1716,11 +1714,8 @@ abstract contract AAStarAirAccountBase is Initializable {
         string calldata endpoint,
         string calldata feedbackURI,
         bytes32 feedbackHash
-    ) external onlyOwner {
-        if (reputationRegistry == address(0)) revert ReputationRegistryFailed();
-        uint256 codeSize;
-        assembly { codeSize := extcodesize(reputationRegistry) }
-        if (codeSize == 0) revert ReputationRegistryFailed();
+    ) external onlyOwner nonReentrant {
+        if (reputationRegistry != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
         IERC8004ReputationRegistry(reputationRegistry).giveFeedback(
             agentId, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash
         );
@@ -1743,6 +1738,10 @@ abstract contract AAStarAirAccountBase is Initializable {
         string calldata tag1,
         string calldata tag2
     ) external view returns (uint64 count, int128 summaryValue, uint8 summaryDecimals) {
+        // Read-only and free of side effects, so onlyOwner is unnecessary; reputation data is
+        // public on-chain. We still pin the registry to the official deployment so callers cannot
+        // be fed summaries from a spoofed contract.
+        if (reputationRegistry != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
         return IERC8004ReputationRegistry(reputationRegistry).getSummary(
             agentId, clientAddresses, tag1, tag2
         );
