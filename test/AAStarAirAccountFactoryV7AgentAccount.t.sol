@@ -86,7 +86,7 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
         uint256 salt
     ) internal view returns (bytes memory) {
         bytes32 raw = keccak256(
-            abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(factory), owner, salt)
+            abi.encodePacked("ACCEPT_GUARDIAN", block.chainid, address(factory), owner, salt, DAILY_LIMIT)
         );
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(g.privateKey, ethHash);
