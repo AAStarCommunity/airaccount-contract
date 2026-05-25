@@ -352,8 +352,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
     ///      Prevents replay of acceptance signatures across chains.
     function test_guardian_wrongChainId_reverts() public {
         uint256 wrongChain = block.chainid + 1;
-        // Sign for wrong chainId manually
-        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", wrongChain, address(factory), ownerA, uint256(0)));
+        // Sign for wrong chainId manually — same format as a valid sig (incl. dailyLimit) so the
+        // ONLY difference is chainId; this isolates the chain-domain-separation check.
+        bytes32 raw = keccak256(abi.encodePacked("ACCEPT_GUARDIAN", wrongChain, address(factory), ownerA, uint256(0), TEST_DAILY_LIMIT));
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(g1Wallet.privateKey, ethHash);
         bytes memory badSig = abi.encodePacked(r, s, v);
