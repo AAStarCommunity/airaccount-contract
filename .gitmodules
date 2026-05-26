@@ -37,9 +37,6 @@
 [submodule "lib/SuperPaymaster"]
 	path = lib/SuperPaymaster
 	url = https://github.com/AAStarCommunity/SuperPaymaster.git
-[submodule "lib/aastar-sdk"]
-	path = lib/aastar-sdk
-	url = https://github.com/AAStarCommunity/aastar-sdk.git
 [submodule "lib/kohaku-extension"]
 	path = lib/kohaku-extension
 	url = https://github.com/ethereum/kohaku-extension
