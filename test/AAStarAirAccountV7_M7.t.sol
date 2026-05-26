@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test, Vm} from "forge-std/Test.sol";
+import {IAirAccountAgent} from "../src/interfaces/IAirAccountAgent.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
@@ -863,7 +864,7 @@ contract AAStarAirAccountV7_M7Test is Test {
         vm.expectEmit(true, true, false, false);
         emit AAStarAirAccountBase.AgentWalletSet(42, agentWallet, address(mockRegistry));
         // MockRegistry skips sig verification — pass empty bytes
-        account.setAgentWallet(42, agentWallet, address(mockRegistry), "");
+        IAirAccountAgent(address(account)).setAgentWallet(42, agentWallet, address(mockRegistry), "");
     }
 
     function test_setAgentWallet_registersWithRegistry() public {
@@ -871,7 +872,7 @@ contract AAStarAirAccountV7_M7Test is Test {
 
         vm.prank(ownerWallet.addr);
         // MockRegistry skips sig verification — pass empty bytes
-        account.setAgentWallet(7, agentWallet, address(mockRegistry), "");
+        IAirAccountAgent(address(account)).setAgentWallet(7, agentWallet, address(mockRegistry), "");
 
         // Registry should have recorded agentWallet → account as owner
         assertEq(mockRegistry.agentWalletOwner(agentWallet), address(account));
@@ -880,19 +881,19 @@ contract AAStarAirAccountV7_M7Test is Test {
     function test_setAgentWallet_notOwner_reverts() public {
         vm.prank(randomWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.NotOwner.selector);
-        account.setAgentWallet(1, makeAddr("agent"), address(mockRegistry), "");
+        IAirAccountAgent(address(account)).setAgentWallet(1, makeAddr("agent"), address(mockRegistry), "");
     }
 
     function test_setAgentWallet_zeroWallet_reverts() public {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(); // require("Invalid agent wallet")
-        account.setAgentWallet(1, address(0), address(mockRegistry), "");
+        IAirAccountAgent(address(account)).setAgentWallet(1, address(0), address(mockRegistry), "");
     }
 
     function test_setAgentWallet_zeroRegistry_reverts() public {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(); // require("Invalid registry")
-        account.setAgentWallet(1, makeAddr("agent"), address(0), "");
+        IAirAccountAgent(address(account)).setAgentWallet(1, makeAddr("agent"), address(0), "");
     }
 
     function test_setAgentWallet_failingRegistry_reverts() public {
@@ -902,7 +903,7 @@ contract AAStarAirAccountV7_M7Test is Test {
 
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.AgentRegistrationFailed.selector);
-        account.setAgentWallet(99, agentWallet, brokenRegistry, "");
+        IAirAccountAgent(address(account)).setAgentWallet(99, agentWallet, brokenRegistry, "");
     }
 
     // ─── Round-trip: install + reinstall after uninstall ─────────────────────

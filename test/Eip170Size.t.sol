@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
 import {AirAccountDelegate} from "../src/core/AirAccountDelegate.sol";
+import {AirAccountExtension} from "../src/core/AirAccountExtension.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 
 /// @title Eip170SizeTest
@@ -41,5 +42,13 @@ contract Eip170SizeTest is Test {
         uint256 size = _runtimeSize(address(new AirAccountDelegate()));
         emit log_named_uint("AirAccountDelegate runtime size", size);
         assertLe(size, EIP170_LIMIT, "AirAccountDelegate exceeds EIP-170");
+    }
+
+    /// @dev The diamond-lite cold-function facet (agent + weight governance). Reached by the
+    ///      account via fallback + delegatecall; must also fit under EIP-170 to be deployable.
+    function test_AirAccountExtension_under_eip170() public {
+        uint256 size = _runtimeSize(address(new AirAccountExtension()));
+        emit log_named_uint("AirAccountExtension runtime size", size);
+        assertLe(size, EIP170_LIMIT, "AirAccountExtension exceeds EIP-170");
     }
 }

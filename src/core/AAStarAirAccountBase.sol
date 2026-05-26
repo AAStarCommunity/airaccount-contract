@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.33;
 
-import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
@@ -9,9 +8,8 @@ import {IAAStarValidator} from "../interfaces/IAAStarValidator.sol";
 import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
 import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 import {ICalldataParser, ICalldataParserRegistry} from "../interfaces/ICalldataParser.sol";
-import {IERC8004IdentityRegistry} from "../interfaces/IERC8004IdentityRegistry.sol";
-import {IERC8004ReputationRegistry} from "../interfaces/IERC8004ReputationRegistry.sol";
-import {ERC8004Addresses} from "../config/ERC8004Addresses.sol";
+import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
+import {AirAccountExtension} from "./AirAccountExtension.sol";
 
 /**
  * @title AAStarAirAccountBase
@@ -30,7 +28,7 @@ import {ERC8004Addresses} from "../config/ERC8004Addresses.sol";
  *      - Monotonic config: daily limit can only decrease, algorithms can only be added
  *      - Tier + guard checks enforced in execute/executeBatch before every _call
  */
-abstract contract AAStarAirAccountBase is Initializable {
+abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
@@ -60,27 +58,15 @@ abstract contract AAStarAirAccountBase is Initializable {
 
     // ─── State ────────────────────────────────────────────────────────
 
-    /// @notice The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility)
-    address public entryPoint;
+    // `entryPoint` (slot 0) and `owner` (slot 1) are declared in AAStarAgentStorageLayout so the
+    // AgentExtension facet shares them across the fallback delegatecall boundary. Layout unchanged.
 
-    // ─── Mutable State ───────────────────────────────────────────────
+    /// @notice Singleton AgentExtension holding ERC-8004 agent functions, reached via fallback.
+    /// @dev Deployed once per implementation in the constructor; baked into runtime as an immutable,
+    ///      so all EIP-1167 clones of this implementation resolve to the same extension address.
+    ///      Splitting agent code out keeps the account runtime under EIP-170's 24,576-byte limit.
+    address public immutable agentExtension;
 
-    /// @notice Account owner and ECDSA signer (mutable for social recovery)
-    address public owner;
-
-    /// @notice Optional validator router for external algorithms (BLS, PQ, etc.)
-    IAAStarValidator public validator;
-
-    /// @notice Optional BLS aggregator for batch verification
-    address public blsAggregator;
-
-    /// @notice Global guard for spending limits (set at construction, cannot be removed)
-    AAStarGlobalGuard public guard;
-
-    /// @notice Optional calldata parser registry for DeFi protocol support (address(0) = disabled)
-    ///         When set, the guard uses protocol-specific parsers to understand DeFi calldata
-    ///         (e.g., Uniswap swaps) rather than falling back to ERC20 transfer parsing only.
-    address public parserRegistry;
 
     // ── algId Pass-Through (validation → execution) ──
     // Uses transient storage (EIP-1153) to avoid cross-UserOp contamination.
@@ -103,90 +89,6 @@ abstract contract AAStarAirAccountBase is Initializable {
     ///      Only populated when algId == ALG_WEIGHTED. Consumed in execute/executeBatch to resolve tier.
     uint256 internal constant WEIGHT_SLOT_BASE = 0x0A1800;
 
-    // ── ERC-7579 Module Registry (M7.2) ──
-
-    /// @dev Installed module registry keyed by module type (1=validator, 2=executor, 3=hook).
-    mapping(uint256 => mapping(address => bool)) internal _installedModules;
-
-    /// @dev installModule permission threshold. 40=owner-only, 70=owner+1guardian(default), 100=owner+2guardians.
-    ///      0 means uninitialized → defaults to 70 at runtime.
-    uint8 internal _installModuleThreshold;
-
-    /// @dev Active ERC-7579 hook module address (at most one active hook per account).
-    ///      Set when a hook (moduleTypeId=4, ERC-7579 hook type) is installed; cleared on uninstall.
-    ///      When non-zero, execute/executeBatch dispatch preCheck() here and skip the
-    ///      inline guard.checkTransaction call to avoid double-counting daily limits.
-    address internal _activeHook;
-
-    // ── P256 Passkey ──
-
-    /// @notice P256 public key x-coordinate
-    bytes32 public p256KeyX;
-
-    /// @notice P256 public key y-coordinate
-    bytes32 public p256KeyY;
-
-    // ── Tiered Routing ──
-
-    /// @notice Tier thresholds: [0]=Tier1 max (ECDSA only), [1]=Tier2 max (dual factor)
-    /// Above Tier2 max requires multi-sig (BLS triple)
-    uint256 public tier1Limit; // e.g., 0.1 ETH — ECDSA only
-    uint256 public tier2Limit; // e.g., 1 ETH — dual factor (ECDSA + P256)
-
-    // ── Social Recovery (F28) ──
-
-    // Packed storage: _guardian0 (20 bytes) + _guardianCount (1 byte) = 21 bytes — fits in one slot.
-    // Saves 1 SLOAD (~2,100 gas) on every guardian check (proposeRecovery, approveRecovery, cancelRecovery).
-    address private _guardian0;
-    uint8 internal _guardianCount;  // packed with _guardian0 in same 32-byte slot
-    address private _guardian1;
-    address private _guardian2;
-    uint256 private _guardianRemovalNonce;
-    uint256 private _tierLimitNonce;
-    /// @dev Latches true the first time tier limits are ever configured (via setTierLimits OR
-    ///      modifyTierLimitsWithGuardians). Never resets — so once configured, setTierLimits is
-    ///      permanently locked out even after a guardian reset to (0,0). Prevents an owner from
-    ///      regaining unilateral tier control by laundering through a (0,0) reset.
-    bool private _tierLimitsInitialized;
-
-    struct RecoveryProposal {
-        address newOwner;
-        uint256 proposedAt;
-        uint256 approvalBitmap;      // bit 0 = guardian[0], bit 1 = guardian[1], bit 2 = guardian[2]
-        uint256 cancellationBitmap;  // same layout, for 2-of-3 cancel threshold
-    }
-
-    /// @notice Active recovery proposal
-    RecoveryProposal public activeRecovery;
-
-    // ── Weighted Multi-Signature (algId 0x07, M6.1) ──
-
-    /// @notice Weighted signature configuration: per-source weights and per-tier thresholds.
-    ///         All 10 meaningful bytes pack into one storage slot.
-    struct WeightConfig {
-        uint8 passkeyWeight;   // P256 passkey signature weight (default: 3)
-        uint8 ecdsaWeight;     // Owner ECDSA signature weight  (default: 2)
-        uint8 blsWeight;       // DVT BLS aggregate weight      (default: 2)
-        uint8 guardian0Weight; // Guardian[0] ECDSA weight      (default: 1)
-        uint8 guardian1Weight; // Guardian[1] ECDSA weight      (default: 1)
-        uint8 guardian2Weight; // Guardian[2] ECDSA weight      (default: 1)
-        uint8 _padding;        // Reserved for future weight source
-        uint8 tier1Threshold;  // Min weight for Tier 1 ops (default: 3; 0 = config uninitialized)
-        uint8 tier2Threshold;  // Min weight for Tier 2 ops (default: 5)
-        uint8 tier3Threshold;  // Min weight for Tier 3 ops (default: 6)
-    }
-
-    /// @notice Current weight config. tier1Threshold == 0 means uninitialised → ALG_WEIGHTED fails.
-    WeightConfig public weightConfig;
-
-    /// @notice Pending weight-change proposal (M6.2). proposedAt == 0 means none pending.
-    struct WeightChangeProposal {
-        WeightConfig proposed;
-        uint256 proposedAt;
-        uint256 approvalBitmap; // bit i = guardian[i] approved
-    }
-
-    WeightChangeProposal public pendingWeightChange;
 
     /// @dev Timelock for weakening weight-change proposals (M6.2)
     uint256 internal constant WEIGHT_CHANGE_TIMELOCK  = 2 days;
@@ -343,6 +245,33 @@ abstract contract AAStarAirAccountBase is Initializable {
         _;
         assembly {
             tstore(0, 0)
+        }
+    }
+
+    // ─── Construction & Agent Fallback (diamond-lite) ─────────────────
+
+    /// @dev Deploys the singleton AgentExtension and records it as an immutable. This runs in the
+    ///      IMPLEMENTATION's constructor (creation code only — not part of EIP-170 runtime size),
+    ///      so the ~2KB of agent logic leaves the account's runtime bytecode while every clone of
+    ///      this implementation still resolves to one shared extension instance.
+    constructor() {
+        agentExtension = address(new AirAccountExtension());
+    }
+
+    /// @dev Routes any selector not defined on the account to the AgentExtension via delegatecall,
+    ///      forwarding raw calldata (no re-encoding). delegatecall preserves msg.sender, address(this),
+    ///      storage, events and reverts — so agent calls behave exactly as if they were inline.
+    ///      Unknown selectors hit the extension, which has no matching function and reverts.
+    // solhint-disable-next-line no-complex-fallback
+    fallback() external {
+        address ext = agentExtension;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let ok := delegatecall(gas(), ext, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch ok
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
         }
     }
 
@@ -1512,101 +1441,6 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
     }
 
-    // ─── Weighted Signature Management (M6.1 + M6.2) ─────────────────
-
-    /// @notice Set the weight configuration for algId 0x07.
-    ///         First-time setup: direct owner call.
-    ///         Subsequent calls that weaken the config require guardian proposal (M6.2).
-    ///         A change is weakening if any weight decreases or any threshold decreases.
-    /// @dev InsecureWeightConfig: any single source weight >= tier1Threshold (single point of failure).
-    function setWeightConfig(WeightConfig calldata config) external onlyOwner {
-        _validateWeightConfig(config);
-
-        WeightConfig memory current = weightConfig;
-        if (current.tier1Threshold != 0 && _isWeakening(current, config)) {
-            revert WeakeningRequiresProposal();
-        }
-        // Block if a weakening proposal is already pending
-        if (pendingWeightChange.proposedAt != 0) revert WeightChangePending();
-
-        weightConfig = config;
-        emit WeightConfigUpdated(config);
-    }
-
-    /// @notice Propose a weakening weight-config change (guardian-gated, M6.2).
-    ///         Owner initiates; guardians approve; executes after WEIGHT_CHANGE_TIMELOCK.
-    function proposeWeightChange(WeightConfig calldata proposed) external onlyOwner {
-        _validateWeightConfig(proposed);
-        if (!_isWeakening(weightConfig, proposed)) revert WeakeningRequiresProposal(); // use setWeightConfig instead
-        if (pendingWeightChange.proposedAt != 0) revert WeightChangePending();
-        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
-
-        pendingWeightChange = WeightChangeProposal({
-            proposed: proposed,
-            proposedAt: block.timestamp,
-            approvalBitmap: 0
-        });
-        emit WeightChangeProposed(proposed, msg.sender);
-    }
-
-    /// @notice Guardian approves the pending weight-change proposal.
-    function approveWeightChange() external {
-        if (pendingWeightChange.proposedAt == 0) revert NoWeightChangeProposal();
-        // Reject approvals on expired proposals (no delete — revert would undo it; let owner cancel)
-        if (block.timestamp > pendingWeightChange.proposedAt + WEIGHT_CHANGE_EXPIRY) revert NoWeightChangeProposal();
-
-        uint8 guardianIndex = _guardianIndex(msg.sender);
-        uint256 bit = uint256(1) << guardianIndex;
-        if (pendingWeightChange.approvalBitmap & bit != 0) revert WeightChangeAlreadyApproved();
-
-        pendingWeightChange.approvalBitmap |= bit;
-        uint256 count = _popcount(pendingWeightChange.approvalBitmap);
-        emit WeightChangeApproved(msg.sender, count);
-    }
-
-    /// @notice Execute an approved weight-change after timelock and threshold are met.
-    function executeWeightChange() external {
-        WeightChangeProposal memory p = pendingWeightChange;
-        if (p.proposedAt == 0) revert NoWeightChangeProposal();
-        if (block.timestamp > p.proposedAt + WEIGHT_CHANGE_EXPIRY) revert NoWeightChangeProposal(); // expired
-        if (_popcount(p.approvalBitmap) < WEIGHT_CHANGE_THRESHOLD) revert WeightChangeNotApproved();
-        if (block.timestamp < p.proposedAt + WEIGHT_CHANGE_TIMELOCK) revert WeightChangeTimelockNotExpired();
-
-        WeightConfig memory oldConfig = weightConfig;
-        weightConfig = p.proposed;
-        delete pendingWeightChange;
-        emit WeightChangeExecuted(oldConfig, p.proposed);
-        emit WeightConfigUpdated(p.proposed);
-    }
-
-    /// @notice Cancel a pending weight-change proposal. Owner or any guardian can cancel.
-    function cancelWeightChange() external {
-        if (pendingWeightChange.proposedAt == 0) revert NoWeightChangeProposal();
-        if (msg.sender != owner) {
-            _guardianIndex(msg.sender);
-        }
-        delete pendingWeightChange;
-        emit WeightChangeCancelled();
-    }
-
-    /// @dev Validate that a WeightConfig is internally consistent and secure.
-    ///      Called by both setWeightConfig and proposeWeightChange to avoid duplication.
-    function _validateWeightConfig(WeightConfig calldata config) internal pure {
-        if (config.tier1Threshold == 0) revert InsecureWeightConfig();
-        // Single-source must not reach threshold alone (prevents single-point-of-failure)
-        if (config.passkeyWeight   >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.ecdsaWeight     >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.blsWeight       >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian0Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian1Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian2Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        // Thresholds must be non-decreasing: tier1 <= tier2 <= tier3 (when non-zero).
-        // Without this, _resolveWeightedAlgId (which checks tier3 first) could map a
-        // low-weight signature to Tier3 if tier3Threshold < tier1Threshold.
-        if (config.tier2Threshold != 0 && config.tier2Threshold < config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.tier3Threshold != 0 && config.tier3Threshold < config.tier2Threshold) revert InsecureWeightConfig();
-        if (config.tier3Threshold != 0 && config.tier2Threshold == 0) revert InsecureWeightConfig();
-    }
 
     /// @dev Map accumulated weight to the highest satisfied tier's representative algId.
     ///      Used in execute/executeBatch to translate ALG_WEIGHTED into a normal algId.
@@ -1618,157 +1452,6 @@ abstract contract AAStarAirAccountBase is Initializable {
         return 0; // below tier1 — fails all tier and guard checks
     }
 
-    /// @dev Returns true if proposed config is a weakening of current config.
-    ///      Weakening: any weight decrease, or any threshold decrease (lower bar = weaker).
-    function _isWeakening(WeightConfig memory current, WeightConfig memory proposed) internal pure returns (bool) {
-        if (proposed.passkeyWeight   < current.passkeyWeight)   return true;
-        if (proposed.ecdsaWeight     < current.ecdsaWeight)     return true;
-        if (proposed.blsWeight       < current.blsWeight)       return true;
-        if (proposed.guardian0Weight < current.guardian0Weight) return true;
-        if (proposed.guardian1Weight < current.guardian1Weight) return true;
-        if (proposed.guardian2Weight < current.guardian2Weight) return true;
-        if (proposed.tier1Threshold  < current.tier1Threshold)  return true;
-        if (proposed.tier2Threshold  < current.tier2Threshold)  return true;
-        if (proposed.tier3Threshold  < current.tier3Threshold)  return true;
-        return false;
-    }
-
-    // ─── ERC-8004 Agent Identity Binding (M7.16) ─────────────────────────
-
-    /// @notice Link an agent wallet to this AirAccount by registering it in AgentRegistry.
-    /// @param agentId Logical agent identifier (used for event indexing only)
-    /// @param agentWallet Execution wallet address that the agent uses for transactions
-    /// @param agentRegistry AgentRegistry contract address (M8.1)
-    /// @param agentWalletSig ECDSA signature from agentWallet proving it consents to registration
-    ///        (prevents front-run griefing — see AgentRegistry.registerAgent for hash construction)
-    /// @dev Only owner can set agent wallet bindings. Calls AgentRegistry.registerAgent()
-    ///      which records msg.sender (this account) as the human owner of agentWallet.
-    ///      Reverts if the registry call fails (e.g. already registered or invalid signature).
-    function setAgentWallet(
-        uint256 agentId,
-        address agentWallet,
-        address agentRegistry,
-        bytes calldata agentWalletSig
-    ) external onlyOwner {
-        if (agentWallet == address(0) || agentRegistry == address(0)) revert InvalidGuardian();
-        // Require agentRegistry to be a deployed contract (extcodesize > 0).
-        // Low-level calls to EOAs succeed silently — we must reject them explicitly.
-        uint256 codeSize;
-        assembly { codeSize := extcodesize(agentRegistry) }
-        if (codeSize == 0) revert AgentRegistrationFailed();
-        (bool ok,) = agentRegistry.call(
-            abi.encodeWithSignature("registerAgent(address,bytes)", agentWallet, agentWalletSig)
-        );
-        if (!ok) revert AgentRegistrationFailed();
-        emit AgentWalletSet(agentId, agentWallet, agentRegistry);
-    }
-
-    /// @dev Pin a registry argument to the official ERC-8004 deployment for this chain.
-    ///      Shared by the 2 identity / 2 reputation call sites so the chain-id table is emitted once.
-    function _requireOfficialIdentityRegistry(address r) private view {
-        if (r != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
-    }
-
-    function _requireOfficialReputationRegistry(address r) private view {
-        if (r != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
-    }
-
-    // ─── ERC-8004 Identity NFT (M8.ERC8004) ──────────────────────────────────
-
-    /// @notice Mint an ERC-8004 agent identity NFT to this AirAccount via the official registry.
-    ///         After minting, ownerOf(agentId) == address(this).
-    ///         The NFT's initial agentWallet is set to address(this) by the registry.
-    ///         Call bindERC8004AgentWallet() afterwards to link the actual execution wallet.
-    /// @param identityRegistry Official ERC-8004 IdentityRegistry (use ERC8004Addresses lib).
-    /// @param agentURI Metadata URI for the agent — recommended: `ipfs://<CID>` or `did:web:<domain>`.
-    ///                 Suggested schema: { "name": string, "description": string,
-    ///                   "agentKey": address, "capabilities": string[] }
-    /// @return agentId Newly minted NFT token ID (starts at 0 per ERC-8004 spec).
-    function mintAgentIdentity(
-        address identityRegistry,
-        string calldata agentURI
-    ) external onlyOwner nonReentrant returns (uint256 agentId) {
-        _requireOfficialIdentityRegistry(identityRegistry);
-        agentId = IERC8004IdentityRegistry(identityRegistry).register(agentURI);
-        emit AgentIdentityMinted(agentId, identityRegistry, agentURI);
-    }
-
-    /// @notice Bind an execution wallet to an ERC-8004 agent identity NFT.
-    ///         Requires an EIP-712 `AgentWalletSet(uint256,address,address,uint256)` signature
-    ///         from `agentWallet` proving it consents to the binding.
-    ///         The deadline must be within the next 5 minutes (enforced by the registry).
-    /// @param identityRegistry Official ERC-8004 IdentityRegistry address.
-    /// @param agentId          Token ID returned by mintAgentIdentity().
-    /// @param agentWallet      Execution wallet (session key) to bind.
-    /// @param deadline         Unix timestamp; must be <= block.timestamp + 300.
-    /// @param signature        EIP-712 consent signature from agentWallet.
-    function bindERC8004AgentWallet(
-        address identityRegistry,
-        uint256 agentId,
-        address agentWallet,
-        uint256 deadline,
-        bytes calldata signature
-    ) external onlyOwner nonReentrant {
-        _requireOfficialIdentityRegistry(identityRegistry);
-        if (agentWallet == address(0)) revert IdentityRegistrationFailed();
-        IERC8004IdentityRegistry(identityRegistry).setAgentWallet(agentId, agentWallet, deadline, signature);
-        emit ERC8004WalletBound(agentId, agentWallet, identityRegistry);
-    }
-
-    /// @notice Submit reputation feedback for an agent interaction via the official registry.
-    ///         This AirAccount (as the caller/client) posts feedback about the agent's work.
-    ///         Self-feedback (when this account IS the agent) is rejected by the registry.
-    /// @param reputationRegistry  Official ERC-8004 ReputationRegistry address.
-    /// @param agentId             ERC-8004 agent token ID.
-    /// @param value               Signed fixed-point score (e.g. 95 with decimals=2 → 0.95).
-    /// @param valueDecimals       Decimal places for value.
-    /// @param tag1                Primary category (e.g. "quality", "accuracy").
-    /// @param tag2                Secondary tag (e.g. "task:summarize").
-    /// @param endpoint            Agent endpoint / API that served the request.
-    /// @param feedbackURI         URI to detailed feedback data (IPFS recommended).
-    /// @param feedbackHash        keccak256 of the off-chain feedback payload.
-    function submitAgentReputation(
-        address reputationRegistry,
-        uint256 agentId,
-        int128 value,
-        uint8 valueDecimals,
-        string calldata tag1,
-        string calldata tag2,
-        string calldata endpoint,
-        string calldata feedbackURI,
-        bytes32 feedbackHash
-    ) external onlyOwner nonReentrant {
-        _requireOfficialReputationRegistry(reputationRegistry);
-        IERC8004ReputationRegistry(reputationRegistry).giveFeedback(
-            agentId, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash
-        );
-        emit AgentReputationSubmitted(agentId, reputationRegistry, value, tag1);
-    }
-
-    /// @notice Query aggregated reputation for an agent across a set of clients.
-    /// @param reputationRegistry  Official ERC-8004 ReputationRegistry address.
-    /// @param agentId             ERC-8004 agent token ID.
-    /// @param clientAddresses     Array of client addresses to include in summary.
-    /// @param tag1                Filter by primary tag (empty = any).
-    /// @param tag2                Filter by secondary tag (empty = any).
-    /// @return count              Number of feedback entries matching the filter.
-    /// @return summaryValue       Aggregated score value.
-    /// @return summaryDecimals    Decimal places for summaryValue.
-    function queryAgentReputation(
-        address reputationRegistry,
-        uint256 agentId,
-        address[] calldata clientAddresses,
-        string calldata tag1,
-        string calldata tag2
-    ) external view returns (uint64 count, int128 summaryValue, uint8 summaryDecimals) {
-        // Read-only and free of side effects, so onlyOwner is unnecessary; reputation data is
-        // public on-chain. We still pin the registry to the official deployment so callers cannot
-        // be fed summaries from a spoofed contract.
-        _requireOfficialReputationRegistry(reputationRegistry);
-        return IERC8004ReputationRegistry(reputationRegistry).getSummary(
-            agentId, clientAddresses, tag1, tag2
-        );
-    }
 
     receive() external payable {}
 }

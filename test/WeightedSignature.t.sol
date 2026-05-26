@@ -2,6 +2,8 @@
 pragma solidity ^0.8.33;
 
 import {Test, Vm} from "forge-std/Test.sol";
+import {IAirAccountAgent} from "../src/interfaces/IAirAccountAgent.sol";
+import {AAStarAgentStorageLayout} from "../src/core/AAStarAgentStorageLayout.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
@@ -66,7 +68,7 @@ contract WeightedSignatureTest is Test {
     ///      Tier1: P256+ECDSA=4 ≥ 3 ✓,  P256+guardian=3 ✓
     ///      Tier2: P256+ECDSA+guardian=5 ≥ 4 ✓
     ///      Tier3: P256+ECDSA+guardian+BLS=7 ≥ 6 ✓  (or P256+ECDSA+BLS=6 ✓)
-    AAStarAirAccountBase.WeightConfig safeConfig;
+    AAStarAgentStorageLayout.WeightConfig safeConfig;
 
     function setUp() public {
         ownerW    = vm.createWallet("owner");
@@ -105,7 +107,7 @@ contract WeightedSignatureTest is Test {
 
         vm.deal(address(account), 100 ether);
 
-        safeConfig = AAStarAirAccountBase.WeightConfig({
+        safeConfig = AAStarAgentStorageLayout.WeightConfig({
             passkeyWeight:   2,
             ecdsaWeight:     2,
             blsWeight:       2,
@@ -123,7 +125,7 @@ contract WeightedSignatureTest is Test {
 
     function test_setWeightConfig_firstTime_succeeds() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         (uint8 pk, uint8 ec,,,,,,uint8 t1, uint8 t2, uint8 t3) = account.weightConfig();
         assertEq(pk, 2);
@@ -137,51 +139,51 @@ contract WeightedSignatureTest is Test {
         vm.prank(ownerW.addr);
         vm.expectEmit(false, false, false, false);
         emit AAStarAirAccountBase.WeightConfigUpdated(safeConfig);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
     }
 
     function test_setWeightConfig_zeroTier1Threshold_reverts() public {
-        AAStarAirAccountBase.WeightConfig memory bad = safeConfig;
+        AAStarAgentStorageLayout.WeightConfig memory bad = safeConfig;
         bad.tier1Threshold = 0;
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.InsecureWeightConfig.selector);
-        account.setWeightConfig(bad);
+        IAirAccountAgent(address(account)).setWeightConfig(bad);
     }
 
     function test_setWeightConfig_passkeyReachesThreshold_reverts() public {
-        AAStarAirAccountBase.WeightConfig memory bad = safeConfig;
+        AAStarAgentStorageLayout.WeightConfig memory bad = safeConfig;
         bad.passkeyWeight = 3; // 3 >= tier1Threshold(3) → insecure
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.InsecureWeightConfig.selector);
-        account.setWeightConfig(bad);
+        IAirAccountAgent(address(account)).setWeightConfig(bad);
     }
 
     function test_setWeightConfig_ecdsaReachesThreshold_reverts() public {
-        AAStarAirAccountBase.WeightConfig memory bad = safeConfig;
+        AAStarAgentStorageLayout.WeightConfig memory bad = safeConfig;
         bad.ecdsaWeight = 3;
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.InsecureWeightConfig.selector);
-        account.setWeightConfig(bad);
+        IAirAccountAgent(address(account)).setWeightConfig(bad);
     }
 
     function test_setWeightConfig_blsReachesThreshold_reverts() public {
-        AAStarAirAccountBase.WeightConfig memory bad = safeConfig;
+        AAStarAgentStorageLayout.WeightConfig memory bad = safeConfig;
         bad.blsWeight = 3;
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.InsecureWeightConfig.selector);
-        account.setWeightConfig(bad);
+        IAirAccountAgent(address(account)).setWeightConfig(bad);
     }
 
     function test_setWeightConfig_strengthening_allowsDirect() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         // Increase tier1Threshold (harder to reach) → strengthening, direct set allowed
-        AAStarAirAccountBase.WeightConfig memory stronger = safeConfig;
+        AAStarAgentStorageLayout.WeightConfig memory stronger = safeConfig;
         stronger.tier1Threshold = 4; // increase → harder → strengthening
         // Guardian weights still < 4, ok. passkeyWeight=2<4, ecdsaWeight=2<4, blsWeight=2<4
         vm.prank(ownerW.addr);
-        account.setWeightConfig(stronger);
+        IAirAccountAgent(address(account)).setWeightConfig(stronger);
 
         (,,,,,,,uint8 t1,,) = account.weightConfig();
         assertEq(t1, 4);
@@ -189,42 +191,42 @@ contract WeightedSignatureTest is Test {
 
     function test_setWeightConfig_weakenThreshold_reverts() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         // Decrease tier1Threshold → weakening → requires proposal
-        AAStarAirAccountBase.WeightConfig memory weaker = safeConfig;
+        AAStarAgentStorageLayout.WeightConfig memory weaker = safeConfig;
         weaker.tier1Threshold = 2;
         weaker.passkeyWeight = 1; // must keep < new threshold(2), ensure 1<2
         weaker.ecdsaWeight = 1;
         weaker.blsWeight = 1;
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.WeakeningRequiresProposal.selector);
-        account.setWeightConfig(weaker);
+        IAirAccountAgent(address(account)).setWeightConfig(weaker);
     }
 
     function test_setWeightConfig_weakenWeight_reverts() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         // Decrease passkeyWeight → weakening
-        AAStarAirAccountBase.WeightConfig memory weaker = safeConfig;
+        AAStarAgentStorageLayout.WeightConfig memory weaker = safeConfig;
         weaker.passkeyWeight = 1;
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.WeakeningRequiresProposal.selector);
-        account.setWeightConfig(weaker);
+        IAirAccountAgent(address(account)).setWeightConfig(weaker);
     }
 
     function test_setWeightConfig_byNonOwner_reverts() public {
         vm.prank(otherW.addr);
         vm.expectRevert(AAStarAirAccountBase.NotOwner.selector);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
     }
 
     // ─── 2. validateUserOp with ALG_WEIGHTED ─────────────────────────────────
 
     function test_weighted_p256AndECDSA_returns0() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig); // p256(2)+ecdsa(2)=4 >= tier1(3)
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig); // p256(2)+ecdsa(2)=4 >= tier1(3)
 
         bytes32 userOpHash = keccak256("test-op");
         bytes memory sig = abi.encodePacked(
@@ -241,7 +243,7 @@ contract WeightedSignatureTest is Test {
 
     function test_weighted_ecdsaOnly_belowThreshold_returns1() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig); // ecdsa(2) < tier1(3)
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig); // ecdsa(2) < tier1(3)
 
         bytes32 userOpHash = keccak256("test-op");
         bytes memory sig = abi.encodePacked(
@@ -257,7 +259,7 @@ contract WeightedSignatureTest is Test {
 
     function test_weighted_p256Only_belowThreshold_returns1() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig); // p256(2) < tier1(3)
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig); // p256(2) < tier1(3)
 
         bytes32 userOpHash = keccak256("test-op");
         bytes memory sig = abi.encodePacked(
@@ -273,7 +275,7 @@ contract WeightedSignatureTest is Test {
 
     function test_weighted_p256PlusGuardian0_meetsThreshold_returns0() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig); // p256(2)+g0(1)=3 == tier1(3)
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig); // p256(2)+g0(1)=3 == tier1(3)
 
         bytes32 userOpHash = keccak256("test-op");
         bytes memory sig = abi.encodePacked(
@@ -301,7 +303,7 @@ contract WeightedSignatureTest is Test {
 
     function test_weighted_p256Fails_returns1() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         MockP256FailW failMock = new MockP256FailW();
         vm.etch(address(0x100), address(failMock).code);
@@ -317,7 +319,7 @@ contract WeightedSignatureTest is Test {
 
     function test_weighted_ecdsaWrongSigner_returns1() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         bytes32 userOpHash = keccak256("test-op");
         // Sign with 'other' instead of owner
@@ -331,7 +333,7 @@ contract WeightedSignatureTest is Test {
 
     function test_weighted_guardianWrongSigner_returns1() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         bytes32 userOpHash = keccak256("test-op");
         // Sign guardian slot with 'other' instead of guardian0
@@ -345,7 +347,7 @@ contract WeightedSignatureTest is Test {
 
     function test_weighted_reservedBitsSet_returns1() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         bytes32 userOpHash = keccak256("test-op");
         // bit 7 set (reserved) — must be rejected
@@ -372,7 +374,7 @@ contract WeightedSignatureTest is Test {
 
         vm.startPrank(ownerW.addr);
         acc1.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
-        acc1.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(acc1)).setWeightConfig(safeConfig);
         vm.stopPrank();
 
         bytes32 userOpHash = keccak256("test-op");
@@ -392,7 +394,7 @@ contract WeightedSignatureTest is Test {
 
     function test_execute_weighted_p256AndECDSA_noGuard_succeeds() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         bytes32 userOpHash = keccak256("test-exec");
         bytes memory sig = abi.encodePacked(
@@ -432,7 +434,7 @@ contract WeightedSignatureTest is Test {
         tieredAcc.setValidator(address(router));
         tieredAcc.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
         tieredAcc.setTierLimits(0.1 ether, 1 ether);
-        tieredAcc.setWeightConfig(safeConfig); // p256+ecdsa=4 ≥ tier2Threshold(4) → resolves to T2
+        IAirAccountAgent(address(tieredAcc)).setWeightConfig(safeConfig); // p256+ecdsa=4 ≥ tier2Threshold(4) → resolves to T2
         vm.stopPrank();
 
         bytes32 userOpHash = keccak256("test-tier2");
@@ -471,7 +473,7 @@ contract WeightedSignatureTest is Test {
         tieredAcc.setValidator(address(router));
         tieredAcc.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
         tieredAcc.setTierLimits(0.1 ether, 1 ether);
-        tieredAcc.setWeightConfig(safeConfig); // p256(2)+g0(1)=3 → resolves to T1 (tier1Threshold=3)
+        IAirAccountAgent(address(tieredAcc)).setWeightConfig(safeConfig); // p256(2)+g0(1)=3 → resolves to T1 (tier1Threshold=3)
         vm.stopPrank();
 
         bytes32 userOpHash = keccak256("test-insuf");
@@ -495,44 +497,44 @@ contract WeightedSignatureTest is Test {
 
     function test_proposeWeightChange_weakening_succeeds() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
-        AAStarAirAccountBase.WeightConfig memory weaker = _weakerConfig();
+        AAStarAgentStorageLayout.WeightConfig memory weaker = _weakerConfig();
         vm.prank(ownerW.addr);
         vm.expectEmit(true, false, false, false);
         emit AAStarAirAccountBase.WeightChangeProposed(weaker, ownerW.addr);
-        account.proposeWeightChange(weaker);
+        IAirAccountAgent(address(account)).proposeWeightChange(weaker);
 
         // Confirm pending via a second propose attempt (proves state was written)
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.WeightChangePending.selector);
-        account.proposeWeightChange(weaker);
+        IAirAccountAgent(address(account)).proposeWeightChange(weaker);
     }
 
     function test_proposeWeightChange_notWeakening_reverts() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         // Strengthening: increase tier1Threshold
-        AAStarAirAccountBase.WeightConfig memory stronger = safeConfig;
+        AAStarAgentStorageLayout.WeightConfig memory stronger = safeConfig;
         stronger.tier1Threshold = 4;
         // All weights 2 < 4 → passes InsecureWeightConfig
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.WeakeningRequiresProposal.selector);
-        account.proposeWeightChange(stronger);
+        IAirAccountAgent(address(account)).proposeWeightChange(stronger);
     }
 
     function test_proposeWeightChange_alreadyPending_reverts() public {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
-        AAStarAirAccountBase.WeightConfig memory weaker = _weakerConfig();
+        AAStarAgentStorageLayout.WeightConfig memory weaker = _weakerConfig();
         vm.prank(ownerW.addr);
-        account.proposeWeightChange(weaker);
+        IAirAccountAgent(address(account)).proposeWeightChange(weaker);
 
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.WeightChangePending.selector);
-        account.proposeWeightChange(weaker);
+        IAirAccountAgent(address(account)).proposeWeightChange(weaker);
     }
 
     function test_approveWeightChange_byGuardian_succeeds() public {
@@ -541,18 +543,18 @@ contract WeightedSignatureTest is Test {
         vm.prank(guardian0W.addr);
         vm.expectEmit(true, false, false, true);
         emit AAStarAirAccountBase.WeightChangeApproved(guardian0W.addr, 1);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
     }
 
     function test_approveWeightChange_duplicate_reverts() public {
         _setupWeakenProposal();
 
         vm.prank(guardian0W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
 
         vm.prank(guardian0W.addr);
         vm.expectRevert(AAStarAirAccountBase.WeightChangeAlreadyApproved.selector);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
     }
 
     function test_approveWeightChange_byNonGuardian_reverts() public {
@@ -560,24 +562,24 @@ contract WeightedSignatureTest is Test {
 
         vm.prank(otherW.addr);
         vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
     }
 
     function test_approveWeightChange_noPending_reverts() public {
         vm.expectRevert(AAStarAirAccountBase.NoWeightChangeProposal.selector);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
     }
 
     function test_executeWeightChange_afterTimelockAndThreshold_succeeds() public {
         _setupWeakenProposal();
 
         vm.prank(guardian0W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
         vm.prank(guardian1W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
 
         vm.warp(block.timestamp + 2 days + 1);
-        account.executeWeightChange();
+        IAirAccountAgent(address(account)).executeWeightChange();
 
         (,,,,,,,uint8 t1,,) = account.weightConfig();
         assertEq(t1, 2); // applied the weaker config
@@ -587,12 +589,12 @@ contract WeightedSignatureTest is Test {
         _setupWeakenProposal();
 
         vm.prank(guardian0W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
         vm.prank(guardian1W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
 
         vm.expectRevert(AAStarAirAccountBase.WeightChangeTimelockNotExpired.selector);
-        account.executeWeightChange();
+        IAirAccountAgent(address(account)).executeWeightChange();
     }
 
     function test_executeWeightChange_insufficientApprovals_reverts() public {
@@ -600,47 +602,47 @@ contract WeightedSignatureTest is Test {
 
         // Only 1 approval, need 2
         vm.prank(guardian0W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
 
         vm.warp(block.timestamp + 2 days + 1);
         vm.expectRevert(AAStarAirAccountBase.WeightChangeNotApproved.selector);
-        account.executeWeightChange();
+        IAirAccountAgent(address(account)).executeWeightChange();
     }
 
     function test_executeWeightChange_clearsPendingProposal() public {
         _setupWeakenProposal();
 
         vm.prank(guardian0W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
         vm.prank(guardian1W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
 
         vm.warp(block.timestamp + 2 days + 1);
-        account.executeWeightChange();
+        IAirAccountAgent(address(account)).executeWeightChange();
 
         // Proposal cleared — executeWeightChange again should revert
         vm.expectRevert(AAStarAirAccountBase.NoWeightChangeProposal.selector);
-        account.executeWeightChange();
+        IAirAccountAgent(address(account)).executeWeightChange();
     }
 
     function test_cancelWeightChange_byOwner_succeeds() public {
         _setupWeakenProposal();
 
         vm.prank(ownerW.addr);
-        account.cancelWeightChange();
+        IAirAccountAgent(address(account)).cancelWeightChange();
 
         vm.expectRevert(AAStarAirAccountBase.NoWeightChangeProposal.selector);
-        account.cancelWeightChange();
+        IAirAccountAgent(address(account)).cancelWeightChange();
     }
 
     function test_cancelWeightChange_byGuardian_succeeds() public {
         _setupWeakenProposal();
 
         vm.prank(guardian0W.addr);
-        account.cancelWeightChange();
+        IAirAccountAgent(address(account)).cancelWeightChange();
 
         vm.expectRevert(AAStarAirAccountBase.NoWeightChangeProposal.selector);
-        account.cancelWeightChange();
+        IAirAccountAgent(address(account)).cancelWeightChange();
     }
 
     function test_cancelWeightChange_byOther_reverts() public {
@@ -648,26 +650,26 @@ contract WeightedSignatureTest is Test {
 
         vm.prank(otherW.addr);
         vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
-        account.cancelWeightChange();
+        IAirAccountAgent(address(account)).cancelWeightChange();
     }
 
     function test_cancelWeightChange_noPending_reverts() public {
         vm.expectRevert(AAStarAirAccountBase.NoWeightChangeProposal.selector);
-        account.cancelWeightChange();
+        IAirAccountAgent(address(account)).cancelWeightChange();
     }
 
     function test_allThreeGuardians_canApprove() public {
         _setupWeakenProposal();
 
         vm.prank(guardian0W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
         vm.prank(guardian1W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
         vm.prank(guardian2W.addr);
-        account.approveWeightChange();
+        IAirAccountAgent(address(account)).approveWeightChange();
 
         vm.warp(block.timestamp + 2 days + 1);
-        account.executeWeightChange(); // Should succeed with 3 approvals (>= threshold 2)
+        IAirAccountAgent(address(account)).executeWeightChange(); // Should succeed with 3 approvals (>= threshold 2)
 
         (,,,,,,,uint8 t1,,) = account.weightConfig();
         assertEq(t1, 2);
@@ -700,8 +702,8 @@ contract WeightedSignatureTest is Test {
     }
 
     /// @dev A safe "weakening" config relative to safeConfig (lower tier1Threshold)
-    function _weakerConfig() internal pure returns (AAStarAirAccountBase.WeightConfig memory) {
-        return AAStarAirAccountBase.WeightConfig({
+    function _weakerConfig() internal pure returns (AAStarAgentStorageLayout.WeightConfig memory) {
+        return AAStarAgentStorageLayout.WeightConfig({
             passkeyWeight:   1,
             ecdsaWeight:     1,
             blsWeight:       1,
@@ -718,9 +720,9 @@ contract WeightedSignatureTest is Test {
     /// @dev Set up account with safeConfig + submit a weakening proposal
     function _setupWeakenProposal() internal {
         vm.prank(ownerW.addr);
-        account.setWeightConfig(safeConfig);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         vm.prank(ownerW.addr);
-        account.proposeWeightChange(_weakerConfig());
+        IAirAccountAgent(address(account)).proposeWeightChange(_weakerConfig());
     }
 }

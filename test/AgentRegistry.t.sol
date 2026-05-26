@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test, Vm} from "forge-std/Test.sol";
+import {IAirAccountAgent} from "../src/interfaces/IAirAccountAgent.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {AgentRegistry} from "../src/registries/AgentRegistry.sol";
@@ -564,7 +565,7 @@ contract AgentRegistryTest is Test {
         vm.prank(ownerAddr);
         vm.expectEmit(true, true, false, false);
         emit AAStarAirAccountBase.AgentWalletSet(1, agentA, address(registry));
-        account.setAgentWallet(1, agentA, address(registry), sig);
+        IAirAccountAgent(address(account)).setAgentWallet(1, agentA, address(registry), sig);
 
         assertEq(registry.agentWalletOwner(agentA), address(account));
         assertTrue(registry.isRegisteredAgent(agentA));
@@ -591,7 +592,7 @@ contract AgentRegistryTest is Test {
 
         vm.prank(makeAddr("notOwner"));
         vm.expectRevert(AAStarAirAccountBase.NotOwner.selector);
-        account.setAgentWallet(1, agentA, address(registry), "");
+        IAirAccountAgent(address(account)).setAgentWallet(1, agentA, address(registry), "");
     }
 
     function test_SetAgentWalletCallsRegistry_failingRegistry_reverts() public {
@@ -617,7 +618,7 @@ contract AgentRegistryTest is Test {
 
         vm.prank(ownerAddr);
         vm.expectRevert(AAStarAirAccountBase.AgentRegistrationFailed.selector);
-        account.setAgentWallet(1, agentA, noCodeAddr, "");
+        IAirAccountAgent(address(account)).setAgentWallet(1, agentA, noCodeAddr, "");
     }
 
     function test_SetAgentWalletCallsRegistry_duplicateRegistration_reverts() public {
@@ -642,10 +643,10 @@ contract AgentRegistryTest is Test {
         bytes memory sig = _buildRegSig(agentAWallet.privateKey, address(account), agentA);
 
         vm.prank(ownerAddr);
-        account.setAgentWallet(1, agentA, address(registry), sig);
+        IAirAccountAgent(address(account)).setAgentWallet(1, agentA, address(registry), sig);
 
         vm.prank(ownerAddr);
         vm.expectRevert(AAStarAirAccountBase.AgentRegistrationFailed.selector);
-        account.setAgentWallet(2, agentA, address(registry), sig);
+        IAirAccountAgent(address(account)).setAgentWallet(2, agentA, address(registry), sig);
     }
 }
