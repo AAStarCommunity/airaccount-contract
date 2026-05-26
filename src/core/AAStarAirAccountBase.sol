@@ -692,16 +692,9 @@ abstract contract AAStarAirAccountBase is Initializable {
         bytes calldata sigData
     ) internal view returns (uint256) {
         if (sigData.length != 129) return 1;
-        if (p256KeyX == bytes32(0) && p256KeyY == bytes32(0)) return 1;
 
-        // LAYER 1: P256 passkey verifies userOpHash directly
-        bytes32 p256r = bytes32(sigData[0:32]);
-        bytes32 p256s = bytes32(sigData[32:64]);
-
-        bytes memory p256CallData = abi.encode(userOpHash, p256r, p256s, p256KeyX, p256KeyY);
-        (bool p256Success, bytes memory p256Result) = P256_VERIFIER.staticcall(p256CallData);
-        if (!p256Success || p256Result.length < 32) return 1;
-        if (abi.decode(p256Result, (uint256)) != 1) return 1;
+        // LAYER 1: P256 passkey verifies userOpHash directly (shared with _validateP256)
+        if (_validateP256(userOpHash, sigData[0:64]) != 0) return 1;
 
         // LAYER 2: Owner ECDSA signs userOpHash (EIP-191 prefix)
         bytes32 ecdsaHash = userOpHash.toEthSignedMessageHash();
@@ -741,6 +734,25 @@ abstract contract AAStarAirAccountBase is Initializable {
         } catch {
             return 1;
         }
+    }
+
+    /// @dev Verify a standard BLS payload laid out as
+    ///      [nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][messagePoint(256)][messagePointSig(65)].
+    ///      Checks: strict length, owner-signed (userOpHash‖messagePoint) binding, and the aggregate
+    ///      BLS signature via the validator router. Shared by cumulative T2/T3 and the weighted BLS
+    ///      branch (identical logic — kept in one place to stay under EIP-170). Returns true on success.
+    function _blsPayloadValid(bytes32 userOpHash, bytes calldata blsPayload) internal view returns (bool) {
+        if (blsPayload.length < 32) return false;
+        uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
+        if (nodeIdsLength == 0 || nodeIdsLength > 100) return false;
+        uint256 baseOffset = 32 + nodeIdsLength * 32;
+        if (blsPayload.length != baseOffset + 256 + 256 + 65) return false;
+        bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
+        bytes calldata messagePointSig = blsPayload[baseOffset + 512:baseOffset + 577];
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
+        if (mpHash.recover(messagePointSig) != owner) return false;
+        // BLS verify data omits the nodeIdsLength prefix: [nodeIds][blsSig][messagePoint]
+        return _callBLSValidator(userOpHash, blsPayload[32:baseOffset + 512]) == 0;
     }
 
     /**
@@ -844,26 +856,15 @@ abstract contract AAStarAirAccountBase is Initializable {
             cursor += 65;
         }
 
-        // bit 2: BLS aggregate (variable-length block)
+        // bit 2: BLS aggregate (variable-length block) — shared helper does the strict-length
+        // parse + owner messagePoint binding + BLS verify (also returns false if validator unset).
         if (bitmap & 0x04 != 0) {
-            if (address(validator) == address(0)) return 1;
             if (sigData.length < cursor + 32) return 1;
             uint256 nodeIdsLength = uint256(bytes32(sigData[cursor:cursor + 32]));
             if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
             uint256 blsBlockLen = 32 + nodeIdsLength * 32 + 256 + 256 + 65;
             if (sigData.length < cursor + blsBlockLen) return 1;
-            bytes calldata blsPayload = sigData[cursor:cursor + blsBlockLen];
-
-            // Verify messagePoint signature binding (same as _validateCumulativeTier2)
-            uint256 baseOffset = 32 + nodeIdsLength * 32;
-            bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
-            bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
-            bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
-            if (mpHash.recover(messagePointSignature) != owner) return 1;
-
-            // Pass BLS payload without nodeIdsLength prefix (same format as standalone BLS)
-            bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
-            if (_callBLSValidator(userOpHash, blsVerifyData) != 0) return 1;
+            if (!_blsPayloadValid(userOpHash, sigData[cursor:cursor + blsBlockLen])) return 1;
             accumulated += wc.blsWeight;
             cursor += blsBlockLen;
         }
@@ -911,32 +912,8 @@ abstract contract AAStarAirAccountBase is Initializable {
         if (sigData.length < 64) return 1;
         if (_validateP256(userOpHash, sigData[0:64]) != 0) return 1;
 
-        // LAYER 2: BLS aggregate verification (remaining bytes)
-        bytes calldata blsPayload = sigData[64:];
-
-        // Parse nodeIds count
-        if (blsPayload.length < 32) return 1;
-        uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
-        if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
-
-        uint256 nodeIdsDataLength = nodeIdsLength * 32;
-        // Expected: nodeIdsLength(32) + nodeIds(N*32) + blsSig(256) + messagePoint(256) + messagePointSig(65)
-        uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 256 + 65;
-        if (blsPayload.length != expectedLength) return 1;
-
-        uint256 baseOffset = 32 + nodeIdsDataLength;
-
-        // Verify messagePoint signature (owner must sign userOpHash+messagePoint — prevents cross-op replay)
-        bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
-        bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
-
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
-        address mpRecovered = mpHash.recover(messagePointSignature);
-        if (mpRecovered != owner) return 1;
-
-        // BLS payload for validator: nodeIds + blsSig + messagePoint (skip nodeIdsLength prefix)
-        bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
-        return _callBLSValidator(userOpHash, blsVerifyData);
+        // LAYER 2+3: BLS aggregate + owner messagePoint binding (shared helper)
+        return _blsPayloadValid(userOpHash, sigData[64:]) ? 0 : 1;
     }
 
     /**
@@ -976,32 +953,8 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
         if (!isGuardian) return 1;
 
-        // LAYER 2: BLS aggregate verification (bytes between P256 and guardian sig)
-        bytes calldata blsPayload = sigData[64:sigData.length - 65];
-
-        // Parse nodeIds count
-        if (blsPayload.length < 32) return 1;
-        uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
-        if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
-
-        uint256 nodeIdsDataLength = nodeIdsLength * 32;
-        // Expected: nodeIdsLength(32) + nodeIds(N*32) + blsSig(256) + messagePoint(256) + messagePointSig(65)
-        uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 256 + 65;
-        if (blsPayload.length != expectedLength) return 1;
-
-        uint256 baseOffset = 32 + nodeIdsDataLength;
-
-        // Verify messagePoint signature (owner must sign userOpHash+messagePoint — prevents cross-op replay)
-        bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
-        bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
-
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
-        address mpRecovered = mpHash.recover(messagePointSignature);
-        if (mpRecovered != owner) return 1;
-
-        // BLS payload for validator: nodeIds + blsSig + messagePoint (skip nodeIdsLength prefix)
-        bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
-        return _callBLSValidator(userOpHash, blsVerifyData);
+        // LAYER 2: BLS aggregate + owner messagePoint binding (bytes between P256 and guardian sig)
+        return _blsPayloadValid(userOpHash, sigData[64:sigData.length - 65]) ? 0 : 1;
     }
 
     // ─── Tiered Routing (F21) ────────────────────────────────────────
@@ -1710,6 +1663,16 @@ abstract contract AAStarAirAccountBase is Initializable {
         emit AgentWalletSet(agentId, agentWallet, agentRegistry);
     }
 
+    /// @dev Pin a registry argument to the official ERC-8004 deployment for this chain.
+    ///      Shared by the 2 identity / 2 reputation call sites so the chain-id table is emitted once.
+    function _requireOfficialIdentityRegistry(address r) private view {
+        if (r != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
+    }
+
+    function _requireOfficialReputationRegistry(address r) private view {
+        if (r != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
+    }
+
     // ─── ERC-8004 Identity NFT (M8.ERC8004) ──────────────────────────────────
 
     /// @notice Mint an ERC-8004 agent identity NFT to this AirAccount via the official registry.
@@ -1725,7 +1688,7 @@ abstract contract AAStarAirAccountBase is Initializable {
         address identityRegistry,
         string calldata agentURI
     ) external onlyOwner nonReentrant returns (uint256 agentId) {
-        if (identityRegistry != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
+        _requireOfficialIdentityRegistry(identityRegistry);
         agentId = IERC8004IdentityRegistry(identityRegistry).register(agentURI);
         emit AgentIdentityMinted(agentId, identityRegistry, agentURI);
     }
@@ -1746,7 +1709,7 @@ abstract contract AAStarAirAccountBase is Initializable {
         uint256 deadline,
         bytes calldata signature
     ) external onlyOwner nonReentrant {
-        if (identityRegistry != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
+        _requireOfficialIdentityRegistry(identityRegistry);
         if (agentWallet == address(0)) revert IdentityRegistrationFailed();
         IERC8004IdentityRegistry(identityRegistry).setAgentWallet(agentId, agentWallet, deadline, signature);
         emit ERC8004WalletBound(agentId, agentWallet, identityRegistry);
@@ -1775,7 +1738,7 @@ abstract contract AAStarAirAccountBase is Initializable {
         string calldata feedbackURI,
         bytes32 feedbackHash
     ) external onlyOwner nonReentrant {
-        if (reputationRegistry != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
+        _requireOfficialReputationRegistry(reputationRegistry);
         IERC8004ReputationRegistry(reputationRegistry).giveFeedback(
             agentId, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash
         );
@@ -1801,7 +1764,7 @@ abstract contract AAStarAirAccountBase is Initializable {
         // Read-only and free of side effects, so onlyOwner is unnecessary; reputation data is
         // public on-chain. We still pin the registry to the official deployment so callers cannot
         // be fed summaries from a spoofed contract.
-        if (reputationRegistry != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
+        _requireOfficialReputationRegistry(reputationRegistry);
         return IERC8004ReputationRegistry(reputationRegistry).getSummary(
             agentId, clientAddresses, tag1, tag2
         );
