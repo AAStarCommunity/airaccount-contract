@@ -23,3 +23,9 @@ jobs:
       - name: Run tests
         run: forge test --summary
         working-directory: .
+
+      - name: Verify merged full ABI is up to date (diamond-lite fallback surface)
+        run: |
+          forge build
+          node scripts/build-full-abi.mjs --check
+        working-directory: .
