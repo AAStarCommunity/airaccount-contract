@@ -52,9 +52,29 @@ function canonicalSig(entry) {
 const account = loadArtifact(ACCOUNT);
 const routed  = loadArtifact(ROUTED);
 
-// solc methodIdentifiers: { "canonicalSig": "deadbeef" }  (no 0x prefix)
-const accountIds = account.methodIdentifiers || {};
-const routedIds  = routed.methodIdentifiers || {};
+// solc methodIdentifiers: { "canonicalSig": "deadbeef" }  (no 0x prefix).
+// Fail CLOSED: the whole selector guard relies on these maps, so a missing/empty field
+// (e.g. artifact schema drift on a new forge version) must abort, never silently no-op.
+function requireMethodIds(artifact, path) {
+  const ids = artifact.methodIdentifiers;
+  if (!ids || typeof ids !== "object" || Object.keys(ids).length === 0) {
+    console.error(`Artifact ${path} has no methodIdentifiers — cannot verify selectors. ` +
+      `Refusing to fail open (check the forge/solc artifact schema).`);
+    process.exit(2);
+  }
+  // Every function in the ABI must have a corresponding selector entry, or the maps are partial.
+  const abiFnSigs = artifact.abi.filter((e) => e.type === "function").map(canonicalSig);
+  const idSigs = new Set(Object.keys(ids));
+  const orphan = abiFnSigs.filter((s) => !idSigs.has(s));
+  if (orphan.length) {
+    console.error(`Artifact ${path} methodIdentifiers is incomplete (no selector for):\n  ${orphan.join("\n  ")}`);
+    process.exit(2);
+  }
+  return ids;
+}
+
+const accountIds = requireMethodIds(account, ACCOUNT);
+const routedIds  = requireMethodIds(routed, ROUTED);
 
 // Selector -> signature for account-native functions (for collision detection).
 const accountSelToSig = new Map(Object.entries(accountIds).map(([sig, sel]) => [sel, sig]));
