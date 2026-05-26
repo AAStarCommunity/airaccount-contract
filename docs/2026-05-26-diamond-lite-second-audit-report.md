@@ -16,7 +16,16 @@
 
 ---
 
-## 1. HIGH — transient 验证 FIFO 队列跨 UserOp 错配
+## ✅ 处置更新（2026-05-26，audit 之后）
+
+- **HIGH-3 主体已修复**（commit `0cc8175`）：三个队列改为**内容寻址**（`keccak256(callData)`），消除了原本"任意不同 callData + 执行 revert"触发的 FIFO 读指针错配——这是触发面最宽的真问题。
+- **残留降级为 LOW**（[issue #52](https://github.com/AAStarCommunity/airaccount-contract/issues/52)）：仅剩"同账户、同 bundle、**逐字节相同 callData**"的 auth 上下文串。经业务论证**不可盈利利用**：callData 相同→无法改目标/导流；要放入高 tier 那笔必须已持有该动作的高 tier 有效签名（高 tier 已被授权),借用不产生任何新能力,最坏只是"已授权的相同动作被重复执行到其既定收款人"。彻底修法 = ERC-4337 `executeUserOp` 按 `userOpHash` 寻址,作为长期 LOW 跟踪,非阻塞。
+- **MEDIUM 已修复**（commit `0cc8175`）：`acceptance-guide.md` 改用 `abi/AAStarAirAccountV7.full.json`。
+- 回归：792 测试通过；EIP-170 canary 绿；full-ABI selector 校验通过。
+
+> 下面是审计当时的原始记录（HIGH 定级为审计时刻的判断，处置见上）。
+
+## 1. HIGH（审计时）→ LOW（论证后）— transient 验证队列跨 UserOp 错配
 
 - 位置：`src/core/AAStarAirAccountBase.sol` `_storeValidatedAlgId`/`_consumeValidatedAlgId`（1151-1177）、`_consumeValidatedWeight`（1208-1214）、`_consumeSessionKey`（1190-1196）
 - 机制（已读码确认）：队列用 **写指针 @BASE + 读指针 @BASE+1 + 数据 @BASE+2+idx** 的 FIFO，**不是 nonce 寻址**。验证阶段写、执行阶段读并自增读指针。EIP-1153 下，若 UserOp N 的**执行帧 revert**，该读指针自增被回滚，而 N 的**验证阶段写**（在未 revert 的验证帧）保留 → 同账户同 bundle 的后续 UserOp M 会消费 N 的 algId/weight。
