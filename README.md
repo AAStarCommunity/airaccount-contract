@@ -23,20 +23,55 @@ pnpm tsx scripts/test-railgun-parser-e2e.ts  # M7.11 Railgun E2E (Sepolia)
 
 ---
 
-## Architecture Overview
+## Contracts (v0.17.0 — full list)
 
-| Layer | Contract | Role |
-|-------|----------|------|
-| Account | `AAStarAirAccountV7` | Non-upgradable ERC-4337 account, 20,900B |
-| Factory | `AAStarAirAccountFactoryV7` | EIP-1167 clone factory, 9,527B |
-| Guard | `AAStarGlobalGuard` | Immutable spending limits + algo whitelist |
-| Validator | `AAStarValidator` | Algorithm router (ECDSA/BLS/P256/Weighted/SessionKey) |
-| Session | `SessionKeyValidator` | Time-limited scoped session keys (algId 0x08) |
-| Delegate | `AirAccountDelegate` | EIP-7702 EOA delegation support |
-| Parsers | `CalldataParserRegistry` | Pluggable DeFi calldata parsing (Uniswap V3) |
-| Exit | `ForceExitModule` | Guardian-gated L2→L1 exit (OP Stack / Arbitrum) |
+What AirAccount ships and what each contract does. **Deploy** column: `singleton` = deployed once per chain (shared); `per-account` = created on demand; `per-factory` = created by the Factory; `external` = not ours, referenced at a known address.
 
-**Signature algorithms**: ECDSA (0x02), BLS (0x03), P256/WebAuthn (0x04), Cumulative T2 (0x04), Cumulative T3 (0x05), Combined T1 (0x06), Weighted Multi-Sig (0x07), Session Key (0x08)
+### Core
+| Contract | Role | Deploy |
+|---|---|---|
+| `AAStarAirAccountV7` | Non-upgradable ERC-4337 v0.7 account: algId signature routing, tiered verification, social recovery, ERC-7579 module surface, ERC-8004 agent functions, IERC721Receiver | per-factory (impl; users are clones) |
+| `AAStarAirAccountBase` | Shared account logic inherited by V7 (signature validation, tiers, recovery, guard enforcement, ERC-8004) | abstract (not deployed) |
+| `AAStarAirAccountFactoryV7` | CREATE2 / EIP-1167 clone factory; config-bound salt (front-run safe); `createAccountWithDefaults` / `createAgentAccount` | singleton |
+| `AAStarGlobalGuard` | Immutable per-account spending guard: daily limits, ERC20 token limits, algorithm whitelist (monotonic tighten-only) | per-account |
+| `AirAccountDelegate` | EIP-7702 path: turn an existing EOA into an AirAccount (guardian rescue, daily limit) | singleton |
+
+### Validators / signature algorithms
+| Contract | Role | Deploy |
+|---|---|---|
+| `AAStarValidator` | Algorithm router: algId → algorithm address | singleton |
+| `AAStarBLSAlgorithm` | BLS aggregate signature verification (DVT co-sign) | singleton |
+| `AAStarBLSAggregator` | ERC-4337 IAggregator for batched BLS UserOps | singleton |
+| `AirAccountCompositeValidator` | ERC-7579 validator: weighted / cumulative composite signatures (Factory default validator) | singleton |
+| `SessionKeyValidator` | Time-limited scoped session keys (algId 0x08) | singleton |
+| `AgentSessionKeyValidator` | Agent session keys: velocity limit + callTarget/selector allowlist (prompt-injection defense) | singleton |
+
+**Signature algorithms (algId):** ECDSA `0x02`, P256/WebAuthn `0x03`, Cumulative T2 (P256+BLS) `0x04`, Cumulative T3 (P256+BLS+Guardian) `0x05`, Combined T1 (P256∧ECDSA) `0x06`, Weighted multi-sig `0x07`, Session Key `0x08`, BLS triple `0x01`.
+
+### Hooks / executor modules (ERC-7579)
+| Contract | Role | Deploy |
+|---|---|---|
+| `TierGuardHook` | ERC-7579 hook (type 4): tier + session-scope enforcement on execute (Factory default hook) | singleton |
+| `ForceExitModule` | Guardian-gated L2→L1 force exit (OP Stack / Arbitrum) | singleton |
+
+### Registries
+| Contract | Role | Deploy |
+|---|---|---|
+| `AgentRegistry` | Maps agent execution wallet ↔ identity; SuperPaymaster `setAgentRegistries` target | singleton |
+
+### DeFi calldata parsers (opt-in via `setParserRegistry`)
+| Contract | Role | Deploy |
+|---|---|---|
+| `CalldataParserRegistry` | Routes a target contract → its parser | singleton |
+| `UniswapV3Parser` / `RailgunParser` | Decode swap/shield calldata so the guard sees real token/amount | singleton |
+
+### External dependencies (referenced, not deployed by us)
+| Contract | Address | Notes |
+|---|---|---|
+| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | canonical, all chains |
+| ERC-8004 Identity / Reputation / Validation | see `src/config/ERC8004Addresses.sol` | official "Trustless Agents" registries, deterministic CREATE2 |
+
+> Deployment order, wiring, and run commands: see [`docs/DEPLOYMENT-v0.17.0.md`](docs/DEPLOYMENT-v0.17.0.md).
 
 ---
 
