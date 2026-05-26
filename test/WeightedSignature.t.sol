@@ -441,13 +441,15 @@ contract WeightedSignatureTest is Test {
         bytes memory sig = abi.encodePacked(
             uint8(0x07), uint8(0x03), _dummyP256(), _signECDSA(ownerW, userOpHash)
         );
+        address target = makeAddr("t2target");
         PackedUserOperation memory op = _buildOp(address(tieredAcc), sig);
+        // HIGH-3: callData must equal the executed call so the content-keyed weight queue resolves.
+        op.callData = abi.encodeWithSelector(tieredAcc.execute.selector, target, uint256(0.5 ether), bytes(""));
 
         vm.prank(address(ep));
         assertEq(tieredAcc.validateUserOp(op, userOpHash, 0), 0);
 
         // Execute 0.5 ETH (tier2 required: 0.1<0.5≤1.0) — weight resolves to T2 → passes
-        address target = makeAddr("t2target");
         vm.prank(address(ep));
         tieredAcc.execute(target, 0.5 ether, "");
         assertEq(target.balance, 0.5 ether);
@@ -481,7 +483,10 @@ contract WeightedSignatureTest is Test {
         bytes memory sig = abi.encodePacked(
             uint8(0x07), uint8(0x09), _dummyP256(), _signECDSA(guardian0W, userOpHash)
         );
+        address target = makeAddr("target");
         PackedUserOperation memory op = _buildOp(address(tieredAcc), sig);
+        // HIGH-3: callData must equal the executed call so the content-keyed weight queue resolves.
+        op.callData = abi.encodeWithSelector(tieredAcc.execute.selector, target, uint256(0.5 ether), bytes(""));
 
         vm.prank(address(ep));
         assertEq(tieredAcc.validateUserOp(op, userOpHash, 0), 0);
@@ -490,7 +495,7 @@ contract WeightedSignatureTest is Test {
         vm.prank(address(ep));
         // Full encoding needed since InsufficientTier has parameters (uint8, uint8)
         vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountBase.InsufficientTier.selector, uint8(2), uint8(1)));
-        tieredAcc.execute(makeAddr("target"), 0.5 ether, "");
+        tieredAcc.execute(target, 0.5 ether, "");
     }
 
     // ─── 4. M6.2: Guardian Consent for Weakening Changes ──────────────────────

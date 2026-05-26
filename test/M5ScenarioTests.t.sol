@@ -830,10 +830,11 @@ contract M5ScenarioTests is Test {
         alice.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
 
         PackedUserOperation memory op = _buildUserOp(address(alice));
-        // Set callData for a large ETH transfer - note: tier enforcement happens in _enforceGuard during execute
-        // validateUserOp itself doesn't check tier, execute() does
         bytes32 hash = keccak256(abi.encode(op));
         op.signature = _buildCombinedT1Sig(hash, aliceWallet);
+        // HIGH-3: callData must equal the executed call so the content-keyed algId resolves
+        // during execute (tier enforcement happens in _enforceGuard, not in validateUserOp).
+        op.callData = abi.encodeWithSelector(alice.execute.selector, address(0xdead), uint256(0.5 ether), bytes(""));
 
         // validateUserOp succeeds (sig is valid)
         vm.prank(address(entryPoint));

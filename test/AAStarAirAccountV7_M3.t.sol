@@ -295,22 +295,6 @@ contract AAStarAirAccountV7M3Test is Test {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerKey, ethHash);
         bytes memory sig = abi.encodePacked(uint8(0x02), r, s, v); // 66 bytes: algId + r + s + v
 
-        PackedUserOperation memory userOp = PackedUserOperation({
-            sender: address(ga),
-            nonce: 0,
-            initCode: "",
-            callData: "",
-            accountGasLimits: bytes32(0),
-            preVerificationGas: 0,
-            gasFees: bytes32(0),
-            paymasterAndData: "",
-            signature: sig
-        });
-
-        // validateUserOp stores ECDSA algId in transient queue
-        vm.prank(entryPoint);
-        ga.validateUserOp(userOp, userOpHash, 0);
-
         // executeBatch: 2 calls × 0.1 ETH — second call cumulative=0.2 ETH → tier2 required
         address[] memory dests = new address[](2);
         dests[0] = address(0xBEEF);
@@ -321,6 +305,25 @@ contract AAStarAirAccountV7M3Test is Test {
         bytes[] memory funcs = new bytes[](2);
         funcs[0] = "";
         funcs[1] = "";
+
+        // HIGH-3: callData must equal the executed call (real EntryPoint behavior) so the
+        // content-keyed algId queue resolves during executeBatch. Precomputed to limit stack depth.
+        bytes memory batchCallData = abi.encodeWithSelector(ga.executeBatch.selector, dests, values, funcs);
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: address(ga),
+            nonce: 0,
+            initCode: "",
+            callData: batchCallData,
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: sig
+        });
+
+        // validateUserOp stores ECDSA algId in transient queue
+        vm.prank(entryPoint);
+        ga.validateUserOp(userOp, userOpHash, 0);
 
         vm.prank(entryPoint);
         vm.expectRevert(abi.encodeWithSignature("InsufficientTier(uint8,uint8)", 2, 1));
@@ -356,7 +359,9 @@ contract AAStarAirAccountV7M3Test is Test {
         bytes memory sig1 = abi.encodePacked(uint8(0x02), r1, s1, v1); // 66 bytes: algId + r + s + v
 
         PackedUserOperation memory userOp1 = PackedUserOperation({
-            sender: address(ga), nonce: 0, initCode: "", callData: "",
+            sender: address(ga), nonce: 0, initCode: "",
+            // HIGH-3: callData must equal the executed call so the content-keyed algId resolves.
+            callData: abi.encodeWithSelector(ga.execute.selector, address(0xBEEF), uint256(0.1 ether), bytes("")),
             accountGasLimits: bytes32(0), preVerificationGas: 0, gasFees: bytes32(0),
             paymasterAndData: "", signature: sig1
         });
@@ -374,7 +379,8 @@ contract AAStarAirAccountV7M3Test is Test {
         bytes memory sig2 = abi.encodePacked(uint8(0x02), r2, s2, v2); // 66 bytes: algId + r + s + v
 
         PackedUserOperation memory userOp2 = PackedUserOperation({
-            sender: address(ga), nonce: 1, initCode: "", callData: "",
+            sender: address(ga), nonce: 1, initCode: "",
+            callData: abi.encodeWithSelector(ga.execute.selector, address(0xBEEF), uint256(0.1 ether), bytes("")),
             accountGasLimits: bytes32(0), preVerificationGas: 0, gasFees: bytes32(0),
             paymasterAndData: "", signature: sig2
         });
@@ -401,7 +407,8 @@ contract AAStarAirAccountV7M3Test is Test {
         bytes memory sig = abi.encodePacked(r, s, v);
 
         PackedUserOperation memory userOp = PackedUserOperation({
-            sender: address(account), nonce: 0, initCode: "", callData: "",
+            sender: address(account), nonce: 0, initCode: "",
+            callData: abi.encodeWithSelector(account.execute.selector, address(0xBEEF), uint256(0.1 ether), bytes("")),
             accountGasLimits: bytes32(0), preVerificationGas: 0, gasFees: bytes32(0),
             paymasterAndData: "", signature: sig
         });

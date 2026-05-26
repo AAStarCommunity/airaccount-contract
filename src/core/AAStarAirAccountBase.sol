@@ -89,6 +89,18 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      Only populated when algId == ALG_WEIGHTED. Consumed in execute/executeBatch to resolve tier.
     uint256 internal constant WEIGHT_SLOT_BASE = 0x0A1800;
 
+    /// @dev HIGH-3 FIX — transient slot holding keccak256(callData) of the UserOp currently being
+    ///      validated or executed. Set at the entry of validateUserOp and execute/executeBatch.
+    ///      The algId / weight / sessionKey transient entries are keyed by content
+    ///      (slot = keccak256(callDataKey, tag)) instead of a shared, revert-rollback-able FIFO
+    ///      read index. Because execute()'s msg.data equals the validated userOp.callData, each
+    ///      UserOp reads exactly the authentication it validated under, even if an earlier op in
+    ///      the same bundle reverts during execution. Reads are non-destructive (idempotent).
+    ///      Residual edge: two ops with byte-identical callData in one bundle share a slot (last
+    ///      validation wins) — narrow and fail-safe (the actions are identical), and still strictly
+    ///      safer than the previous index that desynced on ANY execution revert.
+    uint256 internal constant CALLDATA_KEY_SLOT = 0x0A1900;
+
 
     /// @dev Timelock for weakening weight-change proposals (M6.2)
     uint256 internal constant WEIGHT_CHANGE_TIMELOCK  = 2 days;
@@ -928,6 +940,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         uint256 value,
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
+        // HIGH-3: key the transient queue reads by this op's callData (== validated userOp.callData
+        // on the EntryPoint path). Set BEFORE hook dispatch so getCurrentAlgId()/getCurrentSessionKey()
+        // peeks resolve to this op's entries.
+        _setCallDataKey(keccak256(msg.data));
         // Hook dispatch BEFORE consuming algId — getCurrentAlgId() peeks at current queue entry.
         bool hookActive = _activeHook != address(0);
         if (hookActive) _dispatchHook(value);
@@ -956,6 +972,9 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (dest.length != value.length || dest.length != func.length) {
             revert ArrayLengthMismatch();
         }
+        // HIGH-3: content-key the transient queue reads to this op's callData (== validated
+        // userOp.callData on the EntryPoint path).
+        _setCallDataKey(keccak256(msg.data));
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
         uint8 guardAlgId = algId;   // preserve pre-resolution algId for guard whitelist check
         if (algId == ALG_WEIGHTED) {
@@ -1123,94 +1142,77 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
     // ─── Transient Storage AlgId Queue ────────────────────────────────
 
-    /// @notice Peek at the next algId in the transient queue without consuming it.
-    ///         Called by TierGuardHook.preCheck() before execute() consumes the algId,
-    ///         so the hook can enforce tier limits using the same algId as the guard.
-    ///         Returns 0 (ALG_NONE) if the queue is empty (no validated algId yet).
+    /// @dev HIGH-3 FIX — record the content key (keccak256(callData)) of the UserOp currently
+    ///      being validated or executed. Called at the entry of validateUserOp (validation phase,
+    ///      key = keccak256(userOp.callData)) and execute/executeBatch (execution phase,
+    ///      key = keccak256(msg.data), which equals the validated userOp.callData on the
+    ///      EntryPoint path). All algId/weight/sessionKey entries are keyed by this value.
+    function _setCallDataKey(bytes32 key) internal {
+        assembly { tstore(CALLDATA_KEY_SLOT, key) }
+    }
+
+    /// @dev Transient slot for a queue entry of the current UserOp: keccak256(callDataKey, tag).
+    ///      Uses scratch space (0x00–0x3f) only — does not touch the free-memory pointer at 0x40.
+    function _queueSlot(uint256 tag) private view returns (uint256 slot) {
+        assembly {
+            mstore(0x00, tload(CALLDATA_KEY_SLOT))
+            mstore(0x20, tag)
+            slot := keccak256(0x00, 0x40)
+        }
+    }
+
+    /// @notice Peek at the current UserOp's algId without consuming it.
+    ///         Called by TierGuardHook.preCheck() during execute() so the hook enforces tier
+    ///         limits using the same algId as the guard. Returns 0 (ALG_NONE) if none stored.
     function getCurrentAlgId() external view returns (uint256 algId) {
-        assembly {
-            let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
-            algId := tload(add(add(ALG_ID_SLOT_BASE, 2), readIdx))
-        }
+        uint256 slot = _queueSlot(ALG_ID_SLOT_BASE);
+        assembly { algId := tload(slot) }
     }
 
-    /// @notice Peek at the next session key in the transient queue without consuming it.
+    /// @notice Peek at the current UserOp's session key without consuming it.
     ///         Called by TierGuardHook.preCheck() for session scope enforcement (M8.P2).
-    ///         Returns bytes32(0) if the queue is empty (no session key stored in this batch).
-    ///         Top byte of returned value: 0x01 = ECDSA session (lower 20 bytes = address),
-    ///         0x02 = P256 session (lower 31 bytes = key hash).
+    ///         Top byte: 0x01 = ECDSA session (lower 20 bytes = address), 0x02 = P256 session.
     function getCurrentSessionKey() external view returns (bytes32 taggedId) {
-        assembly {
-            let readIdx := tload(add(SESSION_KEY_SLOT_BASE, 1))
-            taggedId := tload(add(add(SESSION_KEY_SLOT_BASE, 2), readIdx))
-        }
+        uint256 slot = _queueSlot(SESSION_KEY_SLOT_BASE);
+        assembly { taggedId := tload(slot) }
     }
 
-    /// @dev Push validated algId to transient storage queue.
-    ///      Called during validateUserOp (validation phase).
+    /// @dev Store the validated algId for the current UserOp (keyed by callData content).
     function _storeValidatedAlgId(uint8 algId) internal {
-        assembly {
-            let writeIdx := tload(ALG_ID_SLOT_BASE)
-            tstore(add(add(ALG_ID_SLOT_BASE, 2), writeIdx), algId)
-            tstore(ALG_ID_SLOT_BASE, add(writeIdx, 1))
-        }
+        uint256 slot = _queueSlot(ALG_ID_SLOT_BASE);
+        assembly { tstore(slot, algId) }
     }
 
-    /// @dev Pop validated algId from transient storage queue.
-    ///      Called during execute/executeBatch (execution phase).
-    ///
-    ///      HIGH-3 KNOWN LIMITATION — transient queue pollution on failed UserOp:
-    ///      When UserOp N's execution reverts, this increment is also reverted, leaving the
-    ///      readIdx unchanged. If a subsequent UserOp M from the same account is in the same
-    ///      bundle, it reads the algId that was queued for N (queue corruption). This is
-    ///      uncommon (same account, same bundle, first op fails during execution) but not zero.
-    ///      Proper fix: use userOpHash as the transient storage key instead of a shared FIFO
-    ///      index, so each UserOp's algId is keyed uniquely and cannot bleed into another.
-    ///      TODO: implement userOpHash-keyed transient storage to eliminate cross-UserOp
-    ///      queue pollution on execution revert (see tracking issue).
-    function _consumeValidatedAlgId() internal returns (uint8 algId) {
-        assembly {
-            let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
-            algId := tload(add(add(ALG_ID_SLOT_BASE, 2), readIdx))
-            tstore(add(ALG_ID_SLOT_BASE, 1), add(readIdx, 1))
-        }
+    /// @dev Read the current UserOp's validated algId (content-keyed, non-destructive).
+    ///      HIGH-3 fix: keyed by keccak256(callData) instead of a revert-rollback-able FIFO read
+    ///      index, so a prior op's execution revert in the same bundle cannot bleed its algId here.
+    function _consumeValidatedAlgId() internal view returns (uint8 algId) {
+        uint256 slot = _queueSlot(ALG_ID_SLOT_BASE);
+        assembly { algId := tload(slot) }
     }
 
-    /// @dev Push tagged session key identifier to transient storage queue.
-    ///      Top byte = 0x01 (ECDSA) or 0x02 (P256). Only called for ALG_SESSION_KEY.
+    /// @dev Store the tagged session key for the current UserOp. Top byte = 0x01/0x02.
     function _storeSessionKey(bytes32 taggedId) internal {
-        assembly {
-            let writeIdx := tload(SESSION_KEY_SLOT_BASE)
-            tstore(add(add(SESSION_KEY_SLOT_BASE, 2), writeIdx), taggedId)
-            tstore(SESSION_KEY_SLOT_BASE, add(writeIdx, 1))
-        }
+        uint256 slot = _queueSlot(SESSION_KEY_SLOT_BASE);
+        assembly { tstore(slot, taggedId) }
     }
 
-    /// @dev Pop tagged session key identifier from transient storage queue.
-    function _consumeSessionKey() internal returns (bytes32 taggedId) {
-        assembly {
-            let readIdx := tload(add(SESSION_KEY_SLOT_BASE, 1))
-            taggedId := tload(add(add(SESSION_KEY_SLOT_BASE, 2), readIdx))
-            tstore(add(SESSION_KEY_SLOT_BASE, 1), add(readIdx, 1))
-        }
+    /// @dev Read the current UserOp's session key (content-keyed, non-destructive).
+    function _consumeSessionKey() internal view returns (bytes32 taggedId) {
+        uint256 slot = _queueSlot(SESSION_KEY_SLOT_BASE);
+        assembly { taggedId := tload(slot) }
     }
 
-    /// @dev Push accumulated signature weight to transient storage queue (one entry per UserOp).
+    /// @dev Store the accumulated signature weight for the current UserOp.
     function _storeValidatedWeight(uint8 weight) internal {
-        assembly {
-            let writeIdx := tload(WEIGHT_SLOT_BASE)
-            tstore(add(add(WEIGHT_SLOT_BASE, 2), writeIdx), weight)
-            tstore(WEIGHT_SLOT_BASE, add(writeIdx, 1))
-        }
+        uint256 slot = _queueSlot(WEIGHT_SLOT_BASE);
+        assembly { tstore(slot, weight) }
     }
 
-    /// @dev Pop accumulated signature weight from transient storage queue (one entry per UserOp).
-    function _consumeValidatedWeight() internal returns (uint8 weight) {
-        assembly {
-            let readIdx := tload(add(WEIGHT_SLOT_BASE, 1))
-            weight := tload(add(add(WEIGHT_SLOT_BASE, 2), readIdx))
-            tstore(add(WEIGHT_SLOT_BASE, 1), add(readIdx, 1))
-        }
+    /// @dev Read the current UserOp's accumulated weight (content-keyed, non-destructive).
+    function _consumeValidatedWeight() internal view returns (uint8 weight) {
+        uint256 slot = _queueSlot(WEIGHT_SLOT_BASE);
+        assembly { weight := tload(slot) }
     }
 
     /// @dev ERC20/DeFi token guard enforcement shared by _enforceGuard and executeFromExecutor.

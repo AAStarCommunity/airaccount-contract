@@ -144,6 +144,11 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         bytes32 userOpHash,
         uint256 missingAccountFunds
     ) external onlyEntryPoint returns (uint256 validationData) {
+        // HIGH-3: key this op's transient algId/weight/sessionKey entries by its callData content,
+        // so execute() (whose msg.data == userOp.callData) reads exactly what was validated here,
+        // even across a bundle where an earlier op's execution reverts. Set before any store and
+        // visible to the CompositeValidator callback (validateCompositeSignature) in this frame.
+        _setCallDataKey(keccak256(userOp.callData));
         // ERC-7579 nonce key routing: low 160 bits of the 192-bit nonce key = validator module address (M7.2).
         // If non-zero, route to installed validator module instead of built-in signature routing.
         address validatorModule = address(uint160(userOp.nonce >> 64));

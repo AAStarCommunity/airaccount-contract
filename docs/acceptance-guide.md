@@ -396,7 +396,10 @@ await factory.write.createAccountWithDefaults([
 ```typescript
 // 所有 ABI 从 out/ 目录加载（forge build 生成）
 import FactoryABI from '../out/AAStarAirAccountFactoryV7.sol/AAStarAirAccountFactoryV7.json'
-import AccountABI from '../out/AAStarAirAccountV7.sol/AAStarAirAccountV7.json'
+// 账户用合并后的 full ABI（diamond-lite）：agent(ERC-8004) + weight 治理函数经 fallback→delegatecall
+// 路由到 AirAccountExtension，不在原始 out/AAStarAirAccountV7.sol ABI 里。必须用 full 版才能编码它们。
+// 生成：node scripts/build-full-abi.mjs
+import AccountABI from '../abi/AAStarAirAccountV7.full.json'
 import GuardABI  from '../out/AAStarGlobalGuard.sol/AAStarGlobalGuard.json'
 import EntryPointABI from '../out/IEntryPoint.sol/IEntryPoint.json'
 import SessionKeyABI from '../out/SessionKeyValidator.sol/SessionKeyValidator.json'
