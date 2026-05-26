@@ -105,3 +105,14 @@ delegatecall 让 extension 代码**跑在账户自己的上下文**：
 - 全量回归 **791/791 通过**（agent/weight 经 fallback→delegatecall→extension 路径验证），EIP-170 canary 4/4 转绿。
 - 切割边界最终为 agent + weight 治理；**社交恢复保留在内核**（符合诉求）。
 - 实现要点：account 构造函数内 `new AirAccountExtension()`（创建码，不计入 EIP-170 运行时），immutable 存地址；`new AAStarAirAccountV7()` 仍无参，44 处测试与工厂调用零改动；类型化调用经 `IAirAccountAgent` 接口。
+
+## 集成者注意：完整 ABI（diamond-lite 的已知副作用）
+
+fallback 路由的副作用：移出的 10 个函数（agent + weight 治理）**不在 `AAStarAirAccountV7` 编译器 ABI 里**——链上能执行（selector 不变），但只用 V7 ABI 的下游（SDK/脚本/文档）无法编码它们。
+
+解决：
+- **`abi/AAStarAirAccountV7.full.json`** = V7 原生 ABI + `IAirAccountAgent`（fallback 路由面）合并产物，**这是对外/SDK 应消费的完整账户 ABI**。
+- 用 `node scripts/build-full-abi.mjs` 生成；`--check` 模式校验每个 fallback 路由的 selector 都在（回归检查，可进 CI）。
+- **跨仓后续（追踪中）**：把 `@aastar/sdk` 的账户 ABI 切换到 full 版本，并在集成文档里指向它，然后 bump `lib/aastar-sdk` 子模块。
+
+> 该副作用是 fallback-extension（diamond）模式的固有特征，不是缺陷；完整 ABI 是标准应对方式。

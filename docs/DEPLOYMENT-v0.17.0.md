@@ -121,6 +121,7 @@ The deploy script's **logic is validated** via `forge script ... --sender <addr>
 2. **SuperPaymaster**: hand the `AgentRegistry` address to the SP team → they `setAgentRegistries(addr)` + run E2E G2.
 3. **SDK sync** (`@aastar/sdk` / `lib/aastar-sdk`):
    - Export ABIs from `out/<Contract>.sol/<Contract>.json` (`.abi`) → commit to the SDK repo (`abis/`).
+   - **For the account, use the merged `abi/AAStarAirAccountV7.full.json`** (run `node scripts/build-full-abi.mjs`), NOT the raw `out/AAStarAirAccountV7.sol` ABI. The account is diamond-lite: agent (ERC-8004) + weight-governance functions execute via fallback→delegatecall to `AirAccountExtension` and are absent from the raw account ABI; the full ABI merges them back so the SDK can encode them.
    - Update the SDK address config (`config.<network>.json`) with the deployed addresses.
    - Bump the SDK version, then bump the `lib/aastar-sdk` submodule pointer here.
 4. **E2E**: run the relevant `scripts/test-e2e-*.ts` against the new addresses.
