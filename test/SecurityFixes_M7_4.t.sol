@@ -163,14 +163,16 @@ contract SecurityFixes_M7_4Test is Test {
         uint256 value,
         bytes memory data
     ) internal returns (bool execSuccess) {
+        // HIGH-3: mirror the real EntryPoint — the op's callData IS the execution calldata, so the
+        // content-keyed algId/weight/sessionKey queue resolves correctly during execute().
+        userOp.callData = abi.encodeWithSignature("execute(address,uint256,bytes)", dest, value, data);
+
         vm.prank(address(ep));
         uint256 validationData = account.validateUserOp(userOp, userOpHash, 0);
         if (validationData != 0) return false;
 
         vm.prank(address(ep));
-        (execSuccess,) = address(account).call(
-            abi.encodeWithSignature("execute(address,uint256,bytes)", dest, value, data)
-        );
+        (execSuccess,) = address(account).call(userOp.callData);
     }
 
     function _installSig(Vm.Wallet memory wallet, address acc, uint256 moduleTypeId, address module)
@@ -709,49 +711,52 @@ contract SecurityFixes_M7_4Test is Test {
     ///           1. Install TierGuardHook as hook module (moduleTypeId=4)
     ///           2. Simulate a UserOp with signature[0] = ALG_SESSION_KEY (0x08) via nonce-key routing
     ///           3. Call executeBatch — must revert with AgentSessionBatchNotSupported
-    function test_ExecuteBatch_sessionKey_reverts() public {
-        // Deploy and install TierGuardHook as hook module (typeId=4)
+    /// @dev Encode a single-element executeBatch (recipient, 0 wei, empty) without leaving any
+    ///      array locals in the caller's frame — the arrays are built inline and consumed by the
+    ///      encode here, keeping the test within the via-IR stack limit. HIGH-3 content-keying
+    ///      needs the op's callData to equal exactly this executeBatch calldata.
+    function _encSingleBatch() internal view returns (bytes memory) {
+        address[] memory dests = new address[](1);  dests[0] = recipient;
+        uint256[] memory values = new uint256[](1); values[0] = 0;
+        bytes[] memory funcs = new bytes[](1);      funcs[0] = "";
+        return abi.encodeWithSelector(account.executeBatch.selector, dests, values, funcs);
+    }
+
+    /// @dev Deploy + install a fresh TierGuardHook (typeId=4). Extracted so tierHook/hookSig do not
+    ///      occupy the test's stack frame (via-IR stack-limit headroom).
+    function _installFreshTierHook() internal {
         TierGuardHook tierHook = new TierGuardHook();
-        // Guardian sig for installModule (typeId=4, module=tierHook, no extra initData → empty moduleInitData)
         bytes memory hookSig = _installSigWithData(g0Wallet, address(account), 4, address(tierHook), "");
-        // hookSig (65 bytes) prepended, no additional initData → onInstall called with empty bytes
         vm.prank(ownerWallet.addr);
         account.installModule(4, address(tierHook), hookSig);
+    }
 
-        // Simulate a UserOp routed via nonce-key path with ALG_SESSION_KEY sig prefix
-        // trackingModule is used as the validator module (already ERC-7579 compatible)
+    function test_ExecuteBatch_sessionKey_reverts() public {
+        // Deploy and install TierGuardHook as hook module (typeId=4)
+        _installFreshTierHook();
+
+        // trackingModule is the validator module (already ERC-7579 compatible)
         _installTracking();
         trackingModule.setValidateResult(0); // pass validation
 
-        bytes memory sig = abi.encodePacked(uint8(ALG_SESSION_KEY), bytes32(0), bytes32(0));
-        uint192 validatorId = uint192(uint160(address(trackingModule)));
-        PackedUserOperation memory userOp = PackedUserOperation({
-            sender: address(account),
-            nonce: uint256(validatorId) << 64,
-            initCode: "",
-            callData: "",
-            accountGasLimits: bytes32(0),
-            preVerificationGas: 0,
-            gasFees: bytes32(0),
-            paymasterAndData: "",
-            signature: sig
-        });
+        // Build the op with callData == the executeBatch call (HIGH-3 content key). The batch
+        // arrays live only inside _encSingleBatch, so the test frame holds just `userOp`.
+        PackedUserOperation memory userOp;
+        userOp.sender = address(account);
+        userOp.nonce = uint256(uint192(uint160(address(trackingModule)))) << 64;
+        userOp.callData = _encSingleBatch();
+        userOp.signature = abi.encodePacked(uint8(ALG_SESSION_KEY), bytes32(0), bytes32(0));
 
         // validateUserOp queues ALG_SESSION_KEY in transient storage
         vm.prank(address(ep));
         account.validateUserOp(userOp, keccak256("h2test"), 0);
 
-        // Now call executeBatch — should revert with AgentSessionBatchNotSupported
-        address[] memory dests = new address[](1);
-        dests[0] = recipient;
-        uint256[] memory values = new uint256[](1);
-        values[0] = 0;
-        bytes[] memory funcs = new bytes[](1);
-        funcs[0] = "";
-
-        vm.expectRevert(AAStarAirAccountBase.AgentSessionBatchNotSupported.selector);
+        // Invoke executeBatch via the same calldata; it must revert AgentSessionBatchNotSupported.
+        // Low-level call (not account.executeBatch(...)) avoids re-materializing the batch arrays.
         vm.prank(address(ep));
-        account.executeBatch(dests, values, funcs);
+        (bool ok, bytes memory ret) = address(account).call(userOp.callData);
+        assertFalse(ok, "executeBatch with a session key must revert");
+        assertEq(bytes4(ret), AAStarAirAccountBase.AgentSessionBatchNotSupported.selector, "wrong revert");
     }
 
     // ─── modifyTierLimitsWithGuardians (C-1 + H-1 fixes) ─────────────────────

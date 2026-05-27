@@ -279,6 +279,8 @@ contract CumulativeSignatureTest is Test {
         bytes memory sig = _buildCumulativeT2Sig(userOpHash, ownerWallet);
         userOp.signature = abi.encodePacked(uint8(0x04), sig);
 
+        // HIGH-3: callData must equal the executed call so the content-keyed algId resolves.
+        userOp.callData = abi.encodeWithSelector(account.execute.selector, address(0xBEEF), uint256(0.5 ether), bytes(""));
         vm.prank(entryPointAddr);
         uint256 result = account.validateUserOp(userOp, userOpHash, 0);
         assertEq(result, 0, "Cumulative T2 validation should pass");
@@ -288,7 +290,8 @@ contract CumulativeSignatureTest is Test {
         account.execute(address(0xBEEF), 0.5 ether, "");
 
         // Execute a tier-1 value transfer (0.05 ETH) — should also succeed (T2 >= T1)
-        // Re-validate first
+        // Re-validate first with callData matching the second execute.
+        userOp.callData = abi.encodeWithSelector(account.execute.selector, address(0xBEEF), uint256(0.05 ether), bytes(""));
         vm.prank(entryPointAddr);
         account.validateUserOp(userOp, userOpHash, 0);
 

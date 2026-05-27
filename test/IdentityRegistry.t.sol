@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test, Vm} from "forge-std/Test.sol";
+import {IAirAccountAgent} from "../src/interfaces/IAirAccountAgent.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
@@ -237,13 +238,13 @@ contract ERC8004IntegrationTest is Test {
 
     function test_mintAgentIdentity_mintsNFTToAccount() public {
         vm.prank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(address(idReg), "ipfs://QmAgent1");
+        uint256 id = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://QmAgent1");
         assertEq(idReg.ownerOf(id), address(account));
     }
 
     function test_mintAgentIdentity_storesURI() public {
         vm.prank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(address(idReg), "ipfs://QmAgent1");
+        uint256 id = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://QmAgent1");
         assertEq(idReg.tokenURI(id), "ipfs://QmAgent1");
     }
 
@@ -251,13 +252,13 @@ contract ERC8004IntegrationTest is Test {
         vm.prank(ownerWallet.addr);
         vm.expectEmit(true, true, false, true);
         emit AAStarAirAccountBase.AgentIdentityMinted(0, address(idReg), "ipfs://QmAgent1");
-        account.mintAgentIdentity(address(idReg), "ipfs://QmAgent1");
+        IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://QmAgent1");
     }
 
     function test_mintAgentIdentity_returnsIncrementingIds() public {
         vm.startPrank(ownerWallet.addr);
-        uint256 id0 = account.mintAgentIdentity(address(idReg), "ipfs://Qm0");
-        uint256 id1 = account.mintAgentIdentity(address(idReg), "ipfs://Qm1");
+        uint256 id0 = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://Qm0");
+        uint256 id1 = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://Qm1");
         vm.stopPrank();
         assertEq(id0, 0);
         assertEq(id1, 1);
@@ -266,54 +267,54 @@ contract ERC8004IntegrationTest is Test {
     function test_mintAgentIdentity_notOwner_reverts() public {
         vm.prank(makeAddr("stranger"));
         vm.expectRevert();
-        account.mintAgentIdentity(address(idReg), "ipfs://Qm");
+        IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://Qm");
     }
 
     function test_mintAgentIdentity_zeroRegistry_reverts() public {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.UnauthorizedRegistry.selector);
-        account.mintAgentIdentity(address(0), "ipfs://Qm");
+        IAirAccountAgent(address(account)).mintAgentIdentity(address(0), "ipfs://Qm");
     }
 
     function test_mintAgentIdentity_nonOfficialRegistry_reverts() public {
         // Any address other than the official ERC-8004 registry for this chain is rejected.
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.UnauthorizedRegistry.selector);
-        account.mintAgentIdentity(makeAddr("rogueRegistry"), "ipfs://Qm");
+        IAirAccountAgent(address(account)).mintAgentIdentity(makeAddr("rogueRegistry"), "ipfs://Qm");
     }
 
     // ─── bindERC8004AgentWallet ───────────────────────────────────────────────
 
     function test_bind_linksWallet() public {
         vm.startPrank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(address(idReg), "ipfs://QmBind");
-        account.bindERC8004AgentWallet(address(idReg), id, agent, block.timestamp + 60, "");
+        uint256 id = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://QmBind");
+        IAirAccountAgent(address(account)).bindERC8004AgentWallet(address(idReg), id, agent, block.timestamp + 60, "");
         vm.stopPrank();
         assertEq(idReg.getAgentWallet(id), agent);
     }
 
     function test_bind_emitsEvent() public {
         vm.startPrank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(address(idReg), "ipfs://QmBind");
+        uint256 id = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://QmBind");
         vm.expectEmit(true, true, true, false);
         emit AAStarAirAccountBase.ERC8004WalletBound(id, agent, address(idReg));
-        account.bindERC8004AgentWallet(address(idReg), id, agent, block.timestamp + 60, "");
+        IAirAccountAgent(address(account)).bindERC8004AgentWallet(address(idReg), id, agent, block.timestamp + 60, "");
         vm.stopPrank();
     }
 
     function test_bind_notOwner_reverts() public {
         vm.prank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(address(idReg), "ipfs://Qm");
+        uint256 id = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://Qm");
         vm.prank(makeAddr("stranger"));
         vm.expectRevert();
-        account.bindERC8004AgentWallet(address(idReg), id, agent, block.timestamp + 60, "");
+        IAirAccountAgent(address(account)).bindERC8004AgentWallet(address(idReg), id, agent, block.timestamp + 60, "");
     }
 
     function test_bind_zeroWallet_reverts() public {
         vm.startPrank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(address(idReg), "ipfs://Qm");
+        uint256 id = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://Qm");
         vm.expectRevert(AAStarAirAccountBase.IdentityRegistrationFailed.selector);
-        account.bindERC8004AgentWallet(address(idReg), id, address(0), block.timestamp + 60, "");
+        IAirAccountAgent(address(account)).bindERC8004AgentWallet(address(idReg), id, address(0), block.timestamp + 60, "");
         vm.stopPrank();
     }
 
@@ -321,15 +322,15 @@ contract ERC8004IntegrationTest is Test {
 
     function test_reputation_recordsFeedback() public {
         vm.startPrank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(address(idReg), "ipfs://Qm");
-        account.submitAgentReputation(
+        uint256 id = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://Qm");
+        IAirAccountAgent(address(account)).submitAgentReputation(
             address(repReg), id, 95, 2, "quality", "task:swap",
             "https://agent.example.com", "ipfs://QmFb", bytes32(0)
         );
         vm.stopPrank();
 
         address[] memory empty = new address[](0);
-        (uint64 count, int128 val,) = account.queryAgentReputation(
+        (uint64 count, int128 val,) = IAirAccountAgent(address(account)).queryAgentReputation(
             address(repReg), id, empty, "quality", "task:swap"
         );
         assertEq(count, 1);
@@ -338,10 +339,10 @@ contract ERC8004IntegrationTest is Test {
 
     function test_reputation_emitsEvent() public {
         vm.startPrank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(address(idReg), "ipfs://Qm");
+        uint256 id = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://Qm");
         vm.expectEmit(true, true, false, true);
         emit AAStarAirAccountBase.AgentReputationSubmitted(id, address(repReg), 95, "quality");
-        account.submitAgentReputation(
+        IAirAccountAgent(address(account)).submitAgentReputation(
             address(repReg), id, 95, 2, "quality", "", "", "ipfs://Qm", bytes32(0)
         );
         vm.stopPrank();
@@ -350,7 +351,7 @@ contract ERC8004IntegrationTest is Test {
     function test_reputation_notOwner_reverts() public {
         vm.prank(makeAddr("stranger"));
         vm.expectRevert();
-        account.submitAgentReputation(
+        IAirAccountAgent(address(account)).submitAgentReputation(
             address(repReg), 0, 95, 2, "quality", "", "", "", bytes32(0)
         );
     }
@@ -358,13 +359,13 @@ contract ERC8004IntegrationTest is Test {
     function test_reputation_zeroRegistry_reverts() public {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.UnauthorizedRegistry.selector);
-        account.submitAgentReputation(address(0), 0, 95, 2, "quality", "", "", "", bytes32(0));
+        IAirAccountAgent(address(account)).submitAgentReputation(address(0), 0, 95, 2, "quality", "", "", "", bytes32(0));
     }
 
     function test_reputation_nonOfficialRegistry_reverts() public {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.UnauthorizedRegistry.selector);
-        account.submitAgentReputation(makeAddr("rogueRep"), 0, 95, 2, "quality", "", "", "", bytes32(0));
+        IAirAccountAgent(address(account)).submitAgentReputation(makeAddr("rogueRep"), 0, 95, 2, "quality", "", "", "", bytes32(0));
     }
 
     // ─── Full ERC-8004 flow ───────────────────────────────────────────────────
@@ -373,15 +374,15 @@ contract ERC8004IntegrationTest is Test {
         vm.startPrank(ownerWallet.addr);
 
         // 1. Register agent identity on official registry
-        uint256 agentId = account.mintAgentIdentity(address(idReg), "ipfs://QmFullFlow");
+        uint256 agentId = IAirAccountAgent(address(account)).mintAgentIdentity(address(idReg), "ipfs://QmFullFlow");
         assertEq(idReg.ownerOf(agentId), address(account));
 
         // 2. Bind session key as execution wallet
-        account.bindERC8004AgentWallet(address(idReg), agentId, agent, block.timestamp + 60, "");
+        IAirAccountAgent(address(account)).bindERC8004AgentWallet(address(idReg), agentId, agent, block.timestamp + 60, "");
         assertEq(idReg.getAgentWallet(agentId), agent);
 
         // 3. After agent interaction: submit reputation
-        account.submitAgentReputation(
+        IAirAccountAgent(address(account)).submitAgentReputation(
             address(repReg), agentId,
             90, 2,
             "reliability", "task:swap",
@@ -392,7 +393,7 @@ contract ERC8004IntegrationTest is Test {
 
         // 4. Verify reputation is recorded
         address[] memory clients = new address[](0);
-        (uint64 count, int128 val, uint8 dec) = account.queryAgentReputation(
+        (uint64 count, int128 val, uint8 dec) = IAirAccountAgent(address(account)).queryAgentReputation(
             address(repReg), agentId, clients, "reliability", "task:swap"
         );
         assertEq(count, 1);
@@ -409,7 +410,7 @@ contract ERC8004IntegrationTest is Test {
         vm.etch(OFFICIAL_IDENTITY, address(safeMintReg).code);
         SafeMintMockRegistry reg = SafeMintMockRegistry(OFFICIAL_IDENTITY);
         vm.prank(ownerWallet.addr);
-        uint256 id = account.mintAgentIdentity(OFFICIAL_IDENTITY, "ipfs://QmSafeMint");
+        uint256 id = IAirAccountAgent(address(account)).mintAgentIdentity(OFFICIAL_IDENTITY, "ipfs://QmSafeMint");
         assertEq(reg.ownerOf(id), address(account));
     }
 

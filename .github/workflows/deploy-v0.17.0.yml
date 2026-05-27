@@ -1,0 +1,73 @@
+name: Deploy AirAccount v0.17.0
+
+# Runs the SAME forge deploy script (script/DeployAirAccountV017.s.sol) on a clean
+# GitHub-hosted Linux runner — used because forge broadcast is blocked by the local
+# macOS proxy/GFW network (connection reset). Manual trigger only.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   DEPLOYER_PRIVATE_KEY        - testnet deployer key (testnet only; rotate the leaked one first)
+#   SEPOLIA_RPC_URL             - a working Sepolia RPC (NOT the dead Alchemy URL1)
+#   OP_SEPOLIA_RPC_URL          - OP Sepolia RPC (only needed for op-sepolia)
+#   COMMUNITY_GUARDIAN_ADDRESS  - Safe multisig guardian (optional but recommended)
+#   ETHERSCAN_API_KEY           - for --verify (optional)
+#
+# NOTE: OP Mainnet is intentionally NOT a CI option — mainnet must be deployed manually
+#       with a cast-wallet keystore (password-protected), per the deployment policy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Target network"
+        type: choice
+        options: [sepolia, op-sepolia]
+        default: sepolia
+      simulate:
+        description: "Dry-run only (no broadcast)"
+        type: boolean
+        default: true
+      verify:
+        description: "Verify on Etherscan after deploy"
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build
+        run: forge build
+
+      - name: Resolve RPC
+        id: rpc
+        run: |
+          case "${{ inputs.network }}" in
+            sepolia)    echo "url=${{ secrets.SEPOLIA_RPC_URL }}" >> "$GITHUB_OUTPUT" ;;
+            op-sepolia) echo "url=${{ secrets.OP_SEPOLIA_RPC_URL }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Deploy (forge script)
+        env:
+          COMMUNITY_GUARDIAN_ADDRESS: ${{ secrets.COMMUNITY_GUARDIAN_ADDRESS }}
+        run: |
+          FLAGS="--rpc-url ${{ steps.rpc.outputs.url }} -vvvv --slow"
+          if [ "${{ inputs.simulate }}" != "true" ]; then FLAGS="$FLAGS --broadcast"; fi
+          if [ "${{ inputs.verify }}" = "true" ]; then FLAGS="$FLAGS --verify --etherscan-api-key ${{ secrets.ETHERSCAN_API_KEY }}"; fi
+          forge script script/DeployAirAccountV017.s.sol:DeployAirAccountV017 \
+            $FLAGS --private-key ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+
+      - name: Upload broadcast artifacts
+        if: ${{ inputs.simulate == false }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: broadcast-${{ inputs.network }}
+          path: broadcast/DeployAirAccountV017.s.sol/**
+          if-no-files-found: ignore

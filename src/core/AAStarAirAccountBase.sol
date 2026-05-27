@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.33;
 
-import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
@@ -9,9 +8,8 @@ import {IAAStarValidator} from "../interfaces/IAAStarValidator.sol";
 import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
 import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 import {ICalldataParser, ICalldataParserRegistry} from "../interfaces/ICalldataParser.sol";
-import {IERC8004IdentityRegistry} from "../interfaces/IERC8004IdentityRegistry.sol";
-import {IERC8004ReputationRegistry} from "../interfaces/IERC8004ReputationRegistry.sol";
-import {ERC8004Addresses} from "../config/ERC8004Addresses.sol";
+import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
+import {AirAccountExtension} from "./AirAccountExtension.sol";
 
 /**
  * @title AAStarAirAccountBase
@@ -30,7 +28,7 @@ import {ERC8004Addresses} from "../config/ERC8004Addresses.sol";
  *      - Monotonic config: daily limit can only decrease, algorithms can only be added
  *      - Tier + guard checks enforced in execute/executeBatch before every _call
  */
-abstract contract AAStarAirAccountBase is Initializable {
+abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
@@ -60,27 +58,15 @@ abstract contract AAStarAirAccountBase is Initializable {
 
     // ─── State ────────────────────────────────────────────────────────
 
-    /// @notice The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility)
-    address public entryPoint;
+    // `entryPoint` (slot 0) and `owner` (slot 1) are declared in AAStarAgentStorageLayout so the
+    // AgentExtension facet shares them across the fallback delegatecall boundary. Layout unchanged.
 
-    // ─── Mutable State ───────────────────────────────────────────────
+    /// @notice Singleton AgentExtension holding ERC-8004 agent functions, reached via fallback.
+    /// @dev Deployed once per implementation in the constructor; baked into runtime as an immutable,
+    ///      so all EIP-1167 clones of this implementation resolve to the same extension address.
+    ///      Splitting agent code out keeps the account runtime under EIP-170's 24,576-byte limit.
+    address public immutable agentExtension;
 
-    /// @notice Account owner and ECDSA signer (mutable for social recovery)
-    address public owner;
-
-    /// @notice Optional validator router for external algorithms (BLS, PQ, etc.)
-    IAAStarValidator public validator;
-
-    /// @notice Optional BLS aggregator for batch verification
-    address public blsAggregator;
-
-    /// @notice Global guard for spending limits (set at construction, cannot be removed)
-    AAStarGlobalGuard public guard;
-
-    /// @notice Optional calldata parser registry for DeFi protocol support (address(0) = disabled)
-    ///         When set, the guard uses protocol-specific parsers to understand DeFi calldata
-    ///         (e.g., Uniswap swaps) rather than falling back to ERC20 transfer parsing only.
-    address public parserRegistry;
 
     // ── algId Pass-Through (validation → execution) ──
     // Uses transient storage (EIP-1153) to avoid cross-UserOp contamination.
@@ -103,90 +89,18 @@ abstract contract AAStarAirAccountBase is Initializable {
     ///      Only populated when algId == ALG_WEIGHTED. Consumed in execute/executeBatch to resolve tier.
     uint256 internal constant WEIGHT_SLOT_BASE = 0x0A1800;
 
-    // ── ERC-7579 Module Registry (M7.2) ──
+    /// @dev HIGH-3 FIX — transient slot holding keccak256(callData) of the UserOp currently being
+    ///      validated or executed. Set at the entry of validateUserOp and execute/executeBatch.
+    ///      The algId / weight / sessionKey transient entries are keyed by content
+    ///      (slot = keccak256(callDataKey, tag)) instead of a shared, revert-rollback-able FIFO
+    ///      read index. Because execute()'s msg.data equals the validated userOp.callData, each
+    ///      UserOp reads exactly the authentication it validated under, even if an earlier op in
+    ///      the same bundle reverts during execution. Reads are non-destructive (idempotent).
+    ///      Residual edge: two ops with byte-identical callData in one bundle share a slot (last
+    ///      validation wins) — narrow and fail-safe (the actions are identical), and still strictly
+    ///      safer than the previous index that desynced on ANY execution revert.
+    uint256 internal constant CALLDATA_KEY_SLOT = 0x0A1900;
 
-    /// @dev Installed module registry keyed by module type (1=validator, 2=executor, 3=hook).
-    mapping(uint256 => mapping(address => bool)) internal _installedModules;
-
-    /// @dev installModule permission threshold. 40=owner-only, 70=owner+1guardian(default), 100=owner+2guardians.
-    ///      0 means uninitialized → defaults to 70 at runtime.
-    uint8 internal _installModuleThreshold;
-
-    /// @dev Active ERC-7579 hook module address (at most one active hook per account).
-    ///      Set when a hook (moduleTypeId=4, ERC-7579 hook type) is installed; cleared on uninstall.
-    ///      When non-zero, execute/executeBatch dispatch preCheck() here and skip the
-    ///      inline guard.checkTransaction call to avoid double-counting daily limits.
-    address internal _activeHook;
-
-    // ── P256 Passkey ──
-
-    /// @notice P256 public key x-coordinate
-    bytes32 public p256KeyX;
-
-    /// @notice P256 public key y-coordinate
-    bytes32 public p256KeyY;
-
-    // ── Tiered Routing ──
-
-    /// @notice Tier thresholds: [0]=Tier1 max (ECDSA only), [1]=Tier2 max (dual factor)
-    /// Above Tier2 max requires multi-sig (BLS triple)
-    uint256 public tier1Limit; // e.g., 0.1 ETH — ECDSA only
-    uint256 public tier2Limit; // e.g., 1 ETH — dual factor (ECDSA + P256)
-
-    // ── Social Recovery (F28) ──
-
-    // Packed storage: _guardian0 (20 bytes) + _guardianCount (1 byte) = 21 bytes — fits in one slot.
-    // Saves 1 SLOAD (~2,100 gas) on every guardian check (proposeRecovery, approveRecovery, cancelRecovery).
-    address private _guardian0;
-    uint8 internal _guardianCount;  // packed with _guardian0 in same 32-byte slot
-    address private _guardian1;
-    address private _guardian2;
-    uint256 private _guardianRemovalNonce;
-    uint256 private _tierLimitNonce;
-    /// @dev Latches true the first time tier limits are ever configured (via setTierLimits OR
-    ///      modifyTierLimitsWithGuardians). Never resets — so once configured, setTierLimits is
-    ///      permanently locked out even after a guardian reset to (0,0). Prevents an owner from
-    ///      regaining unilateral tier control by laundering through a (0,0) reset.
-    bool private _tierLimitsInitialized;
-
-    struct RecoveryProposal {
-        address newOwner;
-        uint256 proposedAt;
-        uint256 approvalBitmap;      // bit 0 = guardian[0], bit 1 = guardian[1], bit 2 = guardian[2]
-        uint256 cancellationBitmap;  // same layout, for 2-of-3 cancel threshold
-    }
-
-    /// @notice Active recovery proposal
-    RecoveryProposal public activeRecovery;
-
-    // ── Weighted Multi-Signature (algId 0x07, M6.1) ──
-
-    /// @notice Weighted signature configuration: per-source weights and per-tier thresholds.
-    ///         All 10 meaningful bytes pack into one storage slot.
-    struct WeightConfig {
-        uint8 passkeyWeight;   // P256 passkey signature weight (default: 3)
-        uint8 ecdsaWeight;     // Owner ECDSA signature weight  (default: 2)
-        uint8 blsWeight;       // DVT BLS aggregate weight      (default: 2)
-        uint8 guardian0Weight; // Guardian[0] ECDSA weight      (default: 1)
-        uint8 guardian1Weight; // Guardian[1] ECDSA weight      (default: 1)
-        uint8 guardian2Weight; // Guardian[2] ECDSA weight      (default: 1)
-        uint8 _padding;        // Reserved for future weight source
-        uint8 tier1Threshold;  // Min weight for Tier 1 ops (default: 3; 0 = config uninitialized)
-        uint8 tier2Threshold;  // Min weight for Tier 2 ops (default: 5)
-        uint8 tier3Threshold;  // Min weight for Tier 3 ops (default: 6)
-    }
-
-    /// @notice Current weight config. tier1Threshold == 0 means uninitialised → ALG_WEIGHTED fails.
-    WeightConfig public weightConfig;
-
-    /// @notice Pending weight-change proposal (M6.2). proposedAt == 0 means none pending.
-    struct WeightChangeProposal {
-        WeightConfig proposed;
-        uint256 proposedAt;
-        uint256 approvalBitmap; // bit i = guardian[i] approved
-    }
-
-    WeightChangeProposal public pendingWeightChange;
 
     /// @dev Timelock for weakening weight-change proposals (M6.2)
     uint256 internal constant WEIGHT_CHANGE_TIMELOCK  = 2 days;
@@ -343,6 +257,33 @@ abstract contract AAStarAirAccountBase is Initializable {
         _;
         assembly {
             tstore(0, 0)
+        }
+    }
+
+    // ─── Construction & Agent Fallback (diamond-lite) ─────────────────
+
+    /// @dev Deploys the singleton AgentExtension and records it as an immutable. This runs in the
+    ///      IMPLEMENTATION's constructor (creation code only — not part of EIP-170 runtime size),
+    ///      so the ~2KB of agent logic leaves the account's runtime bytecode while every clone of
+    ///      this implementation still resolves to one shared extension instance.
+    constructor() {
+        agentExtension = address(new AirAccountExtension());
+    }
+
+    /// @dev Routes any selector not defined on the account to the AgentExtension via delegatecall,
+    ///      forwarding raw calldata (no re-encoding). delegatecall preserves msg.sender, address(this),
+    ///      storage, events and reverts — so agent calls behave exactly as if they were inline.
+    ///      Unknown selectors hit the extension, which has no matching function and reverts.
+    // solhint-disable-next-line no-complex-fallback
+    fallback() external {
+        address ext = agentExtension;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let ok := delegatecall(gas(), ext, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch ok
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
         }
     }
 
@@ -692,16 +633,9 @@ abstract contract AAStarAirAccountBase is Initializable {
         bytes calldata sigData
     ) internal view returns (uint256) {
         if (sigData.length != 129) return 1;
-        if (p256KeyX == bytes32(0) && p256KeyY == bytes32(0)) return 1;
 
-        // LAYER 1: P256 passkey verifies userOpHash directly
-        bytes32 p256r = bytes32(sigData[0:32]);
-        bytes32 p256s = bytes32(sigData[32:64]);
-
-        bytes memory p256CallData = abi.encode(userOpHash, p256r, p256s, p256KeyX, p256KeyY);
-        (bool p256Success, bytes memory p256Result) = P256_VERIFIER.staticcall(p256CallData);
-        if (!p256Success || p256Result.length < 32) return 1;
-        if (abi.decode(p256Result, (uint256)) != 1) return 1;
+        // LAYER 1: P256 passkey verifies userOpHash directly (shared with _validateP256)
+        if (_validateP256(userOpHash, sigData[0:64]) != 0) return 1;
 
         // LAYER 2: Owner ECDSA signs userOpHash (EIP-191 prefix)
         bytes32 ecdsaHash = userOpHash.toEthSignedMessageHash();
@@ -741,6 +675,25 @@ abstract contract AAStarAirAccountBase is Initializable {
         } catch {
             return 1;
         }
+    }
+
+    /// @dev Verify a standard BLS payload laid out as
+    ///      [nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][messagePoint(256)][messagePointSig(65)].
+    ///      Checks: strict length, owner-signed (userOpHash‖messagePoint) binding, and the aggregate
+    ///      BLS signature via the validator router. Shared by cumulative T2/T3 and the weighted BLS
+    ///      branch (identical logic — kept in one place to stay under EIP-170). Returns true on success.
+    function _blsPayloadValid(bytes32 userOpHash, bytes calldata blsPayload) internal view returns (bool) {
+        if (blsPayload.length < 32) return false;
+        uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
+        if (nodeIdsLength == 0 || nodeIdsLength > 100) return false;
+        uint256 baseOffset = 32 + nodeIdsLength * 32;
+        if (blsPayload.length != baseOffset + 256 + 256 + 65) return false;
+        bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
+        bytes calldata messagePointSig = blsPayload[baseOffset + 512:baseOffset + 577];
+        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
+        if (mpHash.recover(messagePointSig) != owner) return false;
+        // BLS verify data omits the nodeIdsLength prefix: [nodeIds][blsSig][messagePoint]
+        return _callBLSValidator(userOpHash, blsPayload[32:baseOffset + 512]) == 0;
     }
 
     /**
@@ -844,26 +797,15 @@ abstract contract AAStarAirAccountBase is Initializable {
             cursor += 65;
         }
 
-        // bit 2: BLS aggregate (variable-length block)
+        // bit 2: BLS aggregate (variable-length block) — shared helper does the strict-length
+        // parse + owner messagePoint binding + BLS verify (also returns false if validator unset).
         if (bitmap & 0x04 != 0) {
-            if (address(validator) == address(0)) return 1;
             if (sigData.length < cursor + 32) return 1;
             uint256 nodeIdsLength = uint256(bytes32(sigData[cursor:cursor + 32]));
             if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
             uint256 blsBlockLen = 32 + nodeIdsLength * 32 + 256 + 256 + 65;
             if (sigData.length < cursor + blsBlockLen) return 1;
-            bytes calldata blsPayload = sigData[cursor:cursor + blsBlockLen];
-
-            // Verify messagePoint signature binding (same as _validateCumulativeTier2)
-            uint256 baseOffset = 32 + nodeIdsLength * 32;
-            bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
-            bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
-            bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
-            if (mpHash.recover(messagePointSignature) != owner) return 1;
-
-            // Pass BLS payload without nodeIdsLength prefix (same format as standalone BLS)
-            bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
-            if (_callBLSValidator(userOpHash, blsVerifyData) != 0) return 1;
+            if (!_blsPayloadValid(userOpHash, sigData[cursor:cursor + blsBlockLen])) return 1;
             accumulated += wc.blsWeight;
             cursor += blsBlockLen;
         }
@@ -911,32 +853,8 @@ abstract contract AAStarAirAccountBase is Initializable {
         if (sigData.length < 64) return 1;
         if (_validateP256(userOpHash, sigData[0:64]) != 0) return 1;
 
-        // LAYER 2: BLS aggregate verification (remaining bytes)
-        bytes calldata blsPayload = sigData[64:];
-
-        // Parse nodeIds count
-        if (blsPayload.length < 32) return 1;
-        uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
-        if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
-
-        uint256 nodeIdsDataLength = nodeIdsLength * 32;
-        // Expected: nodeIdsLength(32) + nodeIds(N*32) + blsSig(256) + messagePoint(256) + messagePointSig(65)
-        uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 256 + 65;
-        if (blsPayload.length != expectedLength) return 1;
-
-        uint256 baseOffset = 32 + nodeIdsDataLength;
-
-        // Verify messagePoint signature (owner must sign userOpHash+messagePoint — prevents cross-op replay)
-        bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
-        bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
-
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
-        address mpRecovered = mpHash.recover(messagePointSignature);
-        if (mpRecovered != owner) return 1;
-
-        // BLS payload for validator: nodeIds + blsSig + messagePoint (skip nodeIdsLength prefix)
-        bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
-        return _callBLSValidator(userOpHash, blsVerifyData);
+        // LAYER 2+3: BLS aggregate + owner messagePoint binding (shared helper)
+        return _blsPayloadValid(userOpHash, sigData[64:]) ? 0 : 1;
     }
 
     /**
@@ -976,32 +894,8 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
         if (!isGuardian) return 1;
 
-        // LAYER 2: BLS aggregate verification (bytes between P256 and guardian sig)
-        bytes calldata blsPayload = sigData[64:sigData.length - 65];
-
-        // Parse nodeIds count
-        if (blsPayload.length < 32) return 1;
-        uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
-        if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
-
-        uint256 nodeIdsDataLength = nodeIdsLength * 32;
-        // Expected: nodeIdsLength(32) + nodeIds(N*32) + blsSig(256) + messagePoint(256) + messagePointSig(65)
-        uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 256 + 65;
-        if (blsPayload.length != expectedLength) return 1;
-
-        uint256 baseOffset = 32 + nodeIdsDataLength;
-
-        // Verify messagePoint signature (owner must sign userOpHash+messagePoint — prevents cross-op replay)
-        bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
-        bytes calldata messagePointSignature = blsPayload[baseOffset + 512:baseOffset + 577];
-
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
-        address mpRecovered = mpHash.recover(messagePointSignature);
-        if (mpRecovered != owner) return 1;
-
-        // BLS payload for validator: nodeIds + blsSig + messagePoint (skip nodeIdsLength prefix)
-        bytes calldata blsVerifyData = blsPayload[32:baseOffset + 512];
-        return _callBLSValidator(userOpHash, blsVerifyData);
+        // LAYER 2: BLS aggregate + owner messagePoint binding (bytes between P256 and guardian sig)
+        return _blsPayloadValid(userOpHash, sigData[64:sigData.length - 65]) ? 0 : 1;
     }
 
     // ─── Tiered Routing (F21) ────────────────────────────────────────
@@ -1046,6 +940,10 @@ abstract contract AAStarAirAccountBase is Initializable {
         uint256 value,
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
+        // HIGH-3: key the transient queue reads by this op's callData (== validated userOp.callData
+        // on the EntryPoint path). Set BEFORE hook dispatch so getCurrentAlgId()/getCurrentSessionKey()
+        // peeks resolve to this op's entries.
+        _setCallDataKey(keccak256(msg.data));
         // Hook dispatch BEFORE consuming algId — getCurrentAlgId() peeks at current queue entry.
         bool hookActive = _activeHook != address(0);
         if (hookActive) _dispatchHook(value);
@@ -1074,6 +972,9 @@ abstract contract AAStarAirAccountBase is Initializable {
         if (dest.length != value.length || dest.length != func.length) {
             revert ArrayLengthMismatch();
         }
+        // HIGH-3: content-key the transient queue reads to this op's callData (== validated
+        // userOp.callData on the EntryPoint path).
+        _setCallDataKey(keccak256(msg.data));
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
         uint8 guardAlgId = algId;   // preserve pre-resolution algId for guard whitelist check
         if (algId == ALG_WEIGHTED) {
@@ -1241,94 +1142,77 @@ abstract contract AAStarAirAccountBase is Initializable {
 
     // ─── Transient Storage AlgId Queue ────────────────────────────────
 
-    /// @notice Peek at the next algId in the transient queue without consuming it.
-    ///         Called by TierGuardHook.preCheck() before execute() consumes the algId,
-    ///         so the hook can enforce tier limits using the same algId as the guard.
-    ///         Returns 0 (ALG_NONE) if the queue is empty (no validated algId yet).
+    /// @dev HIGH-3 FIX — record the content key (keccak256(callData)) of the UserOp currently
+    ///      being validated or executed. Called at the entry of validateUserOp (validation phase,
+    ///      key = keccak256(userOp.callData)) and execute/executeBatch (execution phase,
+    ///      key = keccak256(msg.data), which equals the validated userOp.callData on the
+    ///      EntryPoint path). All algId/weight/sessionKey entries are keyed by this value.
+    function _setCallDataKey(bytes32 key) internal {
+        assembly { tstore(CALLDATA_KEY_SLOT, key) }
+    }
+
+    /// @dev Transient slot for a queue entry of the current UserOp: keccak256(callDataKey, tag).
+    ///      Uses scratch space (0x00–0x3f) only — does not touch the free-memory pointer at 0x40.
+    function _queueSlot(uint256 tag) private view returns (uint256 slot) {
+        assembly {
+            mstore(0x00, tload(CALLDATA_KEY_SLOT))
+            mstore(0x20, tag)
+            slot := keccak256(0x00, 0x40)
+        }
+    }
+
+    /// @notice Peek at the current UserOp's algId without consuming it.
+    ///         Called by TierGuardHook.preCheck() during execute() so the hook enforces tier
+    ///         limits using the same algId as the guard. Returns 0 (ALG_NONE) if none stored.
     function getCurrentAlgId() external view returns (uint256 algId) {
-        assembly {
-            let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
-            algId := tload(add(add(ALG_ID_SLOT_BASE, 2), readIdx))
-        }
+        uint256 slot = _queueSlot(ALG_ID_SLOT_BASE);
+        assembly { algId := tload(slot) }
     }
 
-    /// @notice Peek at the next session key in the transient queue without consuming it.
+    /// @notice Peek at the current UserOp's session key without consuming it.
     ///         Called by TierGuardHook.preCheck() for session scope enforcement (M8.P2).
-    ///         Returns bytes32(0) if the queue is empty (no session key stored in this batch).
-    ///         Top byte of returned value: 0x01 = ECDSA session (lower 20 bytes = address),
-    ///         0x02 = P256 session (lower 31 bytes = key hash).
+    ///         Top byte: 0x01 = ECDSA session (lower 20 bytes = address), 0x02 = P256 session.
     function getCurrentSessionKey() external view returns (bytes32 taggedId) {
-        assembly {
-            let readIdx := tload(add(SESSION_KEY_SLOT_BASE, 1))
-            taggedId := tload(add(add(SESSION_KEY_SLOT_BASE, 2), readIdx))
-        }
+        uint256 slot = _queueSlot(SESSION_KEY_SLOT_BASE);
+        assembly { taggedId := tload(slot) }
     }
 
-    /// @dev Push validated algId to transient storage queue.
-    ///      Called during validateUserOp (validation phase).
+    /// @dev Store the validated algId for the current UserOp (keyed by callData content).
     function _storeValidatedAlgId(uint8 algId) internal {
-        assembly {
-            let writeIdx := tload(ALG_ID_SLOT_BASE)
-            tstore(add(add(ALG_ID_SLOT_BASE, 2), writeIdx), algId)
-            tstore(ALG_ID_SLOT_BASE, add(writeIdx, 1))
-        }
+        uint256 slot = _queueSlot(ALG_ID_SLOT_BASE);
+        assembly { tstore(slot, algId) }
     }
 
-    /// @dev Pop validated algId from transient storage queue.
-    ///      Called during execute/executeBatch (execution phase).
-    ///
-    ///      HIGH-3 KNOWN LIMITATION — transient queue pollution on failed UserOp:
-    ///      When UserOp N's execution reverts, this increment is also reverted, leaving the
-    ///      readIdx unchanged. If a subsequent UserOp M from the same account is in the same
-    ///      bundle, it reads the algId that was queued for N (queue corruption). This is
-    ///      uncommon (same account, same bundle, first op fails during execution) but not zero.
-    ///      Proper fix: use userOpHash as the transient storage key instead of a shared FIFO
-    ///      index, so each UserOp's algId is keyed uniquely and cannot bleed into another.
-    ///      TODO: implement userOpHash-keyed transient storage to eliminate cross-UserOp
-    ///      queue pollution on execution revert (see tracking issue).
-    function _consumeValidatedAlgId() internal returns (uint8 algId) {
-        assembly {
-            let readIdx := tload(add(ALG_ID_SLOT_BASE, 1))
-            algId := tload(add(add(ALG_ID_SLOT_BASE, 2), readIdx))
-            tstore(add(ALG_ID_SLOT_BASE, 1), add(readIdx, 1))
-        }
+    /// @dev Read the current UserOp's validated algId (content-keyed, non-destructive).
+    ///      HIGH-3 fix: keyed by keccak256(callData) instead of a revert-rollback-able FIFO read
+    ///      index, so a prior op's execution revert in the same bundle cannot bleed its algId here.
+    function _consumeValidatedAlgId() internal view returns (uint8 algId) {
+        uint256 slot = _queueSlot(ALG_ID_SLOT_BASE);
+        assembly { algId := tload(slot) }
     }
 
-    /// @dev Push tagged session key identifier to transient storage queue.
-    ///      Top byte = 0x01 (ECDSA) or 0x02 (P256). Only called for ALG_SESSION_KEY.
+    /// @dev Store the tagged session key for the current UserOp. Top byte = 0x01/0x02.
     function _storeSessionKey(bytes32 taggedId) internal {
-        assembly {
-            let writeIdx := tload(SESSION_KEY_SLOT_BASE)
-            tstore(add(add(SESSION_KEY_SLOT_BASE, 2), writeIdx), taggedId)
-            tstore(SESSION_KEY_SLOT_BASE, add(writeIdx, 1))
-        }
+        uint256 slot = _queueSlot(SESSION_KEY_SLOT_BASE);
+        assembly { tstore(slot, taggedId) }
     }
 
-    /// @dev Pop tagged session key identifier from transient storage queue.
-    function _consumeSessionKey() internal returns (bytes32 taggedId) {
-        assembly {
-            let readIdx := tload(add(SESSION_KEY_SLOT_BASE, 1))
-            taggedId := tload(add(add(SESSION_KEY_SLOT_BASE, 2), readIdx))
-            tstore(add(SESSION_KEY_SLOT_BASE, 1), add(readIdx, 1))
-        }
+    /// @dev Read the current UserOp's session key (content-keyed, non-destructive).
+    function _consumeSessionKey() internal view returns (bytes32 taggedId) {
+        uint256 slot = _queueSlot(SESSION_KEY_SLOT_BASE);
+        assembly { taggedId := tload(slot) }
     }
 
-    /// @dev Push accumulated signature weight to transient storage queue (one entry per UserOp).
+    /// @dev Store the accumulated signature weight for the current UserOp.
     function _storeValidatedWeight(uint8 weight) internal {
-        assembly {
-            let writeIdx := tload(WEIGHT_SLOT_BASE)
-            tstore(add(add(WEIGHT_SLOT_BASE, 2), writeIdx), weight)
-            tstore(WEIGHT_SLOT_BASE, add(writeIdx, 1))
-        }
+        uint256 slot = _queueSlot(WEIGHT_SLOT_BASE);
+        assembly { tstore(slot, weight) }
     }
 
-    /// @dev Pop accumulated signature weight from transient storage queue (one entry per UserOp).
-    function _consumeValidatedWeight() internal returns (uint8 weight) {
-        assembly {
-            let readIdx := tload(add(WEIGHT_SLOT_BASE, 1))
-            weight := tload(add(add(WEIGHT_SLOT_BASE, 2), readIdx))
-            tstore(add(WEIGHT_SLOT_BASE, 1), add(readIdx, 1))
-        }
+    /// @dev Read the current UserOp's accumulated weight (content-keyed, non-destructive).
+    function _consumeValidatedWeight() internal view returns (uint8 weight) {
+        uint256 slot = _queueSlot(WEIGHT_SLOT_BASE);
+        assembly { weight := tload(slot) }
     }
 
     /// @dev ERC20/DeFi token guard enforcement shared by _enforceGuard and executeFromExecutor.
@@ -1559,101 +1443,6 @@ abstract contract AAStarAirAccountBase is Initializable {
         }
     }
 
-    // ─── Weighted Signature Management (M6.1 + M6.2) ─────────────────
-
-    /// @notice Set the weight configuration for algId 0x07.
-    ///         First-time setup: direct owner call.
-    ///         Subsequent calls that weaken the config require guardian proposal (M6.2).
-    ///         A change is weakening if any weight decreases or any threshold decreases.
-    /// @dev InsecureWeightConfig: any single source weight >= tier1Threshold (single point of failure).
-    function setWeightConfig(WeightConfig calldata config) external onlyOwner {
-        _validateWeightConfig(config);
-
-        WeightConfig memory current = weightConfig;
-        if (current.tier1Threshold != 0 && _isWeakening(current, config)) {
-            revert WeakeningRequiresProposal();
-        }
-        // Block if a weakening proposal is already pending
-        if (pendingWeightChange.proposedAt != 0) revert WeightChangePending();
-
-        weightConfig = config;
-        emit WeightConfigUpdated(config);
-    }
-
-    /// @notice Propose a weakening weight-config change (guardian-gated, M6.2).
-    ///         Owner initiates; guardians approve; executes after WEIGHT_CHANGE_TIMELOCK.
-    function proposeWeightChange(WeightConfig calldata proposed) external onlyOwner {
-        _validateWeightConfig(proposed);
-        if (!_isWeakening(weightConfig, proposed)) revert WeakeningRequiresProposal(); // use setWeightConfig instead
-        if (pendingWeightChange.proposedAt != 0) revert WeightChangePending();
-        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
-
-        pendingWeightChange = WeightChangeProposal({
-            proposed: proposed,
-            proposedAt: block.timestamp,
-            approvalBitmap: 0
-        });
-        emit WeightChangeProposed(proposed, msg.sender);
-    }
-
-    /// @notice Guardian approves the pending weight-change proposal.
-    function approveWeightChange() external {
-        if (pendingWeightChange.proposedAt == 0) revert NoWeightChangeProposal();
-        // Reject approvals on expired proposals (no delete — revert would undo it; let owner cancel)
-        if (block.timestamp > pendingWeightChange.proposedAt + WEIGHT_CHANGE_EXPIRY) revert NoWeightChangeProposal();
-
-        uint8 guardianIndex = _guardianIndex(msg.sender);
-        uint256 bit = uint256(1) << guardianIndex;
-        if (pendingWeightChange.approvalBitmap & bit != 0) revert WeightChangeAlreadyApproved();
-
-        pendingWeightChange.approvalBitmap |= bit;
-        uint256 count = _popcount(pendingWeightChange.approvalBitmap);
-        emit WeightChangeApproved(msg.sender, count);
-    }
-
-    /// @notice Execute an approved weight-change after timelock and threshold are met.
-    function executeWeightChange() external {
-        WeightChangeProposal memory p = pendingWeightChange;
-        if (p.proposedAt == 0) revert NoWeightChangeProposal();
-        if (block.timestamp > p.proposedAt + WEIGHT_CHANGE_EXPIRY) revert NoWeightChangeProposal(); // expired
-        if (_popcount(p.approvalBitmap) < WEIGHT_CHANGE_THRESHOLD) revert WeightChangeNotApproved();
-        if (block.timestamp < p.proposedAt + WEIGHT_CHANGE_TIMELOCK) revert WeightChangeTimelockNotExpired();
-
-        WeightConfig memory oldConfig = weightConfig;
-        weightConfig = p.proposed;
-        delete pendingWeightChange;
-        emit WeightChangeExecuted(oldConfig, p.proposed);
-        emit WeightConfigUpdated(p.proposed);
-    }
-
-    /// @notice Cancel a pending weight-change proposal. Owner or any guardian can cancel.
-    function cancelWeightChange() external {
-        if (pendingWeightChange.proposedAt == 0) revert NoWeightChangeProposal();
-        if (msg.sender != owner) {
-            _guardianIndex(msg.sender);
-        }
-        delete pendingWeightChange;
-        emit WeightChangeCancelled();
-    }
-
-    /// @dev Validate that a WeightConfig is internally consistent and secure.
-    ///      Called by both setWeightConfig and proposeWeightChange to avoid duplication.
-    function _validateWeightConfig(WeightConfig calldata config) internal pure {
-        if (config.tier1Threshold == 0) revert InsecureWeightConfig();
-        // Single-source must not reach threshold alone (prevents single-point-of-failure)
-        if (config.passkeyWeight   >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.ecdsaWeight     >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.blsWeight       >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian0Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian1Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.guardian2Weight >= config.tier1Threshold) revert InsecureWeightConfig();
-        // Thresholds must be non-decreasing: tier1 <= tier2 <= tier3 (when non-zero).
-        // Without this, _resolveWeightedAlgId (which checks tier3 first) could map a
-        // low-weight signature to Tier3 if tier3Threshold < tier1Threshold.
-        if (config.tier2Threshold != 0 && config.tier2Threshold < config.tier1Threshold) revert InsecureWeightConfig();
-        if (config.tier3Threshold != 0 && config.tier3Threshold < config.tier2Threshold) revert InsecureWeightConfig();
-        if (config.tier3Threshold != 0 && config.tier2Threshold == 0) revert InsecureWeightConfig();
-    }
 
     /// @dev Map accumulated weight to the highest satisfied tier's representative algId.
     ///      Used in execute/executeBatch to translate ALG_WEIGHTED into a normal algId.
@@ -1665,147 +1454,6 @@ abstract contract AAStarAirAccountBase is Initializable {
         return 0; // below tier1 — fails all tier and guard checks
     }
 
-    /// @dev Returns true if proposed config is a weakening of current config.
-    ///      Weakening: any weight decrease, or any threshold decrease (lower bar = weaker).
-    function _isWeakening(WeightConfig memory current, WeightConfig memory proposed) internal pure returns (bool) {
-        if (proposed.passkeyWeight   < current.passkeyWeight)   return true;
-        if (proposed.ecdsaWeight     < current.ecdsaWeight)     return true;
-        if (proposed.blsWeight       < current.blsWeight)       return true;
-        if (proposed.guardian0Weight < current.guardian0Weight) return true;
-        if (proposed.guardian1Weight < current.guardian1Weight) return true;
-        if (proposed.guardian2Weight < current.guardian2Weight) return true;
-        if (proposed.tier1Threshold  < current.tier1Threshold)  return true;
-        if (proposed.tier2Threshold  < current.tier2Threshold)  return true;
-        if (proposed.tier3Threshold  < current.tier3Threshold)  return true;
-        return false;
-    }
-
-    // ─── ERC-8004 Agent Identity Binding (M7.16) ─────────────────────────
-
-    /// @notice Link an agent wallet to this AirAccount by registering it in AgentRegistry.
-    /// @param agentId Logical agent identifier (used for event indexing only)
-    /// @param agentWallet Execution wallet address that the agent uses for transactions
-    /// @param agentRegistry AgentRegistry contract address (M8.1)
-    /// @param agentWalletSig ECDSA signature from agentWallet proving it consents to registration
-    ///        (prevents front-run griefing — see AgentRegistry.registerAgent for hash construction)
-    /// @dev Only owner can set agent wallet bindings. Calls AgentRegistry.registerAgent()
-    ///      which records msg.sender (this account) as the human owner of agentWallet.
-    ///      Reverts if the registry call fails (e.g. already registered or invalid signature).
-    function setAgentWallet(
-        uint256 agentId,
-        address agentWallet,
-        address agentRegistry,
-        bytes calldata agentWalletSig
-    ) external onlyOwner {
-        if (agentWallet == address(0) || agentRegistry == address(0)) revert InvalidGuardian();
-        // Require agentRegistry to be a deployed contract (extcodesize > 0).
-        // Low-level calls to EOAs succeed silently — we must reject them explicitly.
-        uint256 codeSize;
-        assembly { codeSize := extcodesize(agentRegistry) }
-        if (codeSize == 0) revert AgentRegistrationFailed();
-        (bool ok,) = agentRegistry.call(
-            abi.encodeWithSignature("registerAgent(address,bytes)", agentWallet, agentWalletSig)
-        );
-        if (!ok) revert AgentRegistrationFailed();
-        emit AgentWalletSet(agentId, agentWallet, agentRegistry);
-    }
-
-    // ─── ERC-8004 Identity NFT (M8.ERC8004) ──────────────────────────────────
-
-    /// @notice Mint an ERC-8004 agent identity NFT to this AirAccount via the official registry.
-    ///         After minting, ownerOf(agentId) == address(this).
-    ///         The NFT's initial agentWallet is set to address(this) by the registry.
-    ///         Call bindERC8004AgentWallet() afterwards to link the actual execution wallet.
-    /// @param identityRegistry Official ERC-8004 IdentityRegistry (use ERC8004Addresses lib).
-    /// @param agentURI Metadata URI for the agent — recommended: `ipfs://<CID>` or `did:web:<domain>`.
-    ///                 Suggested schema: { "name": string, "description": string,
-    ///                   "agentKey": address, "capabilities": string[] }
-    /// @return agentId Newly minted NFT token ID (starts at 0 per ERC-8004 spec).
-    function mintAgentIdentity(
-        address identityRegistry,
-        string calldata agentURI
-    ) external onlyOwner nonReentrant returns (uint256 agentId) {
-        if (identityRegistry != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
-        agentId = IERC8004IdentityRegistry(identityRegistry).register(agentURI);
-        emit AgentIdentityMinted(agentId, identityRegistry, agentURI);
-    }
-
-    /// @notice Bind an execution wallet to an ERC-8004 agent identity NFT.
-    ///         Requires an EIP-712 `AgentWalletSet(uint256,address,address,uint256)` signature
-    ///         from `agentWallet` proving it consents to the binding.
-    ///         The deadline must be within the next 5 minutes (enforced by the registry).
-    /// @param identityRegistry Official ERC-8004 IdentityRegistry address.
-    /// @param agentId          Token ID returned by mintAgentIdentity().
-    /// @param agentWallet      Execution wallet (session key) to bind.
-    /// @param deadline         Unix timestamp; must be <= block.timestamp + 300.
-    /// @param signature        EIP-712 consent signature from agentWallet.
-    function bindERC8004AgentWallet(
-        address identityRegistry,
-        uint256 agentId,
-        address agentWallet,
-        uint256 deadline,
-        bytes calldata signature
-    ) external onlyOwner nonReentrant {
-        if (identityRegistry != ERC8004Addresses.identityRegistry(block.chainid)) revert UnauthorizedRegistry();
-        if (agentWallet == address(0)) revert IdentityRegistrationFailed();
-        IERC8004IdentityRegistry(identityRegistry).setAgentWallet(agentId, agentWallet, deadline, signature);
-        emit ERC8004WalletBound(agentId, agentWallet, identityRegistry);
-    }
-
-    /// @notice Submit reputation feedback for an agent interaction via the official registry.
-    ///         This AirAccount (as the caller/client) posts feedback about the agent's work.
-    ///         Self-feedback (when this account IS the agent) is rejected by the registry.
-    /// @param reputationRegistry  Official ERC-8004 ReputationRegistry address.
-    /// @param agentId             ERC-8004 agent token ID.
-    /// @param value               Signed fixed-point score (e.g. 95 with decimals=2 → 0.95).
-    /// @param valueDecimals       Decimal places for value.
-    /// @param tag1                Primary category (e.g. "quality", "accuracy").
-    /// @param tag2                Secondary tag (e.g. "task:summarize").
-    /// @param endpoint            Agent endpoint / API that served the request.
-    /// @param feedbackURI         URI to detailed feedback data (IPFS recommended).
-    /// @param feedbackHash        keccak256 of the off-chain feedback payload.
-    function submitAgentReputation(
-        address reputationRegistry,
-        uint256 agentId,
-        int128 value,
-        uint8 valueDecimals,
-        string calldata tag1,
-        string calldata tag2,
-        string calldata endpoint,
-        string calldata feedbackURI,
-        bytes32 feedbackHash
-    ) external onlyOwner nonReentrant {
-        if (reputationRegistry != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
-        IERC8004ReputationRegistry(reputationRegistry).giveFeedback(
-            agentId, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash
-        );
-        emit AgentReputationSubmitted(agentId, reputationRegistry, value, tag1);
-    }
-
-    /// @notice Query aggregated reputation for an agent across a set of clients.
-    /// @param reputationRegistry  Official ERC-8004 ReputationRegistry address.
-    /// @param agentId             ERC-8004 agent token ID.
-    /// @param clientAddresses     Array of client addresses to include in summary.
-    /// @param tag1                Filter by primary tag (empty = any).
-    /// @param tag2                Filter by secondary tag (empty = any).
-    /// @return count              Number of feedback entries matching the filter.
-    /// @return summaryValue       Aggregated score value.
-    /// @return summaryDecimals    Decimal places for summaryValue.
-    function queryAgentReputation(
-        address reputationRegistry,
-        uint256 agentId,
-        address[] calldata clientAddresses,
-        string calldata tag1,
-        string calldata tag2
-    ) external view returns (uint64 count, int128 summaryValue, uint8 summaryDecimals) {
-        // Read-only and free of side effects, so onlyOwner is unnecessary; reputation data is
-        // public on-chain. We still pin the registry to the official deployment so callers cannot
-        // be fed summaries from a spoofed contract.
-        if (reputationRegistry != ERC8004Addresses.reputationRegistry(block.chainid)) revert UnauthorizedRegistry();
-        return IERC8004ReputationRegistry(reputationRegistry).getSummary(
-            agentId, clientAddresses, tag1, tag2
-        );
-    }
 
     receive() external payable {}
 }
