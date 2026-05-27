@@ -253,11 +253,13 @@ contract AAStarAirAccountFactoryV7 {
     }
 
     /// @notice Create a dedicated AirAccount for an autonomous AI agent.
-    ///         The human caller (msg.sender) becomes guardian1 — no sig needed.
-    ///         Only guardian2 must sign the guardian acceptance message.
+    ///         The human caller (msg.sender) becomes the account OWNER (not a guardian).
+    ///         Guardians are [guardian2, communityGuardian] (2-of-2); only guardian2 must sign.
     ///
-    /// @param agentKey    The agent's signing key (EOA address). Becomes the account owner.
-    ///                   For autonomous agents: use a secure server-side key.
+    /// @param agentKey    The agent's signing key (EOA address). NOT the account owner — it is the
+    ///                   agent's intended session key, authorized after deployment via
+    ///                   AgentSessionKeyValidator.grantAgentSession(). The owner is msg.sender (human).
+    ///                   For autonomous agents: use a secure server-side / KMS-held key.
     /// @param agentId     A bytes32 identifier for this agent (e.g. keccak256("my-agent-v1")).
     ///                   Combined with msg.sender to derive a unique deterministic salt.
     /// @param guardian2   Second guardian (human's personal backup key, trusted person, etc.)
@@ -268,7 +270,7 @@ contract AAStarAirAccountFactoryV7 {
     /// @param agentKeySig agentKey's consent signature. Signs:
     ///                   keccak256("ACCEPT_AGENT_KEY" || chainId || factory || agentKey || humanOwner || agentId || deadline).toEthSignedMessageHash()
     ///                   Proves the KMS/agent key holder explicitly authorized this creation;
-    ///                   prevents a human from setting an arbitrary EOA as the account owner.
+    ///                   prevents a human from binding an arbitrary EOA as the agent's session key.
     /// @param deadline    Expiry timestamp for guardian2Sig and agentKeySig — prevents replay of stale signatures
     /// @param dailyLimit  Daily spending limit in wei for this agent account
     /// @return account    The deployed agent account address
@@ -296,9 +298,10 @@ contract AAStarAirAccountFactoryV7 {
         require(guardian2 != defaultCommunityGuardian, "Guardian2 cannot be community guardian");
         require(agentKey != defaultCommunityGuardian, "Agent key cannot be community guardian");
 
-        // Verify agentKey consents to becoming this account's owner.
+        // Verify agentKey consents to being bound as this account's agent (session) key.
+        // (owner = msg.sender/human, set at initialize below; agentKey is NOT the owner.)
         // This proves the agentKey holder (KMS) authorized this creation,
-        // preventing a human from setting an arbitrary EOA as agentKey.
+        // preventing a human from binding an arbitrary EOA as the agent key.
         bytes32 agentKeyHash = keccak256(
             abi.encodePacked("ACCEPT_AGENT_KEY", block.chainid, address(this), agentKey, msg.sender, agentId, deadline)
         ).toEthSignedMessageHash();

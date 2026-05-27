@@ -1,7 +1,38 @@
 # Agent Account Architecture — AirAccount
 
 > 综合分析文档：问题分析 · 行业调研 · 架构决策 · 创建路径 · 开发计划
-> 最后更新：2026-05-22 | 对应里程碑：M7（助理型）/ M8（自主型）
+> 最后更新：2026-05-27 | 对应里程碑：M7（助理型）/ M8（自主型）
+
+---
+
+## 0. 助理型 vs 自主型：本质区别是"账户边界",不是"权限高低"
+
+这是最容易被误解的一点。**两型的安全模型趋同**——以代码为准：
+
+| | 助理型（Assistant） | 自主型（Autonomous） |
+|---|---|---|
+| 账户 owner | 人类（passkey） | **人类（passkey）** — 非 agentKey |
+| agentKey 角色 | 受约束 session key（secp256k1，algId=0x08） | 受约束 session key（同上） |
+| 是否新建账户 | ❌ 在人类账户内操作 | ✅ 独立 AirAccount |
+| **独立地址 / 收款 / 持币** | ❌ 花的是人类账户 | ✅ 有自己的地址，可收 x402/DeFi、独立持币 |
+| 预算 | 人类账户 Tier1 日限额（共用） | 该独立账户自己的 dailyLimit（隔离） |
+| 即时撤销 | revokeAgentSession | revokeAgentSession |
+
+**结论**：
+- owner 都是人类、agentKey 都是 session key —— 这部分**没有差别**。
+- 唯一真实增量 = 自主型有**独立经济身份**(独立地址/收款/持币/与人类主账户隔离)。
+- 所以"要不要自主型"取决于:**这个 agent 需不需要独立收款/独立持有资产** → 需要则自主型(新账户),不需要则助理型(人类账户内 session key)。**自主型 ≠ 更高权限。**
+
+> agentKey 为何不能是 owner:`removeGuardian` 是 `onlyOwner`,若 agentKey 当 owner 被盗可移除所有 guardian → 取消 recovery → 失控。故 owner 必须是人类,agentKey 只能是受约束 session key。详见 [agent-key-design.md](agent-key-design.md) §0。
+
+### 撤销 vs 社会恢复(两件事,勿混)
+
+| 操作 | 谁能做 | 阈值 | 用途 |
+|---|---|---|---|
+| **`revokeAgentSession(agentKey)`** | **owner(人类)直接**(经 owner 签名的 UserOp) | 无需 guardian | agentKey 泄露时即时止血,人类一笔交易掐断 agent;之后可重新 `grantAgentSession` |
+| **社会恢复(换 owner)** | guardian 投票 | **2-of-2**(agent 账户仅 2 个 guardian:guardian2 + community;`RECOVERY_THRESHOLD=2`) | 仅当**人类 owner 自身**失能(passkey 丢失)时,替换账户 owner |
+
+> 即:日常"停掉 agent"=owner 调 `revokeAgentSession`,**不走 guardian、无阈值**;只有"人类自己丢了 passkey"才需要 2-of-2 社会恢复换 owner。(普通人类账户是 3 guardian / 2-of-3;agent 账户人类已是 owner,故只配 2 个 guardian → 2-of-2。)
 
 ---
 
@@ -301,17 +332,17 @@ Step 2: 人类 AirAccount 调用（指纹签名 UserOp）：
   factory.createAgentAccount(agentKey, agentId, guardian2, g2Sig, deadline, agentDailyLimit)
   ↓
   salt = keccak256("AASTAR_AGENT_V1" || agentKey || humanAccount || agentId)  — 确定性地址
-  guardian1 = msg.sender（humanAirAccount）   — 自动设置，无需额外签名
+  agentKey 签 ACCEPT_AGENT_KEY（同意被绑为 agent key，防止人类塞任意 EOA）
   guardian2 = 传入参数                        — 需要 1 个签名（含 deadline 防重放）
-  guardian3 = defaultCommunityGuardian       — 自动注入
   ↓
-Agent AirAccount 部署完毕：
-  owner: agentKey（agent 用此 key 签名 UserOp，algId=0x02）
-  guardians: [humanAirAccount, guardian2, community]（2-of-3 恢复）
+Agent AirAccount 部署完毕（以代码 AAStarAirAccountFactoryV7.createAgentAccount 为准）：
+  owner: 人类（msg.sender）                    — 完整控制权；agentKey 不是 owner
+  guardians: [guardian2, communityGuardian]   — 2-of-2 恢复；人类是 owner 但不在 guardian 列表
+  agentKey: 部署后经 grantAgentSession 授权为受约束 session key（secp256k1，algId=0x08）
   dailyLimit: agentDailyLimit
 
-所需签名数：1 个新签名（guardian2），相比 createAccountWithDefaults 减少 1 个
-人类账户是 guardian → 可通过社会恢复找回 agent 账户
+所需签名数：agentKey 同意签名 + guardian2 签名
+人类是 owner → 可直接 revokeAgentSession / 重新 grant，无需走社会恢复
 ```
 
 jhf：嗯，针对你这个路径2，我有两个疑问。第一个就是agent生成的EOA的这个private key，你是用random byte生成，它这个私钥存在哪里，你能告诉我它是如何保证安全的，能告诉我么？另外你这个私钥是如何签交易的对你既然自己保留私钥，那外部的交易，你怎么签署，对你是明文保存，还是你自己维护的KMS？解释一下。。第二个就是你这个ge定有两个，那它的恢复机制是怎么样的？为什么两个呀？那换句话说，必须两个A两个ge定都签才能恢复，是这意思吗？这是怎么设计的？
@@ -320,14 +351,13 @@ jhf：嗯，针对你这个路径2，我有两个疑问。第一个就是agent�
 >
 > **私钥安全：** 自主型 Agent 的 EOA key 使用 KMS TEE 存储（详细分析见第1节答复）。签名流程：Agent 运行时通过 API Key 调用 KMS 的 `/kms/sign-agent` 端点，KMS 在 TEE 内签名后返回签名结果，私钥永不离开 TEE。
 >
-> **Guardian 数量和恢复机制：** 是 3 个 guardian（不是 2 个），恢复阈值是 **2-of-3**，任意两个 guardian 同意即可恢复（不需要三个全部同意）：
-> - `guardian1` = humanAirAccount 合约地址（工厂自动注入，人类用指纹控制）
-> - `guardian2` = 调用方传入（人类的备用设备、亲友账户，或人类自己的 passkey 地址）
-> - `guardian3` = defaultCommunityGuardian（工厂自动注入，社区 Safe 多签）
+> **Guardian 数量和恢复机制（口径更正 2026-05-27，以代码为准）：** `createAgentAccount` 实际部署的 agent 账户是 **owner=人类 + guardians=[guardian2, communityGuardian]（2 个，2-of-2）**，人类是 owner 但**不在 guardian 列表**：
+> - `guardian[0]` = guardian2（调用方传入：人类备用设备/亲友/人类自己的 passkey 地址，需签名）
+> - `guardian[1]` = defaultCommunityGuardian（工厂自动注入，社区 Safe 多签）
 >
-> 恢复场景举例：若 agentKey 被盗，人类用 humanAirAccount 发起 `proposeRecovery`（1票），再由 guardian2 或 community 再投 1 票，48h timelock 后执行恢复，更换 agentKey。
+> 关键:**owner 是人类**,所以 agentKey 泄露时人类**直接** `revokeAgentSession` + 重新 grant 即可,**通常不需要走社会恢复**。社会恢复(2-of-2:guardian2 + community)只用于**人类 owner 自身**失能的极端情况。
 >
-> 为什么设计成 3 guardian：这是继承了标准 AirAccount 的 2-of-3 社会恢复机制。保证即便其中一个 guardian 不可用，另外两个也能完成恢复。
+> （注:普通人类账户仍是 3 guardian / 2-of-3；这里的 2-of-2 是 agent 账户的特例——人类已是 owner,不再重复占一个 guardian 位。）
 
 ### 路径 3：手动 OAPD（高级用法，当前可用）
 
