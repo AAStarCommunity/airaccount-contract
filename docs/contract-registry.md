@@ -11,15 +11,22 @@
 
 All contracts live under `src/`. Submodule `lib/YetAnotherAA-Validator` is read-only.
 
-### 1.1 Core Contracts (`src/core/`)
+> **Canonical current contract list:** the [README "Contracts (v0.17.1)" section](../README.md#contracts-v0171--full-list) is the authoritative, fully-categorized inventory (core, validators, hooks, registries, parsers, external). This registry keeps per-file detail and is updated incrementally; §1.1 below is current for v0.17.1 core.
 
-| Contract | Lines | Description |
-|----------|-------|-------------|
-| `AAStarAirAccountBase.sol` | ~900 | Abstract base for all AirAccount variants. Implements ERC-4337 `validateUserOp`, tiered signature dispatch (`_algTier`), global guard enforcement (`_enforceGuard`), social recovery, guardian management, P256 key storage, daily ETH limit, pluggable calldata parser registry. All security invariants live here. |
-| `AAStarAirAccountV7.sol` | ~50 | Concrete account contract (M6-current). Extends `AAStarAirAccountBase`. Deployed per-user by the factory. Non-upgradable. |
-| `AAStarAirAccountFactoryV7.sol` | ~200 | CREATE2 factory. `createAccountWithDefaults(owner, salt, g1, g1sig, g2, g2sig, dailyLimit)` — requires both guardian acceptance signatures. `getAddressWithDefaults(...)` — counterfactual address prediction (view). Factory validates all default token configs at constructor time. |
-| `AAStarGlobalGuard.sol` | ~300 | Per-account immutable spending guard. Enforces ETH daily limit, ERC20 token tier limits (ECDSA=Tier1, P256=Tier1, BLS=Tier3, SessionKey=Tier1), cumulative daily token spend tracking. Monotonic: limits can only decrease, algorithms can only be added. |
-| `CalldataParserRegistry.sol` | ~80 | Singleton registry mapping `dest address → ICalldataParser`. Only-add (parsers cannot be removed). Ownership-controlled. Used by `_enforceGuard` to resolve DeFi protocol calldata before falling back to native ERC20 parsing. |
+### 1.1 Core Contracts (`src/core/`) — v0.17.1
+
+| Contract | Description |
+|----------|-------------|
+| `AAStarAirAccountBase.sol` | Abstract base inherited by V7. ERC-4337 `validateUserOp`, tiered signature dispatch, global guard enforcement (`_enforceGuard`), social recovery, guardian management, P256 key storage, daily ETH limit, parser registry, **content-keyed transient validation queue (HIGH-3)**, and the **`fallback` that routes cold selectors to `AirAccountExtension`** (diamond-lite). Most security invariants live here. |
+| `AAStarAirAccountV7.sol` | Concrete account (impl; users are EIP-1167 clones). Non-upgradable. ERC-7579 module surface, `initialize` / `initializeAgentAccount` (the latter default-installs a session-key validator for agent accounts). Runtime **21,872 B** (under EIP-170). |
+| `AirAccountExtension.sol` | **Diamond-lite facet (v0.17.1)**. Holds the cold functions split out of the account to fit EIP-170: ERC-8004 agent (identity/reputation/wallet binding) + weighted-signature config governance (`setWeightConfig` + change-proposal flow). Reached via the account's `fallback`+`delegatecall`, so it runs in the account's storage context. Runtime ~8,330 B. |
+| `AAStarAgentStorageLayout.sol` | Abstract shared storage prefix (slots 0–23) inherited by **both** `AAStarAirAccountBase` and `AirAccountExtension`, so the delegatecall boundary sees identical slots. `forge inspect storageLayout` verified byte-identical to the pre-split layout. |
+| `AAStarAirAccountFactoryV7.sol` | CREATE2 / EIP-1167 clone factory; config-bound salt (front-run safe). `createAccountWithDefaults` / `createAgentAccount`. Agent accounts default-install `AgentSessionKeyValidator` when `setAgentSessionKeyValidator` is configured (**deployer-only, set-once**, `factoryAdmin = deployer`). |
+| `AAStarGlobalGuard.sol` | Per-account immutable spending guard. ETH daily limit, ERC20 token tier limits (ECDSA/P256/SessionKey=Tier1, BLS=Tier3), cumulative daily spend tracking. Monotonic: limits only decrease, algorithms only added. |
+| `AirAccountDelegate.sol` | EIP-7702 path: turn an existing EOA into an AirAccount (guardian rescue, daily limit). Singleton. |
+| `TierGuardHook.sol` | ERC-7579 hook (type 4): tier + session-scope enforcement on `execute` (factory default hook). |
+| `ForceExitModule.sol` | Guardian-gated L2→L1 force exit (OP Stack / Arbitrum). |
+| `CalldataParserRegistry.sol` | Singleton registry mapping `dest → ICalldataParser`. Only-add. Used by `_enforceGuard` to resolve DeFi calldata before native ERC20 parsing. |
 
 ### 1.2 Validator Contracts (`src/validators/`)
 
@@ -28,6 +35,8 @@ All contracts live under `src/`. Submodule `lib/YetAnotherAA-Validator` is read-
 | `AAStarValidator.sol` | ~150 | Validator router. Maps `algId` (first byte of signature) to algorithm contract via `IAAStarAlgorithm`. Only-add registry with optional 7-day governance timelock for new additions. |
 | `AAStarBLSAlgorithm.sol` | ~350 | BLS12-381 signature verification for Tier 2 and Tier 3. Uses EIP-2537 precompiles. Maintains a node registry of 128-byte G1 public keys. Supports pre-cached aggregated keys for gas savings. algId: `0x01`. |
 | `SessionKeyValidator.sol` | ~250 | Time-limited session key authorization (M6.4). Stores `sessions[account][sessionKey] → Session{expiry, contractScope, selectorScope, revoked}`. Owner grants sessions via off-chain signature (`grantSession`) or direct call (`grantSessionDirect`). Validates 105-byte `[account(20)][sessionKey(20)][ECDSASig(65)]` signatures. algId: `0x08`. |
+| `AgentSessionKeyValidator.sol` | — | ERC-7579 validator (type 1) for **agent session keys** (M7+). `validateUserOp` reads a 66-byte `[0x08][ECDSASig(65)]` sig, recovers the signer over the EIP-191 `userOpHash`, and looks up `agentSessions[sender][signer] → AgentSessionConfig{expiry, velocityLimit, velocityWindow, revoked, callTargets[], selectorAllowlist[]}`. Sessions are owner-keyed via `grantAgentSession`. Default-installed on agent accounts by the factory (see §1.1). |
+| `AirAccountCompositeValidator.sol` | — | Composite validator combining multiple validation modules under one ERC-7579 entry (weighted / multi-module agent flows). |
 
 ### 1.3 Parser Contracts (`src/parsers/`)
 
@@ -42,6 +51,7 @@ All contracts live under `src/`. Submodule `lib/YetAnotherAA-Validator` is read-
 | `IAAStarAlgorithm.sol` | `validate(bytes32 userOpHash, bytes signature) → uint256`. Every algorithm module (BLS, Session Key, etc.) implements this. Return 0 = success, 1 = failure. |
 | `IAAStarValidator.sol` | Router interface: `validateSignature(bytes32 userOpHash, bytes signature) → uint256`. Accounts call this when an algId requires an external module. |
 | `ICalldataParser.sol` | `parseTokenTransfer(bytes data) → (address token, uint256 amount)`. Every DeFi protocol parser implements this. Returns `(address(0), 0)` if calldata is not recognized. |
+| `IAirAccountAgent.sol` | Interface for the 10 cold functions routed from the account to `AirAccountExtension` via `fallback`+`delegatecall` (5 ERC-8004 agent + 5 weighted-config governance). Defines the canonical selectors integrators must include — the build-full-abi script merges these into the published account ABI (see [README full-ABI note](../README.md#contracts-v0171--full-list)). |
 
 ### 1.5 Aggregator Contracts (`src/aggregator/`)
 
