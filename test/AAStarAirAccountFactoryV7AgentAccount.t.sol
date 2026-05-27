@@ -6,6 +6,7 @@ import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.s
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
+import {AgentSessionKeyValidator} from "../src/validators/AgentSessionKeyValidator.sol";
 
 /// @title AAStarAirAccountFactoryV7AgentAccountTest
 /// @notice Tests for createAgentAccount() and getAgentAddress() on AAStarAirAccountFactoryV7.
@@ -461,5 +462,86 @@ contract AAStarAirAccountFactoryV7AgentAccountTest is Test {
         factory.createAgentAccount(
             communityGuardian, AGENT_ID_1, guardian2Wallet.addr, sig2, agentS, deadline, DAILY_LIMIT
         );
+    }
+
+    // ─── #21: hybrid default-install of AgentSessionKeyValidator on agent accounts ──────
+
+    /// @dev Create an agent account with default sigs (helper for the install tests).
+    function _createAgent(bytes32 agentId) internal returns (address) {
+        uint48 deadline = uint48(block.timestamp + 1 days);
+        bytes memory sig2   = _guardian2Sig(guardian2Wallet, humanWallet.addr, agentWallet.addr, agentId, deadline);
+        bytes memory agentS = _agentKeySig(agentWallet, humanWallet.addr, agentId, deadline);
+        vm.prank(humanWallet.addr);
+        return factory.createAgentAccount(
+            agentWallet.addr, agentId, guardian2Wallet.addr, sig2, agentS, deadline, DAILY_LIMIT
+        );
+    }
+
+    /// @notice When configured, agent accounts default-install the AgentSessionKeyValidator (validator
+    ///         module installed + onInstall called); installing is inert until a session is granted.
+    function test_AgentAccount_defaultInstalls_validator_whenConfigured() public {
+        AgentSessionKeyValidator validator = new AgentSessionKeyValidator();
+        factory.setAgentSessionKeyValidator(address(validator)); // deployer (this test) is factoryAdmin
+
+        address account = _createAgent(AGENT_ID_1);
+        AAStarAirAccountV7 acc = AAStarAirAccountV7(payable(account));
+
+        // Module registered on the account (ERC-7579 validator type = 1)
+        assertTrue(acc.isModuleInstalled(1, address(validator), ""), "validator must be installed");
+        // onInstall was called → validator marks the account initialized
+        assertTrue(validator.isInitialized(account), "onInstall must have run");
+        // Inert: no session granted yet → expiry == 0 for any key
+        (uint48 expiry,,,) = validator.agentSessions(account, agentWallet.addr);
+        assertEq(expiry, 0, "no session should be granted by default (install is inert)");
+    }
+
+    /// @notice When NOT configured (address(0)), createAgentAccount still works — no default install.
+    function test_AgentAccount_noValidator_gracefulNoInstall() public {
+        // factory.agentSessionKeyValidator == address(0) (never set)
+        address account = _createAgent(AGENT_ID_2);
+        assertTrue(account.code.length > 0, "account still created");
+        // Nothing installed under a zero address (sanity: a random module is not installed)
+        assertFalse(AAStarAirAccountV7(payable(account)).isModuleInstalled(1, address(0xBEEF), ""), "no default install");
+    }
+
+    /// @notice Regular (non-agent) accounts do NOT get the validator (hybrid = opt-in for them).
+    function test_RegularAccount_doesNotInstall_validator() public {
+        AgentSessionKeyValidator validator = new AgentSessionKeyValidator();
+        factory.setAgentSessionKeyValidator(address(validator));
+
+        // Plain account via createAccount (no default install path)
+        uint8[] memory noAlgs = new uint8[](0);
+        AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
+            initialTokens: new address[](0), initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+        vm.prank(humanWallet.addr);
+        address account = factory.createAccount(humanWallet.addr, 1, cfg);
+        assertFalse(AAStarAirAccountV7(payable(account)).isModuleInstalled(1, address(validator), ""),
+            "regular account must NOT default-install the agent validator");
+    }
+
+    // ─── setter security (deployer-only, set-once, contract-only) ──────────
+
+    function test_setAgentSessionKeyValidator_onlyFactoryAdmin() public {
+        AgentSessionKeyValidator validator = new AgentSessionKeyValidator();
+        vm.prank(makeAddr("notAdmin"));
+        vm.expectRevert(AAStarAirAccountFactoryV7.NotFactoryAdmin.selector);
+        factory.setAgentSessionKeyValidator(address(validator));
+    }
+
+    function test_setAgentSessionKeyValidator_setOnce() public {
+        AgentSessionKeyValidator v1 = new AgentSessionKeyValidator();
+        AgentSessionKeyValidator v2 = new AgentSessionKeyValidator();
+        factory.setAgentSessionKeyValidator(address(v1));
+        vm.expectRevert(AAStarAirAccountFactoryV7.AgentValidatorAlreadySet.selector);
+        factory.setAgentSessionKeyValidator(address(v2));
+        assertEq(factory.agentSessionKeyValidator(), address(v1), "set-once: first value sticks");
+    }
+
+    function test_setAgentSessionKeyValidator_mustBeContract() public {
+        vm.expectRevert(AAStarAirAccountFactoryV7.AgentValidatorNotContract.selector);
+        factory.setAgentSessionKeyValidator(makeAddr("eoa")); // EOA, no code
     }
 }

@@ -58,6 +58,31 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
     }
 
+    /// @notice Initialize an autonomous-agent account, default-installing a session-key validator.
+    ///         Used by the factory's createAgentAccount (hybrid policy — only agent accounts get it).
+    /// @dev Trusted one-time setup (initializer-gated, factory-called). Installing the validator at
+    ///      genesis is safe and needs no guardian signature — same trust as the factory deploying the
+    ///      guard. Installing the module is INERT (grants no power); the owner must still authorize a
+    ///      specific session via AgentSessionKeyValidator.grantAgentSession() afterwards.
+    /// @param _sessionKeyValidator AgentSessionKeyValidator to install (address(0) = skip, plain init).
+    function initializeAgentAccount(
+        address _entryPoint,
+        address _owner,
+        InitConfig calldata _config,
+        address _guardAddr,
+        address _sessionKeyValidator
+    ) external initializer {
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
+        if (_sessionKeyValidator != address(0)) {
+            _installedModules[MODULE_TYPE_VALIDATOR][_sessionKeyValidator] = true;
+            // Best-effort? No — hard-revert if onInstall fails, so the account is never left with a
+            // module marked installed but uninitialized (mirrors installModule's MEDIUM-1 fix).
+            (bool ok,) = _sessionKeyValidator.call(abi.encodeWithSelector(SEL_ON_INSTALL, new bytes(0)));
+            if (!ok) revert ModuleInstallCallbackFailed(MODULE_TYPE_VALIDATOR, _sessionKeyValidator);
+            emit ModuleInstalled(MODULE_TYPE_VALIDATOR, _sessionKeyValidator);
+        }
+    }
+
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────
 
     // Module type IDs (ERC-7579 §2): 1=validator, 2=executor, 3=fallback, 4=hook.
