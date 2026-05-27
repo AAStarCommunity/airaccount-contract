@@ -25,6 +25,15 @@
 
 > agentKey 为何不能是 owner:`removeGuardian` 是 `onlyOwner`,若 agentKey 当 owner 被盗可移除所有 guardian → 取消 recovery → 失控。故 owner 必须是人类,agentKey 只能是受约束 session key。详见 [agent-key-design.md](agent-key-design.md) §0。
 
+### 撤销 vs 社会恢复(两件事,勿混)
+
+| 操作 | 谁能做 | 阈值 | 用途 |
+|---|---|---|---|
+| **`revokeAgentSession(agentKey)`** | **owner(人类)直接**(经 owner 签名的 UserOp) | 无需 guardian | agentKey 泄露时即时止血,人类一笔交易掐断 agent;之后可重新 `grantAgentSession` |
+| **社会恢复(换 owner)** | guardian 投票 | **2-of-2**(agent 账户仅 2 个 guardian:guardian2 + community;`RECOVERY_THRESHOLD=2`) | 仅当**人类 owner 自身**失能(passkey 丢失)时,替换账户 owner |
+
+> 即:日常"停掉 agent"=owner 调 `revokeAgentSession`,**不走 guardian、无阈值**;只有"人类自己丢了 passkey"才需要 2-of-2 社会恢复换 owner。(普通人类账户是 3 guardian / 2-of-3;agent 账户人类已是 owner,故只配 2 个 guardian → 2-of-2。)
+
 ---
 
 ## 1. 核心问题：Agent 如何获得签名密钥？
