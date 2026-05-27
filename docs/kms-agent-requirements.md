@@ -237,6 +237,17 @@ Signature: HMAC-SHA256(header.payload, kms_secret[kid])
 
 要求：① `kms_secret`（所有版本）永不出 TEE；② 默认初始化时创建第一把（v1）；③ 自动轮换周期与重叠窗口可配置（默认 30d / 7d）；④ admin 紧急轮换接口需最高权限鉴权 + 审计。
 
+**谁执行 / 何时 / 运营者怎么管（明确机制）：**
+
+- **初始化（自动，无需 API）**：KMS host 首次启动检查 TEE 封存存储无签名密钥时，**在 TEE 内用 TRNG 生成 v1**、封存、标记 `current`。可选幂等 CLI `kms admin init` 供排障。
+- **自动轮换执行者 = KMS 服务自身**：KMS host 进程内的**后台定时任务**（每日醒一次，检查 current 密钥年龄是否 ≥ 30 天），**不是人工、不是外部 cron**。状态机存 TEE：`{ kid → (secret, status: current|verify-only, retireAt) }`。
+- **运营者接口**：
+  - 常态：**无需任何操作**（初始化、轮换全自动）。
+  - 紧急（疑似泄露）：`POST /kms/admin/rotate-jwt-secret`（最高权限鉴权）→ 立即新 current；可选立即吊销旧 kid（强制所有在用 JWT 失效 → agent 需 refresh）。
+  - 巡检：`GET /kms/admin/jwt-secret-status` → 列出各 kid + status + retireAt + 年龄。
+  - 配置：轮换周期 / 重叠窗口 / JWT TTL 走 KMS 配置文件或 env。
+- **实现归属**：以上（定时任务 + 2 个 admin 接口 + TEE 封存状态机）由 **KMS 团队**实现；合约侧只出此 spec。
+
 ### 3.4 Credential 存储建议（Agent 侧）
 
 | 方案 | 安全性 | 复杂度 | 推荐场景 |
