@@ -5,9 +5,6 @@
   "lib/YetAnotherAA-Validator": {
     "rev": "f90de3393615f04bd12879ff8ef5a573937a4a44"
   },
-  "lib/aastar-sdk": {
-    "rev": "9fa832298d001102fb1341857286df34eafd1991"
-  },
   "lib/account-abstraction": {
     "rev": "1c6b669d0eea734e09a87e095ba15e076151718a"
   },
