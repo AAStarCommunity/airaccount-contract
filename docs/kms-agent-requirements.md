@@ -35,7 +35,10 @@ userOp.signature = 0x08 ‖ R(32) ‖ S(32) ‖ V(1)      // 共 66 字节
 
 被签哈希 = toEthSignedMessageHash(userOpHash)
          = keccak256("\x19Ethereum Signed Message:\n32" ‖ userOpHash)   // EIP-191 前缀
-  ⚠️ KMS 要签的是【以太坊前缀哈希】，不是裸 userOpHash（eth_sign 语义）
+  ⚠️ payload 入参 = 【裸 userOpHash(32 字节)】；EIP-191 前缀【由 KMS 在 TEE 内加】后再签。
+     · 即 KMS 内部:sign( keccak256("\x19Ethereum Signed Message:\n32" ‖ payload) )
+     · KMS 绝不可裸签外部传入的任意 32 字节 digest（否则可被诱导裸签真实交易哈希）——
+       EIP-191 前缀是域分隔符,必须在 TEE 内强制加上,不接受外部传"已包裹"的值。
   ⚠️ V 必须是 27/28（不是 0/1）—— 多数库默认 0/1，需归一化，否则 ecrecover 取错地址
 ```
 
@@ -93,7 +96,8 @@ Authorization: Bearer <agent_credential>
 ```json
 {
   "keyId":     "string",   // KMS 内部密钥标识符，由 /kms/create-agent-key 返回
-  "payload":   "0x...",    // 需要签名的原始字节（hex 编码，32 bytes 的 keccak256 digest）
+  "payload":   "0x...",    // 【裸 userOpHash,32 字节 hex】。KMS 在 TEE 内自动加 EIP-191 前缀
+                           //  (toEthSignedMessageHash) 后再签，不可裸签该 digest（见 §0.5）
   "algorithm": "secp256k1" // 当前固定值；未来扩展支持 p256
 }
 ```
