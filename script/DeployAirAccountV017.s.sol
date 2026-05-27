@@ -144,6 +144,10 @@ contract DeployAirAccountV017 is Script {
         d.factory = address(factory);
         d.implementation = factory.implementation();
 
+        // Hybrid policy (#21): configure the agent session-key validator so agent accounts
+        // (createAgentAccount) default-install it. Deployer is factoryAdmin; set-once.
+        factory.setAgentSessionKeyValidator(d.agentSessionValidator);
+
         vm.stopBroadcast();
 
         _report(d);

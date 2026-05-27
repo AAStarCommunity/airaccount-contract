@@ -41,6 +41,15 @@ contract AAStarAirAccountFactoryV7 {
     ///      Typically TierGuardHook to enforce tier-based spending limits via ERC-7579 hooks.
     address public immutable defaultHookModule;
 
+    /// @dev Factory deployer — the only address allowed to configure agentSessionKeyValidator.
+    address public immutable factoryAdmin;
+
+    /// @dev AgentSessionKeyValidator (ERC-7579 validator) default-installed on AGENT accounts only
+    ///      (hybrid policy — regular accounts opt-in via installModule). Set once by factoryAdmin via
+    ///      setAgentSessionKeyValidator() after deployment. address(0) = not configured → createAgentAccount
+    ///      degrades gracefully (no default install; SDK can installModule later).
+    address public agentSessionKeyValidator;
+
     /// @dev Maximum allowed TTL for guardian2 (and agentKey) signatures in createAgentAccount.
     ///      Prevents a long-lived signature from being replayed far in the future.
     uint48 internal constant MAX_GUARDIAN_SIG_TTL = 30 days;
@@ -60,6 +69,11 @@ contract AAStarAirAccountFactoryV7 {
     error GuardianDidNotAccept(address guardian);
     error DuplicateGuardian();
     error AgentKeyDidNotAccept();
+    error NotFactoryAdmin();
+    error AgentValidatorAlreadySet();
+    error AgentValidatorNotContract();
+
+    event AgentSessionKeyValidatorSet(address indexed validator);
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
@@ -77,6 +91,7 @@ contract AAStarAirAccountFactoryV7 {
     ) {
         defaultValidatorModule = _defaultValidatorModule;
         defaultHookModule = _defaultHookModule;
+        factoryAdmin = msg.sender; // deployer; only one allowed to set agentSessionKeyValidator
         require(defaultTokens.length == defaultConfigs.length, "Token/config length mismatch");
         // Deploy shared implementation. All user accounts are EIP-1167 clones of this address.
         implementation = address(new AAStarAirAccountV7());
@@ -100,6 +115,20 @@ contract AAStarAirAccountFactoryV7 {
             _defaultTokenAddresses.push(tok);
             _defaultTokenConfigs.push(cfg);
         }
+    }
+
+    /// @notice One-time configuration of the agent session-key validator (deployer-only, set-once).
+    /// @dev Default-installed on agent accounts created via createAgentAccount (hybrid policy).
+    ///      Security: deployer-only + set-once prevents a front-runner from injecting a malicious
+    ///      validator that would be auto-installed on every future agent account. Set-once (no
+    ///      re-set) matches the non-upgradable philosophy; a new validator version needs a new factory.
+    /// @param v Deployed AgentSessionKeyValidator address (must be a contract).
+    function setAgentSessionKeyValidator(address v) external {
+        if (msg.sender != factoryAdmin) revert NotFactoryAdmin();
+        if (agentSessionKeyValidator != address(0)) revert AgentValidatorAlreadySet();
+        if (v.code.length == 0) revert AgentValidatorNotContract();
+        agentSessionKeyValidator = v;
+        emit AgentSessionKeyValidatorSet(v);
     }
 
     // ─── Full Configuration ─────────────────────────────────────────
@@ -310,7 +339,11 @@ contract AAStarAirAccountFactoryV7 {
             config.initialTokenConfigs
         ));
         account = Clones.cloneDeterministic(implementation, cloneSalt);
-        AAStarAirAccountV7(payable(account)).initialize(entryPoint, msg.sender, config, guardAddr);
+        // Hybrid policy: agent accounts default-install AgentSessionKeyValidator (if configured).
+        // agentSessionKeyValidator == address(0) → degrades to a plain init (no default install).
+        AAStarAirAccountV7(payable(account)).initializeAgentAccount(
+            entryPoint, msg.sender, config, guardAddr, agentSessionKeyValidator
+        );
         emit AgentAccountCreated(account, agentKey, msg.sender, agentId, guardian2, dailyLimit);
     }
 
