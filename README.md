@@ -3,11 +3,16 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-> ## ❄️ Status: FROZEN at v0.17.0
+> ## Status: v0.17.1 (current)
 >
-> This contract codebase is **frozen** at tag [`v0.17.0`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.0) (freeze marker `freeze/m9-v0.17.0`), completing **M8** (ERC-8004 official integration + autonomous agent accounts) and **M9** (security hardening: factory front-run, ERC-1271, BLS/tier checks, ERC-7579 hook typeId, executor Tier-1 ceiling). Full test suite green (788 tests); deployed on Sepolia + OP Sepolia.
+> Current line: tag [`v0.17.1`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.1). It builds on the **M8** (ERC-8004 official integration + autonomous agent accounts) and **M9** (security hardening: factory front-run, ERC-1271, BLS/tier checks, ERC-7579 hook typeId, executor Tier-1 ceiling) work tagged at `v0.17.0`, and adds:
+> - **EIP-170 diamond-lite fix**: `AAStarAirAccountV7` was over the 24,576-byte runtime limit (undeployable on real chains). The cold functions (ERC-8004 agent + weighted-signature config governance) moved into a singleton **`AirAccountExtension`**, reached via `fallback`+`delegatecall` (zero capability loss; storage layout byte-identical, verified). Account runtime: 27,975 → **21,872 B**.
+> - **HIGH-3 fix**: the transient validation queue is now content-keyed (`keccak256(callData)`), revert-safe across a same-account bundle.
+> - **Agent default-install (hybrid)**: agent accounts (`createAgentAccount`) default-install `AgentSessionKeyValidator`; regular accounts opt-in.
 >
-> **No further contract changes will be made in this version.** If you find a problem, please [open an issue](https://github.com/AAStarCommunity/airaccount-contract/issues) — it will be triaged and documented, but the frozen v0.17.0 contracts will **not** be modified. Any fixes will land in a future, separately-versioned line.
+> Full test suite green (**798 tests**); deployed on Sepolia + OP Sepolia.
+>
+> ⚠️ **Integrators / SDK**: the account is now *diamond-lite* — the agent + weight-governance functions execute via fallback and are **absent from the raw `out/AAStarAirAccountV7.sol` ABI**. Use the merged **[`abi/AAStarAirAccountV7.full.json`](abi/AAStarAirAccountV7.full.json)** (run `scripts/build-full-abi.mjs`) to encode them. See [`docs/2026-05-26-diamond-lite-migration-impact.md`](docs/2026-05-26-diamond-lite-migration-impact.md).
 
 ---
 
@@ -23,16 +28,18 @@ pnpm tsx scripts/test-railgun-parser-e2e.ts  # M7.11 Railgun E2E (Sepolia)
 
 ---
 
-## Contracts (v0.17.0 — full list)
+## Contracts (v0.17.1 — full list)
 
 What AirAccount ships and what each contract does. **Deploy** column: `singleton` = deployed once per chain (shared); `per-account` = created on demand; `per-factory` = created by the Factory; `external` = not ours, referenced at a known address.
 
 ### Core
 | Contract | Role | Deploy |
 |---|---|---|
-| `AAStarAirAccountV7` | Non-upgradable ERC-4337 v0.7 account: algId signature routing, tiered verification, social recovery, ERC-7579 module surface, ERC-8004 agent functions, IERC721Receiver | per-factory (impl; users are clones) |
-| `AAStarAirAccountBase` | Shared account logic inherited by V7 (signature validation, tiers, recovery, guard enforcement, ERC-8004) | abstract (not deployed) |
-| `AAStarAirAccountFactoryV7` | CREATE2 / EIP-1167 clone factory; config-bound salt (front-run safe); `createAccountWithDefaults` / `createAgentAccount` | singleton |
+| `AAStarAirAccountV7` | Non-upgradable ERC-4337 v0.7 account: algId signature routing, tiered verification, social recovery, ERC-7579 module surface, IERC721Receiver. **Diamond-lite**: routes agent (ERC-8004) + weight-governance selectors to `AirAccountExtension` via `fallback`+`delegatecall` | per-factory (impl; users are clones) |
+| `AAStarAirAccountBase` | Shared account logic inherited by V7 (signature validation, tiers, recovery, guard enforcement, fallback routing) | abstract (not deployed) |
+| `AirAccountExtension` | **Diamond-lite facet** (v0.17.1): ERC-8004 agent (identity/reputation/wallet binding) + weighted-signature config governance. Reached via the account's `fallback`+`delegatecall` — runs in the account's storage context; split out to keep the account under EIP-170 | singleton (per impl) |
+| `AAStarAgentStorageLayout` | Shared storage prefix (slots 0–23) inherited by both `AAStarAirAccountBase` and `AirAccountExtension` so delegatecall slots align | abstract (not deployed) |
+| `AAStarAirAccountFactoryV7` | CREATE2 / EIP-1167 clone factory; config-bound salt (front-run safe); `createAccountWithDefaults` / `createAgentAccount` (agent accounts default-install `AgentSessionKeyValidator` once `setAgentSessionKeyValidator` is configured — deployer-only, set-once) | singleton |
 | `AAStarGlobalGuard` | Immutable per-account spending guard: daily limits, ERC20 token limits, algorithm whitelist (monotonic tighten-only) | per-account |
 | `AirAccountDelegate` | EIP-7702 path: turn an existing EOA into an AirAccount (guardian rescue, daily limit) | singleton |
 
