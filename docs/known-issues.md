@@ -306,12 +306,13 @@ Auditors should confirm that `_executeSessionKeyCall()` correctly enforces `cont
 
 ---
 
-## KI-10 — ForceExit Proposal Invalidated by Guardian Set Change
+## KI-10 — ForceExit Proposal Invalidated by Guardian Set Change — ✅ RESOLVED (already implemented)
 
-**Severity**: Low (design decision, security-first)
-**Affected Contract**: `ForceExitModule.sol` — `approveForceExit` / `executeForceExit`
+**Severity**: ~~Low~~ → **Resolved**
+**Affected Contract**: `ForceExitModule.sol` — `proposeForceExit` / `approveForceExit` / `executeForceExit`
 **Category**: Guardian management / social recovery consistency
-**Tracking**: [issue #59](https://github.com/AAStarCommunity/airaccount-contract/issues/59)
+
+> **Resolved (verified in current code):** the guardian set **is** snapshotted at proposal time. `ExitProposal` has `address[3] guardians` (`// Snapshot from account at propose time`); `proposeForceExit()` fills it via `_readGuardians(msg.sender)`, and `approveForceExit()` matches the signer against `proposal.guardians` (the snapshot), **not** the live account guardian set. A later `updateGuardians()` therefore cannot invalidate approvals on an in-progress proposal. The description below documented the *pre-snapshot* design and no longer reflects the code. (Issue #59 was filed against the stale text and has been closed.)
 
 ### Description
 
@@ -405,6 +406,6 @@ No on-chain contract change is implicated. This is an operational note so that t
 | KI-7 | P256 precompile only on OP Stack chains | Medium | Deployment | Deployment-specific |
 | KI-8 | Weighted signature bitmap malleability | Informational | By design | N/A |
 | KI-9 | Session key scope checked in execution phase only | Medium | ERC-4337 constraint | No (protocol limit) |
-| KI-10 | ForceExit proposal invalidated by guardian rotation | Low | Design decision | Deferred (#59) |
+| KI-10 | ForceExit proposal invalidated by guardian rotation | ~~Low~~ | Design decision | ✅ **Resolved (guardians snapshotted at propose time)** |
 | KI-11 | Validated-state transient re-read within identical calldata (HIGH-3 residual) | Low | Validation/execution split | Planned (#52) |
 | KI-12 | Leaked testnet key in historical records | Low | Operational | Rotate key |
