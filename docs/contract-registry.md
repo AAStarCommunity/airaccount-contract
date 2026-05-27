@@ -105,19 +105,21 @@ The first byte of every UserOp signature is the `algId`. It determines the signa
 | M5 | Factory r5 (current) | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` |
 
 > M6 deploys: `SessionKeyValidator`, `CalldataParserRegistry`, `UniswapV3Parser` — addresses assigned per deployment
+>
+> **M7 / M8 / M9 / v0.17.1 — not yet deployed.** The diamond-lite (v0.17.1) factory/impl/extension and the agent contracts (`AgentSessionKeyValidator`, `AirAccountCompositeValidator`, `AgentRegistry`, `TierGuardHook`, `ForceExitModule`) are release-pending; addresses will be filled in here once the v0.17.1 deployment runs. Do not treat any pre-M7 address above as current for the agent/diamond-lite code path.
 
 ### 3.3 Test Accounts (EOA)
 
 | Role | Address |
 |------|---------|
-| Owner / Bundler | `0xb5600060e6de5E11D3636731964218E53caadf0E` |
+| Owner / Bundler | `0xb5600060e6de5E11D3636731964218E53caadf0E` ⚠️ **leaked test key — rotate before any further use, testnet-only** |
 | Guardian 1 (Anni) | `0xEcAACb915f7D92e9916f449F7ad42BD0408733c9` |
 | Guardian 2 (Bob) | `0xF7Bf79AcB7F3702b9DbD397d8140ac9DE6Ce642C` |
 | Guardian 3 (Charlie) | `0x4F0b7d0EaD970f6573FEBaCFD0Cd1FaB3b64870D` |
 
 ---
 
-## 4. Milestone Feature Overview (M1 – M6)
+## 4. Milestone Feature Overview (M1 – M9 + v0.17.1)
 
 ### M1 — ECDSA E2E ✅
 Single-owner ERC-4337 account. ECDSA signature (algId `0x02`). Factory with CREATE2. Basic ETH transfer.
@@ -142,6 +144,18 @@ Zero Solidity changes. `OAPDManager` TypeScript class. Derives deterministic sal
 
 ### M6.6b — Pluggable Calldata Parser ✅
 `ICalldataParser` interface. `CalldataParserRegistry` singleton maps `dest → parser`. `UniswapV3Parser` understands Uniswap V3 `exactInputSingle` / `exactInput` calldata. `_enforceGuard` in the account checks the registry first; if parser returns a recognized token/amount, applies tier enforcement; otherwise falls back to native ERC20 parsing. Enables token tier enforcement for DeFi protocol calls where `value=0`. E2E: `scripts/test-calldata-parser-e2e.ts`.
+
+### M7 — ERC-7579 Modules + Agent Economy ✅
+Full ERC-7579 module surface on the account: validators (type 1), executors (type 2), hooks (type 4), fallback (type 3) with install/uninstall lifecycle. `AgentSessionKeyValidator` — agent session keys with **velocity limits** (`velocityLimit` over `velocityWindow`), call-target + selector allowlists, owner-keyed `grantAgentSession`. `AirAccountCompositeValidator` for multi-module flows. `TierGuardHook` enforces tier + session scope on `execute`. ERC-8004 identity/reputation primitives. WalletBeat compliance. ~680 unit tests.
+
+### M8 — ERC-8004 Official Integration + Autonomous Agent Accounts ✅
+`AgentRegistry` / identity / reputation registries aligned to the official ERC-8004 interfaces. Autonomous agent account model: **owner = human (msg.sender), agentKey = session key** (the agent never holds owner rights — the boundary is the account, not privilege). Factory `createAgentAccount`; on-chain `mintAgentIdentity`, `bindERC8004AgentWallet`, `submitAgentReputation`, `queryAgentReputation`. Two agent shapes documented: assistant (session key inside the human's account) vs autonomous (separate AirAccount).
+
+### M9 — Security Hardening (second audit) ✅
+Factory front-run fix: salt is bound to the full config so an attacker cannot pre-create an account at the victim's counterfactual address with different params. ERC-1271 `isValidSignature` path. BLS / tier-check hardening. ERC-7579 hook `typeId` correctness + multi-typeId module lifecycle. Executor Tier-1 ceiling (executors cannot exceed Tier-1 spend). Session cleanup on uninstall.
+
+### v0.17.1 — Diamond-lite EIP-170 Fix (current) ✅
+Account runtime exceeded the 24,576 B EIP-170 limit. Fix splits the **cold** functions (ERC-8004 agent + weighted-config governance) into `AirAccountExtension`, reached via the account's `fallback`+`delegatecall` so they still run in the account's storage context — **zero capability loss**, optimizer runs unchanged. Shared `AAStarAgentStorageLayout` keeps the delegatecall slot layout byte-identical. Account now **21,872 B**. Also: HIGH-3 fix — validated-state transient queue is now **content-keyed** (`keccak256(callData)`) so reads are non-destructive and cannot be confused across nested frames. Agent accounts **default-install** `AgentSessionKeyValidator` (factory, set-once, deployer-only). Published a merged **full ABI** (`abi/AAStarAirAccountV7.full.json`) so integrators can call the fallback-routed functions. ~798 tests; storage layout verified; Codex-approved.
 
 ---
 

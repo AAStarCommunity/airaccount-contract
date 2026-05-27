@@ -1,7 +1,7 @@
 # AirAccount — Known Issues & Accepted Risks
 
-**Version**: v0.16.0 (M7 r4)
-**Last Updated**: 2026-03-22
+**Version**: v0.17.1 (diamond-lite, M9 + EIP-170 fix)
+**Last Updated**: 2026-05-27
 **Purpose**: This document explicitly declares known limitations and accepted risks in AirAccount's design. It exists so that security auditors and users can make an informed decision. Items listed here are **intentional design trade-offs**, not bugs. Auditors should NOT file findings for these items unless they identify a new exploit path that makes the described risk worse than documented.
 
 ---
@@ -334,6 +334,55 @@ Auditors should verify that `updateGuardians()` cannot be called during an activ
 
 ---
 
+## KI-11 — Validated-State Transient Queue Re-use Within Identical Calldata (HIGH-3 residual)
+
+**Severity**: Low (not profitably exploitable)
+**Affected Contract**: `AAStarAirAccountBase.sol` — `_setCallDataKey` / `_store*` / `_consume*` validation queue
+**Category**: ERC-4337 validation/execution split
+**Tracking**: [issue #52](https://github.com/AAStarCommunity/airaccount-contract/issues/52)
+
+### Description
+
+The account passes validated state (algId, session key, weight) from the `validateUserOp` phase to the `execute` phase through EIP-1153 transient storage. In v0.17.1 this queue was hardened to be **content-keyed**: the slot is derived from `keccak256(callData)` (HIGH-3 fix), and reads are non-destructive, so a nested or replayed frame can no longer pop a value validated for a *different* callData.
+
+The residual edge: within the **same** callData, the validated state could in principle be read more than once. This is not profitably exploitable — to reach a higher tier an attacker must already hold the higher-tier signature for that exact callData, and byte-identical callData cannot be redirected to a different recipient or amount. So "re-reading" only ever re-affirms a tier the caller already legitimately satisfied.
+
+### Risk
+
+No fund-redirection or privilege-escalation path. An attacker cannot manufacture a higher-tier authorization they do not already possess, and cannot change where funds go while keeping callData byte-identical.
+
+### Mitigation
+
+- Current content-keying already blocks the cross-callData confusion that made the original HIGH-3 a real finding.
+- Long-term hardening tracked in #52: route the validated-state handoff through `executeUserOp` so the queue is strictly single-consume per UserOp, removing the residual re-read entirely.
+
+### Auditor Note
+
+If a reviewer finds a callData shape where re-reading validated state yields authority the signer did not already have for that exact callData, that would exceed the documented residual and should be filed as a new finding.
+
+---
+
+## KI-12 — Leaked Testnet Key in Historical Records
+
+**Severity**: Low (testnet-only, operational)
+**Affected**: deployment scripts / docs referencing `0xb5600060e6de5E11D3636731964218E53caadf0E`
+**Category**: Operational key hygiene
+
+### Description
+
+The testnet owner/bundler key `0xb5600060e6de5E11D3636731964218E53caadf0E` appearing in historical deployment records and `docs/contract-registry.md §3.3` has been **leaked**. It is a Sepolia testnet key with no mainnet authority and no production funds.
+
+### Mitigation
+
+- Treat this key as burned: **rotate** before any further deployment or E2E run; never fund it beyond throwaway testnet gas.
+- Do not reuse this address for any v0.17.1 release deployment.
+
+### Auditor Note
+
+No on-chain contract change is implicated. This is an operational note so that the address is never mistaken for a live, trusted operator key.
+
+---
+
 ## Summary Table
 
 | ID | Issue | Severity | Category | Fixable? |
@@ -348,3 +397,5 @@ Auditors should verify that `updateGuardians()` cannot be called during an activ
 | KI-8 | Weighted signature bitmap malleability | Informational | By design | N/A |
 | KI-9 | Session key scope checked in execution phase only | Medium | ERC-4337 constraint | No (protocol limit) |
 | KI-10 | ForceExit proposal invalidated by guardian rotation | Low | Design decision | Planned improvement |
+| KI-11 | Validated-state transient re-read within identical calldata (HIGH-3 residual) | Low | Validation/execution split | Planned (#52) |
+| KI-12 | Leaked testnet key in historical records | Low | Operational | Rotate key |
