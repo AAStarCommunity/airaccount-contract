@@ -97,7 +97,7 @@ KMS 持有签名密钥，agent 只持有完整 JWT（无法伪造）。
 | agentKey 角色 | **session key（有约束）** | 通过 AgentSessionKeyValidator 授权 |
 | agentKey 存在哪 | KMS（TEE）或进程 RAM | 同助理型处理方式 |
 | 资产归属 | **agent 独立 AirAccount** | 与助理型的根本区别 |
-| guardian 配置 | humanOwner + guardian2 + communityGuardian | 2-of-3 可恢复 |
+| guardian 配置 | [guardian2, communityGuardian] | **2-of-2 可恢复**（人类是 owner，不在 guardian 列表，以代码为准） |
 
 ### 2.2 为何 owner 不能是 agentKey
 
@@ -108,13 +108,13 @@ KMS 持有签名密钥，agent 只持有完整 JWT（无法伪造）。
 ### 2.3 账户结构
 
 ```
-Agent AirAccount
-├── owner: humanOwner（人类的 AirAccount 地址）
-├── guardian[0]: humanOwner（同 owner，双重保障）
-├── guardian[1]: guardian2（人类指定第二 guardian）
-├── guardian[2]: defaultCommunityGuardian
-└── agentKey: 以 session key 形式授权（AgentSessionKeyValidator）
-              constraints: { callTargets, spendCap, velocityLimit, expiry }
+Agent AirAccount   （以 AAStarAirAccountFactoryV7.createAgentAccount 实现为准）
+├── owner: humanOwner（人类，msg.sender）— 完整控制权
+├── guardian[0]: guardian2（人类指定第二 guardian）
+├── guardian[1]: defaultCommunityGuardian
+│   （2-of-2 恢复；humanOwner 是 owner 但**不**在 guardian 列表，避免 owner==guardian 约束）
+└── agentKey: 以 session key 形式授权（AgentSessionKeyValidator.grantAgentSession）
+              constraints: { callTargets, selectorAllowlist, spendCap(velocity), expiry }
 ```
 
 ### 2.4 完整流程

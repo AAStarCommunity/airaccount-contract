@@ -5,14 +5,21 @@
 > 账户归属：Agent 拥有独立的 AirAccount，可持有资产、自主支付  
 > 状态：M8 PR #35 已实现合约层，UX 流程待完善
 
+> ⚠️ **口径更正（2026-05-27，以代码 + [agent-key-design.md](agent-key-design.md) 为准）**：本文档(05-22)早期把 owner 写成 agentKey、guardian 写成 [human, guardian2, community] 3 个——**与 `AAStarAirAccountFactoryV7.createAgentAccount` 实现不符**。实际：
+> - **owner = 人类（`msg.sender`）**，agentKey **不是 owner**，而是部署后经 `grantAgentSession` 授权的受约束 **session key（secp256k1）**。
+> - **guardians = [guardian2, communityGuardian]，2-of-2**；**人类是 owner 但不在 guardian 列表**。
+> - 自主型与助理型的本质区别 = **账户边界（独立地址/收款/持币）**，不是权限高低。
+> 下文凡出现 “owner = agentKey / guardian1 = 人类” 处，均以此横幅为准。
+
 ---
 
 ## 核心设计原则
 
-Agent 拥有与人类等价的完整 AirAccount。差异：
-- **Owner**：agent 的 EOA 密钥（存 KMS，程序化签名）
-- **Guardian1**：人类的 AirAccount（合约地址，通过 ERC-1271 行使 guardian 权）
-- **资产**：独立持有，可接收 x402 支付、DeFi 收益等
+Agent 拥有一个独立 AirAccount（与人类账户等价的能力），但**控制权仍在人类**：
+- **Owner**：**人类**（`msg.sender`，passkey/ERC-1271 控制）——掌握完整控制权，可随时 `revokeAgentSession`
+- **agentKey**：受约束 **session key**（secp256k1，存 KMS TEE，程序化签名），通过 `grantAgentSession` 授权，受 scope/spendCap/expiry 限制
+- **Guardians**：[guardian2, communityGuardian]（2-of-2 社会恢复）
+- **资产**：独立持有，可接收 x402 支付、DeFi 收益等（这才是自主型的核心价值）
 
 ---
 
@@ -109,11 +116,11 @@ guardians: [msg.sender, defaultCommunityGuardian, address(0)]
 5. 人类指纹一次签名产生：
    - UserOp sig（调用 createAgentAccount）
    - guardian2Sig（acceptHash 用 P256 key 签）
-6. factory.createAgentAccount(agentKey, agentId, humanPasskeyAddr, guardian2Sig, dailyLimit)
-   → guardian1 = humanAirAccount (auto)
-   → guardian2 = humanPasskeyAddr (verified by guardian2Sig)
-   → guardian3 = community (auto)
-   → 部署 agent AirAccount，owner = agentKey
+6. factory.createAgentAccount(agentKey, agentId, guardian2, guardian2Sig, agentKeySig, deadline, dailyLimit)
+   → owner = msg.sender（人类）            ← initialize(entryPoint, msg.sender, ...)
+   → guardians = [guardian2, community]    ← 2-of-2；人类是 owner 但不在 guardian 列表
+   → agentKey：仅签 ACCEPT_AGENT_KEY 同意 + 入 salt/event；部署后经 grantAgentSession 授权为 session key
+   → 部署 agent AirAccount，owner = 人类（非 agentKey）
 ```
 
 **用户感知**：一次指纹，等待合约部署确认。
@@ -155,19 +162,23 @@ Agent 有完整 AirAccount 能力：executeBatch、ERC-7579 模块、任意合�
 
 ---
 
-## 社会恢复（Agent 账户被攻破时）
+## agentKey 泄露 / Agent 账户恢复
 
+> 口径更正(以代码为准):owner=人类、guardians=[guardian2, community] 2-of-2。
+
+**常态(agentKey 泄露):人类是 owner,直接处理,无需社会恢复:**
 ```
-发起恢复（需要 2-of-3 guardian）：
-  guardian1（humanAirAccount）：人类用指纹签 UserOp → humanAirAccount 发出 proposeRecovery
-  guardian2（humanPasskeyAddr / 第三方）：直接签 proposeRecovery
-
-48h timelock 后执行恢复，更换 agentKey
+人类(owner) → revokeAgentSession(agentKey)   // 即时止血
+人类(owner) → 生成新 agentKey → grantAgentSession(new, cfg)  // 重新授权
 ```
 
-> guardian1 是合约（humanAirAccount），其 guardian 投票通过 ERC-1271 验证：  
-> `humanAirAccount.isValidSignature(recoveryHash, humanPasskeySig)` → 有效  
-> 人类用自己的指纹控制 guardian1 投票。
+**仅当人类 owner 自身失能时,才走社会恢复(2-of-2):**
+```
+发起恢复(需要 2 个 guardian 全签,即 2-of-2)：
+  guardian1 = guardian2(人类备用设备/亲友/passkey 地址)
+  guardian2 = community(社区 Safe 多签)
+48h timelock 后执行恢复,更换 owner
+```
 
 ---
 
