@@ -1,6 +1,7 @@
-# AirAccount Deployment Guide — v0.17.0 (2026)
+# AirAccount Deployment Guide — v0.17.1 (2026)
 
-> Frozen release: tag `v0.17.0` / `freeze/m9-v0.17.0` (commit `b8b9a7c`).
+> **Current release: tag `v0.17.1`** (diamond-lite EIP-170 fix + HIGH-3 content-keying + agent default-install + full ABI). Supersedes `v0.17.0` / `freeze/m9-v0.17.0` (commit `b8b9a7c`).
+> The **deployable contract set is identical** to v0.17.0 — the v0.17.1 changes are internal to the account (the account now routes its cold ERC-8004/weight functions to `AirAccountExtension` via `fallback`+`delegatecall`, deployed inside the Factory constructor alongside the impl). No new top-level contract to deploy.
 > This doc is the canonical, versioned record of **what gets deployed, in what order, how it is wired, and how to run it** on each chain. Keep one of these per release.
 
 ---
@@ -119,11 +120,11 @@ The deploy script's **logic is validated** via `forge script ... --sender <addr>
 
 1. **Record addresses** here (append a per-chain table below) and into `.env.<network>`.
 2. **SuperPaymaster**: hand the `AgentRegistry` address to the SP team → they `setAgentRegistries(addr)` + run E2E G2.
-3. **SDK sync** (`@aastar/sdk` / `lib/aastar-sdk`):
+3. **SDK sync** (`@aastar/sdk`, separate repo — the `lib/aastar-sdk` submodule was removed; the SDK consumes the contract's published ABIs directly, there is **no submodule pointer to bump**):
    - Export ABIs from `out/<Contract>.sol/<Contract>.json` (`.abi`) → commit to the SDK repo (`abis/`).
    - **For the account, use the merged `abi/AAStarAirAccountV7.full.json`** (run `node scripts/build-full-abi.mjs`), NOT the raw `out/AAStarAirAccountV7.sol` ABI. The account is diamond-lite: agent (ERC-8004) + weight-governance functions execute via fallback→delegatecall to `AirAccountExtension` and are absent from the raw account ABI; the full ABI merges them back so the SDK can encode them.
    - Update the SDK address config (`config.<network>.json`) with the deployed addresses.
-   - Bump the SDK version, then bump the `lib/aastar-sdk` submodule pointer here.
+   - Bump the SDK version in the SDK repo + open its PR (e.g. SDK PR #29). Nothing to commit back here.
 4. **E2E**: run the relevant `scripts/test-e2e-*.ts` against the new addresses.
 
 ### Deployed addresses — Sepolia (chainId 11155111)
