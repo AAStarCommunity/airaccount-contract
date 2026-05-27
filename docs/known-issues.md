@@ -74,9 +74,11 @@ The `cancelRecovery` function requires **2-of-3 guardian signatures** (NOT an ow
 
 ## KI-3 — Low installModuleThreshold Allows Single-Key Module Install
 
-**Severity**: High if misconfigured (configuration risk, not a code bug)
+**Severity**: ~~High if misconfigured~~ → **not currently reachable** (see v0.17.1 update)
 **Affected Contract**: `AAStarAirAccountBase.sol` / `AAStarAirAccountV7.sol`
 **Category**: Access control configuration
+
+> **Update (v0.17.1):** there is **no `setInstallModuleThreshold` setter in the current code** — `_installModuleThreshold` (slot 7) is never written and always reads back as 0, which the install path resolves to the hardcoded default **70** (`installModule` line ~262). So the "user lowers the threshold below the owner's weight" scenario described below **cannot happen today**; the threshold is effectively immutable at 70. This entry is retained as a forward-looking constraint: **if** a configurable setter is ever added, it must enforce a lower bound (e.g. `>= 60`). The storage slot is not removed because doing so would shift the diamond-lite layout.
 
 ### Description
 
@@ -106,6 +108,9 @@ Auditors should verify that the factory deploys accounts with `installModuleThre
 **Severity**: Low (by-design behavior)
 **Affected Contract**: `AgentSessionKeyValidator.sol`
 **Category**: Rate limiting
+**Tracking**: [issue #57](https://github.com/AAStarCommunity/airaccount-contract/issues/57)
+
+> **Correction (v0.17.1):** the original mitigation below referenced a `spendCap` field as an independent cumulative bound. `AgentSessionConfig` **no longer has a `spendCap` field** — the velocity window is the only rate bound today. Whether to (re)introduce a cumulative cap is part of #57.
 
 ### Description
 
@@ -124,8 +129,8 @@ An AI agent with a velocity limit of 10 calls/hour could make 19 calls in slight
 ### Mitigation
 
 - For high-security agent sessions, set `velocityLimit` conservatively (e.g., half the intended peak rate) to account for the 2x boundary effect.
-- A sliding window implementation (tracking call timestamps in a ring buffer) would eliminate this, but would cost significantly more gas per call. This optimization is deferred to a future milestone.
-- The `spendCap` limit provides an independent, cumulative bound that the velocity window cannot bypass.
+- A sliding window implementation (tracking call timestamps in a ring buffer) would eliminate this, but would cost significantly more gas per call. This optimization is deferred (tracked in #57).
+- ~~The `spendCap` limit provides an independent, cumulative bound that the velocity window cannot bypass.~~ (No `spendCap` field exists in the current `AgentSessionConfig`; velocity is the only bound.)
 
 ### Auditor Note
 
@@ -133,11 +138,13 @@ Auditors should confirm that the velocity limit enforces at most `velocityLimit`
 
 ---
 
-## KI-5 — Best-Effort onInstall() During Factory Pre-Installation
+## KI-5 — Best-Effort onInstall() During Factory Pre-Installation — ✅ RESOLVED (v0.17.1)
 
-**Severity**: Low (documentation risk)
-**Affected Contract**: `AAStarAirAccountFactoryV7.sol`
+**Severity**: ~~Low~~ → **Resolved**
+**Affected Contract**: `AAStarAirAccountFactoryV7.sol` / `AAStarAirAccountV7.sol`
 **Category**: Module initialization
+
+> **Resolved (v0.17.1, MEDIUM-1 / #21):** the best-effort `try/catch` no longer exists. Both module-install paths now **hard-revert** if `onInstall()` fails: `installModule` (line ~304, `if (!_ok) revert ModuleInstallCallbackFailed(...)`) and the factory agent default-install in `initializeAgentAccount` (line ~81, same revert). A module can no longer be marked installed while uninitialized. The description below is retained for history only.
 
 ### Description
 
@@ -168,6 +175,7 @@ Auditors should check whether any pre-installed module's `onInstall()` contains 
 **Severity**: Low (accepted design trade-off)
 **Affected Contract**: `AAStarAirAccountV7.sol`
 **Category**: Module management
+**Tracking**: [issue #58](https://github.com/AAStarCommunity/airaccount-contract/issues/58)
 
 ### Description
 
@@ -271,7 +279,7 @@ Auditors should confirm: (1) no bypass exists where a lower-weight bitmap is cra
 
 ### Description
 
-`AgentSessionKeyValidator.validateUserOp()` is a stateless validation function: it verifies the session key signature and checks policy bounds (spend cap, velocity, expiry) but **cannot** inspect the calldata of the `execute()` call that will run later. The `contractScope` (target address allowlist) and `selectorScope` (function selector allowlist) are checked inside `AAStarAirAccountBase._executeSessionKeyCall()` during the execution phase, not during `validateUserOp`.
+`AgentSessionKeyValidator.validateUserOp()` is a stateless validation function: it verifies the session key signature and checks policy bounds (velocity, expiry) but **cannot** inspect the calldata of the `execute()` call that will run later. The `contractScope` (target address allowlist) and `selectorScope` (function selector allowlist) are checked inside `AAStarAirAccountBase._executeSessionKeyCall()` during the execution phase, not during `validateUserOp`.
 
 This means:
 
@@ -303,6 +311,7 @@ Auditors should confirm that `_executeSessionKeyCall()` correctly enforces `cont
 **Severity**: Low (design decision, security-first)
 **Affected Contract**: `ForceExitModule.sol` — `approveForceExit` / `executeForceExit`
 **Category**: Guardian management / social recovery consistency
+**Tracking**: [issue #59](https://github.com/AAStarCommunity/airaccount-contract/issues/59)
 
 ### Description
 
@@ -389,13 +398,13 @@ No on-chain contract change is implicated. This is an operational note so that t
 |----|-------|----------|----------|----------|
 | KI-1 | EIP-7702 private key permanence | Medium | Protocol limitation | No |
 | KI-2 | Guardian self-dealing after trust | Medium | Trust model | No (social) |
-| KI-3 | Low threshold enables single-key module install | High if misconfigured | Configuration | Partially (default is safe) |
-| KI-4 | Velocity window reset timing (2x calls possible) | Low | Rate limiting | Deferred |
-| KI-5 | Best-effort onInstall() swallows revert | Low | Module init | Planned improvement |
-| KI-6 | No timelock on module install | Low | Module management | Planned improvement |
+| KI-3 | Low threshold enables single-key module install | ~~High~~ → not reachable | Configuration | **N/A — no setter; threshold fixed at 70** |
+| KI-4 | Velocity window reset timing (2x calls possible) | Low | Rate limiting | Deferred (#57) |
+| KI-5 | Best-effort onInstall() swallows revert | ~~Low~~ | Module init | ✅ **Resolved (#21, hard-revert)** |
+| KI-6 | No timelock on module install | Low | Module management | Deferred (#58) |
 | KI-7 | P256 precompile only on OP Stack chains | Medium | Deployment | Deployment-specific |
 | KI-8 | Weighted signature bitmap malleability | Informational | By design | N/A |
 | KI-9 | Session key scope checked in execution phase only | Medium | ERC-4337 constraint | No (protocol limit) |
-| KI-10 | ForceExit proposal invalidated by guardian rotation | Low | Design decision | Planned improvement |
+| KI-10 | ForceExit proposal invalidated by guardian rotation | Low | Design decision | Deferred (#59) |
 | KI-11 | Validated-state transient re-read within identical calldata (HIGH-3 residual) | Low | Validation/execution split | Planned (#52) |
 | KI-12 | Leaked testnet key in historical records | Low | Operational | Rotate key |
