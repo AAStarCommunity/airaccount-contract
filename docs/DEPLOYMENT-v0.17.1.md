@@ -6,6 +6,31 @@
 
 ---
 
+## 0. Pre-release checklist
+
+Run top-to-bottom. Code is frozen; everything here is execution + verification.
+
+**Before broadcast**
+- [ ] **Code frozen**: tag `v0.17.1` exists; CI green on the merge commit (`forge test` + `node scripts/build-full-abi.mjs --check`).
+- [ ] **Rotate the deployer key (KI-12)**: use a **fresh** key. Never reuse the leaked testnet key `0xb5600060e6de5E11D3636731964218E53caadf0E`.
+- [ ] **Per-chain env** (`.env.<network>`): signer (testnet `PRIVATE_KEY` / mainnet `cast wallet` keystore), a **reachable** RPC, `COMMUNITY_GUARDIAN_ADDRESS` (Factory's 3rd guardian — set for production chains), `ETHERSCAN_API_KEY` (for `--verify`).
+- [ ] **Build**: `forge build` (profile: via-IR, EIP-170 headroom, solc 0.8.33, Cancun).
+- [ ] **Local-tooling caveat**: on the current macOS dev box **both** `forge` broadcast (socket reset, §4) **and** `tsx` (esbuild `darwin-x64` vs `darwin-arm64` mismatch) are broken. Run the deploy + E2E on **Linux / CI**, or fix locally (`pnpm rebuild esbuild` for tsx; resolve the proxy/VPN for forge). Local `--simulate` validates the deploy *logic* only.
+
+**Deploy**
+- [ ] **Dry run**: `./deploy-v0.17.1.sh <net> --simulate` → review the printed summary.
+- [ ] **Broadcast**: `./deploy-v0.17.1.sh <net> [--verify]`.
+
+**After broadcast**
+- [ ] **Record addresses** → §5 table below + `.env.<net>` (incl. `AIRACCOUNT_FACTORY`, `AGENT_SESSION_VALIDATOR`, and an `AIRACCOUNT_AGENT_ACCOUNT` created via `createAgentAccount`).
+- [ ] **Smoke E2E (v0.17.1-specific)**: `pnpm tsx scripts/test-v0171-diamond-e2e.ts` — asserts factory→validator wiring (#21), `agentExtension` singleton, agent default-install, and live fallback routing.
+- [ ] **Full agent flow**: `pnpm tsx scripts/test-m7-e2e.ts` against the new addresses (grantAgentSession, agent-key UserOp, velocity).
+- [ ] **Signature-path E2E**: relevant `scripts/test-e2e-*.ts` (ecdsa / bls / gasless / session-key / force-exit / 7702).
+- [ ] **SuperPaymaster handoff**: give the `AgentRegistry` address to the SP team → they `setAgentRegistries(addr)` + run E2E G2.
+- [ ] **SDK sync**: publish ABIs (account = `abi/AAStarAirAccountV7.full.json`) + addresses to `@aastar/sdk` (PR #29). The `lib/aastar-sdk` submodule was removed — **no submodule bump**.
+
+---
+
 ## 1. Target chains
 
 | Chain | chainId | Key source | RPC |

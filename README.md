@@ -78,7 +78,7 @@ What AirAccount ships and what each contract does. **Deploy** column: `singleton
 | EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | canonical, all chains |
 | ERC-8004 Identity / Reputation / Validation | see `src/config/ERC8004Addresses.sol` | official "Trustless Agents" registries, deterministic CREATE2 |
 
-> Deployment order, wiring, and run commands: see [`docs/DEPLOYMENT-v0.17.0.md`](docs/DEPLOYMENT-v0.17.0.md).
+> Deployment order, wiring, and run commands: see [`docs/DEPLOYMENT-v0.17.1.md`](docs/DEPLOYMENT-v0.17.1.md).
 
 ---
 
