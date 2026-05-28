@@ -1371,7 +1371,7 @@ Calls the ERC-5564 Announcer at `0x55649E01B5Df198D18D95b5cc5051630cfD45564` (sa
 | `setP256Key` | `(bytes32 x, bytes32 y)` | Owner only | Required for P256 algIds |
 | `setTierLimits` | `(uint256 tier1, uint256 tier2)` | Owner only | tier1 <= tier2 |
 | `setWeightConfig` | `(WeightConfig config)` | Owner only | First setup or strengthening |
-| `setAgentWallet` | `(uint256 agentId, address wallet, address registry)` | Owner only | ERC-8004 binding |
+| `setAgentWallet` | `(uint256 agentId, address agentWallet, address agentRegistry, bytes agentWalletSig)` | Owner only | ERC-8004 binding (fallback-routed to AirAccountExtension; needs the agent wallet's consent sig) |
 | `guardApproveAlgorithm` | `(uint8 algId)` | Owner only | Monotonic (add-only) |
 | `guardDecreaseDailyLimit` | `(uint256 newLimit)` | Owner only | Only decrease |
 | `guardAddTokenConfig` | `(address token, TokenConfig config)` | Owner only | Add-only |

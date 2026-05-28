@@ -29,6 +29,8 @@ AirAccount M8 代码库设计严谨，覆盖 ERC-4337、ERC-7579、社交恢复�
 - **修改建议（方案A — 立即修复）**: 在 NatSpec 和文档中明确标注 spendCap 为"off-chain 约束（仅 bundler/DVT 节点执行）"，移除误导性注释"Max cumulative spend this session"改为"Advisory spend cap — enforced off-chain only"。
 - **修改建议（方案B — 完整修复）**: 在 `TierGuardHook.preCheck()` 中，当 `algId == ALG_SESSION_KEY` 且 session 有 `spendCap > 0` 时，解析 ETH value 后调用 `AgentSessionKeyValidator(accountAgentValidator[msg.sender]).recordSpend(msg.sender, sessionKey, value)`，并在 `enforceSessionScope` 内检查 `totalSpent + amount <= spendCap`。
 
+> ⚠️ **更新 2026-05-28（已解决）**：采用了第三方案 —— `spendCap`（连同 `recordSpend` / `totalSpent`）已在 **v0.17.1** 从 `AgentSessionConfig` 中**整体移除**。`grep spendCap src/` 现已无任何命中。"字段存在但永不执行"的风险因此**彻底消除**，此 Finding 标记为 **resolved**。当前 agent session 的唯一链上速率约束是 velocity（见 `known-issues.md` KI-4；是否重新引入累计上限由 issue #57 跟踪）。
+
 ---
 
 ### H-2: IdentityRegistry 未禁用 ERC-721 approve 和 setApprovalForAll
@@ -169,6 +171,8 @@ modifier nonReentrantDelegate() {
 - **位置**: `src/core/AAStarAirAccountBase.sol`（algId 常量定义处）
 - **问题**: ALG_ECDSA 文档注释中标注为 `0x02`，但实际值应为 `0x01`（按 AAStarValidator algId 路由表）。不影响运行时行为，但会误导审计员和集成方。
 - **修改建议**: 修正常量注释为 `0x01`。
+
+> ⚠️ **更新 2026-05-28（驳回 — 此 Finding 本身有误）**：核对代码后，`ALG_ECDSA = 0x02` 是**正确的**，注释也是 `0x02`，二者一致，无需修改。本 Finding 把 `AAStarValidator` 路由表里的 `0x01`（那是 **ALG_BLS**，注册到 BLS 算法合约）误当成了 ECDSA —— ECDSA 是原生内联校验，**根本不经过 AAStarValidator 路由**。**切勿**按原"修改建议"把 ECDSA 注释改成 `0x01`,那会引入真正的错误。权威常量(来自 `AAStarAirAccountBase`): `ALG_BLS=0x01, ALG_ECDSA=0x02, ALG_P256=0x03, ALG_CUMULATIVE_T2=0x04, ALG_CUMULATIVE_T3=0x05, ALG_COMBINED_T1=0x06, ALG_WEIGHTED=0x07, ALG_SESSION_KEY=0x08`,与 `contract-registry.md §2` 一致。
 
 ---
 

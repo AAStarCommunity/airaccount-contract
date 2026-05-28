@@ -65,6 +65,8 @@ All contracts live under `src/`. Submodule `lib/YetAnotherAA-Validator` is read-
 
 The first byte of every UserOp signature is the `algId`. It determines the signature type and security tier.
 
+> **Canonical source:** these values are the on-chain `ALG_*` constants in `AAStarAirAccountBase.sol` (`ALG_BLS=0x01`, `ALG_ECDSA=0x02`, `ALG_P256=0x03`, `ALG_CUMULATIVE_T2=0x04`, `ALG_CUMULATIVE_T3=0x05`, `ALG_COMBINED_T1=0x06`, `ALG_WEIGHTED=0x07`, `ALG_SESSION_KEY=0x08`). This table is authoritative. Note `0x01` is **BLS** — only BLS is registered in the `AAStarValidator` router; ECDSA (`0x02`) is native/inline and does **not** route through it. (An earlier audit note, m8 report L-5, mistakenly read the router's `0x01`=BLS slot as "ECDSA should be 0x01" — that is incorrect and has been rejected; see that report's L-5 update.)
+
 | algId | Name | Tier | Contract | Status |
 |-------|------|------|----------|--------|
 | `0x01` | BLS Legacy Triple | Tier 3 | `AAStarBLSAlgorithm` | Registered in Validator Router |
@@ -73,7 +75,8 @@ The first byte of every UserOp signature is the `algId`. It determines the signa
 | `0x04` | Cumulative T2 (P256 + BLS) | Tier 2 | (inline in base) | Native |
 | `0x05` | Cumulative T3 (P256 + BLS + Guardian) | Tier 3 | (inline in base) | Native |
 | `0x06` | Combined T1 (ECDSA + P256 combined) | Tier 1 | (inline in base) | Native |
-| `0x08` | Session Key (ephemeral ECDSA, time-limited) | Tier 1 | `SessionKeyValidator` | M6.4 — register in Validator Router |
+| `0x07` | Weighted Multi-Signature (configurable per-source weights) | per config | `AirAccountCompositeValidator` | M6 — weighted multisig |
+| `0x08` | Session Key (ephemeral ECDSA, time-limited) | Tier 1 | `SessionKeyValidator` / `AgentSessionKeyValidator` | M6.4 — register in Validator Router |
 
 **Tier definitions**:
 - **Tier 1**: ECDSA / P256 / Session Key — for transactions ≤ tier1Limit (e.g., ≤ 0.1 ETH or ≤ 100 USDC)
