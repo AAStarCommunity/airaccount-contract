@@ -1,7 +1,33 @@
-# AirAccount Deployment Guide — v0.17.0 (2026)
+# AirAccount Deployment Guide — v0.17.1 (2026)
 
-> Frozen release: tag `v0.17.0` / `freeze/m9-v0.17.0` (commit `b8b9a7c`).
+> **Current release: tag `v0.17.1`** (diamond-lite EIP-170 fix + HIGH-3 content-keying + agent default-install + full ABI). Supersedes `v0.17.0` / `freeze/m9-v0.17.0` (commit `b8b9a7c`).
+> The **deployable contract set is identical** to v0.17.0 — the v0.17.1 changes are internal to the account (the account now routes its cold ERC-8004/weight functions to `AirAccountExtension` via `fallback`+`delegatecall`, deployed inside the Factory constructor alongside the impl). No new top-level contract to deploy.
 > This doc is the canonical, versioned record of **what gets deployed, in what order, how it is wired, and how to run it** on each chain. Keep one of these per release.
+
+---
+
+## 0. Pre-release checklist
+
+Run top-to-bottom. Code is frozen; everything here is execution + verification.
+
+**Before broadcast**
+- [ ] **Code frozen**: tag `v0.17.1` exists; CI green on the merge commit (`forge test` + `node scripts/build-full-abi.mjs --check`).
+- [ ] **Rotate the deployer key (KI-12)**: use a **fresh** key. Never reuse the leaked testnet key `0xb5600060e6de5E11D3636731964218E53caadf0E`.
+- [ ] **Per-chain env** (`.env.<network>`): signer (testnet `PRIVATE_KEY` / mainnet `cast wallet` keystore), a **reachable** RPC, `COMMUNITY_GUARDIAN_ADDRESS` (Factory's 3rd guardian — set for production chains), `ETHERSCAN_API_KEY` (for `--verify`).
+- [ ] **Build**: `forge build` (profile: via-IR, EIP-170 headroom, solc 0.8.33, Cancun).
+- [ ] **Local-tooling caveat**: on the current macOS dev box **both** `forge` broadcast (socket reset, §4) **and** `tsx` (esbuild `darwin-x64` vs `darwin-arm64` mismatch) are broken. Run the deploy + E2E on **Linux / CI**, or fix locally (`pnpm rebuild esbuild` for tsx; resolve the proxy/VPN for forge). Local `--simulate` validates the deploy *logic* only.
+
+**Deploy**
+- [ ] **Dry run**: `./deploy-v0.17.1.sh <net> --simulate` → review the printed summary.
+- [ ] **Broadcast**: `./deploy-v0.17.1.sh <net> [--verify]`.
+
+**After broadcast**
+- [ ] **Record addresses** → §5 table below + `.env.<net>` (incl. `AIRACCOUNT_FACTORY`, `AGENT_SESSION_VALIDATOR`, and an `AIRACCOUNT_AGENT_ACCOUNT` created via `createAgentAccount`).
+- [ ] **Smoke E2E (v0.17.1-specific)**: `pnpm tsx scripts/test-v0171-diamond-e2e.ts` — asserts factory→validator wiring (#21), `agentExtension` singleton, agent default-install, and live fallback routing.
+- [ ] **Full agent flow**: `pnpm tsx scripts/test-m7-e2e.ts` against the new addresses (grantAgentSession, agent-key UserOp, velocity).
+- [ ] **Signature-path E2E**: relevant `scripts/test-e2e-*.ts` (ecdsa / bls / gasless / session-key / force-exit / 7702).
+- [ ] **SuperPaymaster handoff**: give the `AgentRegistry` address to the SP team → they `setAgentRegistries(addr)` + run E2E G2.
+- [ ] **SDK sync**: publish ABIs (account = `abi/AAStarAirAccountV7.full.json`) + addresses to `@aastar/sdk` (PR #29). The `lib/aastar-sdk` submodule was removed — **no submodule bump**.
 
 ---
 
@@ -119,11 +145,11 @@ The deploy script's **logic is validated** via `forge script ... --sender <addr>
 
 1. **Record addresses** here (append a per-chain table below) and into `.env.<network>`.
 2. **SuperPaymaster**: hand the `AgentRegistry` address to the SP team → they `setAgentRegistries(addr)` + run E2E G2.
-3. **SDK sync** (`@aastar/sdk` / `lib/aastar-sdk`):
+3. **SDK sync** (`@aastar/sdk`, separate repo — the `lib/aastar-sdk` submodule was removed; the SDK consumes the contract's published ABIs directly, there is **no submodule pointer to bump**):
    - Export ABIs from `out/<Contract>.sol/<Contract>.json` (`.abi`) → commit to the SDK repo (`abis/`).
    - **For the account, use the merged `abi/AAStarAirAccountV7.full.json`** (run `node scripts/build-full-abi.mjs`), NOT the raw `out/AAStarAirAccountV7.sol` ABI. The account is diamond-lite: agent (ERC-8004) + weight-governance functions execute via fallback→delegatecall to `AirAccountExtension` and are absent from the raw account ABI; the full ABI merges them back so the SDK can encode them.
    - Update the SDK address config (`config.<network>.json`) with the deployed addresses.
-   - Bump the SDK version, then bump the `lib/aastar-sdk` submodule pointer here.
+   - Bump the SDK version in the SDK repo + open its PR (e.g. SDK PR #29). Nothing to commit back here.
 4. **E2E**: run the relevant `scripts/test-e2e-*.ts` against the new addresses.
 
 ### Deployed addresses — Sepolia (chainId 11155111)

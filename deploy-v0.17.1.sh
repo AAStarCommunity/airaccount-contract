@@ -1,15 +1,15 @@
 #!/bin/bash
 # =============================================================================
-# deploy-v0.17.0.sh — One-click deploy of the full AirAccount v0.17.0 contract set
+# deploy-v0.17.1.sh — One-click deploy of the full AirAccount v0.17.1 contract set
 #                     via forge script (script/DeployAirAccountV017.s.sol).
 #
 # Usage:
-#   ./deploy-v0.17.0.sh                 # Sepolia (default), env private key
-#   ./deploy-v0.17.0.sh sepolia
-#   ./deploy-v0.17.0.sh op-sepolia
-#   ./deploy-v0.17.0.sh op-mainnet      # OP Mainnet — cast wallet keystore (password prompt)
-#   ./deploy-v0.17.0.sh sepolia --simulate    # dry-run, no broadcast
-#   ./deploy-v0.17.0.sh sepolia --verify       # also verify on Etherscan
+#   ./deploy-v0.17.1.sh                 # Sepolia (default), env private key
+#   ./deploy-v0.17.1.sh sepolia
+#   ./deploy-v0.17.1.sh op-sepolia
+#   ./deploy-v0.17.1.sh op-mainnet      # OP Mainnet — cast wallet keystore (password prompt)
+#   ./deploy-v0.17.1.sh sepolia --simulate    # dry-run, no broadcast
+#   ./deploy-v0.17.1.sh sepolia --verify       # also verify on Etherscan
 #
 # Env file (auto-detected): ./.env.sepolia  (falls back to ../SuperPaymaster/.env.<net>)
 # Needs: PRIVATE_KEY (testnet) or a cast-wallet keystore (mainnet),
@@ -88,7 +88,7 @@ echo "🏛  communityGuardian: ${COMMUNITY_GUARDIAN_ADDRESS:-<unset → address(
 [ -f "out/AAStarAirAccountFactoryV7.sol/AAStarAirAccountFactoryV7.json" ] || { echo "🔧 forge build…"; forge build; }
 
 echo ""
-echo "=== Deploy AirAccount v0.17.0 → $NET  (simulate=$SIMULATE) ==="
+echo "=== Deploy AirAccount v0.17.1 → $NET  (simulate=$SIMULATE) ==="
 # Redact any secret (private key) before echoing the command.
 echo "forge script $SCRIPT $(printf '%s ' "${FLAGS[@]}" | sed -E 's/(--private-key )[^ ]+/\1***REDACTED***/g')"
 echo ""
@@ -96,6 +96,7 @@ forge script "$SCRIPT" "${FLAGS[@]}"
 
 echo ""
 echo "✅ Done. Next:"
-echo "   1. Copy the printed addresses into docs/DEPLOYMENT-v0.17.0.md (per-chain table) + .env.$NET"
+echo "   1. Copy the printed addresses into docs/DEPLOYMENT-v0.17.1.md (per-chain table) + .env.$NET"
 echo "   2. Give the AgentRegistry address to the SuperPaymaster team (setAgentRegistries)"
-echo "   3. Sync ABIs + addresses to the @aastar/sdk repo, then bump the lib/aastar-sdk submodule"
+echo "   3. Sync ABIs (account: abi/AAStarAirAccountV7.full.json) + addresses to the @aastar/sdk repo"
+echo "      (lib/aastar-sdk submodule was removed — no submodule bump)"
