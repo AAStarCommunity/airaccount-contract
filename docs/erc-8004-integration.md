@@ -135,6 +135,40 @@ It maps naturally onto AAStar's roadmap (KMS/TEE attestation, the DVT-based **Po
 
 ---
 
+## 6.5 Deployment-model alternatives & why we use the singleton
+
+The EIP currently describes per-chain singleton registries, but an active community discussion (ethereum-magicians thread "ERC-8004 in production: per-collection factory vs chain singleton", May 2026) proposes per-collection factories. Recording our decision so future questions about it have a written answer.
+
+### Models considered
+
+| Model | Used by | Fits us? |
+|---|---|---|
+| **A. Per-chain singleton (official)** — one canonical `IdentityRegistry` per network family, address baked into the spec. | The EIP reference; we use this. | ✅ Yes — see below. |
+| **B. Per-collection factory** — `AgentIdentityRegistryFactory` deploys one registry per NFT collection; `boundCollection` is immutable; `registerWithSource(tokenId)` requires owning a token in the bound collection. Aligns with ERC-8217 (Agent NFT Identity Bindings). | TMerlini's production deployment (Pixel Goblins / Goblinarinos / Sproto Gremlins). | ❌ Our agent identity is the **AirAccount** itself, not an NFT-collection membership — the factory's isolation benefits (per-collection admin, economics, treasury) and its `boundCollection` invariant have no corresponding requirement in our model. |
+| **C. Self-deployed standalone registry** — anyone can deploy their own ERC-8004 registry (the interface is open). | Private / permissioned networks; consortia. | ❌ We want public, canonical, EIP-aligned discovery. |
+| **D. ERC-8217 per-agent binding contract** — one binding contract per agent. | Niche; spec still moving. | ❌ Too fine-grained; not required by our agent model. |
+
+### Why model A is right for AirAccount
+
+- Our agent's on-chain identity is the AirAccount itself (autonomous AirAccount, or session key inside a human AirAccount) — there is **no NFT-collection layer** to segregate by, so the factory's main premise doesn't apply.
+- Canonical address → SDK / SuperPaymaster / integrators do a single direct read, no `factory.lookup(collection)` hop.
+- All public ERC-8004 indexers/explorers (QuickNode, etc.) target the canonical singleton — we get discovery for free.
+- Zero deployment cost on our side; spec-compliant by signature (audited 2026-05-29).
+
+### Tradeoffs we explicitly accept by using the singleton
+
+- **Trust assumption on the upgrade authority**: the official registries are upgradeable; we implicitly rely on the ERC-8004 team's stewardship of the implementation. Mitigation: pin to the official addresses per chain (`_requireOfficial*`) so a malicious clone cannot be passed in.
+- **Shared blast radius**: a vulnerability in the singleton affects all consumers. Accepted because we are not in a position to maintain a fork, and the alternative (self-deploy) sacrifices canonical discovery.
+- **No per-account isolation of identity governance / economics**: we have no requirement for it.
+
+### What would make us reconsider
+
+- If the EIP graduates and changes the recommended deployment model.
+- If we add a product line where agents are bound to a specific NFT collection (in which case model B becomes naturally applicable for that line, in parallel to our existing singleton usage for non-collection agents).
+- If a singleton-level incident makes the trust assumption untenable.
+
+---
+
 ## 7. Reference resources (reading priority)
 
 1. **Official EIP / spec** — https://eips.ethereum.org/EIPS/eip-8004 — minimal interfaces for all three registries, agent registration JSON, feedback file structure, validation request/response. *Status: Draft.*
