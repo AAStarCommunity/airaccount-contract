@@ -828,6 +828,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // Reject if accumulated weight is insufficient for even Tier 1
         if (accumulated < wc.tier1Threshold) return 1;
 
+        // L-1 fix (Codex 2026-05-30): reject trailing/extraneous bytes after the last consumed signature.
+        // Without this, signature canonicalisation is broken — relayers/indexers using keccak256(signature)
+        // as a uniqueness key would see distinct hashes for semantically identical signatures.
+        // The ERC-4337 nonce prevents replay, so trailing bytes are not a security hole, but they ARE
+        // a downstream-consumer footgun. Forge canonical form.
+        if (cursor != sigData.length) return 1;
+
         _storeValidatedWeight(accumulated);
         return 0;
     }
@@ -1163,6 +1170,25 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      key = keccak256(userOp.callData)) and execute/executeBatch (execution phase,
     ///      key = keccak256(msg.data), which equals the validated userOp.callData on the
     ///      EntryPoint path). All algId/weight/sessionKey entries are keyed by this value.
+    ///
+    /// @dev AUDIT NOTE — HIGH-3 residual (#52, classified LOW by AAStar 2026-05-30):
+    ///      _setCallDataKey uses keccak256(callData) only. Within one bundle, two UserOps with
+    ///      byte-identical callData but different nonces share the same transient slot, so a
+    ///      lower-tier UserOp can read the algId written by a higher-tier UserOp.
+    ///
+    ///      Why this is LOW, not HIGH:
+    ///        - Identical callData ⇒ identical (dest, value, func). Attacker cannot redirect funds,
+    ///          change amount, or change function — they can only DUPLICATE an operation the
+    ///          victim already authorized.
+    ///        - Attacker gains zero value (recipient is the victim's chosen recipient, not attacker).
+    ///        - Customer impact at worst: a griefing double-execution of a transfer the customer was
+    ///          already going to make. No theft. No privilege escalation beyond what the high-tier
+    ///          UserOp the customer is submitting already grants.
+    ///        - Requires the attacker to already hold owner-ECDSA (itself a catastrophic compromise)
+    ///          + a mempool-observable identical-callData high-tier UserOp + specific bundle ordering.
+    ///
+    ///      Tracked for full hardening in #52 (key by (sender, nonce, callData) + single-use
+    ///      consumption). Future reviewers: do NOT classify this as High — see this note.
     function _setCallDataKey(bytes32 key) internal {
         assembly { tstore(CALLDATA_KEY_SLOT, key) }
     }
