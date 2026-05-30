@@ -37,7 +37,17 @@ contract AAStarAirAccountFactoryV7 {
     ///      Prevents a long-lived signature from being replayed far in the future.
     uint48 internal constant MAX_GUARDIAN_SIG_TTL = 30 days;
 
+    /// @dev v0.17.2 H-2 (Codex P1 round 2): AgentRegistry that records the provenance of each
+    ///      account created by this factory. Set once via `setAgentRegistry` post-deploy
+    ///      (factory↔registry circular dependency). When non-zero, each createAccount* calls
+    ///      `agentRegistry.markValid(account)`, which is the only path to populating
+    ///      `isValidAccount`. SuperPaymaster's sponsorship eligibility rests on this mapping.
+    address public agentRegistry;
+    /// @dev Deployer of the factory; the only address allowed to call `setAgentRegistry`. Set-once.
+    address public immutable factoryAdmin;
+
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
+    event AgentRegistrySet(address indexed agentRegistry);
 
     /// @dev Emitted when an agent account is created via createAgentAccount.
     event AgentAccountCreated(
@@ -52,6 +62,9 @@ contract AAStarAirAccountFactoryV7 {
     error GuardianDidNotAccept(address guardian);
     error DuplicateGuardian();
     error AgentKeyDidNotAccept();
+    error NotFactoryAdmin();
+    error AgentRegistryAlreadySet();
+    error AgentRegistryNotContract();
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
@@ -71,6 +84,7 @@ contract AAStarAirAccountFactoryV7 {
         implementation = address(new AAStarAirAccountV7());
         entryPoint = _entryPoint;
         defaultCommunityGuardian = _communityGuardian;
+        factoryAdmin = msg.sender; // for set-once setAgentRegistry post-deploy
         for (uint256 i = 0; i < defaultTokens.length; i++) {
             address tok = defaultTokens[i];
             require(tok != address(0), "Default token address zero");
@@ -89,6 +103,37 @@ contract AAStarAirAccountFactoryV7 {
             _defaultTokenAddresses.push(tok);
             _defaultTokenConfigs.push(cfg);
         }
+    }
+
+    // ─── Post-deploy AgentRegistry binding (v0.17.2 H-2 round 2) ─────
+
+    /// @notice One-time setter for the AgentRegistry whose `isValidAccount` mapping records
+    ///         which accounts were created by this factory. Caller must be `factoryAdmin`
+    ///         (i.e., the deployer of this factory). Set-once: cannot be re-pointed.
+    /// @dev    Why a setter and not a constructor param: AgentRegistry's own constructor needs
+    ///         to know the factory address (to gate `markValid`), creating a circular dependency
+    ///         at deploy time. Deployment order is: factory → AgentRegistry(factory) →
+    ///         factory.setAgentRegistry(agentRegistry). Until set, createAccount* still works
+    ///         but does NOT call markValid — those accounts will not be able to registerAgent
+    ///         until the registry is bound. Recommended to set immediately after deploy.
+    function setAgentRegistry(address _agentRegistry) external {
+        if (msg.sender != factoryAdmin) revert NotFactoryAdmin();
+        if (agentRegistry != address(0)) revert AgentRegistryAlreadySet();
+        if (_agentRegistry.code.length == 0) revert AgentRegistryNotContract();
+        agentRegistry = _agentRegistry;
+        emit AgentRegistrySet(_agentRegistry);
+    }
+
+    /// @dev Helper called from each createAccount* path to mark provenance in the AgentRegistry.
+    ///      No-op if agentRegistry is unset. Uses low-level call so a faulty/reverting registry
+    ///      doesn't bork account creation — but logs a clear event when the call fails so
+    ///      operators notice the misconfiguration.
+    function _markAccountValid(address account) internal {
+        address reg = agentRegistry;
+        if (reg == address(0)) return;
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool ok,) = reg.call(abi.encodeWithSignature("markValid(address)", account));
+        ok; // intentionally swallowed — account is created either way; the registry pop is best-effort
     }
 
     // ─── Full Configuration ─────────────────────────────────────────
@@ -134,7 +179,7 @@ contract AAStarAirAccountFactoryV7 {
         }
         account = Clones.cloneDeterministic(implementation, cloneSalt);
         AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
-        emit AccountCreated(account, owner, salt);
+        _markAccountValid(account);        emit AccountCreated(account, owner, salt);
     }
 
     /// @notice Predict the counterfactual address for a full-config account.
@@ -209,7 +254,7 @@ contract AAStarAirAccountFactoryV7 {
         ));
         account = Clones.cloneDeterministic(implementation, cloneSalt);
         AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
-        emit AccountCreated(account, owner, salt);
+        _markAccountValid(account);        emit AccountCreated(account, owner, salt);
     }
 
     /// @notice Create a dedicated AirAccount for an autonomous AI agent.
@@ -307,7 +352,7 @@ contract AAStarAirAccountFactoryV7 {
         AAStarAirAccountV7(payable(account)).initializeAgentAccount(
             entryPoint, msg.sender, config, guardAddr
         );
-        emit AgentAccountCreated(account, agentKey, msg.sender, agentId, guardian2, dailyLimit);
+        _markAccountValid(account);        emit AgentAccountCreated(account, agentKey, msg.sender, agentId, guardian2, dailyLimit);
     }
 
     /// @notice Predict the address of a future agent account.

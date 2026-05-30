@@ -177,11 +177,19 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
                 // SIG_VALIDATION_FAILED = 1 is the only sentinel for rejection.
                 if (validationData != 1 && userOp.signature.length > 0) {
                     uint8 algId = uint8(userOp.signature[0]);
-                    _storeValidatedAlgId(algId);
-                    // v0.17.2: the previous 66-byte ASK session-key recovery branch is removed.
-                    // Session keys (algId 0x08) use the native base._validateSignature path with the
-                    // 106/149-byte M6.4 format; that path stores the session-key identifier via
-                    // _storeSessionKey() directly, so no nonce-key-route session-key handling is needed.
+                    // Codex P1-#11 (2026-05-30): session keys (algId 0x08) MUST NOT come in via
+                    // ERC-7579 nonce-key routing. A third-party validator could otherwise pass
+                    // sig[0]==0x08 through this path; base._enforceGuard would see algId=0x08 with
+                    // taggedSessionKey == bytes32(0) (because nonce-key route does not call
+                    // _storeSessionKey) and SKIP the scope/velocity check entirely. To prevent
+                    // that bypass, reject ALG_SESSION_KEY here — session keys belong in the
+                    // native base._validateSignature path (106/149-byte M6.4 format) where
+                    // taggedSessionKey IS populated and _enforceGuard enforces scope.
+                    if (algId == ALG_SESSION_KEY) {
+                        validationData = 1; // SIG_VALIDATION_FAILED
+                    } else {
+                        _storeValidatedAlgId(algId);
+                    }
                 }
             }
         } else {

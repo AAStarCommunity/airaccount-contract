@@ -11,20 +11,20 @@ contract AgentRegistry {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
-    /// @dev EIP-1167 minimal-proxy prefix (10 bytes) — runtime code emitted by OZ Clones.
-    ///      Layout: prefix(10) + implementation(20) + suffix(15) = 45 bytes total.
-    bytes10 internal constant EIP1167_PREFIX = hex"363d3d373d3d3d363d73";
-    bytes15 internal constant EIP1167_SUFFIX = hex"5af43d82803e903d91602b57fd5bf3";
+    /// @dev v0.17.2 H-2 fix (Codex P1 round 2 — 2026-05-30): replaces the original extcodehash
+    ///      `EIP-1167 clone of implementation` check, which can be bypassed by anyone calling
+    ///      `Clones.clone(implementation)` directly (no factory involvement). The mapping below
+    ///      is populated only by the bound factory's `createAccount*` paths, giving a true
+    ///      factory-provenance guarantee.
+    ///
+    ///      The factory address is set once at deploy time (`bindFactory`), and is the SOLE
+    ///      authorised writer of `isValidAccount`. The pre-existing `Clones.clone` bypass
+    ///      becomes irrelevant — even if an attacker produces a clone, they cannot have
+    ///      the factory call `markValid(theirClone)`.
+    address public factory;
 
-    /// @dev v0.17.2 H-2 fix: AirAccount implementation that valid callers must be a clone of.
-    ///      Set in constructor to factory.implementation(). Replaces the v0.17.1
-    ///      accountId() prefix-string check, which was forgeable by any contract returning
-    ///      a string starting with "airaccount." — see Codex pre-release H-2 finding.
-    address public immutable airAccountImplementation;
-
-    /// @dev Pre-computed extcodehash of a valid EIP-1167 clone of airAccountImplementation.
-    ///      Compared against extcodehash(msg.sender) in registerAgent for O(1) verification.
-    bytes32 public immutable validCloneCodeHash;
+    /// @dev Accounts authorised to register agents (set by `factory.markValid` during createAccount*).
+    mapping(address => bool) public isValidAccount;
 
     /// @dev agentWallet → humanOwner
     mapping(address => address) public agentWalletOwner;
@@ -35,6 +35,8 @@ contract AgentRegistry {
 
     event AgentRegistered(address indexed humanOwner, address indexed agentWallet);
     event AgentDeregistered(address indexed humanOwner, address indexed agentWallet);
+    event FactoryBound(address indexed factory);
+    event AccountMarkedValid(address indexed account);
 
     error NotAgentOwner();
     error AgentAlreadyRegistered();
@@ -42,36 +44,46 @@ contract AgentRegistry {
     error InvalidAgentSignature();
     error SelfRegistrationForbidden();
     error NotSupported();
-    /// @dev v0.17.2: msg.sender is not an EIP-1167 clone of the bound AirAccount implementation.
     error CallerNotAirAccount();
+    error FactoryAlreadyBound();
+    error OnlyFactory();
 
-    /// @param _airAccountImplementation The AirAccount V7 implementation address (factory.implementation()).
-    ///         All valid callers of registerAgent must be EIP-1167 clones of this contract.
-    constructor(address _airAccountImplementation) {
-        if (_airAccountImplementation == address(0)) revert InvalidAddress();
-        airAccountImplementation = _airAccountImplementation;
-        validCloneCodeHash = keccak256(abi.encodePacked(
-            EIP1167_PREFIX,
-            _airAccountImplementation,
-            EIP1167_SUFFIX
-        ));
+    /// @notice One-time binding of the factory address. Deployer (i.e. the account that deploys
+    ///         this AgentRegistry) is the only address allowed to call this; once bound it cannot
+    ///         be changed. Performed post-deploy because the deploy order has a circular
+    ///         dependency (factory↔registry), and using a setter avoids needing CREATE2 address
+    ///         prediction in scripts.
+    /// @dev Only callable once. After binding, only `factory` can call `markValid`. There is no
+    ///      `unbind` — the binding is permanent.
+    function bindFactory(address _factory) external {
+        if (factory != address(0)) revert FactoryAlreadyBound();
+        if (_factory == address(0) || _factory.code.length == 0) revert InvalidAddress();
+        factory = _factory;
+        emit FactoryBound(_factory);
     }
 
-    /// @notice Register msg.sender (AirAccount clone) as the human owner of agentWallet.
-    ///         agentWalletSig proves the caller controls agentWallet, preventing front-run griefing.
-    ///         Supports both EOA (ECDSA) and smart-contract (ERC-1271) agent wallets.
+    /// @notice Called by the factory at the end of each createAccount* to record provenance.
+    /// @dev Only the bound factory may call this. Reverts if factory is not yet bound or if
+    ///      the caller is not the bound factory.
+    function markValid(address account) external {
+        if (msg.sender != factory) revert OnlyFactory();
+        if (account == address(0) || account.code.length == 0) revert InvalidAddress();
+        isValidAccount[account] = true;
+        emit AccountMarkedValid(account);
+    }
+
+    /// @notice Register msg.sender (AirAccount created by the bound factory) as the human owner
+    ///         of agentWallet. agentWalletSig proves the caller controls agentWallet, preventing
+    ///         front-run griefing. Supports both EOA (ECDSA) and smart-contract (ERC-1271) agent wallets.
     /// @param agentWallet The agent's wallet address (EOA or smart contract)
     /// @param agentWalletSig Signature from agentWallet over:
     ///        keccak256(abi.encodePacked("REGISTER_AGENT", chainId, address(this), msg.sender, agentWallet)).toEthSignedMessageHash()
     function registerAgent(address agentWallet, bytes calldata agentWalletSig) external {
-        // v0.17.2 H-2 fix: only EIP-1167 clones of the bound implementation may register.
-        // Verifies msg.sender's runtime code is exactly the EIP-1167 minimal proxy pointing at
-        // airAccountImplementation. Cannot be forged: an attacker cannot produce a contract
-        // whose extcodehash matches without deploying the canonical clone (which only the factory
-        // can do via Clones.cloneDeterministic / clone). Constant-gas check via extcodehash.
-        bytes32 callerCodeHash;
-        assembly { callerCodeHash := extcodehash(caller()) }
-        if (callerCodeHash != validCloneCodeHash) revert CallerNotAirAccount();
+        // v0.17.2 H-2 (Codex P1 round 2 — 2026-05-30): only factory-created accounts may register.
+        // Bypasses the prior extcodehash-clone-bypass (any contract can call `Clones.clone(impl)`
+        // and pass the codehash check). isValidAccount is written ONLY by the bound factory's
+        // createAccount* paths, so a script-deployed clone outside the factory cannot pass.
+        if (!isValidAccount[msg.sender]) revert CallerNotAirAccount();
 
         if (agentWallet == address(0)) revert InvalidAddress();
         if (agentWallet == msg.sender) revert SelfRegistrationForbidden();

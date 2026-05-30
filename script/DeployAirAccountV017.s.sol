@@ -131,10 +131,13 @@ contract DeployAirAccountV017 is Script {
         d.implementation = factory.implementation();
 
         // 9. Agent identity/wallet registry (SuperPaymaster setAgentRegistries target).
-        //    H-2 fix: bound to factory.implementation() so only EIP-1167 clones of that
-        //    implementation can call registerAgent (replaces the v0.17.1 accountId()
-        //    prefix-string check, which was forgeable by any contract).
-        d.agentRegistry = address(new AgentRegistry(d.implementation));
+        //    H-2 (Codex P1 round 2): factory-provenance whitelist instead of extcodehash check.
+        //    AgentRegistry constructor takes NO args; the factory address is bound post-deploy
+        //    via `bindFactory`, and factory.createAccount* writes `isValidAccount[account] = true`
+        //    via `markValid`. SuperPaymaster eligibility derives from this mapping.
+        d.agentRegistry = address(new AgentRegistry());
+        AgentRegistry(d.agentRegistry).bindFactory(address(factory));
+        factory.setAgentRegistry(d.agentRegistry);
 
         vm.stopBroadcast();
 

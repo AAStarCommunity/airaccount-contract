@@ -193,12 +193,15 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     }
 
     /// @notice Grant an ECDSA session by direct owner call (or via owner-signed UserOp).
+    /// @dev Codex P1-#2 (2026-05-30): accepts both `msg.sender == owner` (direct EOA call)
+    ///      AND `msg.sender == account` (account self-calls during a UserOp — the canonical
+    ///      KMS / DApp flow where owner signs a UserOp whose calldata is `grantSessionDirect(...)`).
     function grantSessionDirect(
         address account,
         address sessionKey,
         Session calldata cfg
     ) external {
-        if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
+        if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
         _validateCfg(cfg);
         _checkNotExists(account, sessionKey);
         _storeSession(account, sessionKey, cfg);
@@ -223,7 +226,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         address contractScope,
         bytes4  selectorScope
     ) external {
-        if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
+        if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
         Session memory cfg = Session({
             expiry: expiry,
             contractScope: contractScope,
@@ -275,7 +278,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         address contractScope,
         bytes4  selectorScope
     ) external {
-        if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
+        if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
         Session memory cfg = Session({
             expiry: expiry,
             contractScope: contractScope,
@@ -461,7 +464,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         bytes32 p256KeyY,
         Session calldata cfg
     ) external {
-        if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
+        if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
         _validateCfg(cfg);
         bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
         _checkP256NotExists(account, keyHash);

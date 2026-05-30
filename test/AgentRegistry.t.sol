@@ -106,7 +106,10 @@ contract AgentRegistryTest is Test {
 
     function setUp() public {
         mockImpl = new MockAirAccount();
-        registry = new AgentRegistry(address(mockImpl));
+        registry = new AgentRegistry();
+        // v0.17.2 Codex P1 round 2: AgentRegistry uses factory-provenance whitelist.
+        // The test contract impersonates the factory: bind it, then mark each test "account" valid.
+        registry.bindFactory(address(this));
 
         aliceWallet  = vm.createWallet("alice");
         bobWallet    = vm.createWallet("bob");
@@ -118,17 +121,22 @@ contract AgentRegistryTest is Test {
         agentA = agentAWallet.addr;
         agentB = agentBWallet.addr;
 
-        // Real EIP-1167 clones — their extcodehash matches AgentRegistry's expected value.
+        // Real EIP-1167 clones to look-and-feel like factory output (extcodehash not relied on
+        // anymore, but kept for behavioural realism).
         aliceAccount = MockAirAccount(Clones.clone(address(mockImpl)));
         aliceAccount.initialize(alice);
+        registry.markValid(address(aliceAccount));
         bobAccount = MockAirAccount(Clones.clone(address(mockImpl)));
         bobAccount.initialize(bob);
+        registry.markValid(address(bobAccount));
     }
 
     /// @dev Create a new clone owned by `_owner` for tests that need extra mock accounts.
+    ///      Also marks the clone valid in the registry so it can call registerAgent.
     function _newMockClone(address _owner) internal returns (MockAirAccount) {
         MockAirAccount c = MockAirAccount(Clones.clone(address(mockImpl)));
         c.initialize(_owner);
+        registry.markValid(address(c));
         return c;
     }
 
@@ -558,11 +566,13 @@ contract AgentRegistryTest is Test {
 
     // ─── setAgentWallet integration (account → registry) ─────────────────────
 
-    /// @dev Helper: deploy a V7 impl + an AgentRegistry bound to it + a V7 clone for testing.
-    ///      Returns (account-clone, registry-bound-to-v7-impl).
+    /// @dev Helper: deploy a V7 impl + an AgentRegistry + a V7 clone + bind & markValid.
+    ///      Returns (account-clone, registry).
     function _setupV7CloneAndRegistry(address ownerAddr) internal returns (AAStarAirAccountV7, AgentRegistry) {
         AAStarAirAccountV7 v7Impl = new AAStarAirAccountV7();
-        AgentRegistry v7Registry = new AgentRegistry(address(v7Impl));
+        AgentRegistry v7Registry = new AgentRegistry();
+        // Bind THIS test contract as the registry's "factory" so we can call markValid below.
+        v7Registry.bindFactory(address(this));
         AAStarAirAccountV7 clone = AAStarAirAccountV7(payable(Clones.clone(address(v7Impl))));
         MockEntryPoint ep = new MockEntryPoint();
         uint8[] memory algs = new uint8[](0);
@@ -578,6 +588,7 @@ contract AgentRegistryTest is Test {
                 initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
             })
         );
+        v7Registry.markValid(address(clone));
         return (clone, v7Registry);
     }
 
