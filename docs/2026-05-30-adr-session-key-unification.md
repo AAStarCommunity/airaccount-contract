@@ -162,6 +162,100 @@ Chosen.
 
 ---
 
+## 6.5 Codex adversarial review response (2026-05-30, agent a717e9f65a2b9058a)
+
+Codex returned **PLAN NEEDS REVISION** with 3 P0 (release-blocker), 4 P1 (same-release), 4 P2 (recommended) findings. Below: each finding acknowledged + plan revision.
+
+### P0 — release blockers (must be in PR A)
+
+**P0-1: velocity SSTORE must NEVER occur in validation phase (ERC-4337 / EIP-7562 mempool rule)**
+- Evidence: `src/validators/AgentSessionKeyValidator.sol:239-250` (existing ASK does this — pre-existing bug masked by us never deploying through a real bundler that enforces 7562)
+- Decision:
+  - Enhanced `SessionKeyValidator.validateSignature(...)` (router fallthrough path) stays **view-only**. Velocity field is read for early-reject check only; no SSTORE.
+  - Add `SessionKeyValidator.recordCallForVelocity(address account, address key) external` (state-mutating, only callable from the account).
+  - `base._enforceGuard` calls `recordCallForVelocity` after scope check passes. `_enforceGuard` already runs in `execute` / `executeBatch` / `executeFromExecutor`, **never** in `validateUserOp`. ERC-4337-clean.
+  - Accept the per-bundle race: 2 simultaneous in-flight UserOps may both pass validation, increment to N+2; documented as design trade-off (same as expiry checks).
+
+**P0-2: executeBatch per-call array scope check**
+- Evidence: `src/core/AAStarAirAccountBase.sol:983-1000` (batch already runs `_enforceGuard` per call), `src/core/TierGuardHook.sol:69-123` (hook only ran in single-execute path)
+- Decision:
+  - All array scope enforcement lives inside `SessionKeyValidator.checkSessionScope(account, key, dest, selector)` (view function).
+  - `_enforceGuard` invokes `checkSessionScope` per-call (no special batch logic).
+  - Single + batch paths uniformly covered. Hook deletion does not introduce regression — actually fixes M8.P2 batch-bypass note at L988-991.
+
+**P0-3: EIP-170 — don't inline array loops in V7**
+- Evidence: V7 currently 22,697 B / 1,879 B headroom; arrays + velocity + immutable getter inline est. exceeds margin
+- Decision:
+  - V7 **does NOT inline** `callTargets[]` or `selectorAllowlist[]` iteration. Iteration lives in `SessionKeyValidator.checkSessionScope`.
+  - V7 contains only: immutable `sessionKeyValidator` getter (~50 B), 1 staticcall to `checkSessionScope` (~80 B), 1 call to `recordCallForVelocity` (~80 B) inside `_enforceGuard` ext. ≈ 200-250 B (not 300-500).
+  - Must run `forge build --sizes` after every commit on this branch and gate against EIP-170; abort + redesign if margin drops below 500 B.
+  - Add `test/Eip170Size.t.sol` assertion update if needed.
+
+### P1 — same-release required
+
+**P1-1: Clean up V7:195-209 ASK 66-byte recovery branch**
+- After deleting ASK, the `if (algId == ALG_SESSION_KEY && userOp.signature.length >= 66)` branch in V7's nonce-key routing path becomes dead. Remove that block; nonce-key routing for ALG_SESSION_KEY no longer applies (session keys use base native dispatch + router only).
+
+**P1-2: Deploy script register 0x08** (already in plan, confirmed by Codex)
+- `script/DeployAirAccountV017.s.sol` adds `router.registerAlgorithm(0x08, d.sessionKeyValidator)` after the SessionKeyValidator deploy.
+
+**P1-3: KMS / E2E / SDK doc breaking-change**
+- Evidence: `docs/kms-agent-requirements.md:29-47` (hard-codes 66-byte format), `scripts/test-m7-e2e.ts:451-465` (constructs 66-byte sigs), `docs/sdk-abi-mapping.md:906-955, 992-1032, 1561-1581` (internally inconsistent already)
+- Decision: v0.17.2 release is a **breaking change** for KMS / SDK consumers.
+  - PR B: update all three docs to specify 106-byte (ECDSA session) / 149-byte (P256 session) formats with the `[0x08][account(20)][key(20)][sig]` layout.
+  - Update `scripts/test-m7-e2e.ts` to construct the new format.
+  - Open a coordinated issue on `aastar-sdk` repo + notify KMS team via Slack DM.
+
+**P1-4: New `grantSessionWithLimits` function, do NOT overload old `grantSession`**
+- Evidence: `src/validators/SessionKeyValidator.sol:111-127` (existing EIP-191 typed hash excludes velocity/arrays)
+- Decision:
+  - Keep existing `grantSession(...)` / `grantSessionDirect(...)` ABI-stable (old typed hash unchanged).
+  - Add new `grantSessionWithLimits(..., velocityLimit, velocityWindow, callTargets[], selectorAllowlist[])` + `grantSessionWithLimitsDirect(...)`.
+  - New typed hash domain: `"GRANT_SESSION_WITH_LIMITS"` (or EIP-712 with explicit type hash including all new fields).
+  - Old sessions get implicit defaults (velocityLimit=0=unlimited, empty arrays).
+
+### P2 — recommended for same release
+
+**P2-1: Preserve ASK's hard limits** — Carry over `MAX_CALL_TARGETS = 20` + `MAX_SELECTORS = 30` constants to enhanced `SessionKeyValidator` (prevents gas-bomb on iteration). Enforce in `grantSessionWithLimits`.
+
+**P2-2: factory + V7 constructor signatures** — V7 constructor adds `address _sessionKeyValidator` (stored as immutable). Factory passes it through. Existing factory `defaultValidatorModule`/`defaultHookModule` params + immutables deleted in same commit.
+
+**P2-3: ADR explicit deferment of ERC-7715 / ERC-7710** — Stated here: enhanced `SessionKeyValidator` implements `IAAStarAlgorithm` (router fallthrough) and does NOT implement `IERC7579Validator` (nonce-key module). ERC-7715 (wallet_grantPermissions) and ERC-7710 (Delegation) standard alignment is **deferred to v0.18+** for re-design when there is a concrete consumer requirement.
+
+**P2-4: WalletBeat doc downgrade** — `docs/walletbeat-assessment.md:235-255, 372-383` change "Full ERC-7579" → "ERC-7579 module surface (validator type 1 partial; executor type 2 supported; fallback type 3 used internally via diamond-lite; hook type 4 surface available but no default hooks installed)". Honest.
+
+### Revised V7 / SessionKeyValidator interaction (after Codex P0 revisions)
+
+```
+ValidateUserOp phase (NO SSTORE allowed):
+  base._validateSignature(sig) for ALG_SESSION_KEY:
+    - cross-account check (sig[1:21] == address(this))           [existing]
+    - store taggedSessionKey to transient                         [existing]
+    - fall-through to validator.validateSignature(sig)            [existing]
+      → router → SessionKeyValidator.validateSignature(sig)
+        - dispatches 105/148 by length                            [existing]
+        - ECDSA / P256 verify                                     [existing]
+        - check expiry/revoked                                    [existing]
+        - check velocity counter (READ only, would-exceed)        [NEW, view]
+        - return 0/1 (no SSTORE)
+        # NOTE: 66-byte ASK format dispatch DELETED
+
+Execute / ExecuteBatch / ExecuteFromExecutor phase:
+  base._enforceGuard(... taggedSessionKey ... dest, func):
+    - existing scope check for static contractScope/selectorScope  [existing]
+    - IF callTargets[] or selectorAllowlist[] non-empty:           [NEW]
+        sessionKeyValidator.checkSessionScope(account, key, dest, selector)
+        (staticcall — view, handles arrays + limits)
+        reverts on violation
+    - IF velocityLimit > 0:                                        [NEW]
+        sessionKeyValidator.recordCallForVelocity(account, key)
+        (call — SSTORE the counter, reverts if exceeded)
+```
+
+This split satisfies Codex P0-1 (no SSTORE in validate), P0-2 (per-call in batch via `_enforceGuard`), P0-3 (no array iteration in V7).
+
+---
+
 ## 7. Execution plan summary (full plan in PR description)
 
 1. **Pre-flight**: ADR committed (this file); Codex adversarial review of the plan.
