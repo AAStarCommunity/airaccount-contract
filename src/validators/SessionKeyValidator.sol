@@ -91,6 +91,11 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     // ─── Errors ──────────────────────────────────────────────────────
 
     error NotAccountOwner();
+    /// @dev Distinguishes "account does not expose owner() at all" from "caller is not the owner".
+    ///      Raised by _ownerOf when the staticcall fails or returns no data — i.e. the address
+    ///      is not an AirAccount-shaped contract. Codex PR #61 LOW #3 (David, 2026-05-30):
+    ///      separate this from NotAccountOwner so debugging is unambiguous.
+    error NotAirAccount();
     error NotBoundAccount();
     error SessionAlreadyExists();
     error SessionNotFound();
@@ -478,9 +483,11 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     }
 
     /// @dev Read owner address from account (account must expose `owner()` view).
+    ///      Reverts NotAirAccount if the address is not an AirAccount-shaped contract — this
+    ///      separates "wrong address entirely" from "right account, wrong caller" (NotAccountOwner).
     function _ownerOf(address account) internal view returns (address) {
         (bool ok, bytes memory data) = account.staticcall(abi.encodeWithSignature("owner()"));
-        if (!ok || data.length < 32) return address(0);
+        if (!ok || data.length < 32) revert NotAirAccount();
         return abi.decode(data, (address));
     }
 }
