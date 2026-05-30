@@ -423,9 +423,13 @@ contract SessionKeyBatchScopeTest is Test {
         vm.prank(address(ep));
         assertEq(account.validateUserOp(uop, h, 0), 0);
 
-        // Must revert — disallowedTarget is outside contractScope
+        // Must revert — disallowedTarget is outside contractScope.
+        // v0.17.2: base bubbles up the unified SessionKeyValidator's specific error;
+        // for an out-of-scope dest, that's CallTargetForbidden(dest).
         vm.prank(address(ep));
-        vm.expectRevert(AAStarAirAccountBase.SessionScopeViolation.selector);
+        vm.expectRevert(
+            abi.encodeWithSignature("CallTargetForbidden(address)", address(disallowedTarget))
+        );
         account.executeBatch(dests, values, funcs);
     }
 

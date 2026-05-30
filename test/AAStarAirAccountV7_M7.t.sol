@@ -169,8 +169,8 @@ contract AAStarAirAccountV7_M7Test is Test {
         account.installModule(typeId, module, sig);
     }
 
-    function test_accountId_is_0_16_0() public view {
-        assertEq(account.accountId(), "airaccount.v7@0.16.0");
+    function test_accountId_is_0_17_2() public view {
+        assertEq(account.accountId(), "airaccount.v7@0.17.2");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────

@@ -77,6 +77,23 @@ contract MockAirAccount {
         module.executeForceExit(address(this));
     }
 
+    /// @dev v0.17.2: ForceExitModule now routes the bridge call through this function
+    ///      (the real V7's executeFromExecutor entry point). The mock just performs the call
+    ///      from its own balance, mimicking real V7 behaviour.
+    function executeFromExecutor(bytes32 /* mode */, bytes calldata executionCalldata)
+        external returns (bytes[] memory returnData)
+    {
+        // Layout: [target(20)][value(32)][data...]
+        address target = address(bytes20(executionCalldata[0:20]));
+        uint256 value  = uint256(bytes32(executionCalldata[20:52]));
+        bytes calldata data = executionCalldata[52:];
+
+        returnData = new bytes[](1);
+        (bool ok, bytes memory ret) = target.call{value: value}(data);
+        require(ok, "executor call failed");
+        returnData[0] = ret;
+    }
+
     /// @dev Receive ETH (needed for value-forwarding tests)
     receive() external payable {}
 }
