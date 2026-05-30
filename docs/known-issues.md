@@ -410,27 +410,50 @@ No on-chain contract change is implicated. This is an operational note so that t
 
 ---
 
-## KI-13 — ForceExit Tier-1 daily-limit constrains emergency exit
+## KI-13 — ForceExit Constrained by Tier-1 Daily Limit (v0.17.2)
 
-**Severity**: Low (informational; matches Codex round 5 INFO-2 confirmation)
-**Affected Contract**: `ForceExitModule.sol` + `AAStarAirAccountV7.executeFromExecutor`
-**Category**: Emergency-exit ergonomics
+**Severity**: Low (operational, no security loss — break-glass works but is rate-limited)
+**Affected Contract**: `ForceExitModule.sol` — `executeForceExit`
+**Category**: Emergency withdrawal UX
+**Tracking**: v0.18 issue (TBD) — add bypass path
+
+> **Identified by Codex P1-#7 on 2026-05-30 and INFO-2-confirmed on round 5 (2026-05-31). v0.17.2 documents this as a known limitation rather than rewriting the V7 surface; v0.18 will add a dedicated guard-bypass entrypoint for guardian-approved force exits.**
 
 ### Description
 
-`ForceExitModule.executeForceExit` routes through `account.executeFromExecutor(bytes32(0), [target||value||data])`, which is itself guarded by `_enforceGuard(..., ALG_ECDSA, ...)` at the executor level. The practical effect: emergency exits are capped by the account's **Tier 1 (single-signature) daily limit** at the time of exit, NOT by a higher emergency-tier allowance.
+v0.17.2's M-2 fix routes `ForceExitModule.executeForceExit(account)` through `account.executeFromExecutor(...)`, which internally runs the same `_enforceGuard(value, ALG_ECDSA, ...)` as any normal executor call. That guard enforces the account's **Tier-1 daily ETH limit**.
+
+Net effect: a force-exit can only move at most `dailyLimit - todaySpent` wei in a single transaction. If the daily limit is small relative to account balance — or an attacker proactively burns the daily limit through legitimate low-amount UserOps to keep `todaySpent ≈ dailyLimit` — force-exit is throttled to the next day.
 
 ### Risk
 
-Insufficient emergency-exit bandwidth for high-value accounts. Operational, not security: assets are not at risk, but slow drain over many days is required to fully evacuate.
+- Funds are **not at risk** — the value still goes to the guardian-approved L1 target.
+- The "break-glass emergency exit" UX is degraded into a "rate-limited exit". Across days the full balance can still be withdrawn (re-propose with a fresh value each day).
+- A motivated attacker who already controls the owner key can keep `todaySpent` saturated, but they can also drain at Tier-1 rate directly, so this attack vector adds no real harm beyond what owner-key compromise already enables.
 
-### Mitigation / Plan
+### Mitigation (v0.17.2 — operational)
 
-If product wants instant full-balance exit, introduce an explicit `ALG_EMERGENCY` algorithm + higher tier that ForceExit routes through. Tracked for v0.18+.
+- Set `dailyLimit` ≥ the maximum value the user might ever need to force-exit in a single day. Documentation guidance: account holders should configure daily limit at or above their target evacuation amount.
+- Multi-day force-exit: re-call `proposeForceExit` with smaller per-tx values across consecutive days until the account is drained.
+- Don't conflate this with a security failure — guardian consent is still required, and the exit eventually completes.
+
+### Long-term Fix (v0.18+)
+
+Add a dedicated function on V7, e.g. `executeFromForceExit(address target, uint256 value, bytes data) external` that:
+
+1. Verifies `msg.sender` is the registered `ForceExitModule` address (set once at deploy time, e.g. via a new immutable on V7 or a set-once setter on factory + V7 lookup).
+2. **Skips** `_enforceGuard` — the 2-of-3 guardian approval already in `ForceExitModule.executeForceExit` is the authority, so daily-limit re-enforcement is redundant.
+3. Performs `target.call{value: value}(data)` directly.
+
+Estimated bytecode cost on V7: ~200 B (fits the v0.17.2 EIP-170 headroom of ~3 KB).
 
 ### Auditor Note
 
-Codex round 5 INFO-2 explicitly confirmed: "This is not a vulnerability; it confirms the documented KI-13 concern is implemented as 'emergency exit is constrained by Tier-1 executor guard' rather than 'guard bypass for emergency drain.'"
+Auditors should confirm that:
+- `ForceExitModule.executeForceExit` correctly requires ≥ `APPROVAL_THRESHOLD` (2-of-3) approvals before invoking `executeFromExecutor`.
+- The proposal data (target / value / data) signed by guardians cannot be tampered with between approval and execution (guardian snapshot + proposal-hash binding).
+- No existing executor path allows bypassing `_enforceGuard` for arbitrary value — only the guardian-gated `ForceExitModule` path will gain bypass in v0.18, and only for its specific bridge-precompile target.
+- Codex round 5 INFO-2 explicitly confirmed: "This is not a vulnerability; it confirms the documented KI-13 concern is implemented as 'emergency exit is constrained by Tier-1 executor guard' rather than 'guard bypass for emergency drain.'"
 
 ---
 
@@ -510,6 +533,6 @@ This is a delegate-specific limitation, NOT a regression. v0.17.1 had a strictly
 | KI-10 | ForceExit proposal invalidated by guardian rotation | ~~Low~~ | Design decision | ✅ **Resolved (guardians snapshotted at propose time)** |
 | KI-11 | Validated-state transient re-read within identical calldata (HIGH-3 residual) | Low | Validation/execution split | Planned (#52) |
 | KI-12 | Leaked testnet key in historical records | Low | Operational | Rotate key |
-| KI-13 | ForceExit Tier-1 limit constrains emergency exit | Low (informational) | Emergency-exit | Planned v0.18+ |
+| KI-13 | ForceExit constrained by Tier-1 daily limit | Low | Operational UX | Deferred to v0.18 (dedicated bypass path) |
 | KI-14 | Calldata parsers disabled in beta.1 (HIGH-4/5) | was HIGH, mitigated | Parser correctness | Planned beta.2 (rewrite parsers) |
 | KI-15 | 7702 delegate has minimal token guard (no DeFi parser) | Low | 7702 ergonomics | Planned v0.18+ |

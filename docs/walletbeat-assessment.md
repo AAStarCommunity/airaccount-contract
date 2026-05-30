@@ -381,7 +381,7 @@ absence of a companion frontend app (and one professional audit).
 | Funding Transparency | FUNDING.md, website | ✅ Contract is open source |
 | Fee Transparency | Gas estimate + limit UI | ✅ `guard.todaySpent()`, `getDeposit()`, events |
 | Chain Address Resolution | ERC-7828 resolver | ❌ Not in contract |
-| Account Abstraction | Bundler integration, ERC-5792 | ✅ Full ERC-4337 v0.7 + 7579 + 7702 |
+| Account Abstraction | Bundler integration, ERC-5792 | ✅ ERC-4337 v0.7 (full) + partial ERC-7579 module surface + EIP-7702 EOA bridge |
 | Transaction Batching | wallet_sendCalls | ✅ `executeBatch()` |
 
 **Stage 2 blockers at contract level: 2 (L2 force-exit, ERC-7828). Everything else is frontend.**

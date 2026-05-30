@@ -920,172 +920,122 @@ const nonce = await publicClient.readContract({
 
 ---
 
-## 9. Scenario 7: AI Agent Session Keys
+## 9. Scenario 7: Session Keys (v0.17.2 unified — supersedes the v0.17.1 AgentSessionKeyValidator API)
 
 ### Description
 
-Grant a time-limited, scope-restricted signing key to an AI agent or automated service. The agent can operate within defined spending caps, call target restrictions, and velocity limits without requiring the owner's key for every transaction.
+Grant a time-limited, scope-restricted signing key. Use cases:
+- **Human DApp session** (e.g. gaming): owner grants a session key to the game contract for 24h with `callTargets[]` and `selectorAllowlist[]` restricting what it can do.
+- **AI agent session**: owner grants a session key held by a KMS / agent server, with `velocityLimit` capping call rate and `callTargets[]` restricting where the agent may interact.
 
-### 9.1 grantAgentSession
+Both flows use the **same contract** — `SessionKeyValidator` registered at `algId = 0x08` in the validator router. The separate `AgentSessionKeyValidator` was deleted in v0.17.2.
+
+### 9.1 The `Session` struct
 
 ```solidity
-function grantAgentSession(
+struct Session {
+    uint48    expiry;            // Unix ts; 0 = does not exist
+    address   contractScope;     // legacy single-target; ignored if callTargets non-empty
+    bytes4    selectorScope;     // legacy single-selector; ignored if selectorAllowlist non-empty
+    bool      revoked;
+    uint16    velocityLimit;     // 0 = unlimited
+    uint32    velocityWindow;    // seconds
+    address[] callTargets;       // empty = use contractScope; non-empty = allowlist
+    bytes4[]  selectorAllowlist; // empty = use selectorScope; non-empty = allowlist
+}
+```
+
+Hard caps: `callTargets.length ≤ 20`, `selectorAllowlist.length ≤ 30`.
+
+### 9.2 grantSessionDirect — direct call (by owner or by the account itself)
+
+```solidity
+function grantSessionDirect(address account, address sessionKey, Session cfg) external
+```
+
+Callable by either `msg.sender == _ownerOf(account)` (direct EOA tx) or `msg.sender == account` (account self-call during a UserOp where `userOp.callData` invokes this function on the account). Reverts `NotAccountOwner` otherwise.
+
+### 9.3 grantSession — off-chain owner signature (gasless on-boarding)
+
+```solidity
+function grantSession(
+    address account,
     address sessionKey,
-    AgentSessionConfig calldata cfg
-) external  // msg.sender = account (via execute() UserOp or direct owner call)
-
-struct AgentSessionConfig {
-    uint48  expiry;              // Unix timestamp — session expires after this
-    uint16  velocityLimit;       // Max calls per velocityWindow (0 = unlimited)
-    uint32  velocityWindow;      // Window in seconds for velocity limiting
-    address spendToken;          // ERC-20 token for spend cap (address(0) = ETH)
-    uint256 spendCap;            // Max cumulative spend this session (0 = unlimited)
-    bool    revoked;             // Owner can revoke at any time
-    address[] callTargets;       // Allowlisted contracts (empty = all allowed)
-    bytes4[]  selectorAllowlist; // Allowed function selectors (empty = all allowed)
-}
+    Session cfg,
+    bytes ownerSig          // EIP-191 over GRANT_SESSION_V2 typed hash
+) external
 ```
 
-**SDK pseudocode:**
-```typescript
-const agentPrivKey = generatePrivateKey();
-const agentAccount = privateKeyToAccount(agentPrivKey);
+Any relayer may submit. Compute the hash via `sessionKeyValidator.buildGrantHash(account, sessionKey, cfg)`, then sign it with the owner's key (no extra EIP-191 prefix — `buildGrantHash` already returns the `toEthSignedMessageHash` of the inner bytes). The hash includes the current `grantNonces[account][sessionKey]` so a `revokeSession` invalidates any prior signature for that key.
 
-const expiry = BigInt(Math.floor(Date.now() / 1000) + 24 * 60 * 60); // 24h from now
-
-const cfg = {
-  expiry,
-  velocityLimit: 10,                    // max 10 calls per window
-  velocityWindow: 3600,                 // 1 hour window
-  spendToken: "0x0000000000000000000000000000000000000000", // ETH
-  spendCap: parseEther("0.5"),          // max 0.5 ETH total this session
-  revoked: false,
-  callTargets: [UNISWAP_ROUTER],        // only allowed to call Uniswap
-  selectorAllowlist: ["0x5ae401dc"],    // only exactInputSingle()
-};
-
-// Grant: owner sends UserOp that calls account.execute(agentValidator, 0, grantCalldata)
-const grantCalldata = encodeFunctionData({
-  abi: AGENT_VALIDATOR_ABI,
-  functionName: "grantAgentSession",
-  args: [agentAccount.address, cfg],
-});
-
-const executeCalldata = encodeFunctionData({
-  abi: ACCOUNT_ABI,
-  functionName: "execute",
-  args: [AGENT_SESSION_KEY_VALIDATOR, 0n, grantCalldata],
-});
-
-// Send as owner UserOp with ECDSA sig...
-```
-
-### 9.2 delegateSession
+### 9.4 P256 sessions
 
 ```solidity
-function delegateSession(
-    address subKey,
-    AgentSessionConfig calldata subCfg
-) external  // msg.sender = a valid session key (parentKey)
-// Sub-session scope cannot exceed parent session scope
+function grantP256SessionDirect(address account, bytes32 keyX, bytes32 keyY, Session cfg) external
+function grantP256Session     (address account, bytes32 keyX, bytes32 keyY, Session cfg, bytes ownerSig) external
+function buildP256GrantHash   (address account, bytes32 keyX, bytes32 keyY, Session cfg) external view returns (bytes32)
 ```
 
-Scope rules (all checked on-chain):
-- `subCfg.expiry <= parentCfg.expiry`
-- `subCfg.spendCap <= parentCfg.spendCap` (0 = unlimited, only allowed if parent also has 0)
-- `subCfg.velocityLimit <= parentCfg.velocityLimit`
-- `subCfg.callTargets` must be a subset of `parentCfg.callTargets`
-- `subCfg.selectorAllowlist` must be a subset of `parentCfg.selectorAllowlist`
+P256 storage key uses the truncated 248-bit `keccak256(keyX || keyY)` (see `_p256StorageKey`). v0.17.2 fixes a v0.17.1 silent bypass where storage used the full 256-bit hash but `base._enforceGuard` lookup used the 248-bit form.
 
-### 9.3 revokeAgentSession
+### 9.5 Revoke
 
 ```solidity
-function revokeAgentSession(address sessionKey) external
-// msg.sender = account. Immediately marks the session as revoked.
+function revokeSession(address account, address sessionKey) external             // owner or account
+function revokeP256Session(address account, bytes32 keyX, bytes32 keyY) external // owner or account
 ```
 
-### 9.4 recordSpend
+Increments the grant nonce so any prior `ownerSig` becomes invalid for re-grant.
+
+### 9.6 UserOp signature layout
+
+```
+ECDSA session (algId 0x08, length = 106):
+  [0x08][account(20)][sessionKey(20)][ECDSA r,s,v (65)]
+
+P256 session (algId 0x08, length = 149):
+  [0x08][account(20)][keyX(32)][keyY(32)][P256 r(32)][P256 s(32)]
+```
+
+`userOp.nonce >> 64` (the ERC-7579 "nonce key") MUST be `0` for session-key UserOps. The native `base._validateSignature` path is the only one that populates `taggedSessionKey` for scope enforcement; routing sig[0]==0x08 via ERC-7579 nonce-key selection is rejected (v0.17.2 P1-#11 hardening).
+
+### 9.7 Execute-side enforcement (called inline by `base._enforceGuard`)
 
 ```solidity
-function recordSpend(address account, address sessionKey, uint256 amount) external
-// msg.sender must equal account. Tracks cumulative spend against spendCap.
-// Reverts SpendCapExceeded if totalSpent + amount > spendCap.
+// View — reverts with CallTargetForbidden / SelectorForbidden / SessionNotFound / SessionExpired / SessionRevoked
+function checkSessionScope(
+    address account,
+    bytes32 sessionKeyOrHash,
+    uint8   sessionType,         // 0x01 = ECDSA, 0x02 = P256
+    address dest,
+    bytes4  selector
+) external view
+
+// State-mutating — gated on msg.sender == account (anti-griefing)
+function recordCallForVelocity(
+    address account,
+    bytes32 sessionKeyOrHash,
+    uint8   sessionType
+) external
 ```
 
-### 9.5 Session Key Signature Format
+SDK consumers should NOT call these directly — they fire automatically from `base._enforceGuard` per call (single-execute + executeBatch per-call coverage).
 
-When using the session key to sign a UserOp:
-
-**ECDSA session key (106 bytes total):**
-```
-[algId (0x08, 1 byte)]
-[account address (20 bytes)]  ← security: prevents cross-account replay
-[session key address (20 bytes)]
-[ECDSA signature (65 bytes)]
-```
-
-**P256 session key (149 bytes total):**
-```
-[algId (0x08, 1 byte)]
-[account address (20 bytes)]  ← security: prevents cross-account replay
-[keyX (32 bytes)]
-[keyY (32 bytes)]
-[r (32 bytes)]
-[s (32 bytes)]
-```
-
-```typescript
-async function buildSessionKeySig(
-  agentAccount: ReturnType<typeof privateKeyToAccount>,
-  accountAddress: Address,
-  hash: Hex
-): Promise<Hex> {
-  const ethHash = keccak256(concat([
-    "0x19457468657265756d205369676e6564204d6573736167653a0a3332",
-    hash,
-  ]));
-  const rawSig = await agentAccount.sign({ hash: ethHash });
-  // [0x08][account][agentAddress][sig]
-  return concat([
-    toHex(0x08, { size: 1 }),
-    accountAddress,
-    agentAccount.address,
-    rawSig,
-  ]) as Hex;
-}
-```
-
-### 9.6 Session State Queries
+### 9.8 View accessors
 
 ```solidity
-function agentSessions(address account, address sessionKey) external view returns (
-    uint48 expiry,
-    uint16 velocityLimit,
-    uint32 velocityWindow,
-    address spendToken,
-    uint256 spendCap,
-    bool revoked
-)
-
-function sessionStates(address account, address sessionKey) external view returns (
-    uint256 callCount,
-    uint256 windowStart,
-    uint256 totalSpent
-)
-
-function sessionKeyOwner(address sessionKey) external view returns (address parentAccount)
-function delegatedBy(address account, address subKey) external view returns (address parentKey)
+function getSession(address account, address sessionKey) external view returns (Session memory)
+function getP256Session(address account, bytes32 p256KeyHash) external view returns (Session memory)
+function isSessionActive(address account, address sessionKey) external view returns (bool)
+function isP256SessionActive(address account, bytes32 keyX, bytes32 keyY) external view returns (bool)
+function sessionStates(address account, address sessionKey) external view returns (uint256 callCount, uint256 windowStart)
 ```
 
-### 9.7 ERC-7715/ERC-7710 Compatibility
+### 9.9 What's NOT in v0.17.2
 
-`AgentSessionKeyValidator.validateUserOp()` returns `validationData` with the session expiry packed in the high 48 bits:
-
-```
-validationData = uint256(cfg.expiry) << 160
-// High 48 bits = validUntil, low 48 bits = validAfter (0)
-// EntryPoint will reject the UserOp if block.timestamp > validUntil
-```
+- **No `delegateSession`** — sub-delegation removed in v0.17.2; deferred to v0.18+ when there is a concrete consumer requirement.
+- **No `spendCap`** — the v0.17.1 ASK field that was never enforced on-chain. The mempool-compatible velocity counter is the only on-chain rate bound; SDK can layer additional spend tracking off-chain if needed.
+- **No ERC-7715 / ERC-7710 alignment** — the unified `SessionKeyValidator` implements `IAAStarAlgorithm` (router fallthrough), not `IERC7579Validator` (nonce-key module). Standard alignment is deferred to v0.18+.
 
 ---
 

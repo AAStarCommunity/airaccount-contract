@@ -44,7 +44,7 @@ Rather than band-aid each finding individually and keep the dual session-key com
   - **Semantics**: if `callTargets` is non-empty, it takes priority over `contractScope` (multi-target). Same for `selectorAllowlist` vs `selectorScope`. Empty array = fall back to single-value field (backward compatible with existing `grantSession`).
 - **Sub-delegation (`delegateSession`) is dropped** — defer to v0.18+ when there is a real consumer.
 - **Signature format**: keep M6.4 existing `[0x08][account(20)][key(20)][ECDSA(65)] = 106 bytes` (ECDSA) and `[0x08][account(20)][keyX(32)][keyY(32)][r(32)][s(32)] = 149 bytes` (P256). The ASK 66-byte format is not adopted — base already inline-parses 106/149.
-- **Grant API**: keep both `grantSession` (EIP-712 owner sig — DApp/SP back-end on-boarding) and `grantSessionDirect` (`msg.sender == account` — UserOp from owner). Add a parameter to either or a parallel `grantSessionWithLimits()` that accepts the velocity + array fields.
+- **Grant API**: keep both `grantSession` (EIP-191 owner sig — DApp/SP back-end on-boarding) and `grantSessionDirect` (`msg.sender == account` — UserOp from owner). Add a parameter to either or a parallel `grantSessionWithLimits()` that accepts the velocity + array fields.
 - **Naming**: contract stays `SessionKeyValidator` (no rename); ABI-stable name across versions.
 
 ### 2.2 Delete `CompositeValidator` entirely
@@ -87,7 +87,7 @@ Rather than band-aid each finding individually and keep the dual session-key com
 |---|---|---|---|
 | B-1 | Keep `delegateSession`? | **Drop** | Saves ~1500 B; no real consumer; can re-add when needed |
 | B-2 | Signature format | **Keep M6.4 existing (106/149 bytes)** | Base already inline-parses; ASK's 66-byte format was an artifact of the now-removed ERC-7579 module path |
-| B-3 | Keep both `grantSession` (EIP-712) and `grantSessionDirect`? | **Yes, both** | EIP-712 owner-sig grant is a genuine M6.4 capability (DApp back-end on-boarding) that ASK lacked |
+| B-3 | Keep both `grantSession` (EIP-191) and `grantSessionDirect`? | **Yes, both** | EIP-191 owner-sig grant is a genuine M6.4 capability (DApp back-end on-boarding) that ASK lacked |
 | B-4 | Rename enhanced contract? | **Keep `SessionKeyValidator`** | Stable contract name across versions; "v6.4" / "v7" / "agent" labels are noise |
 
 ---
