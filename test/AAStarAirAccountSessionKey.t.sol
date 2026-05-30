@@ -201,11 +201,23 @@ contract AAStarAirAccountSessionKeyTest is Test {
 
     function test_sessionKey_cannotSelfGrantViaAccountExecute() public {
         address newSessionKey = makeAddr("newSessionKey");
-        bytes memory grantCall = abi.encodeWithSelector(
-            SessionKeyValidator.grantSessionDirect.selector,
+        SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
+            expiry: uint48(block.timestamp + 1 hours),
+            contractScope: address(0),
+            selectorScope: bytes4(0),
+            revoked: false,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
+        // Use signature-form encoding (not `.selector`) because on PR A both 5-arg shim and
+        // Session-struct overloads coexist; `.selector` is ambiguous until the shim is removed.
+        bytes memory grantCall = abi.encodeWithSignature(
+            "grantSessionDirect(address,address,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))",
             address(accountA),
             newSessionKey,
-            _legacySession(uint48(block.timestamp + 1 hours), address(0), bytes4(0))
+            cfg
         );
         bytes memory callData = abi.encodeWithSelector(
             AAStarAirAccountBase.execute.selector,

@@ -235,7 +235,10 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         address contractScope,
         bytes4  selectorScope
     ) external {
-        if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
+        // Round 3 (2026-05-30): shim MUST mirror the new Session-struct overload's owner-only
+        // restriction — otherwise the confused-deputy attack (unscoped session key has the
+        // account call this shim via execute()) bypasses the L209 fix entirely.
+        if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
         Session memory cfg = Session({
             expiry: expiry,
             contractScope: contractScope,
@@ -287,7 +290,8 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         address contractScope,
         bytes4  selectorScope
     ) external {
-        if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
+        // Round 3 (2026-05-30): see grantSessionDirect shim — owner-only, no account self-call.
+        if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
         Session memory cfg = Session({
             expiry: expiry,
             contractScope: contractScope,
