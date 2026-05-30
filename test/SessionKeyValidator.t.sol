@@ -61,6 +61,12 @@ contract SessionKeyValidatorTest is Test {
         validator.grantSessionDirect(account, sessionKey, uint48(block.timestamp + 1 hours), address(0), bytes4(0));
     }
 
+    function test_grantSessionDirect_byAccount_reverts() public {
+        vm.prank(account);
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0)));
+    }
+
     function test_grantSessionDirect_expiredTimestamp_reverts() public {
         vm.prank(owner);
         vm.expectRevert(SessionKeyValidator.ExpiryInPast.selector);
@@ -138,6 +144,17 @@ contract SessionKeyValidatorTest is Test {
 
         vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
         validator.grantSession(account, sessionKey, expiry, address(0), bytes4(0), badSig);
+    }
+
+    function test_grantP256SessionDirect_byAccount_reverts() public {
+        vm.prank(account);
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        validator.grantP256SessionDirect(
+            account,
+            bytes32(uint256(0x1111)),
+            bytes32(uint256(0x2222)),
+            _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0))
+        );
     }
 
     // ─── 3. validate ─────────────────────────────────────────────────

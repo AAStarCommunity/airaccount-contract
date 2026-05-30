@@ -185,6 +185,13 @@ contract AgentRegistryTest is Test {
         registry.registerAgent(agentA, sig);
     }
 
+    function test_BindFactory_nonDeployer_reverts() public {
+        AgentRegistry fresh = new AgentRegistry();
+        vm.prank(alice);
+        vm.expectRevert(AgentRegistry.NotDeployer.selector);
+        fresh.bindFactory(address(this));
+    }
+
     function test_RegisterAgent_contractWithoutAccountId_reverts() public {
         MockEntryPoint ep = new MockEntryPoint();
         bytes memory sig = _buildRegSig(agentAWallet.privateKey, address(ep), agentA);

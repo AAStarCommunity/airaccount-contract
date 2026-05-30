@@ -198,6 +198,63 @@ contract AAStarAirAccountSessionKeyTest is Test {
         vm.prank(address(ep));
         assertEq(accountA.validateUserOp(uop, h, 0), 1, "Wrong signer must return 1");
     }
+
+    function test_sessionKey_cannotSelfGrantViaAccountExecute() public {
+        address newSessionKey = makeAddr("newSessionKey");
+        bytes memory grantCall = abi.encodeWithSelector(
+            SessionKeyValidator.grantSessionDirect.selector,
+            address(accountA),
+            newSessionKey,
+            _legacySession(uint48(block.timestamp + 1 hours), address(0), bytes4(0))
+        );
+        bytes memory callData = abi.encodeWithSelector(
+            AAStarAirAccountBase.execute.selector,
+            address(skValidator),
+            uint256(0),
+            grantCall
+        );
+
+        PackedUserOperation memory uop = _buildUserOpFor(address(accountA));
+        uop.callData = callData;
+        bytes32 h = keccak256(abi.encode(uop));
+        uop.signature = _skSig(address(accountA), sessionKey, sessionKeyPriv, h);
+
+        vm.prank(address(ep));
+        assertEq(accountA.validateUserOp(uop, h, 0), 0);
+
+        vm.prank(address(ep));
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        accountA.execute(address(skValidator), 0, grantCall);
+
+        assertFalse(skValidator.isSessionActive(address(accountA), newSessionKey));
+    }
+
+    function test_sessionKey_canSelfRevokeViaAccountExecute() public {
+        bytes memory revokeCall = abi.encodeWithSelector(
+            SessionKeyValidator.revokeSession.selector,
+            address(accountA),
+            sessionKey
+        );
+        bytes memory callData = abi.encodeWithSelector(
+            AAStarAirAccountBase.execute.selector,
+            address(skValidator),
+            uint256(0),
+            revokeCall
+        );
+
+        PackedUserOperation memory uop = _buildUserOpFor(address(accountA));
+        uop.callData = callData;
+        bytes32 h = keccak256(abi.encode(uop));
+        uop.signature = _skSig(address(accountA), sessionKey, sessionKeyPriv, h);
+
+        vm.prank(address(ep));
+        assertEq(accountA.validateUserOp(uop, h, 0), 0);
+
+        vm.prank(address(ep));
+        accountA.execute(address(skValidator), 0, revokeCall);
+
+        assertFalse(skValidator.isSessionActive(address(accountA), sessionKey));
+    }
 }
 
 // ─── Parser try/catch integration test ───────────────────────────────────────

@@ -6,6 +6,7 @@ import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.s
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
+import {AgentRegistry} from "../src/registries/AgentRegistry.sol";
 
 /// @title AAStarAirAccountFactoryV7Test - Unit tests for CREATE2 factory
 contract AAStarAirAccountFactoryV7Test is Test {
@@ -459,6 +460,14 @@ contract AAStarAirAccountFactoryV7Test is Test {
         address account1 = factory.createAccount(ownerA, 42, _minimalConfig());
         address account2 = factory.createAccount(ownerA, 42, _minimalConfig()); // same params = same address
         assertEq(account1, account2);
+    }
+
+    function test_createAccount_revertsWhenAgentRegistryMarkValidFails() public {
+        AgentRegistry unboundRegistry = new AgentRegistry();
+        factory.setAgentRegistry(address(unboundRegistry));
+
+        vm.expectRevert(AgentRegistry.OnlyFactory.selector);
+        factory.createAccount(ownerA, 43, _minimalConfig());
     }
 
     // ─── Review fix: createAccount guardian dedup ────────────────────
