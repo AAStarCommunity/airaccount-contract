@@ -151,7 +151,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         bytes32 keyY    = bytes32(sig[52:84]);
         bytes32 r       = bytes32(sig[84:116]);
         bytes32 s_val   = bytes32(sig[116:148]);
-        bytes32 keyHash = keccak256(abi.encodePacked(keyX, keyY));
+        bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(keyX, keyY)));
 
         Session storage s = _sessions_p256[account][keyHash];
         if (s.expiry == 0) return 1;
@@ -287,7 +287,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
             selectorAllowlist: new bytes4[](0)
         });
         _validateCfgMem(cfg);
-        bytes32 keyHash = keccak256(abi.encodePacked(p256KeyX, p256KeyY));
+        bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
         _checkP256NotExists(account, keyHash);
         _sessions_p256[account][keyHash] = cfg;
         emit P256SessionGranted(account, keyHash, cfg);
@@ -313,7 +313,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
             selectorAllowlist: new bytes4[](0)
         });
         _validateCfgMem(cfg);
-        bytes32 keyHash = keccak256(abi.encodePacked(p256KeyX, p256KeyY));
+        bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
         _checkP256NotExists(account, keyHash);
         bytes32 grantHash = _buildP256GrantHashMem(account, p256KeyX, p256KeyY, cfg);
         address recovered = grantHash.recover(ownerSig);
@@ -415,7 +415,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     function _buildP256GrantHashMem(address account, bytes32 keyX, bytes32 keyY, Session memory cfg)
         internal view returns (bytes32)
     {
-        bytes32 keyHash = keccak256(abi.encodePacked(keyX, keyY));
+        bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(keyX, keyY)));
         bytes32 inner = keccak256(abi.encode(
             "GRANT_P256_SESSION_V2",
             block.chainid,
@@ -445,7 +445,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         bytes calldata ownerSig
     ) external {
         _validateCfg(cfg);
-        bytes32 keyHash = keccak256(abi.encodePacked(p256KeyX, p256KeyY));
+        bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
         _checkP256NotExists(account, keyHash);
 
         bytes32 grantHash = _buildP256GrantHash(account, p256KeyX, p256KeyY, cfg);
@@ -463,14 +463,14 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     ) external {
         if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
         _validateCfg(cfg);
-        bytes32 keyHash = keccak256(abi.encodePacked(p256KeyX, p256KeyY));
+        bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
         _checkP256NotExists(account, keyHash);
         _storeP256Session(account, keyHash, cfg);
     }
 
     function revokeP256Session(address account, bytes32 p256KeyX, bytes32 p256KeyY) external {
         if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
-        bytes32 keyHash = keccak256(abi.encodePacked(p256KeyX, p256KeyY));
+        bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
         _sessions_p256[account][keyHash].revoked = true;
         grantNonces_p256[account][keyHash]++;
         emit P256SessionRevoked(account, keyHash);
@@ -569,7 +569,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     }
 
     function isP256SessionActive(address account, bytes32 p256KeyX, bytes32 p256KeyY) external view returns (bool) {
-        bytes32 keyHash = keccak256(abi.encodePacked(p256KeyX, p256KeyY));
+        bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
         Session storage s = _sessions_p256[account][keyHash];
         return s.expiry != 0 && !s.revoked && block.timestamp < s.expiry;
     }
@@ -643,7 +643,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     function _buildP256GrantHash(address account, bytes32 keyX, bytes32 keyY, Session calldata cfg)
         internal view returns (bytes32)
     {
-        bytes32 keyHash = keccak256(abi.encodePacked(keyX, keyY));
+        bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(keyX, keyY)));
         bytes32 inner = keccak256(abi.encode(
             "GRANT_P256_SESSION_V2",
             block.chainid,
@@ -661,6 +661,13 @@ contract SessionKeyValidator is IAAStarAlgorithm {
             grantNonces_p256[account][keyHash]
         ));
         return inner.toEthSignedMessageHash();
+    }
+
+    /// @dev P256 storage key: truncate to lower 248 bits so base's taggedSessionKey
+    ///      lookup (which uses the top byte for sessionType tag) matches storage. The
+    ///      8-bit entropy loss is cryptographically negligible (still 2^124 collision).
+    function _p256StorageKey(bytes32 fullHash) internal pure returns (bytes32) {
+        return bytes32(uint256(fullHash) & type(uint248).max);
     }
 
     function _containsAddr(address[] storage arr, address val) internal view returns (bool) {
