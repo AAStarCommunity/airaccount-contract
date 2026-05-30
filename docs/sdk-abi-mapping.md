@@ -947,13 +947,15 @@ struct Session {
 
 Hard caps: `callTargets.length ≤ 20`, `selectorAllowlist.length ≤ 30`.
 
-### 9.2 grantSessionDirect — direct call (by owner or by the account itself)
+### 9.2 grantSessionDirect — direct call by owner EOA only
 
 ```solidity
 function grantSessionDirect(address account, address sessionKey, Session cfg) external
 ```
 
-Callable by either `msg.sender == _ownerOf(account)` (direct EOA tx) or `msg.sender == account` (account self-call during a UserOp where `userOp.callData` invokes this function on the account). Reverts `NotAccountOwner` otherwise.
+**Callable only by `msg.sender == _ownerOf(account)`** — i.e. a direct EOA transaction from the owner. Reverts `NotAccountOwner` otherwise.
+
+> ⚠️ **No account self-call** (v0.17.2 round 3 hardening, 2026-05-30): an earlier draft allowed `msg.sender == account` so that the owner could route this call through a UserOp. That was withdrawn because any pre-existing unscoped session key (empty `callTargets` + empty `selectorAllowlist`) could have the account call `grantSessionDirect` via `execute()` and mint itself a new session, completely bypassing owner re-authorisation (confused-deputy). For paymaster-sponsored / gasless / UserOp grant flows, use **§9.3 `grantSession`** with an off-chain owner signature instead — any relayer can submit it.
 
 ### 9.3 grantSession — off-chain owner signature (gasless on-boarding)
 
