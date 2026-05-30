@@ -1,8 +1,31 @@
 # AirAccount V7 SDK ABI/API Mapping — User Scenario Reference
 
 > **Target audience**: SDK developers integrating AirAccount V7 into frontend applications or backend services.
-> **Contract version**: `airaccount.v7@0.17.1` (diamond-lite)
-> **Last updated**: 2026-05-27
+> **Contract version**: `airaccount.v7@0.17.2` (diamond-lite + session-key unification)
+> **Last updated**: 2026-05-30
+
+---
+
+> ## ⚠️ v0.17.2 breaking change — session-key API unified
+>
+> Section 9 below describes the v0.17.1 `AgentSessionKeyValidator` API. **v0.17.2 deletes that contract** and merges all functionality into `SessionKeyValidator`. SDK consumers must update:
+>
+> | Aspect | v0.17.1 (deprecated) | v0.17.2 |
+> |---|---|---|
+> | Contract | `AgentSessionKeyValidator` (separate, install-required) | **`SessionKeyValidator`** (singleton at router algId `0x08`, no install) |
+> | UserOp.signature | `[0x08][ECDSA(65)]` = **66 B** | **`[0x08][account(20)][key(20)][ECDSA(65)]` = 106 B** (ECDSA session)<br>**`[0x08][account(20)][keyX(32)][keyY(32)][r(32)][s(32)]` = 149 B** (P256 session) |
+> | UserOp.nonce key (`>> 64`) | Must be validator address | **Must be 0** (no nonce-key routing; base dispatches by sig[0]=0x08 + length) |
+> | Grant API | `grantAgentSession(sessionKey, AgentSessionConfig)` | **`grantSession(account, sessionKey, Session)`** or `grantSession(account, sessionKey, Session, ownerSig)` for gasless EIP-191 path |
+> | Session config struct | `AgentSessionConfig {expiry, velocityLimit, velocityWindow, revoked, callTargets[], selectorAllowlist[]}` | **`Session {expiry, contractScope, selectorScope, revoked, velocityLimit, velocityWindow, callTargets[], selectorAllowlist[]}`** — unified, supports both legacy single-target and array-based scope |
+> | EIP-191 typed-hash domain | `GRANT_AGENT_SESSION` | **`GRANT_SESSION_V2`** / **`GRANT_P256_SESSION_V2`** (full struct binding) |
+> | `delegateSession` (sub-delegation) | Available | **Removed** in v0.17.2; deferred to v0.18+ |
+> | Scope check entry point | `enforceSessionScope(account, key, target, selector)` (called by hook) | **`checkSessionScope(account, keyOrHash, sessionType, dest, selector)`** — view, called inline by `base._enforceGuard` per call (covers single + batch) |
+> | Velocity counter | `recordSpend(...)` | **`recordCallForVelocity(account, keyOrHash, sessionType)`** — `msg.sender == account` gated |
+> | Hook | Required (`TierGuardHook`) to enforce scope | **Deleted** — scope enforcement inlined in `base._enforceGuard` |
+>
+> **For "human session key for DApp" use cases** (e.g. gaming session keys): no longer need ASK install; use `SessionKeyValidator.grantSession`/`grantSessionDirect` directly with the same struct, pass `velocityLimit=0` + empty arrays for legacy single-target semantics. Section 9 will be re-written in a follow-up; treat the content below as superseded.
+>
+> Full reference: `docs/2026-05-30-adr-session-key-unification.md` §2 / §6.5.
 
 ---
 

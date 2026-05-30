@@ -79,9 +79,24 @@ contract AAStarAirAccountSessionKeyTest is Test {
         vm.prank(ownerA);
         skValidator.grantSessionDirect(
             address(accountA), sessionKey,
-            uint48(block.timestamp + 1 hours),
-            address(0), bytes4(0)
+            _legacySession(uint48(block.timestamp + 1 hours), address(0), bytes4(0))
         );
+    }
+
+    /// @dev Build a Session struct mimicking the v0.17.1 simple session (no velocity, no arrays).
+    function _legacySession(uint48 expiry, address scope, bytes4 sel)
+        internal pure returns (SessionKeyValidator.Session memory)
+    {
+        return SessionKeyValidator.Session({
+            expiry: expiry,
+            contractScope: scope,
+            selectorScope: sel,
+            revoked: false,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
     }
 
     function _deployAccount(address owner_, uint8 algId_) internal returns (AAStarAirAccountV7 acct) {
@@ -438,10 +453,24 @@ contract SessionKeyBatchScopeTest is Test {
         vm.prank(owner_);
         skValidator.grantSessionDirect(
             address(account), sessionKey_,
-            uint48(block.timestamp + 1 hours),
-            address(allowedTarget), // contractScope = allowedTarget only
-            bytes4(0)
+            _legacySession(uint48(block.timestamp + 1 hours), address(allowedTarget), bytes4(0))
         );
+    }
+
+    /// @dev Session-struct helper, scoped to this contract (separate from AAStarAirAccountSessionKeyTest).
+    function _legacySession(uint48 expiry, address scope, bytes4 sel)
+        internal pure returns (SessionKeyValidator.Session memory)
+    {
+        return SessionKeyValidator.Session({
+            expiry: expiry,
+            contractScope: scope,
+            selectorScope: sel,
+            revoked: false,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
     }
 
     /// @notice executeBatch with 1 allowed call must succeed.
