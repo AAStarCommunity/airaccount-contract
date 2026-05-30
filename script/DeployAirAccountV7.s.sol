@@ -33,9 +33,7 @@ contract DeployAirAccountV7 is Script {
             ENTRYPOINT_V07,
             COMMUNITY_GUARDIAN,
             noTokens,
-            noConfigs,
-            address(0), // defaultValidatorModule
-            address(0)  // defaultHookModule
+            noConfigs
         );
         console.log("Factory deployed at:", address(factory));
 

@@ -29,7 +29,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
 
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs, address(0), address(0));
+        factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs);
     }
 
     /// @dev Sign the guardian acceptance message for setUp factory + owner + salt at TEST_DAILY_LIMIT.
@@ -256,7 +256,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         });
 
         AAStarAirAccountFactoryV7 tokenFactory = new AAStarAirAccountFactoryV7(
-            entryPoint, communityGuardian, tokens, configs, address(0), address(0)
+            entryPoint, communityGuardian, tokens, configs
         );
 
         bytes memory sig1 = _guardianSigFor(g1Wallet, address(tokenFactory), ownerA, 0);
@@ -327,7 +327,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
             dailyLimit: 5000e6
         });
         vm.expectRevert("Invalid default token config");
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs, address(0), address(0));
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
     }
 
     /// @dev Tier limits set but dailyLimit=0 should revert (guard requires dailyLimit > 0
@@ -343,7 +343,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
             dailyLimit: 0    // tier limits set but no daily — invalid
         });
         vm.expectRevert("Invalid default token config");
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs, address(0), address(0));
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
     }
 
     // ─── Codex audit: MEDIUM — guardian acceptance domain separation ──
@@ -371,7 +371,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         // Deploy a second factory, sign acceptance for it
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        AAStarAirAccountFactoryV7 otherFactory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs, address(0), address(0));
+        AAStarAirAccountFactoryV7 otherFactory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs);
 
         // Sign for otherFactory address
         bytes memory sigForOtherFactory = _guardianSigFor(g1Wallet, address(otherFactory), ownerA, 0);
@@ -390,7 +390,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1);
         configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         vm.expectRevert("Default token address zero");
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs, address(0), address(0));
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
     }
 
     /// @dev Duplicate token address in default config should revert at factory deploy time.
@@ -403,7 +403,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         configs[1] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         vm.expectRevert("Duplicate default token");
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs, address(0), address(0));
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
     }
 
     // ─── ERC-7828 Chain-Specific Address (M7.4) ──────────────────────────────
@@ -449,37 +449,10 @@ contract AAStarAirAccountFactoryV7Test is Test {
         assertEq(cq1, cq2);
     }
 
-    // ─── C8: Factory Pre-Install Default Modules (M7.2) ───────────────────
-
-    /// @notice Factory with no default modules stores address(0) for both
-    function test_factory_noDefaultModules_storesZero() public view {
-        assertEq(factory.defaultValidatorModule(), address(0));
-        assertEq(factory.defaultHookModule(), address(0));
-    }
-
-    /// @notice Factory stores default validator module address
-    function test_factory_defaultValidatorModule_stored() public {
-        address mockValidator = makeAddr("mockValidator");
-        address[] memory noTokens = new address[](0);
-        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        AAStarAirAccountFactoryV7 f = new AAStarAirAccountFactoryV7(
-            entryPoint, communityGuardian, noTokens, noConfigs, mockValidator, address(0)
-        );
-        assertEq(f.defaultValidatorModule(), mockValidator);
-        assertEq(f.defaultHookModule(), address(0));
-    }
-
-    /// @notice Factory stores default hook module address
-    function test_factory_defaultHookModule_stored() public {
-        address mockHook = makeAddr("mockHook");
-        address[] memory noTokens = new address[](0);
-        AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        AAStarAirAccountFactoryV7 f = new AAStarAirAccountFactoryV7(
-            entryPoint, communityGuardian, noTokens, noConfigs, address(0), mockHook
-        );
-        assertEq(f.defaultValidatorModule(), address(0));
-        assertEq(f.defaultHookModule(), mockHook);
-    }
+    // ─── C8: Factory default-module tests removed in v0.17.2 ──────────────
+    // defaultValidatorModule / defaultHookModule fields were deleted (CompositeValidator
+    // + TierGuardHook were removed; session-key functionality moved to the unified
+    // SessionKeyValidator registered at router algId 0x08).
 
     /// @notice createAccount is idempotent — second call with same params returns same account without revert
     function test_factory_createAccount_idempotent() public {

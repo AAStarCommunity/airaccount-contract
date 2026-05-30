@@ -58,29 +58,21 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
     }
 
-    /// @notice Initialize an autonomous-agent account, default-installing a session-key validator.
-    ///         Used by the factory's createAgentAccount (hybrid policy — only agent accounts get it).
-    /// @dev Trusted one-time setup (initializer-gated, factory-called). Installing the validator at
-    ///      genesis is safe and needs no guardian signature — same trust as the factory deploying the
-    ///      guard. Installing the module is INERT (grants no power); the owner must still authorize a
-    ///      specific session via AgentSessionKeyValidator.grantAgentSession() afterwards.
-    /// @param _sessionKeyValidator AgentSessionKeyValidator to install (address(0) = skip, plain init).
+    /// @notice Initialize an autonomous-agent account.
+    /// @dev v0.17.2: this no longer pre-installs any validator module. Session keys (for agents
+    ///      or DApp gaming flows) are managed via the unified `SessionKeyValidator` registered
+    ///      in the router at algId 0x08 — no per-account install is required. After creation the
+    ///      owner calls `SessionKeyValidator.grantSession[Direct]` to authorize a specific session.
+    ///      Kept as a separate entrypoint from `initialize` to allow factory `createAgentAccount` to
+    ///      carry agent-specific semantics (deterministic salt from agentId, agentKey consent sig)
+    ///      without forcing those checks on `createAccount` / `createAccountWithDefaults`.
     function initializeAgentAccount(
         address _entryPoint,
         address _owner,
         InitConfig calldata _config,
-        address _guardAddr,
-        address _sessionKeyValidator
+        address _guardAddr
     ) external initializer {
         _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
-        if (_sessionKeyValidator != address(0)) {
-            _installedModules[MODULE_TYPE_VALIDATOR][_sessionKeyValidator] = true;
-            // Best-effort? No — hard-revert if onInstall fails, so the account is never left with a
-            // module marked installed but uninitialized (mirrors installModule's MEDIUM-1 fix).
-            (bool ok,) = _sessionKeyValidator.call(abi.encodeWithSelector(SEL_ON_INSTALL, new bytes(0)));
-            if (!ok) revert ModuleInstallCallbackFailed(MODULE_TYPE_VALIDATOR, _sessionKeyValidator);
-            emit ModuleInstalled(MODULE_TYPE_VALIDATOR, _sessionKeyValidator);
-        }
     }
 
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────
@@ -136,15 +128,6 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         return 0xffffffff;
     }
 
-    /// @notice H-5: Composite signature callback for AirAccountCompositeValidator module.
-    ///         Validates weighted/cumulative signatures using the account's built-in routing.
-    ///         Called by the installed CompositeValidator module via nonce-key routing.
-    ///         Also stores the algId in the transient queue (H-6) for guard tier enforcement.
-    function validateCompositeSignature(bytes32 hash, bytes calldata sig) external returns (uint256) {
-        if (!_installedModules[MODULE_TYPE_VALIDATOR][msg.sender]) revert ModuleNotInstalled();
-        return _validateSignature(hash, sig);
-    }
-
     /// @notice ERC-721 receiver — required because official ERC-8004 IdentityRegistry uses _safeMint.
     ///         Without this, minting an agent identity NFT directly to this account would revert.
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
@@ -195,18 +178,10 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
                 if (validationData != 1 && userOp.signature.length > 0) {
                     uint8 algId = uint8(userOp.signature[0]);
                     _storeValidatedAlgId(algId);
-                    // For ALG_SESSION_KEY (0x08), also recover and store the session key in transient
-                    // storage so TierGuardHook.preCheck() can call AgentSessionKeyValidator.enforceSessionScope().
-                    // AgentSessionKeyValidator signature format: [0x08][65-byte ECDSA sig] = 66 bytes total.
-                    if (algId == ALG_SESSION_KEY && userOp.signature.length >= 66) {
-                        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
-                        (address sessionKey, ECDSA.RecoverError err,) =
-                            ECDSA.tryRecover(ethHash, userOp.signature[1:66]);
-                        if (err == ECDSA.RecoverError.NoError && sessionKey != address(0)) {
-                            // Tag 0x01 = ECDSA session key; lower 20 bytes = session key address.
-                            _storeSessionKey(bytes32(uint256(0x01) << 248 | uint256(uint160(sessionKey))));
-                        }
-                    }
+                    // v0.17.2: the previous 66-byte ASK session-key recovery branch is removed.
+                    // Session keys (algId 0x08) use the native base._validateSignature path with the
+                    // 106/149-byte M6.4 format; that path stores the session-key identifier via
+                    // _storeSessionKey() directly, so no nonce-key-route session-key handling is needed.
                 }
             }
         } else {
