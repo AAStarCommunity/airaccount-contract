@@ -206,13 +206,15 @@ Codex returned **PLAN NEEDS REVISION** with 3 P0 (release-blocker), 4 P1 (same-r
   - Update `scripts/test-m7-e2e.ts` to construct the new format.
   - Open a coordinated issue on `aastar-sdk` repo + notify KMS team via Slack DM.
 
-**P1-4: New `grantSessionWithLimits` function, do NOT overload old `grantSession`**
-- Evidence: `src/validators/SessionKeyValidator.sol:111-127` (existing EIP-191 typed hash excludes velocity/arrays)
+**P1-4 (REVISED — see also User feedback 2026-05-30 below): replace `grantSession` / `grantSessionDirect` outright, do NOT add parallel WithLimits functions**
+- Original Codex concern: "silent extension of old function binds new fields to existing typed hashes — security risk."
+- **Reality**: v0.17.2 is a fresh, never-deployed release. There are ZERO live `grantSession` typed-hash signatures on any chain. Codex's silent-extension concern is real *in principle* but **moot in our context** (nothing to break backward-compat with).
 - Decision:
-  - Keep existing `grantSession(...)` / `grantSessionDirect(...)` ABI-stable (old typed hash unchanged).
-  - Add new `grantSessionWithLimits(..., velocityLimit, velocityWindow, callTargets[], selectorAllowlist[])` + `grantSessionWithLimitsDirect(...)`.
-  - New typed hash domain: `"GRANT_SESSION_WITH_LIMITS"` (or EIP-712 with explicit type hash including all new fields).
-  - Old sessions get implicit defaults (velocityLimit=0=unlimited, empty arrays).
+  - **Replace** `grantSession` / `grantSessionDirect` signatures to accept a single `Session calldata cfg` struct containing all fields (old: expiry/contractScope/selectorScope/revoked; new: velocityLimit/velocityWindow/callTargets[]/selectorAllowlist[]).
+  - One new EIP-191 typed-hash domain `"GRANT_SESSION_V2"` (or equivalent), encoding the full struct.
+  - Backward-equivalence: callers wanting "legacy behavior" pass `velocityLimit=0` and empty arrays — semantically identical to the old `grantSession`.
+  - No parallel functions; SDK / docs have a single API surface.
+  - Old `grantSession` / `grantSessionDirect` ABI-stable variants are NOT preserved — they had no live consumer.
 
 ### P2 — recommended for same release
 
