@@ -85,6 +85,7 @@ contract ForceExitModule is IERC7579Module {
     error UnsupportedL2Type();
     error NotOwner();
     error NotInstalled();
+    error ForceExitCallFailed();
 
     // ─── Events ────────────────────────────────────────────────────────────
 
@@ -196,22 +197,55 @@ contract ForceExitModule is IERC7579Module {
         address target = proposal.target;
         uint256 value  = proposal.value;
         bytes memory exitData = proposal.data;
-
-        // Clear proposal before external call (re-entrancy guard)
-        delete pendingExit[account];
-
         uint8 l2Type = accountL2Type[account];
 
+        // Clear proposal before external call (re-entrancy guard).
+        delete pendingExit[account];
+
+        // M-2 fix (Codex 2026-05-30): bridge call routed through account.executeFromExecutor()
+        // so the ETH leaves the ACCOUNT's balance, not this module's. The prior implementation
+        // used `bridge.initiateWithdrawal{value: value}(...)` which transferred from msg.sender
+        // (this module) — but this module is never funded, so the feature was non-functional.
+        //
+        // executeFromExecutor: msg.sender (= ForceExitModule) must be installed as a type-2
+        // executor on the account; account performs `target.call{value: value}(data)` from its
+        // own balance with full _enforceGuard (Tier 1 daily limit applies).
+        address bridge;
+        bytes memory bridgeCalldata;
         if (l2Type == L2_TYPE_OPTIMISM) {
-            IL2ToL1MessagePasser(L2_TO_L1_MESSAGE_PASSER_OP).initiateWithdrawal{value: value}(
-                target,
-                OP_DEFAULT_GAS_LIMIT,
-                exitData
+            bridge = L2_TO_L1_MESSAGE_PASSER_OP;
+            bridgeCalldata = abi.encodeWithSignature(
+                "initiateWithdrawal(address,uint256,bytes)",
+                target, OP_DEFAULT_GAS_LIMIT, exitData
             );
         } else if (l2Type == L2_TYPE_ARBITRUM) {
-            IArbSys(ARB_SYS).sendTxToL1{value: value}(target, exitData);
+            bridge = ARB_SYS;
+            bridgeCalldata = abi.encodeWithSignature(
+                "sendTxToL1(address,bytes)",
+                target, exitData
+            );
         } else {
             revert UnsupportedL2Type();
+        }
+
+        // ERC-7579 executionCalldata layout: [target(20)][value(32)][data...]
+        bytes memory executionCalldata = abi.encodePacked(
+            bytes20(bridge),
+            bytes32(value),
+            bridgeCalldata
+        );
+
+        (bool ok, bytes memory ret) = account.call(
+            abi.encodeWithSignature(
+                "executeFromExecutor(bytes32,bytes)",
+                bytes32(0), executionCalldata
+            )
+        );
+        if (!ok) {
+            if (ret.length > 0) {
+                assembly { revert(add(ret, 0x20), mload(ret)) }
+            }
+            revert ForceExitCallFailed();
         }
 
         emit ExitExecuted(account, target, value);

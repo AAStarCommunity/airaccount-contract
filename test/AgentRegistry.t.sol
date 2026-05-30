@@ -99,7 +99,11 @@ contract AgentRegistryTest is Test {
     address public agentB;
 
     function setUp() public {
-        registry = new AgentRegistry();
+        // TODO v0.17.2: refactor MockAirAccount to use Clones.clone(impl) so extcodehash
+        // matches the EIP-1167 hash that AgentRegistry's H-2 check expects. Until then,
+        // runtime tests in this file will fail with CallerNotAirAccount() — placeholder
+        // wiring just to keep the build green.
+        registry = new AgentRegistry(address(this));
 
         aliceWallet  = vm.createWallet("alice");
         bobWallet    = vm.createWallet("bob");

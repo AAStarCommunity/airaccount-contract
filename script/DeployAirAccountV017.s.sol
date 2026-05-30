@@ -106,20 +106,19 @@ contract DeployAirAccountV017 is Script {
         // 5. L2 force-exit executor module
         d.forceExitModule = address(new ForceExitModule());
 
-        // 6. Agent identity/wallet registry (SuperPaymaster setAgentRegistries target)
-        d.agentRegistry = address(new AgentRegistry());
-
-        // 7. EIP-7702 delegate singleton (EOA onboarding path)
+        // 6. EIP-7702 delegate singleton (EOA onboarding path)
         d.delegate = address(new AirAccountDelegate());
 
-        // 8. DeFi calldata parsers + registry (opt-in via account.setParserRegistry).
+        // 7. DeFi calldata parsers + registry (opt-in via account.setParserRegistry).
         d.parserRegistry = address(new CalldataParserRegistry());
         d.railgunParser = address(new RailgunParser());
         d.uniswapV3Parser = address(new UniswapV3Parser());
 
-        // 9. Factory (constructor deploys the AAStarAirAccountV7 implementation).
+        // 8. Factory (constructor deploys the AAStarAirAccountV7 implementation).
         //    v0.17.2: no per-account default module install — unified SessionKeyValidator at
         //    router[0x08] replaces the deleted CompositeValidator + TierGuardHook + ASK trio.
+        //    MUST be deployed BEFORE AgentRegistry because AgentRegistry takes
+        //    factory.implementation() as a constructor argument (H-2 whitelist binding).
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
         AAStarAirAccountFactoryV7 factory = new AAStarAirAccountFactoryV7(
@@ -130,6 +129,12 @@ contract DeployAirAccountV017 is Script {
         );
         d.factory = address(factory);
         d.implementation = factory.implementation();
+
+        // 9. Agent identity/wallet registry (SuperPaymaster setAgentRegistries target).
+        //    H-2 fix: bound to factory.implementation() so only EIP-1167 clones of that
+        //    implementation can call registerAgent (replaces the v0.17.1 accountId()
+        //    prefix-string check, which was forgeable by any contract).
+        d.agentRegistry = address(new AgentRegistry(d.implementation));
 
         vm.stopBroadcast();
 

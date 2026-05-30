@@ -11,6 +11,21 @@ contract AgentRegistry {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
+    /// @dev EIP-1167 minimal-proxy prefix (10 bytes) — runtime code emitted by OZ Clones.
+    ///      Layout: prefix(10) + implementation(20) + suffix(15) = 45 bytes total.
+    bytes10 internal constant EIP1167_PREFIX = hex"363d3d373d3d3d363d73";
+    bytes15 internal constant EIP1167_SUFFIX = hex"5af43d82803e903d91602b57fd5bf3";
+
+    /// @dev v0.17.2 H-2 fix: AirAccount implementation that valid callers must be a clone of.
+    ///      Set in constructor to factory.implementation(). Replaces the v0.17.1
+    ///      accountId() prefix-string check, which was forgeable by any contract returning
+    ///      a string starting with "airaccount." — see Codex pre-release H-2 finding.
+    address public immutable airAccountImplementation;
+
+    /// @dev Pre-computed extcodehash of a valid EIP-1167 clone of airAccountImplementation.
+    ///      Compared against extcodehash(msg.sender) in registerAgent for O(1) verification.
+    bytes32 public immutable validCloneCodeHash;
+
     /// @dev agentWallet → humanOwner
     mapping(address => address) public agentWalletOwner;
     /// @dev humanOwner → agentWallet[] (for enumeration)
@@ -27,23 +42,36 @@ contract AgentRegistry {
     error InvalidAgentSignature();
     error SelfRegistrationForbidden();
     error NotSupported();
-    /// @dev HIGH-1: msg.sender is not a known AirAccount (no accountId() or wrong prefix).
+    /// @dev v0.17.2: msg.sender is not an EIP-1167 clone of the bound AirAccount implementation.
     error CallerNotAirAccount();
 
-    /// @notice Register msg.sender (AirAccount) as the human owner of agentWallet.
+    /// @param _airAccountImplementation The AirAccount V7 implementation address (factory.implementation()).
+    ///         All valid callers of registerAgent must be EIP-1167 clones of this contract.
+    constructor(address _airAccountImplementation) {
+        if (_airAccountImplementation == address(0)) revert InvalidAddress();
+        airAccountImplementation = _airAccountImplementation;
+        validCloneCodeHash = keccak256(abi.encodePacked(
+            EIP1167_PREFIX,
+            _airAccountImplementation,
+            EIP1167_SUFFIX
+        ));
+    }
+
+    /// @notice Register msg.sender (AirAccount clone) as the human owner of agentWallet.
     ///         agentWalletSig proves the caller controls agentWallet, preventing front-run griefing.
     ///         Supports both EOA (ECDSA) and smart-contract (ERC-1271) agent wallets.
     /// @param agentWallet The agent's wallet address (EOA or smart contract)
     /// @param agentWalletSig Signature from agentWallet over:
     ///        keccak256(abi.encodePacked("REGISTER_AGENT", chainId, address(this), msg.sender, agentWallet)).toEthSignedMessageHash()
     function registerAgent(address agentWallet, bytes calldata agentWalletSig) external {
-        // HIGH-1: Only AirAccount contracts may register agents.
-        // This prevents plain EOAs and unrelated contracts from obtaining SuperPaymaster sponsorship.
-        (bool ok, bytes memory data) = msg.sender.staticcall(
-            abi.encodeWithSignature("accountId()")
-        );
-        if (!ok || data.length < 32) revert CallerNotAirAccount();
-        if (!_startsWith(abi.decode(data, (string)), "airaccount.")) revert CallerNotAirAccount();
+        // v0.17.2 H-2 fix: only EIP-1167 clones of the bound implementation may register.
+        // Verifies msg.sender's runtime code is exactly the EIP-1167 minimal proxy pointing at
+        // airAccountImplementation. Cannot be forged: an attacker cannot produce a contract
+        // whose extcodehash matches without deploying the canonical clone (which only the factory
+        // can do via Clones.cloneDeterministic / clone). Constant-gas check via extcodehash.
+        bytes32 callerCodeHash;
+        assembly { callerCodeHash := extcodehash(caller()) }
+        if (callerCodeHash != validCloneCodeHash) revert CallerNotAirAccount();
 
         if (agentWallet == address(0)) revert InvalidAddress();
         if (agentWallet == msg.sender) revert SelfRegistrationForbidden();
@@ -146,17 +174,6 @@ contract AgentRegistry {
     /// @notice Returns count of agent wallets registered by this owner.
     function getAgentCount(address owner) external view returns (uint256) {
         return ownerAgents[owner].length;
-    }
-
-    /// @dev Returns true if `str` starts with `prefix`.
-    function _startsWith(string memory str, string memory prefix) private pure returns (bool) {
-        bytes memory s = bytes(str);
-        bytes memory p = bytes(prefix);
-        if (s.length < p.length) return false;
-        for (uint256 i = 0; i < p.length; i++) {
-            if (s[i] != p[i]) return false;
-        }
-        return true;
     }
 
     /// @dev O(1) swap-and-pop removal using the index mapping.
