@@ -65,6 +65,7 @@ contract AAStarAirAccountFactoryV7 {
     error NotFactoryAdmin();
     error AgentRegistryAlreadySet();
     error AgentRegistryNotContract();
+    error AgentRegistryMarkValidFailed();
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
@@ -125,15 +126,25 @@ contract AAStarAirAccountFactoryV7 {
     }
 
     /// @dev Helper called from each createAccount* path to mark provenance in the AgentRegistry.
-    ///      No-op if agentRegistry is unset. Uses low-level call so a faulty/reverting registry
-    ///      doesn't bork account creation — but logs a clear event when the call fails so
-    ///      operators notice the misconfiguration.
+    ///      No-op if agentRegistry is unset (deployer hasn't bound a registry yet — recommended
+    ///      to set immediately after deploy).
+    /// @dev Codex P1 round 3 (2026-05-30): if the registry IS set but markValid fails (wrong
+    ///      address, wrong contract, paused, etc), REVERT the whole account creation. Previously
+    ///      this was a silent best-effort swallow — but that produces "ghost" accounts that
+    ///      exist on-chain but cannot registerAgent (registry's isValidAccount mapping is empty
+    ///      for them), with no signal to user / SDK / SuperPaymaster about why. Loud failure is
+    ///      strictly better than silent half-broken state.
     function _markAccountValid(address account) internal {
         address reg = agentRegistry;
         if (reg == address(0)) return;
         // solhint-disable-next-line avoid-low-level-calls
-        (bool ok,) = reg.call(abi.encodeWithSignature("markValid(address)", account));
-        ok; // intentionally swallowed — account is created either way; the registry pop is best-effort
+        (bool ok, bytes memory ret) = reg.call(abi.encodeWithSignature("markValid(address)", account));
+        if (!ok) {
+            if (ret.length > 0) {
+                assembly { revert(add(ret, 0x20), mload(ret)) }
+            }
+            revert AgentRegistryMarkValidFailed();
+        }
     }
 
     // ─── Full Configuration ─────────────────────────────────────────

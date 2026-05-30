@@ -192,21 +192,30 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         _storeSession(account, sessionKey, cfg);
     }
 
-    /// @notice Grant an ECDSA session by direct owner call (or via owner-signed UserOp).
-    /// @dev Codex P1-#2 (2026-05-30): accepts both `msg.sender == owner` (direct EOA call)
-    ///      AND `msg.sender == account` (account self-calls during a UserOp — the canonical
-    ///      KMS / DApp flow where owner signs a UserOp whose calldata is `grantSessionDirect(...)`).
+    /// @notice Grant an ECDSA session by direct owner call. Owner EOA only.
+    /// @dev Codex P1 round 3 (2026-05-30): the v0.17.2 round 2 fix briefly accepted
+    ///      `msg.sender == account` to support "owner signs a UserOp whose calldata is
+    ///      grantSessionDirect" — but that opens a confused-deputy attack: an existing
+    ///      unscoped session key (callTargets empty + selectorAllowlist empty) can have the
+    ///      account call this function via execute() and mint itself a new session, bypassing
+    ///      owner re-authorisation entirely. So we revert to "owner-only" here. For UserOp /
+    ///      gasless on-boarding flows, callers MUST use `grantSession` with the off-chain
+    ///      owner signature (relayer-submittable, no account self-call required).
     function grantSessionDirect(
         address account,
         address sessionKey,
         Session calldata cfg
     ) external {
-        if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
+        if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
         _validateCfg(cfg);
         _checkNotExists(account, sessionKey);
         _storeSession(account, sessionKey, cfg);
     }
 
+    /// @dev Revoke remains caller=owner OR caller=account: revoking a session never grants
+    ///      authority — it only removes it. Letting a session key self-revoke (by causing
+    ///      the account to call revokeSession via execute) is actually a beneficial property
+    ///      (a compromised session key can be turned off promptly without an EOA tx).
     function revokeSession(address account, address sessionKey) external {
         if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
         _sessions[account][sessionKey].revoked = true;
@@ -458,19 +467,22 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         _storeP256Session(account, keyHash, cfg);
     }
 
+    /// @notice Grant a P256 session by direct owner call. Owner EOA only.
+    /// @dev See grantSessionDirect for why `msg.sender == account` is NOT accepted (round 3 fix).
     function grantP256SessionDirect(
         address account,
         bytes32 p256KeyX,
         bytes32 p256KeyY,
         Session calldata cfg
     ) external {
-        if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
+        if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
         _validateCfg(cfg);
         bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
         _checkP256NotExists(account, keyHash);
         _storeP256Session(account, keyHash, cfg);
     }
 
+    /// @dev Revoke: same rationale as revokeSession — caller=owner OR caller=account both ok.
     function revokeP256Session(address account, bytes32 p256KeyX, bytes32 p256KeyY) external {
         if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
         bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));

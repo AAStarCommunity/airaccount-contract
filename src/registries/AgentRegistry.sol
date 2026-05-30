@@ -47,15 +47,25 @@ contract AgentRegistry {
     error CallerNotAirAccount();
     error FactoryAlreadyBound();
     error OnlyFactory();
+    error NotDeployer();
 
-    /// @notice One-time binding of the factory address. Deployer (i.e. the account that deploys
-    ///         this AgentRegistry) is the only address allowed to call this; once bound it cannot
-    ///         be changed. Performed post-deploy because the deploy order has a circular
-    ///         dependency (factory↔registry), and using a setter avoids needing CREATE2 address
-    ///         prediction in scripts.
-    /// @dev Only callable once. After binding, only `factory` can call `markValid`. There is no
-    ///      `unbind` — the binding is permanent.
+    /// @notice The account that deployed this AgentRegistry. Set at construction time and
+    ///         immutable. The sole caller authorised to bind the factory (one-time).
+    /// @dev Codex P1 round 3 (2026-05-30): without this, `bindFactory` was public and any
+    ///      bystander could front-run the deployer and bind their own malicious factory,
+    ///      then call `markValid` on attacker-controlled clones to fake AirAccount provenance.
+    address public immutable deployer;
+
+    constructor() {
+        deployer = msg.sender;
+    }
+
+    /// @notice One-time binding of the factory address. Caller must be `deployer` (the account
+    ///         that deployed this registry). Once bound, cannot be re-bound — the binding is
+    ///         permanent. Performed post-deploy because deploy order has a circular dependency
+    ///         (factory↔registry), and using a setter avoids needing CREATE2 address prediction.
     function bindFactory(address _factory) external {
+        if (msg.sender != deployer) revert NotDeployer();
         if (factory != address(0)) revert FactoryAlreadyBound();
         if (_factory == address(0) || _factory.code.length == 0) revert InvalidAddress();
         factory = _factory;
