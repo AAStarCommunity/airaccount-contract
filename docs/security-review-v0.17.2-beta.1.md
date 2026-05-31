@@ -109,3 +109,46 @@ No Critical findings.
 - Fix: No immediate code fix for the monotonic invariant. Consider a future strict mode for unconfigured tokens if product expectations change. Add-only token config is at src/core/AAStarGlobalGuard.sol:225, daily-limit decrease-only logic at src/core/AAStarGlobalGuard.sol:237, and unconfigured-token pass-through at src/core/AAStarGlobalGuard.sol:181.
 
 **Overall verdict: BLOCKED — must fix Critical/High before tag**
+
+---
+
+## Round 6 Verification
+
+**Commit**: d4122a2 | **Date**: 2026-05-30 | **Reviewer**: Codex automated pass
+
+### HIGH Findings
+
+| ID | Finding | Status | Evidence |
+|----|---------|--------|----------|
+| HIGH-1 | BLS cache invalidation | VERIFIED-CLOSED ✅ | `cachedAggKeys` is removed; storage now has only `registeredKeys`/`isRegistered`/`registeredNodes` at `src/validators/AAStarBLSAlgorithm.sol:13`. Removal rationale is documented at `src/validators/AAStarBLSAlgorithm.sol:22`; `cacheAggregatedKey()` always reverts `CacheDeprecated` at `src/validators/AAStarBLSAlgorithm.sol:195`; `_aggregateNodeKeys()` recomputes from registered storage at `src/validators/AAStarBLSAlgorithm.sol:176`; `aggregateKeys()` recomputes on-demand at `src/validators/AAStarBLSAlgorithm.sol:490`. No stale aggregate return path remains. |
+| HIGH-2 | BLS infinity bypass | NOT-CLOSED ❌ | Standalone checks exist for signature/message point at `src/validators/AAStarBLSAlgorithm.sol:118`, `src/validators/AAStarBLSAlgorithm.sol:137`, and `src/validators/AAStarBLSAlgorithm.sol:151`; G1/G2 helpers exist at `src/validators/AAStarBLSAlgorithm.sol:208` and `src/validators/AAStarBLSAlgorithm.sol:226`; register/update reject infinity at `src/validators/AAStarBLSAlgorithm.sol:403`, `src/validators/AAStarBLSAlgorithm.sol:415`, and `src/validators/AAStarBLSAlgorithm.sol:451`. However `validate()` returns `1` instead of throwing `BLSPointAtInfinity` at `src/validators/AAStarBLSAlgorithm.sol:118`, aggregator recompute throws `AggregatedSignatureInvalid` instead at `src/aggregator/AAStarBLSAggregator.sol:147`, and `_extractBLSData()` does not reject each UserOp's BLS signature/message point before `_g2Add` at `src/aggregator/AAStarBLSAggregator.sol:190`, so an infinity UserOp can be hidden in a multi-op aggregate with another valid same-node UserOp. Aggregated public key infinity is also not checked after `aggregateKeys()` at `src/aggregator/AAStarBLSAggregator.sol:152` or after `_aggregateNodeKeys()` at `src/validators/AAStarBLSAlgorithm.sol:164`. Explicit curve/subgroup checks are still not present beyond relying on EIP-2537 precompile failure. |
+| HIGH-3 | Aggregator unbound | VERIFIED-CLOSED ✅ | `validateSignatures(userOps, signature)` ignores the caller-supplied `signature` parameter at `src/aggregator/AAStarBLSAggregator.sol:122`; it recomputes from `userOps[0].signature` at `src/aggregator/AAStarBLSAggregator.sol:128`, rebuilds aggregate sig/message via `_g2Add` at `src/aggregator/AAStarBLSAggregator.sol:143`, enforces same node set at `src/aggregator/AAStarBLSAggregator.sol:136`, and verifies the recomputed aggregate at `src/aggregator/AAStarBLSAggregator.sol:158`. `_verifyPairing` now takes memory bytes and uses MCOPY at `src/aggregator/AAStarBLSAggregator.sol:283`. Malicious supplied aggregate substitution is closed; HIGH-2 residual infinity handling remains separate. |
+| HIGH-4 | RailgunParser fail-open | VERIFIED-CLOSED ✅ | Beta deploy script does not deploy the parser: deployment lines are commented at `script/DeployV0172Beta.s.sol:163` and `_d.railgunParser` is set to `address(0)` at `script/DeployV0172Beta.s.sol:167`. No default wiring is performed in `wireAll()` at `script/DeployV0172Beta.s.sol:219`. KI-14 accurately states this at `docs/known-issues.md:452`. Opt-in remains possible through account `setParserRegistry()` at `src/core/AAStarAirAccountBase.sol:348` plus registry `registerParser()` at `src/core/CalldataParserRegistry.sol:50`; note the actual function is `registerParser`, not `setParser`. |
+| HIGH-5 | UniswapV3Parser fail-open | VERIFIED-CLOSED ✅ | Beta deploy script does not deploy the parser: deployment lines are commented at `script/DeployV0172Beta.s.sol:163` and `_d.uniswapV3Parser` is set to `address(0)` at `script/DeployV0172Beta.s.sol:168`. Console output reports both parsers skipped at `script/DeployV0172Beta.s.sol:169`. KI-14 correctly describes parser-disable risk and mitigation at `docs/known-issues.md:437`. |
+
+### MEDIUM Findings
+
+| ID | Finding | Status | Evidence |
+|----|---------|--------|----------|
+| MEDIUM-1 | 7702 delegate ERC20 | VERIFIED-CLOSED ✅ | Delegate defines raw ERC20 selectors at `src/core/AirAccountDelegate.sol:233`; `execute()` calls `checkTransaction` and `_checkTokenGuard` at `src/core/AirAccountDelegate.sol:257`; `executeBatch()` does the same per call at `src/core/AirAccountDelegate.sol:284`. `_checkTokenGuard` requires `data.length >= 68` at `src/core/AirAccountDelegate.sol:300`, checks `transfer`/`approve` at `src/core/AirAccountDelegate.sol:302`, and decodes amount from `data[36:68]` at `src/core/AirAccountDelegate.sol:303`. Non-ERC20/DeFi delegate calls still have no parser coverage; this is documented as KI-15 at `docs/known-issues.md:479`. |
+| MEDIUM-2 | Weighted-sig token tier | VERIFIED-CLOSED ✅ | `execute()`/`executeBatch()` preserve pre-resolution `guardAlgId` at `src/core/AAStarAirAccountBase.sol:958` and `src/core/AAStarAirAccountBase.sol:986`, then resolve weighted algId at `src/core/AAStarAirAccountBase.sol:960` and `src/core/AAStarAirAccountBase.sol:988`. Guard whitelist still receives `guardAlgId` at `src/core/AAStarAirAccountBase.sol:1093`; token guard now receives resolved `algId` at `src/core/AAStarAirAccountBase.sol:1104`. `_resolveWeightedAlgId()` maps weight to tier representative algIds at `src/core/AAStarAirAccountBase.sol:1497`, so weighted Tier 2/3 token tier checks can succeed. |
+
+### New Findings (Regressions / New Attack Surface)
+
+HIGH: residual HIGH-2 aggregator path remains exploitable for multi-op batches because per-UserOp infinity BLS signature/message points are not rejected before aggregation (`src/aggregator/AAStarBLSAggregator.sol:190`, `src/aggregator/AAStarBLSAggregator.sol:143`). No material new gas-griefing issue identified from cache removal; aggregation is on-demand and bounded by submitted node count, but gas cost increases versus cached sets.
+
+### Test Coverage Gaps
+
+ADD-TEST: HIGH-2 — no `BLSPointAtInfinity` assertion found under `test/`; source checks need tests for standalone validate, register/update, aggregate public key infinity, and aggregator per-UserOp infinity.
+
+ADD-TEST: HIGH-4/HIGH-5 — no deploy-script integrity test found proving `DeployV0172Beta` leaves parser addresses zero.
+
+ADD-TEST: MEDIUM-1 — `test/AirAccountDelegate.t.sol:318` covers generic `executeBatch`, but no delegate ERC20 selector/token-tier test was found.
+
+ADD-TEST: MEDIUM-2 — `test/WeightedSignature.t.sol:416` covers weighted ETH tier resolution, but no configured-token weighted path test was found.
+
+Covered: HIGH-1 has `CacheDeprecated` assertions at `test/AAStarBLSAlgorithm_M3.t.sol:61`; HIGH-3 has caller-supplied aggregate ignored coverage starting at `test/AAStarBLSAggregator.t.sol:153`, though it is mostly malformed-input coverage.
+
+### Round 6 Verdict
+
+**Overall verdict: BLOCKED — must fix HIGH-2 aggregator per-UserOp infinity / aggregate-public-key infinity before tag**

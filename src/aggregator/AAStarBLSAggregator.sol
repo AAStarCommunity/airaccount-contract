@@ -129,6 +129,17 @@ contract AAStarBLSAggregator is IAggregator {
         (bytes32[] memory nodeIds, bytes memory aggSig, bytes memory aggMsgPt) =
             _extractBLSData(userOps[0].signature);
 
+        // v0.17.2-beta.1 round 6 follow-up (Codex): PER-USEROP infinity reject.
+        //
+        // Round 5 HIGH-2 fix only checked infinity on the FINAL recomputed aggregate. Round 6
+        // verification caught the residual: a malicious bundler can submit `userOps[i]` whose
+        // embedded BLS sig/msgPt is infinity — G2Add(valid, infinity) = valid (identity element),
+        // so the final aggregate stays non-infinity and passes the post-aggregate check, BUT
+        // that UserOp's BLS factor is effectively never verified. Each per-UserOp component
+        // must therefore be rejected at infinity before G2Add.
+        if (_isG2Infinity(aggSig)) revert AggregatedSignatureInvalid();
+        if (_isG2Infinity(aggMsgPt)) revert AggregatedSignatureInvalid();
+
         for (uint256 i = 1; i < userOps.length; i++) {
             (bytes32[] memory nodeIdsI, bytes memory blsSig, bytes memory msgPt) =
                 _extractBLSData(userOps[i].signature);
@@ -140,11 +151,16 @@ contract AAStarBLSAggregator is IAggregator {
                 if (nodeIdsI[j] != nodeIds[j]) revert NodeSetMismatch();
             }
 
+            // Round 6 per-UserOp infinity reject (see comment above).
+            if (_isG2Infinity(blsSig)) revert AggregatedSignatureInvalid();
+            if (_isG2Infinity(msgPt)) revert AggregatedSignatureInvalid();
+
             aggSig = _g2Add(aggSig, blsSig);
             aggMsgPt = _g2Add(aggMsgPt, msgPt);
         }
 
-        // v0.17.2-beta.1 round 5 HIGH-2: reject point-at-infinity in the recomputed aggregate.
+        // Defensive post-aggregate check (belt + suspenders against pathological sums-to-infinity
+        // among non-infinity per-UserOp components).
         if (_isG2Infinity(aggSig)) revert AggregatedSignatureInvalid();
         if (_isG2Infinity(aggMsgPt)) revert AggregatedSignatureInvalid();
 

@@ -317,6 +317,79 @@ contract AirAccountDelegateTest is Test {
 
     // ─── 5. executeBatch ─────────────────────────────────────────────────────
 
+    // ─── Round 5 MEDIUM-1 + round 6 ADD-TEST: ERC20 selector token guard ────────
+
+    /// @dev Round 5 MEDIUM-1 (Codex) — Round 6 ADD-TEST requirement.
+    ///      Delegate.execute(token, 0, transfer(...)) must now invoke guard.checkTokenTransaction.
+    ///      Previously ETH `value` was the only thing checked; ERC20 transfers slipped through.
+    function test_execute_erc20Transfer_unconfiguredToken_passes() public {
+        _initialize(1 ether);
+        address token = makeAddr("mockToken_unconfigured");
+        bytes memory callData = abi.encodeWithSignature(
+            "transfer(address,uint256)", makeAddr("recipient"), uint256(100)
+        );
+
+        // Token has no config → checkTokenTransaction returns true (passthrough), no revert.
+        // Verifies the ERC20 selector path is reached without breaking unconfigured-token flow.
+        vm.prank(eoa);
+        delegate.execute(token, 0, callData);
+    }
+
+    function test_execute_erc20Transfer_aboveTier1_reverts() public {
+        _initialize(1 ether);
+        address token = makeAddr("mockToken_USDClike");
+
+        // Configure: tier1 = 100 (single-sig), no tier2, daily = 1000.
+        AAStarGlobalGuard guard = AAStarGlobalGuard(delegate.getGuard());
+        vm.prank(eoa); // account-binding for onlyAccount modifier
+        guard.addTokenConfig(token, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100,
+            tier2Limit: 0,
+            dailyLimit: 1000
+        }));
+
+        bytes memory callData = abi.encodeWithSignature(
+            "transfer(address,uint256)", makeAddr("recipient"), uint256(200) // > tier1
+        );
+
+        vm.prank(eoa);
+        vm.expectRevert(); // InsufficientTokenTier — exact selector varies
+        delegate.execute(token, 0, callData);
+    }
+
+    function test_execute_erc20Approve_aboveTier1_reverts() public {
+        _initialize(1 ether);
+        address token = makeAddr("mockToken_USDClike2");
+
+        AAStarGlobalGuard guard = AAStarGlobalGuard(delegate.getGuard());
+        vm.prank(eoa);
+        guard.addTokenConfig(token, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100,
+            tier2Limit: 0,
+            dailyLimit: 1000
+        }));
+
+        bytes memory callData = abi.encodeWithSignature(
+            "approve(address,uint256)", makeAddr("spender"), uint256(500) // > tier1
+        );
+
+        vm.prank(eoa);
+        vm.expectRevert();
+        delegate.execute(token, 0, callData);
+    }
+
+    function test_execute_nonERC20_calldata_skipsTokenGuard() public {
+        // Confirm non-ERC20 calldata (random selector) does NOT trip the token guard.
+        _initialize(1 ether);
+        address target = makeAddr("nonERC20Target");
+
+        // Calldata: 4-byte non-ERC20 selector + 64 bytes random (long enough to satisfy data.length >= 68)
+        bytes memory callData = abi.encodePacked(bytes4(0x12345678), new bytes(64));
+
+        vm.prank(eoa);
+        delegate.execute(target, 0, callData); // no revert — sel != ERC20_TRANSFER/APPROVE
+    }
+
     function test_executeBatch_succeeds() public {
         _initialize(2 ether);
         address t1 = makeAddr("t1");
