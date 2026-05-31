@@ -588,11 +588,6 @@
           "name": "_guardAddr",
           "type": "address",
           "internalType": "address"
-        },
-        {
-          "name": "_sessionKeyValidator",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [],
@@ -1073,30 +1068,6 @@
         }
       ],
       "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "validateCompositeSignature",
-      "inputs": [
-        {
-          "name": "hash",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        },
-        {
-          "name": "sig",
-          "type": "bytes",
-          "internalType": "bytes"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
       "stateMutability": "nonpayable"
     },
     {
