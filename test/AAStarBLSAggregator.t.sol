@@ -150,14 +150,20 @@ contract AAStarBLSAggregatorTest is Test {
         aggregator.validateSignatures(ops, new bytes(544));
     }
 
-    // ─── validateSignatures: invalid aggregated signature format ────────
+    // ─── validateSignatures: caller-supplied aggregate is IGNORED (v0.17.2-beta.1 round 5 HIGH-3) ──
+
+    /// @dev Round 5 HIGH-3: the `signature` parameter is no longer trusted/parsed. validateSignatures
+    ///      recomputes the aggregate from `userOps[i].signature`. These three legacy tests previously
+    ///      verified malformed-`signature` rejection; with the new binding, the revert now originates
+    ///      from `_extractBLSData(userOps[0].signature)` because userOps[0].signature is empty/malformed.
+    ///      We accept any revert (without specific selector) — the assertion is "still rejects bad input",
+    ///      just at the userOps-side path rather than the aggregate-side path.
 
     function test_validateSignatures_tooShortSignature_reverts() public {
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _makeUserOp(new bytes(0));
 
-        // Less than minimum 544 bytes (256 + 256 + 32)
-        vm.expectRevert(AAStarBLSAggregator.InvalidSignatureFormat.selector);
+        vm.expectRevert(); // userOps[0].signature too short → _extractBLSData reverts
         aggregator.validateSignatures(ops, new bytes(100));
     }
 
@@ -165,14 +171,13 @@ contract AAStarBLSAggregatorTest is Test {
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _makeUserOp(new bytes(0));
 
-        // aggBlsSig(256) + aggMsgPoint(256) + nodeCount=1(32) but missing the 32-byte nodeId
         bytes memory aggSig = abi.encodePacked(
-            new bytes(256),     // aggBlsSig
-            new bytes(256),     // aggMsgPoint
-            uint256(1)          // nodeCount = 1, but no nodeId data follows
+            new bytes(256),     // aggBlsSig — IGNORED in beta.1
+            new bytes(256),     // aggMsgPoint — IGNORED
+            uint256(1)          // nodeCount — IGNORED
         );
 
-        vm.expectRevert(AAStarBLSAggregator.InvalidSignatureFormat.selector);
+        vm.expectRevert(); // revert from _extractBLSData(empty userOps[0].signature)
         aggregator.validateSignatures(ops, aggSig);
     }
 
@@ -180,15 +185,13 @@ contract AAStarBLSAggregatorTest is Test {
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _makeUserOp(new bytes(0));
 
-        // nodeCount = 0, total length = 544 which matches 544 + 0*32
-        // This passes format check but should revert on blsAlgorithm.aggregateKeys with empty array
         bytes memory aggSig = abi.encodePacked(
             new bytes(256),
             new bytes(256),
             uint256(0)
         );
 
-        vm.expectRevert(AAStarBLSAlgorithm.NoNodesProvided.selector);
+        vm.expectRevert(); // empty userOps[0].signature → _extractBLSData reverts, NOT from supplied aggSig
         aggregator.validateSignatures(ops, aggSig);
     }
 

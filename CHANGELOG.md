@@ -8,7 +8,7 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
-## [v0.17.2] - 2026-05-30 (Session-Key Unification + Codex Pre-Release Findings)
+## [v0.17.2-beta.1] - 2026-05-31 (Session-Key Unification + Codex 4-Round Adversarial Review + David PR #61 Review)
 
 ### Highlights
 - **Session-key system unified**: deleted `AgentSessionKeyValidator`, `AirAccountCompositeValidator`, `TierGuardHook` (~7.8 KB combined external bytecode). All session-key features (velocity rate limit, `callTargets[]`, `selectorAllowlist[]`, classic single contractScope/selectorScope) now live in a single enhanced `SessionKeyValidator` registered in the validator router at algId `0x08`.
@@ -35,8 +35,36 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 - **L-2** — `accountId()` returns `"airaccount.v7@0.17.2"` (was 0.16.0).
 - **L-3** — eliminated alongside the `TierGuardHook` deletion (the misleading-comment line ceased to exist).
 
+### Pre-release hardening (Codex rounds 2-4 + David PR #61 review)
+
+Beyond the initial round 1 findings (H-1..H-2 / M-1..M-3 / L-1..L-3) above, four further rounds of adversarial review surfaced these issues, all of which are fixed in this beta:
+
+- **Round 2 (5 P1)** — `grantSession` accepted any `msg.sender` (off-chain sig verified separately); `AgentRegistry.registerAgent` bypassable via `Clones.clone(implementation)` (extcodehash-based whitelist superseded by factory-provenance `isValidAccount` mapping); `nonce-key 0x08` smuggling rejected at base; `bindFactory` made set-once.
+- **Round 3 (2 HIGH + 1 supplemental)** —
+  - **A1**: `grantSessionDirect` / `grantP256SessionDirect` access reverted to **owner-EOA only**. Round 2 had briefly allowed `msg.sender == account` to enable owner-via-UserOp grant, but this opened a confused-deputy attack (an unscoped existing session key could have the account call back into the validator and mint itself a new session, bypassing owner re-authorisation). UserOp / paymaster / gasless flows must now use `grantSession` + off-chain `ownerSig`. `revokeSession` keeps both caller paths (revoke only removes authority).
+  - **A2**: `AgentRegistry.bindFactory` now requires `msg.sender == deployer` (new `immutable deployer = msg.sender` captured in constructor) — without this, any bystander could front-run the legitimate deploy and bind a malicious factory.
+  - **Supplemental**: `AAStarAirAccountFactoryV7._markAccountValid` now reverts on registry failure (was silently swallowed). Bubbles registry's specific error; new error `AgentRegistryMarkValidFailed`. Prevents "ghost accounts" that exist on-chain but cannot `registerAgent`.
+- **Round 4 (1 HIGH I had missed)** — the 5-arg `grantSessionDirect` / `grantP256SessionDirect` backward-compat **shims** still carried the `msg.sender != owner && msg.sender != account` check from before the round-3 A1 fix. Result: the confused-deputy attack closed in the new Session-struct overload was still reachable through the shim. Both shim caller checks tightened to owner-EOA-only. (Shims subsequently deleted entirely — see "API surface" below.)
+- **David PR #61 human review** —
+  - MEDIUM: shim removal pulled into this PR (was previously phased to PR B); v0.17.2 now ships without dead API surface.
+  - LOW: `_ownerOf` reverts new `error NotAirAccount()` when the address is not an AirAccount-shaped contract (was returning `address(0)`, which collapsed two distinct failure modes into the same `NotAccountOwner` revert).
+
+### API surface — backward-compat shims removed
+
+`SessionKeyValidator` no longer exposes the 5-arg `(account, sessionKey, expiry, contractScope, selectorScope)` shim form of `grantSession` / `grantSessionDirect` / `grantP256Session` / `grantP256SessionDirect`. All four functions now take a single `Session calldata cfg` struct. Integrations must construct the struct (use `_sessionLegacy`-style helpers for legacy "simple session" behavior — `velocityLimit: 0`, empty `callTargets[]` / `selectorAllowlist[]`).
+
+### KMS / SDK migration impact (cross-referenced in issues)
+
+- **KMS** (issues [AAStarCommunity/AirAccount#7](https://github.com/AAStarCommunity/AirAccount/issues/7) round-1 + [#11](https://github.com/AAStarCommunity/AirAccount/issues/11) round 3+4 update): `/kms/sign-agent` must return **106 bytes** (`[0x08][account(20)][key(20)][ECDSA(65)]`), not the old 66-byte form. PR [AAStarCommunity/AirAccount#8](https://github.com/AAStarCommunity/AirAccount/pull/8) implements this in the TA (selected the "TA assembles full 106B" path over "SDK assembles" for zero-trust on `key` derivation).
+- **SDK** (issue [AAStarCommunity/aastar-sdk#35](https://github.com/AAStarCommunity/aastar-sdk/issues/35)): drop the `0x08` prefix assembly; for UserOp / paymaster / gasless grant flows, switch from `grantSessionDirect` UserOp self-call to `grantSession` + off-chain owner sig + relayer.
+
 ### Test results
-- 29 suites, 656 tests, 0 failed, 0 skipped.
+- 29 suites, **663 tests**, 0 failed, 0 skipped.
+- 7 new regression tests added by Codex round 4 + David PR #61 review covering: H-2 EOA caller rejected; `grantSessionDirect` rejects `msg.sender == account`; `grantP256SessionDirect` rejects `msg.sender == account`; full confused-deputy chain via `account.execute(grantSessionDirect)`; session key self-revoke via `account.execute(revokeSession)`; `bindFactory` rejects non-deployer; `createAccount` reverts when `_markAccountValid` fails.
+
+### ABI bundle regenerated
+
+`abi/AAStarAirAccountV7.full.json` re-built via `node scripts/build-full-abi.mjs` after shim removal — drops the 5-arg shim entries from the merged bundle. CI staleness check passes. No runtime behavior change.
 
 ### EIP-170 budget (runtime bytecode; limit 24,576 B)
 | Contract | v0.17.1 | v0.17.2 | Headroom |

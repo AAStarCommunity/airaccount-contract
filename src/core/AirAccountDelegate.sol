@@ -230,9 +230,20 @@ contract AirAccountDelegate {
 
     // ─── Execution ────────────────────────────────────────────────────────────
 
+    // v0.17.2-beta.1 round 5 MEDIUM-1 (Codex): ERC20 selectors for delegate-side token guard.
+    bytes4 internal constant ERC20_TRANSFER = 0xa9059cbb;
+    bytes4 internal constant ERC20_APPROVE  = 0x095ea7b3;
+
     /**
      * @notice Execute a single call. Caller must be EntryPoint or the EOA itself.
-     * @dev Enforces ETH daily limit via guard before executing.
+     * @dev Enforces ETH daily limit + ERC20 token tier/daily limit via guard before executing.
+     *
+     * v0.17.2-beta.1 round 5 MEDIUM-1: previously only ETH `value` was checked against the
+     *      guard; ERC20 `transfer` / `approve` could bypass token tier/daily limits via
+     *      `execute(token, 0, transferCalldata)`. Now we additionally parse `data` for the
+     *      ERC20 selectors and call `guard.checkTokenTransaction` to mirror the native
+     *      AirAccount path. The 7702 raw-key bypass (KI-1) remains a separate, documented
+     *      out-of-contract concern; this fix closes the in-contract ERC20 gap.
      */
     function execute(address dest, uint256 value, bytes calldata data) external {
         if (msg.sender != address(ENTRY_POINT) && msg.sender != address(this))
@@ -243,9 +254,10 @@ contract AirAccountDelegate {
 
         uint8 algId = msg.sender == address(ENTRY_POINT) ? _consumeAlgId() : ALG_ECDSA;
 
-        // Guard: ETH daily limit + algorithm whitelist
+        // Guard: ETH daily limit + algorithm whitelist + ERC20 transfer/approve tier check.
         if (address(ds.guard) != address(0)) {
             AAStarGlobalGuard(ds.guard).checkTransaction(value, algId);
+            _checkTokenGuard(ds.guard, dest, data, algId);
         }
 
         _call(dest, value, data);
@@ -272,8 +284,27 @@ contract AirAccountDelegate {
         for (uint256 i = 0; i < dest.length; i++) {
             if (address(ds.guard) != address(0)) {
                 AAStarGlobalGuard(ds.guard).checkTransaction(value[i], algId);
+                _checkTokenGuard(ds.guard, dest[i], data[i], algId);
             }
             _call(dest[i], value[i], data[i]);
+        }
+    }
+
+    /// @dev v0.17.2-beta.1 round 5 MEDIUM-1: ERC20 transfer/approve tier+daily-limit guard.
+    ///      The 7702 delegate does not have a parser registry like the native AirAccount,
+    ///      so this is a stripped-down version: only the two raw ERC20 selectors. Any
+    ///      DeFi-style calldata (Uniswap multicall, etc.) is NOT parsed and would still
+    ///      pass through with no ERC20 tier check — that's an accepted limitation for the
+    ///      7702 delegate, documented in known-issues.md KI-15.
+    function _checkTokenGuard(address guardAddr, address dest, bytes calldata data, uint8 algId) internal {
+        if (data.length < 68) return;
+        bytes4 sel = bytes4(data[:4]);
+        if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
+            AAStarGlobalGuard(guardAddr).checkTokenTransaction(
+                dest,
+                abi.decode(data[36:68], (uint256)),
+                algId
+            );
         }
     }
 

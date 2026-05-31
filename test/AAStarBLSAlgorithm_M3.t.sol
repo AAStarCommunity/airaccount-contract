@@ -51,23 +51,35 @@ contract AAStarBLSAlgorithmM3Test is Test {
         assertNotEq(bls.computeSetHash(ids1), bls.computeSetHash(ids2));
     }
 
-    // ─── cacheAggregatedKey ──────────────────────────────────────────
+    // ─── cacheAggregatedKey (DEPRECATED in v0.17.2-beta.1 — round 5 HIGH-1 fix) ──────
 
-    function test_cacheAggregatedKey_emptyReverts() public {
+    /// @dev Round 5 HIGH-1: cache mechanism removed because cached aggregates were not
+    ///      invalidated on key revoke/update. `cacheAggregatedKey` now always reverts
+    ///      `CacheDeprecated` regardless of inputs.
+    function test_cacheAggregatedKey_alwaysReverts_empty() public {
         bytes32[] memory empty = new bytes32[](0);
-        vm.expectRevert(AAStarBLSAlgorithm.NoNodesProvided.selector);
+        vm.expectRevert(AAStarBLSAlgorithm.CacheDeprecated.selector);
         bls.cacheAggregatedKey(empty);
     }
 
-    function test_cacheAggregatedKey_unregisteredReverts() public {
+    function test_cacheAggregatedKey_alwaysReverts_unregistered() public {
         bytes32[] memory ids = new bytes32[](1);
         ids[0] = bytes32(uint256(999));
-        vm.expectRevert(AAStarBLSAlgorithm.NodeNotRegistered.selector);
+        vm.expectRevert(AAStarBLSAlgorithm.CacheDeprecated.selector);
         bls.cacheAggregatedKey(ids);
     }
 
-    // Note: cacheAggregatedKey with real keys requires G1Add precompile (EIP-2537)
-    // which is not available in forge's EVM. Testing format/validation only.
+    function test_cacheAggregatedKey_alwaysReverts_registered() public {
+        // Even with a real registered node, this is always CacheDeprecated.
+        bytes32 nid = bytes32(uint256(0x42));
+        bytes memory dummyKey = new bytes(128);
+        dummyKey[0] = 0x01; // non-infinity sentinel byte
+        bls.registerPublicKey(nid, dummyKey);
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = nid;
+        vm.expectRevert(AAStarBLSAlgorithm.CacheDeprecated.selector);
+        bls.cacheAggregatedKey(ids);
+    }
 
     // ─── aggregateKeys ───────────────────────────────────────────────
 
