@@ -32,7 +32,7 @@ contract Eip170SizeTest is Test {
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
         uint256 size = _runtimeSize(address(new AAStarAirAccountFactoryV7(
-            address(0xEE), address(0), noTokens, noConfigs, address(0), address(0)
+            address(0xEE), address(0), noTokens, noConfigs
         )));
         emit log_named_uint("AAStarAirAccountFactoryV7 runtime size", size);
         assertLe(size, EIP170_LIMIT, "Factory exceeds EIP-170");

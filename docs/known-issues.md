@@ -200,38 +200,42 @@ The absence of a module-install timelock is a deliberate UX trade-off. Auditors 
 
 ---
 
-## KI-7 — P256 Precompile Availability on Non-OP-Stack Chains
+## KI-7 — P256 Precompile Required (Deployment-Blocking on Non-OP-Stack Chains)
 
-**Severity**: Medium (deployment configuration risk)
-**Affected Contracts**: All contracts using P256 (ALG_P256 0x03) via `AAStarValidator.sol`
+**Severity**: Medium (deployment configuration constraint)
+**Affected Contracts**: `AAStarAirAccountBase` `_validateP256` (algId `0x03`), `SessionKeyValidator` P256 session path (148-byte sigs)
 **Category**: Cross-chain deployment
+
+> **Correction 2026-05-30**: prior wording stated AirAccount "falls back to a Solidity software implementation" of P256 verification on chains without the EIP-7212 precompile. That is **not true** in the current code. The contract calls the precompile at `0x100` via `staticcall` and **fails fast** (returns SIG_VALIDATION_FAILED) when the precompile is absent — there is no software fallback. Deployment on a chain without EIP-7212 means P256 (and any cumulative/combined algId that requires P256) is **unusable on that chain**, not "expensive". Treat KI-7 as a deployment-blocking constraint for any chain that lacks the precompile.
 
 ### Description
 
-AirAccount's P256 (WebAuthn) signature verification uses the EIP-7212 precompile at address `0x0000000000000000000000000000000000000100`. This precompile is only natively available on:
+P256 (WebAuthn) signature verification uses the EIP-7212 precompile at address `0x0000000000000000000000000000000000000100`. Natively available on:
 
-- OP Mainnet (since the Fjord upgrade)
-- Base (Fjord)
-- Other OP Stack chains with Fjord
+- OP Mainnet, Base, and other OP Stack chains with Fjord active
+- Optimism Sepolia, Base Sepolia (Fjord testnets)
 
-On **Ethereum mainnet** and non-OP-Stack L2s (e.g., Arbitrum One, zkSync Era), the precompile does not exist. AirAccount falls back to a Solidity software implementation of P256 verification, which costs approximately **330,000 gas** per verification (vs. ~3,450 gas for the precompile).
+On **Ethereum mainnet** and non-OP-Stack L2s (Arbitrum One, zkSync Era, etc.) the precompile does **not** exist. `_validateP256` returns `1` (SIG_VALIDATION_FAILED) when the precompile staticcall fails; no software fallback is attempted.
 
 ### Risk
 
-On Ethereum mainnet, using P256 (WebAuthn) as a tier factor makes `validateUserOp` prohibitively expensive (~350k+ gas). Users deploying on mainnet who rely on WebAuthn for Tier 2/Tier 3 authentication will face unexpected gas costs and may hit bundler gas limits.
+Deploying on a chain without EIP-7212 means:
 
-Additionally, the software P256 verifier is a separate contract dependency. Its security must be evaluated independently.
+- **Any UserOp using `ALG_P256` (0x03), `ALG_CUMULATIVE_T2` (0x04), `ALG_CUMULATIVE_T3` (0x05), or `ALG_COMBINED_T1` (0x06)** fails validation — these algorithms all internally call `_validateP256`.
+- `ALG_BLS` (0x01) and `ALG_ECDSA` (0x02) work fine — no precompile dependency.
+- Session keys: ECDSA session (105-byte format) works; P256 session (148-byte format) fails.
+
+This is by design — using the precompile keeps gas low (~3,450 vs ~330k for any pure-Solidity P256), and a chain without EIP-7212 should not be a primary AirAccount target.
 
 ### Mitigation
 
-- Primary deployment targets are OP Stack L2s (Base, OP Mainnet) where the precompile is available.
-- Deployment documentation explicitly warns against using P256 tier factors on Ethereum mainnet.
-- Alternative: Use ECDSA + BLS cumulative tier (`ALG_CUMULATIVE_T2`) as the high-security path on non-OP chains. P256 is reserved for OP Stack deployments.
-- The factory deployment script checks `block.chainid` and emits a `P256PrecompileWarning` if deploying to a chain without known precompile support.
+- Primary deployment targets are OP Stack L2s where EIP-7212 is active.
+- For non-OP-Stack chains, restrict accounts to ECDSA + BLS algorithm subset; do not advertise P256 session keys or passkey-based tiers.
+- Deployment guide explicitly lists supported chains; deploying to unlisted chains requires re-evaluating P256 support.
 
 ### Auditor Note
 
-Auditors should verify that the fallback P256 verifier is correctly integrated and that a precompile call failure does not silently validate a bad signature.
+Verify that on a chain without the precompile, P256-dependent UserOps cleanly return SIG_VALIDATION_FAILED (rather than silently accepting bad signatures or reverting unexpectedly). Specifically check `AAStarAirAccountBase._validateP256` and `SessionKeyValidator._validateP256Session` both check `!success || result.length < 32 || decoded != 1` before returning `0`.
 
 ---
 
@@ -353,9 +357,21 @@ Auditors should verify that `updateGuardians()` cannot be called during an activ
 
 ### Description
 
-The account passes validated state (algId, session key, weight) from the `validateUserOp` phase to the `execute` phase through EIP-1153 transient storage. In v0.17.1 this queue was hardened to be **content-keyed**: the slot is derived from `keccak256(callData)` (HIGH-3 fix), and reads are non-destructive, so a nested or replayed frame can no longer pop a value validated for a *different* callData.
+The account passes validated state (algId, session key, weight) from the `validateUserOp` phase to the `execute` phase through EIP-1153 transient storage. In v0.17.1 the queue was hardened to be **content-keyed** by `keccak256(callData)` (HIGH-3 fix), and reads are non-destructive, so a nested or replayed frame can no longer pop a value validated for a *different* callData.
 
-The residual edge: within the **same** callData, the validated state could in principle be read more than once. This is not profitably exploitable — to reach a higher tier an attacker must already hold the higher-tier signature for that exact callData, and byte-identical callData cannot be redirected to a different recipient or amount. So "re-reading" only ever re-affirms a tier the caller already legitimately satisfied.
+The residual edge (Codex 2026-05-30 review escalated this to HIGH; AAStar classified it as LOW after reviewing the attack economics — see authoritative analysis below):
+
+**Mechanism.** Within one bundle, two UserOps with **byte-identical callData but different nonces** share the same transient slot, so a lower-tier UserOp can read the algId written by a higher-tier UserOp for the same callData. Identical to the inline `AUDIT NOTE — HIGH-3 residual` block above `_setCallDataKey` in `AAStarAirAccountBase.sol`.
+
+**Why this is LOW, not HIGH:**
+
+- Identical callData ⇒ identical `(dest, value, func)`. The attacker cannot redirect funds, change amount, or change function — they can only **duplicate** an operation the victim already authorized.
+- Attacker gains **zero value**: the recipient is the victim's chosen recipient, not the attacker.
+- Customer impact at worst: a griefing double-execution of a transfer the customer was already going to make. **No theft. No privilege escalation beyond what the high-tier UserOp the customer is submitting already grants.**
+- Required conditions are very narrow:
+  1. Attacker already holds owner-ECDSA (itself the most catastrophic compromise — at which point Tier-1 attacks are far cheaper / more flexible);
+  2. A legitimate high-tier UserOp for that exact callData exists in mempool;
+  3. Bundle ordering puts the attacker's lower-tier UserOp after the legitimate higher-tier one in the same bundle.
 
 ### Risk
 
@@ -364,11 +380,11 @@ No fund-redirection or privilege-escalation path. An attacker cannot manufacture
 ### Mitigation
 
 - Current content-keying already blocks the cross-callData confusion that made the original HIGH-3 a real finding.
-- Long-term hardening tracked in #52: route the validated-state handoff through `executeUserOp` so the queue is strictly single-consume per UserOp, removing the residual re-read entirely.
+- Long-term hardening tracked in #52: route the validated-state handoff through `executeUserOp` so the queue is strictly single-consume per UserOp `(sender, nonce, callData)`, removing the residual re-read entirely.
 
 ### Auditor Note
 
-If a reviewer finds a callData shape where re-reading validated state yields authority the signer did not already have for that exact callData, that would exceed the documented residual and should be filed as a new finding.
+If a reviewer finds a callData shape where re-reading validated state yields authority the signer did **not** already have for that exact callData, that would exceed the documented residual and should be filed as a new finding. Specifically: any path where (a) the attacker does not need to hold the higher-tier sig for callData X, OR (b) the duplicated execution can be redirected to attacker-controlled address.
 
 ---
 

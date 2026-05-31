@@ -11,6 +11,21 @@ contract AgentRegistry {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
+    /// @dev v0.17.2 H-2 fix (Codex P1 round 2 — 2026-05-30): replaces the original extcodehash
+    ///      `EIP-1167 clone of implementation` check, which can be bypassed by anyone calling
+    ///      `Clones.clone(implementation)` directly (no factory involvement). The mapping below
+    ///      is populated only by the bound factory's `createAccount*` paths, giving a true
+    ///      factory-provenance guarantee.
+    ///
+    ///      The factory address is set once at deploy time (`bindFactory`), and is the SOLE
+    ///      authorised writer of `isValidAccount`. The pre-existing `Clones.clone` bypass
+    ///      becomes irrelevant — even if an attacker produces a clone, they cannot have
+    ///      the factory call `markValid(theirClone)`.
+    address public factory;
+
+    /// @dev Accounts authorised to register agents (set by `factory.markValid` during createAccount*).
+    mapping(address => bool) public isValidAccount;
+
     /// @dev agentWallet → humanOwner
     mapping(address => address) public agentWalletOwner;
     /// @dev humanOwner → agentWallet[] (for enumeration)
@@ -20,6 +35,8 @@ contract AgentRegistry {
 
     event AgentRegistered(address indexed humanOwner, address indexed agentWallet);
     event AgentDeregistered(address indexed humanOwner, address indexed agentWallet);
+    event FactoryBound(address indexed factory);
+    event AccountMarkedValid(address indexed account);
 
     error NotAgentOwner();
     error AgentAlreadyRegistered();
@@ -27,23 +44,56 @@ contract AgentRegistry {
     error InvalidAgentSignature();
     error SelfRegistrationForbidden();
     error NotSupported();
-    /// @dev HIGH-1: msg.sender is not a known AirAccount (no accountId() or wrong prefix).
     error CallerNotAirAccount();
+    error FactoryAlreadyBound();
+    error OnlyFactory();
+    error NotDeployer();
 
-    /// @notice Register msg.sender (AirAccount) as the human owner of agentWallet.
-    ///         agentWalletSig proves the caller controls agentWallet, preventing front-run griefing.
-    ///         Supports both EOA (ECDSA) and smart-contract (ERC-1271) agent wallets.
+    /// @notice The account that deployed this AgentRegistry. Set at construction time and
+    ///         immutable. The sole caller authorised to bind the factory (one-time).
+    /// @dev Codex P1 round 3 (2026-05-30): without this, `bindFactory` was public and any
+    ///      bystander could front-run the deployer and bind their own malicious factory,
+    ///      then call `markValid` on attacker-controlled clones to fake AirAccount provenance.
+    address public immutable deployer;
+
+    constructor() {
+        deployer = msg.sender;
+    }
+
+    /// @notice One-time binding of the factory address. Caller must be `deployer` (the account
+    ///         that deployed this registry). Once bound, cannot be re-bound — the binding is
+    ///         permanent. Performed post-deploy because deploy order has a circular dependency
+    ///         (factory↔registry), and using a setter avoids needing CREATE2 address prediction.
+    function bindFactory(address _factory) external {
+        if (msg.sender != deployer) revert NotDeployer();
+        if (factory != address(0)) revert FactoryAlreadyBound();
+        if (_factory == address(0) || _factory.code.length == 0) revert InvalidAddress();
+        factory = _factory;
+        emit FactoryBound(_factory);
+    }
+
+    /// @notice Called by the factory at the end of each createAccount* to record provenance.
+    /// @dev Only the bound factory may call this. Reverts if factory is not yet bound or if
+    ///      the caller is not the bound factory.
+    function markValid(address account) external {
+        if (msg.sender != factory) revert OnlyFactory();
+        if (account == address(0) || account.code.length == 0) revert InvalidAddress();
+        isValidAccount[account] = true;
+        emit AccountMarkedValid(account);
+    }
+
+    /// @notice Register msg.sender (AirAccount created by the bound factory) as the human owner
+    ///         of agentWallet. agentWalletSig proves the caller controls agentWallet, preventing
+    ///         front-run griefing. Supports both EOA (ECDSA) and smart-contract (ERC-1271) agent wallets.
     /// @param agentWallet The agent's wallet address (EOA or smart contract)
     /// @param agentWalletSig Signature from agentWallet over:
     ///        keccak256(abi.encodePacked("REGISTER_AGENT", chainId, address(this), msg.sender, agentWallet)).toEthSignedMessageHash()
     function registerAgent(address agentWallet, bytes calldata agentWalletSig) external {
-        // HIGH-1: Only AirAccount contracts may register agents.
-        // This prevents plain EOAs and unrelated contracts from obtaining SuperPaymaster sponsorship.
-        (bool ok, bytes memory data) = msg.sender.staticcall(
-            abi.encodeWithSignature("accountId()")
-        );
-        if (!ok || data.length < 32) revert CallerNotAirAccount();
-        if (!_startsWith(abi.decode(data, (string)), "airaccount.")) revert CallerNotAirAccount();
+        // v0.17.2 H-2 (Codex P1 round 2 — 2026-05-30): only factory-created accounts may register.
+        // Bypasses the prior extcodehash-clone-bypass (any contract can call `Clones.clone(impl)`
+        // and pass the codehash check). isValidAccount is written ONLY by the bound factory's
+        // createAccount* paths, so a script-deployed clone outside the factory cannot pass.
+        if (!isValidAccount[msg.sender]) revert CallerNotAirAccount();
 
         if (agentWallet == address(0)) revert InvalidAddress();
         if (agentWallet == msg.sender) revert SelfRegistrationForbidden();
@@ -146,17 +196,6 @@ contract AgentRegistry {
     /// @notice Returns count of agent wallets registered by this owner.
     function getAgentCount(address owner) external view returns (uint256) {
         return ownerAgents[owner].length;
-    }
-
-    /// @dev Returns true if `str` starts with `prefix`.
-    function _startsWith(string memory str, string memory prefix) private pure returns (bool) {
-        bytes memory s = bytes(str);
-        bytes memory p = bytes(prefix);
-        if (s.length < p.length) return false;
-        for (uint256 i = 0; i < p.length; i++) {
-            if (s[i] != p[i]) return false;
-        }
-        return true;
     }
 
     /// @dev O(1) swap-and-pop removal using the index mapping.

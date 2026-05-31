@@ -33,28 +33,21 @@ contract AAStarAirAccountFactoryV7 {
     /// @dev Default token spending configs aligned with _defaultTokenAddresses
     AAStarGlobalGuard.TokenConfig[] private _defaultTokenConfigs;
 
-    /// @dev Default validator module pre-installed on every new account (address(0) = disabled)
-    ///      Typically AirAccountCompositeValidator to enable weighted/cumulative sigs out-of-box.
-    address public immutable defaultValidatorModule;
-
-    /// @dev Default hook module pre-installed on every new account (address(0) = disabled)
-    ///      Typically TierGuardHook to enforce tier-based spending limits via ERC-7579 hooks.
-    address public immutable defaultHookModule;
-
-    /// @dev Factory deployer — the only address allowed to configure agentSessionKeyValidator.
-    address public immutable factoryAdmin;
-
-    /// @dev AgentSessionKeyValidator (ERC-7579 validator) default-installed on AGENT accounts only
-    ///      (hybrid policy — regular accounts opt-in via installModule). Set once by factoryAdmin via
-    ///      setAgentSessionKeyValidator() after deployment. address(0) = not configured → createAgentAccount
-    ///      degrades gracefully (no default install; SDK can installModule later).
-    address public agentSessionKeyValidator;
-
     /// @dev Maximum allowed TTL for guardian2 (and agentKey) signatures in createAgentAccount.
     ///      Prevents a long-lived signature from being replayed far in the future.
     uint48 internal constant MAX_GUARDIAN_SIG_TTL = 30 days;
 
+    /// @dev v0.17.2 H-2 (Codex P1 round 2): AgentRegistry that records the provenance of each
+    ///      account created by this factory. Set once via `setAgentRegistry` post-deploy
+    ///      (factory↔registry circular dependency). When non-zero, each createAccount* calls
+    ///      `agentRegistry.markValid(account)`, which is the only path to populating
+    ///      `isValidAccount`. SuperPaymaster's sponsorship eligibility rests on this mapping.
+    address public agentRegistry;
+    /// @dev Deployer of the factory; the only address allowed to call `setAgentRegistry`. Set-once.
+    address public immutable factoryAdmin;
+
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
+    event AgentRegistrySet(address indexed agentRegistry);
 
     /// @dev Emitted when an agent account is created via createAgentAccount.
     event AgentAccountCreated(
@@ -70,33 +63,29 @@ contract AAStarAirAccountFactoryV7 {
     error DuplicateGuardian();
     error AgentKeyDidNotAccept();
     error NotFactoryAdmin();
-    error AgentValidatorAlreadySet();
-    error AgentValidatorNotContract();
-
-    event AgentSessionKeyValidatorSet(address indexed validator);
+    error AgentRegistryAlreadySet();
+    error AgentRegistryNotContract();
+    error AgentRegistryMarkValidFailed();
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
     /// @param defaultTokens Token addresses to pre-configure for all new accounts (empty = no defaults)
     /// @param defaultConfigs Spending limits aligned with defaultTokens
-    /// @param _defaultValidatorModule AirAccountCompositeValidator to pre-install (address(0) = none)
-    /// @param _defaultHookModule TierGuardHook to pre-install (address(0) = none)
+    /// @dev v0.17.2: removed defaultValidatorModule / defaultHookModule / agentSessionKeyValidator
+    ///      machinery. The unified SessionKeyValidator (router algId 0x08) replaces ERC-7579
+    ///      install-based session keys. CompositeValidator and TierGuardHook are deleted.
     constructor(
         address _entryPoint,
         address _communityGuardian,
         address[] memory defaultTokens,
-        AAStarGlobalGuard.TokenConfig[] memory defaultConfigs,
-        address _defaultValidatorModule,
-        address _defaultHookModule
+        AAStarGlobalGuard.TokenConfig[] memory defaultConfigs
     ) {
-        defaultValidatorModule = _defaultValidatorModule;
-        defaultHookModule = _defaultHookModule;
-        factoryAdmin = msg.sender; // deployer; only one allowed to set agentSessionKeyValidator
         require(defaultTokens.length == defaultConfigs.length, "Token/config length mismatch");
         // Deploy shared implementation. All user accounts are EIP-1167 clones of this address.
         implementation = address(new AAStarAirAccountV7());
         entryPoint = _entryPoint;
         defaultCommunityGuardian = _communityGuardian;
+        factoryAdmin = msg.sender; // for set-once setAgentRegistry post-deploy
         for (uint256 i = 0; i < defaultTokens.length; i++) {
             address tok = defaultTokens[i];
             require(tok != address(0), "Default token address zero");
@@ -117,18 +106,45 @@ contract AAStarAirAccountFactoryV7 {
         }
     }
 
-    /// @notice One-time configuration of the agent session-key validator (deployer-only, set-once).
-    /// @dev Default-installed on agent accounts created via createAgentAccount (hybrid policy).
-    ///      Security: deployer-only + set-once prevents a front-runner from injecting a malicious
-    ///      validator that would be auto-installed on every future agent account. Set-once (no
-    ///      re-set) matches the non-upgradable philosophy; a new validator version needs a new factory.
-    /// @param v Deployed AgentSessionKeyValidator address (must be a contract).
-    function setAgentSessionKeyValidator(address v) external {
+    // ─── Post-deploy AgentRegistry binding (v0.17.2 H-2 round 2) ─────
+
+    /// @notice One-time setter for the AgentRegistry whose `isValidAccount` mapping records
+    ///         which accounts were created by this factory. Caller must be `factoryAdmin`
+    ///         (i.e., the deployer of this factory). Set-once: cannot be re-pointed.
+    /// @dev    Why a setter and not a constructor param: AgentRegistry's own constructor needs
+    ///         to know the factory address (to gate `markValid`), creating a circular dependency
+    ///         at deploy time. Deployment order is: factory → AgentRegistry(factory) →
+    ///         factory.setAgentRegistry(agentRegistry). Until set, createAccount* still works
+    ///         but does NOT call markValid — those accounts will not be able to registerAgent
+    ///         until the registry is bound. Recommended to set immediately after deploy.
+    function setAgentRegistry(address _agentRegistry) external {
         if (msg.sender != factoryAdmin) revert NotFactoryAdmin();
-        if (agentSessionKeyValidator != address(0)) revert AgentValidatorAlreadySet();
-        if (v.code.length == 0) revert AgentValidatorNotContract();
-        agentSessionKeyValidator = v;
-        emit AgentSessionKeyValidatorSet(v);
+        if (agentRegistry != address(0)) revert AgentRegistryAlreadySet();
+        if (_agentRegistry.code.length == 0) revert AgentRegistryNotContract();
+        agentRegistry = _agentRegistry;
+        emit AgentRegistrySet(_agentRegistry);
+    }
+
+    /// @dev Helper called from each createAccount* path to mark provenance in the AgentRegistry.
+    ///      No-op if agentRegistry is unset (deployer hasn't bound a registry yet — recommended
+    ///      to set immediately after deploy).
+    /// @dev Codex P1 round 3 (2026-05-30): if the registry IS set but markValid fails (wrong
+    ///      address, wrong contract, paused, etc), REVERT the whole account creation. Previously
+    ///      this was a silent best-effort swallow — but that produces "ghost" accounts that
+    ///      exist on-chain but cannot registerAgent (registry's isValidAccount mapping is empty
+    ///      for them), with no signal to user / SDK / SuperPaymaster about why. Loud failure is
+    ///      strictly better than silent half-broken state.
+    function _markAccountValid(address account) internal {
+        address reg = agentRegistry;
+        if (reg == address(0)) return;
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool ok, bytes memory ret) = reg.call(abi.encodeWithSignature("markValid(address)", account));
+        if (!ok) {
+            if (ret.length > 0) {
+                assembly { revert(add(ret, 0x20), mload(ret)) }
+            }
+            revert AgentRegistryMarkValidFailed();
+        }
     }
 
     // ─── Full Configuration ─────────────────────────────────────────
@@ -174,7 +190,7 @@ contract AAStarAirAccountFactoryV7 {
         }
         account = Clones.cloneDeterministic(implementation, cloneSalt);
         AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
-        emit AccountCreated(account, owner, salt);
+        _markAccountValid(account);        emit AccountCreated(account, owner, salt);
     }
 
     /// @notice Predict the counterfactual address for a full-config account.
@@ -249,7 +265,7 @@ contract AAStarAirAccountFactoryV7 {
         ));
         account = Clones.cloneDeterministic(implementation, cloneSalt);
         AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
-        emit AccountCreated(account, owner, salt);
+        _markAccountValid(account);        emit AccountCreated(account, owner, salt);
     }
 
     /// @notice Create a dedicated AirAccount for an autonomous AI agent.
@@ -342,12 +358,12 @@ contract AAStarAirAccountFactoryV7 {
             config.initialTokenConfigs
         ));
         account = Clones.cloneDeterministic(implementation, cloneSalt);
-        // Hybrid policy: agent accounts default-install AgentSessionKeyValidator (if configured).
-        // agentSessionKeyValidator == address(0) → degrades to a plain init (no default install).
+        // v0.17.2: agent accounts are structurally identical to human accounts. Session-key
+        // grants happen post-creation via the unified SessionKeyValidator (router algId 0x08).
         AAStarAirAccountV7(payable(account)).initializeAgentAccount(
-            entryPoint, msg.sender, config, guardAddr, agentSessionKeyValidator
+            entryPoint, msg.sender, config, guardAddr
         );
-        emit AgentAccountCreated(account, agentKey, msg.sender, agentId, guardian2, dailyLimit);
+        _markAccountValid(account);        emit AgentAccountCreated(account, agentKey, msg.sender, agentId, guardian2, dailyLimit);
     }
 
     /// @notice Predict the address of a future agent account.

@@ -828,6 +828,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // Reject if accumulated weight is insufficient for even Tier 1
         if (accumulated < wc.tier1Threshold) return 1;
 
+        // L-1 fix (Codex 2026-05-30): reject trailing/extraneous bytes after the last consumed signature.
+        // Without this, signature canonicalisation is broken — relayers/indexers using keccak256(signature)
+        // as a uniqueness key would see distinct hashes for semantically identical signatures.
+        // The ERC-4337 nonce prevents replay, so trailing bytes are not a security hole, but they ARE
+        // a downstream-consumer footgun. Forge canonical form.
+        if (cursor != sigData.length) return 1;
+
         _storeValidatedWeight(accumulated);
         return 0;
     }
@@ -1092,50 +1099,66 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             _checkTokenGuard(dest, func, guardAlgId);
         }
 
-        // SESSION KEY scope enforcement: verify contractScope and selectorScope against live calldata.
-        // taggedSessionKey was consumed ONCE by the caller (execute/executeBatch), not per-call here.
-        // This ensures ALL calls in a batch are subject to the same contractScope/selectorScope.
-        // Top byte: 0x01 = ECDSA session (lookup by address), 0x02 = P256 session (lookup by keyHash).
+        // SESSION KEY scope + velocity enforcement (v0.17.2 unified path).
         //
-        // Two paths:
-        //   Standard path (taggedSessionKey != 0): session stored during validateUserOp via
-        //     _validateAlgId(). Enforce scope via SessionKeyValidator registered in CompositeValidator.
-        //   Nonce-key path (taggedSessionKey == 0): ERC-7579 module validator (AgentSessionKeyValidator)
-        //     handled validation; TierGuardHook enforces tier limits. Skip scope re-check here.
+        // taggedSessionKey was consumed ONCE by the caller (execute/executeBatch), not per-call here,
+        // so ALL calls in a batch share the same session identifier. The top byte encodes sessionType
+        // (0x01 = ECDSA session, lower 20 bytes = key address; 0x02 = P256 session, lower 31 bytes
+        // = truncated keyHash). The unified SessionKeyValidator at router[ALG_SESSION_KEY] enforces:
+        //   - expiry / revoked
+        //   - target scope: callTargets[] takes priority over legacy single contractScope
+        //   - selector scope: selectorAllowlist[] takes priority over legacy single selectorScope
+        //   - velocity: limit/window counter incremented per-call via recordCallForVelocity
         //
-        // M8.P2 FIX: AgentSessionKeyValidator callTargets/selectorAllowlist are now enforced on-chain
-        //   via TierGuardHook.preCheck() calling enforceSessionScope() (HIGH-1 fix applied).
-        //   executeBatch with ALG_SESSION_KEY + active hook reverts (HIGH-2 fix applied).
+        // Per Codex P0-1 review: velocity SSTORE happens here in EXECUTE phase only (not validate).
+        // Per Codex P0-2 review: this branch runs per-call from execute() / executeBatch() loops,
+        // so batch paths automatically get array scope + velocity coverage.
         if (algId == ALG_SESSION_KEY && taggedSessionKey != bytes32(0)) {
-            if (address(validator) == address(0)) revert SessionScopeViolation(); // no validator router
+            if (address(validator) == address(0)) revert SessionScopeViolation();
             address skValidator = IAAStarValidator(address(validator)).getAlgorithm(ALG_SESSION_KEY);
-            if (skValidator == address(0)) revert SessionScopeViolation();         // session key validator not installed
+            if (skValidator == address(0)) revert SessionScopeViolation();
+
             uint8 sessionType = uint8(uint256(taggedSessionKey) >> 248);
-            bool ok;
-            bytes memory data;
+            bytes32 keyOrHash;
             if (sessionType == 0x01) {
-                // ECDSA session: extract address from lower 20 bytes
-                address ecdsaKey = address(uint160(uint256(taggedSessionKey)));
-                (ok, data) = skValidator.staticcall(
-                    abi.encodeWithSignature("sessions(address,address)", address(this), ecdsaKey)
-                );
-            } else if (sessionType == 0x02) {
-                // P256 session: extract key hash from lower 31 bytes
-                bytes32 p256Hash = bytes32(uint256(taggedSessionKey) & type(uint248).max);
-                (ok, data) = skValidator.staticcall(
-                    abi.encodeWithSignature("getP256Session(address,bytes32)", address(this), p256Hash)
-                );
+                // ECDSA session: lower 20 bytes (address) — bytes32 with address in low position
+                keyOrHash = bytes32(uint256(uint160(uint256(taggedSessionKey))));
+            } else {
+                // P256 session: lower 248 bits (truncated keyHash); top byte already zero
+                keyOrHash = bytes32(uint256(taggedSessionKey) & type(uint248).max);
             }
-            if (ok && data.length >= 128) {
-                // ABI decode Session: (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked)
-                (, address contractScope, bytes4 selectorScope,) =
-                    abi.decode(data, (uint48, address, bytes4, bool));
-                if (contractScope != address(0) && dest != contractScope) {
-                    revert SessionScopeViolation();
+
+            // Scope check (view; reverts internally on violation).
+            bytes4 sel = func.length >= 4 ? bytes4(func[:4]) : bytes4(0);
+            (bool scopeOk, bytes memory scopeRet) = skValidator.staticcall(
+                abi.encodeWithSignature(
+                    "checkSessionScope(address,bytes32,uint8,address,bytes4)",
+                    address(this), keyOrHash, sessionType, dest, sel
+                )
+            );
+            if (!scopeOk) {
+                // Bubble the validator's specific revert reason; falls back to generic if empty.
+                if (scopeRet.length > 0) {
+                    assembly { revert(add(scopeRet, 0x20), mload(scopeRet)) }
                 }
-                if (selectorScope != bytes4(0) && func.length >= 4 && bytes4(func[:4]) != selectorScope) {
-                    revert SessionScopeViolation();
+                revert SessionScopeViolation();
+            }
+
+            // Velocity counter (state-mutating). msg.sender check in validator gates this to
+            // address(this) — which IS the account; safe.
+            // skipEthCheck path (e.g. executeFromExecutor pre-decoded) also runs this so
+            // executor-routed session calls are equally rate-limited.
+            (bool vOk, bytes memory vRet) = skValidator.call(
+                abi.encodeWithSignature(
+                    "recordCallForVelocity(address,bytes32,uint8)",
+                    address(this), keyOrHash, sessionType
+                )
+            );
+            if (!vOk) {
+                if (vRet.length > 0) {
+                    assembly { revert(add(vRet, 0x20), mload(vRet)) }
                 }
+                revert SessionScopeViolation();
             }
         }
     }
@@ -1147,6 +1170,25 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      key = keccak256(userOp.callData)) and execute/executeBatch (execution phase,
     ///      key = keccak256(msg.data), which equals the validated userOp.callData on the
     ///      EntryPoint path). All algId/weight/sessionKey entries are keyed by this value.
+    ///
+    /// @dev AUDIT NOTE — HIGH-3 residual (#52, classified LOW by AAStar 2026-05-30):
+    ///      _setCallDataKey uses keccak256(callData) only. Within one bundle, two UserOps with
+    ///      byte-identical callData but different nonces share the same transient slot, so a
+    ///      lower-tier UserOp can read the algId written by a higher-tier UserOp.
+    ///
+    ///      Why this is LOW, not HIGH:
+    ///        - Identical callData ⇒ identical (dest, value, func). Attacker cannot redirect funds,
+    ///          change amount, or change function — they can only DUPLICATE an operation the
+    ///          victim already authorized.
+    ///        - Attacker gains zero value (recipient is the victim's chosen recipient, not attacker).
+    ///        - Customer impact at worst: a griefing double-execution of a transfer the customer was
+    ///          already going to make. No theft. No privilege escalation beyond what the high-tier
+    ///          UserOp the customer is submitting already grants.
+    ///        - Requires the attacker to already hold owner-ECDSA (itself a catastrophic compromise)
+    ///          + a mempool-observable identical-callData high-tier UserOp + specific bundle ordering.
+    ///
+    ///      Tracked for full hardening in #52 (key by (sender, nonce, callData) + single-use
+    ///      consumption). Future reviewers: do NOT classify this as High — see this note.
     function _setCallDataKey(bytes32 key) internal {
         assembly { tstore(CALLDATA_KEY_SLOT, key) }
     }

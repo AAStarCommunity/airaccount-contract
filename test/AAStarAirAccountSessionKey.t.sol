@@ -79,9 +79,24 @@ contract AAStarAirAccountSessionKeyTest is Test {
         vm.prank(ownerA);
         skValidator.grantSessionDirect(
             address(accountA), sessionKey,
-            uint48(block.timestamp + 1 hours),
-            address(0), bytes4(0)
+            _legacySession(uint48(block.timestamp + 1 hours), address(0), bytes4(0))
         );
+    }
+
+    /// @dev Build a Session struct mimicking the v0.17.1 simple session (no velocity, no arrays).
+    function _legacySession(uint48 expiry, address scope, bytes4 sel)
+        internal pure returns (SessionKeyValidator.Session memory)
+    {
+        return SessionKeyValidator.Session({
+            expiry: expiry,
+            contractScope: scope,
+            selectorScope: sel,
+            revoked: false,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
     }
 
     function _deployAccount(address owner_, uint8 algId_) internal returns (AAStarAirAccountV7 acct) {
@@ -197,6 +212,75 @@ contract AAStarAirAccountSessionKeyTest is Test {
 
         vm.prank(address(ep));
         assertEq(accountA.validateUserOp(uop, h, 0), 1, "Wrong signer must return 1");
+    }
+
+    function test_sessionKey_cannotSelfGrantViaAccountExecute() public {
+        address newSessionKey = makeAddr("newSessionKey");
+        SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
+            expiry: uint48(block.timestamp + 1 hours),
+            contractScope: address(0),
+            selectorScope: bytes4(0),
+            revoked: false,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
+        // Use signature-form encoding (not `.selector`) because on PR A both 5-arg shim and
+        // Session-struct overloads coexist; `.selector` is ambiguous until the shim is removed.
+        bytes memory grantCall = abi.encodeWithSignature(
+            "grantSessionDirect(address,address,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))",
+            address(accountA),
+            newSessionKey,
+            cfg
+        );
+        bytes memory callData = abi.encodeWithSelector(
+            AAStarAirAccountBase.execute.selector,
+            address(skValidator),
+            uint256(0),
+            grantCall
+        );
+
+        PackedUserOperation memory uop = _buildUserOpFor(address(accountA));
+        uop.callData = callData;
+        bytes32 h = keccak256(abi.encode(uop));
+        uop.signature = _skSig(address(accountA), sessionKey, sessionKeyPriv, h);
+
+        vm.prank(address(ep));
+        assertEq(accountA.validateUserOp(uop, h, 0), 0);
+
+        vm.prank(address(ep));
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        accountA.execute(address(skValidator), 0, grantCall);
+
+        assertFalse(skValidator.isSessionActive(address(accountA), newSessionKey));
+    }
+
+    function test_sessionKey_canSelfRevokeViaAccountExecute() public {
+        bytes memory revokeCall = abi.encodeWithSelector(
+            SessionKeyValidator.revokeSession.selector,
+            address(accountA),
+            sessionKey
+        );
+        bytes memory callData = abi.encodeWithSelector(
+            AAStarAirAccountBase.execute.selector,
+            address(skValidator),
+            uint256(0),
+            revokeCall
+        );
+
+        PackedUserOperation memory uop = _buildUserOpFor(address(accountA));
+        uop.callData = callData;
+        bytes32 h = keccak256(abi.encode(uop));
+        uop.signature = _skSig(address(accountA), sessionKey, sessionKeyPriv, h);
+
+        vm.prank(address(ep));
+        assertEq(accountA.validateUserOp(uop, h, 0), 0);
+
+        vm.prank(address(ep));
+        accountA.execute(address(skValidator), 0, revokeCall);
+
+        assertFalse(skValidator.isSessionActive(address(accountA), sessionKey));
     }
 }
 
@@ -369,10 +453,24 @@ contract SessionKeyBatchScopeTest is Test {
         vm.prank(owner_);
         skValidator.grantSessionDirect(
             address(account), sessionKey_,
-            uint48(block.timestamp + 1 hours),
-            address(allowedTarget), // contractScope = allowedTarget only
-            bytes4(0)
+            _legacySession(uint48(block.timestamp + 1 hours), address(allowedTarget), bytes4(0))
         );
+    }
+
+    /// @dev Session-struct helper, scoped to this contract (separate from AAStarAirAccountSessionKeyTest).
+    function _legacySession(uint48 expiry, address scope, bytes4 sel)
+        internal pure returns (SessionKeyValidator.Session memory)
+    {
+        return SessionKeyValidator.Session({
+            expiry: expiry,
+            contractScope: scope,
+            selectorScope: sel,
+            revoked: false,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
     }
 
     /// @notice executeBatch with 1 allowed call must succeed.
@@ -423,9 +521,13 @@ contract SessionKeyBatchScopeTest is Test {
         vm.prank(address(ep));
         assertEq(account.validateUserOp(uop, h, 0), 0);
 
-        // Must revert — disallowedTarget is outside contractScope
+        // Must revert — disallowedTarget is outside contractScope.
+        // v0.17.2: base bubbles up the unified SessionKeyValidator's specific error;
+        // for an out-of-scope dest, that's CallTargetForbidden(dest).
         vm.prank(address(ep));
-        vm.expectRevert(AAStarAirAccountBase.SessionScopeViolation.selector);
+        vm.expectRevert(
+            abi.encodeWithSignature("CallTargetForbidden(address)", address(disallowedTarget))
+        );
         account.executeBatch(dests, values, funcs);
     }
 

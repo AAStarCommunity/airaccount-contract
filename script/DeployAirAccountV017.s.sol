@@ -5,14 +5,11 @@ import {Script, console} from "forge-std/Script.sol";
 
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
-import {TierGuardHook} from "../src/core/TierGuardHook.sol";
 import {ForceExitModule} from "../src/core/ForceExitModule.sol";
 import {AirAccountDelegate} from "../src/core/AirAccountDelegate.sol";
 import {CalldataParserRegistry} from "../src/core/CalldataParserRegistry.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
 import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
-import {AirAccountCompositeValidator} from "../src/validators/AirAccountCompositeValidator.sol";
-import {AgentSessionKeyValidator} from "../src/validators/AgentSessionKeyValidator.sol";
 import {SessionKeyValidator} from "../src/validators/SessionKeyValidator.sol";
 import {AAStarBLSAggregator} from "../src/aggregator/AAStarBLSAggregator.sol";
 import {AgentRegistry} from "../src/registries/AgentRegistry.sol";
@@ -59,10 +56,7 @@ contract DeployAirAccountV017 is Script {
         address blsAlgorithm;
         address validatorRouter;
         address blsAggregator;
-        address compositeValidator;
-        address agentSessionValidator;
         address sessionKeyValidator;
-        address tierGuardHook;
         address forceExitModule;
         address agentRegistry;
         address delegate;
@@ -93,60 +87,57 @@ contract DeployAirAccountV017 is Script {
         // 1. BLS aggregate-signature algorithm (Tier 2/3 DVT co-sign)
         d.blsAlgorithm = address(new AAStarBLSAlgorithm());
 
-        // 2. Validator router (algId -> algorithm) + register BLS
+        // 2. Validator router (algId -> algorithm)
         AAStarValidator router = new AAStarValidator();
         router.registerAlgorithm(ALG_BLS, d.blsAlgorithm);
         d.validatorRouter = address(router);
 
-        // 3. BLS aggregator (ERC-4337 IAggregator) — needs the BLS algorithm address
+        // 3. BLS aggregator (ERC-4337 IAggregator)
         d.blsAggregator = address(new AAStarBLSAggregator(d.blsAlgorithm));
 
-        // 4. ERC-7579 validator module: weighted / cumulative composite (Factory default validator)
-        d.compositeValidator = address(new AirAccountCompositeValidator());
-
-        // 5. Agent session-key validator (velocity + callTarget/selector scope)
-        d.agentSessionValidator = address(new AgentSessionKeyValidator());
-
-        // 6. Session-key validator
+        // 4. Unified SessionKeyValidator (algId 0x08) — covers BOTH simple DApp/M6.4-style
+        //    session keys AND the richer agent-session features (velocity, callTargets[],
+        //    selectorAllowlist[]) previously split into AgentSessionKeyValidator (deleted v0.17.2).
         d.sessionKeyValidator = address(new SessionKeyValidator());
+        // M-3 fix: register it in the router so base._validateSignature -> router for 0x08 works.
+        // Without this register call, ALG_SESSION_KEY validation returns SIG_VALIDATION_FAILED.
+        router.registerAlgorithm(0x08, d.sessionKeyValidator);
 
-        // 7. ERC-7579 hook: tier + session-scope enforcement (Factory default hook)
-        d.tierGuardHook = address(new TierGuardHook());
-
-        // 8. L2 force-exit executor module
+        // 5. L2 force-exit executor module
         d.forceExitModule = address(new ForceExitModule());
 
-        // 9. Agent identity/wallet registry (SuperPaymaster setAgentRegistries target)
-        d.agentRegistry = address(new AgentRegistry());
-
-        // 10. EIP-7702 delegate singleton (EOA onboarding path)
+        // 6. EIP-7702 delegate singleton (EOA onboarding path)
         d.delegate = address(new AirAccountDelegate());
 
-        // 11. DeFi calldata parsers + registry (opt-in via account.setParserRegistry).
-        //     Protocol->parser mappings are chain-specific and registered post-deploy.
+        // 7. DeFi calldata parsers + registry (opt-in via account.setParserRegistry).
         d.parserRegistry = address(new CalldataParserRegistry());
         d.railgunParser = address(new RailgunParser());
         d.uniswapV3Parser = address(new UniswapV3Parser());
 
-        // 12. Factory (constructor deploys the AAStarAirAccountV7 implementation).
-        //     Default modules: CompositeValidator (validator) + TierGuardHook (hook).
-        //     No default ERC20 token configs here — add per-chain after deploy (guardAddTokenConfig).
+        // 8. Factory (constructor deploys the AAStarAirAccountV7 implementation).
+        //    v0.17.2: no per-account default module install — unified SessionKeyValidator at
+        //    router[0x08] replaces the deleted CompositeValidator + TierGuardHook + ASK trio.
+        //    MUST be deployed BEFORE AgentRegistry because AgentRegistry takes
+        //    factory.implementation() as a constructor argument (H-2 whitelist binding).
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
         AAStarAirAccountFactoryV7 factory = new AAStarAirAccountFactoryV7(
             ENTRYPOINT,
             communityGuardian,
             noTokens,
-            noConfigs,
-            d.compositeValidator,
-            d.tierGuardHook
+            noConfigs
         );
         d.factory = address(factory);
         d.implementation = factory.implementation();
 
-        // Hybrid policy (#21): configure the agent session-key validator so agent accounts
-        // (createAgentAccount) default-install it. Deployer is factoryAdmin; set-once.
-        factory.setAgentSessionKeyValidator(d.agentSessionValidator);
+        // 9. Agent identity/wallet registry (SuperPaymaster setAgentRegistries target).
+        //    H-2 (Codex P1 round 2): factory-provenance whitelist instead of extcodehash check.
+        //    AgentRegistry constructor takes NO args; the factory address is bound post-deploy
+        //    via `bindFactory`, and factory.createAccount* writes `isValidAccount[account] = true`
+        //    via `markValid`. SuperPaymaster eligibility derives from this mapping.
+        d.agentRegistry = address(new AgentRegistry());
+        AgentRegistry(d.agentRegistry).bindFactory(address(factory));
+        factory.setAgentRegistry(d.agentRegistry);
 
         vm.stopBroadcast();
 
@@ -158,10 +149,7 @@ contract DeployAirAccountV017 is Script {
         console.log("BLS Algorithm        :", d.blsAlgorithm);
         console.log("Validator Router     :", d.validatorRouter);
         console.log("BLS Aggregator       :", d.blsAggregator);
-        console.log("Composite Validator  :", d.compositeValidator);
-        console.log("AgentSession Validator:", d.agentSessionValidator);
         console.log("SessionKey Validator :", d.sessionKeyValidator);
-        console.log("TierGuard Hook       :", d.tierGuardHook);
         console.log("ForceExit Module     :", d.forceExitModule);
         console.log("Agent Registry       :", d.agentRegistry);
         console.log("AirAccount Delegate  :", d.delegate);

@@ -6,9 +6,25 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {SessionKeyValidator} from "../src/validators/SessionKeyValidator.sol";
 
-/// @title SessionKeyValidatorTest — Unit tests for M6.4 SessionKeyValidator
+/// @title SessionKeyValidatorTest — Unit tests for v0.17.2 unified SessionKeyValidator
 contract SessionKeyValidatorTest is Test {
     using MessageHashUtils for bytes32;
+
+    /// @dev Build a Session struct mimicking the v0.17.1 simple session (no velocity, no arrays).
+    function _sessionLegacy(uint48 expiry, address scope, bytes4 sel)
+        internal pure returns (SessionKeyValidator.Session memory)
+    {
+        return SessionKeyValidator.Session({
+            expiry: expiry,
+            contractScope: scope,
+            selectorScope: sel,
+            revoked: false,
+            velocityLimit: 0,
+            velocityWindow: 0,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
+    }
 
     SessionKeyValidator public validator;
 
@@ -50,7 +66,7 @@ contract SessionKeyValidatorTest is Test {
 
     function test_grantSessionDirect_byOwner_succeeds() public {
         vm.prank(owner);
-        validator.grantSessionDirect(account, sessionKey, uint48(block.timestamp + 1 hours), address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0)));
 
         assertTrue(validator.isSessionActive(account, sessionKey));
     }
@@ -58,55 +74,55 @@ contract SessionKeyValidatorTest is Test {
     function test_grantSessionDirect_byNonOwner_reverts() public {
         vm.prank(other);
         vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
-        validator.grantSessionDirect(account, sessionKey, uint48(block.timestamp + 1 hours), address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0)));
+    }
+
+    function test_grantSessionDirect_byAccount_reverts() public {
+        vm.prank(account);
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0)));
     }
 
     function test_grantSessionDirect_expiredTimestamp_reverts() public {
         vm.prank(owner);
         vm.expectRevert(SessionKeyValidator.ExpiryInPast.selector);
-        validator.grantSessionDirect(account, sessionKey, uint48(block.timestamp - 1), address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp - 1), address(0), bytes4(0)));
     }
 
     function test_grantSessionDirect_zeroExpiry_reverts() public {
         vm.prank(owner);
         vm.expectRevert(SessionKeyValidator.InvalidExpiry.selector);
-        validator.grantSessionDirect(account, sessionKey, 0, address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(0, address(0), bytes4(0)));
     }
 
     function test_grantSessionDirect_expiryBeyond30Days_reverts() public {
         vm.prank(owner);
         vm.expectRevert(SessionKeyValidator.ExpiryTooFar.selector);
-        validator.grantSessionDirect(
-            account, sessionKey,
-            uint48(block.timestamp + 31 days),
-            address(0), bytes4(0)
-        );
+        validator.grantSessionDirect(account, sessionKey,
+            _sessionLegacy(uint48(block.timestamp + 31 days), address(0), bytes4(0)));
     }
 
     function test_grantSessionDirect_exactly24Hours_succeeds() public {
         vm.prank(owner);
-        validator.grantSessionDirect(
-            account, sessionKey,
-            uint48(block.timestamp + 24 hours),
-            address(0), bytes4(0)
-        );
+        validator.grantSessionDirect(account, sessionKey,
+            _sessionLegacy(uint48(block.timestamp + 24 hours), address(0), bytes4(0)));
         assertTrue(validator.isSessionActive(account, sessionKey));
     }
 
     function test_grantSessionDirect_duplicate_active_reverts() public {
         vm.prank(owner);
-        validator.grantSessionDirect(account, sessionKey, uint48(block.timestamp + 1 hours), address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0)));
 
         vm.prank(owner);
         vm.expectRevert(SessionKeyValidator.SessionAlreadyExists.selector);
-        validator.grantSessionDirect(account, sessionKey, uint48(block.timestamp + 2 hours), address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 2 hours), address(0), bytes4(0)));
     }
 
     function test_grantSessionDirect_afterExpiry_canRegrant() public {
         // t=1_000_000: grant session expiring at t=1_003_600 (+1h, within 24h limit)
         vm.warp(1_000_000);
         vm.prank(owner);
-        validator.grantSessionDirect(account, sessionKey, 1_003_600, address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(1_003_600, address(0), bytes4(0)));
 
         // Warp past first expiry
         vm.warp(1_003_601);
@@ -114,7 +130,7 @@ contract SessionKeyValidatorTest is Test {
 
         // Re-grant same session key after expiry — new 1h session from t=1_003_601
         vm.prank(owner);
-        validator.grantSessionDirect(account, sessionKey, 1_007_201, address(0), bytes4(0));
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(1_007_201, address(0), bytes4(0)));
         assertTrue(validator.isSessionActive(account, sessionKey));
     }
 
@@ -122,22 +138,35 @@ contract SessionKeyValidatorTest is Test {
 
     function test_grantSession_validOwnerSig_succeeds() public {
         uint48 expiry = uint48(block.timestamp + 1 hours);
+        SessionKeyValidator.Session memory cfg = _sessionLegacy(expiry, address(0), bytes4(0));
         bytes memory sig = _ownerGrantSig(account, sessionKey, expiry, address(0), bytes4(0));
 
-        validator.grantSession(account, sessionKey, expiry, address(0), bytes4(0), sig);
+        validator.grantSession(account, sessionKey, cfg, sig);
         assertTrue(validator.isSessionActive(account, sessionKey));
     }
 
     function test_grantSession_wrongSigner_reverts() public {
         uint48 expiry = uint48(block.timestamp + 1 hours);
+        SessionKeyValidator.Session memory cfg = _sessionLegacy(expiry, address(0), bytes4(0));
 
         // Sign with non-owner key (same hash, wrong signer)
-        bytes32 grantHash = validator.buildGrantHash(account, sessionKey, expiry, address(0), bytes4(0));
+        bytes32 grantHash = validator.buildGrantHash(account, sessionKey, cfg);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(otherKey, grantHash);
         bytes memory badSig = abi.encodePacked(r, s, v);
 
         vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
-        validator.grantSession(account, sessionKey, expiry, address(0), bytes4(0), badSig);
+        validator.grantSession(account, sessionKey, cfg, badSig);
+    }
+
+    function test_grantP256SessionDirect_byAccount_reverts() public {
+        vm.prank(account);
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        validator.grantP256SessionDirect(
+            account,
+            bytes32(uint256(0x1111)),
+            bytes32(uint256(0x2222)),
+            _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0))
+        );
     }
 
     // ─── 3. validate ─────────────────────────────────────────────────
@@ -243,7 +272,7 @@ contract SessionKeyValidatorTest is Test {
         bytes memory sig = _ownerGrantSig(account, sessionKey, expiry, address(0), bytes4(0));
 
         // Grant session using the signed message
-        validator.grantSession(account, sessionKey, expiry, address(0), bytes4(0), sig);
+        validator.grantSession(account, sessionKey, _sessionLegacy(expiry, address(0), bytes4(0)), sig);
         assertTrue(validator.isSessionActive(account, sessionKey));
 
         // Owner revokes — this increments the grant nonce to 1
@@ -256,7 +285,7 @@ contract SessionKeyValidatorTest is Test {
         // _checkNotExists allows re-grant because session is revoked
         // But the hash no longer matches since nonce is now 1 → NotAccountOwner revert
         vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
-        validator.grantSession(account, sessionKey, expiry, address(0), bytes4(0), sig);
+        validator.grantSession(account, sessionKey, _sessionLegacy(expiry, address(0), bytes4(0)), sig);
     }
 
     /// @notice After revocation, owner can re-grant with a fresh signature (new nonce).
@@ -264,7 +293,7 @@ contract SessionKeyValidatorTest is Test {
         uint48 expiry1 = uint48(block.timestamp + 1 hours);
 
         bytes memory sig1 = _ownerGrantSig(account, sessionKey, expiry1, address(0), bytes4(0));
-        validator.grantSession(account, sessionKey, expiry1, address(0), bytes4(0), sig1);
+        validator.grantSession(account, sessionKey, _sessionLegacy(expiry1, address(0), bytes4(0)), sig1);
 
         vm.prank(owner);
         validator.revokeSession(account, sessionKey);
@@ -273,7 +302,7 @@ contract SessionKeyValidatorTest is Test {
         // Owner builds a new sig — this time with nonce=1 baked in via buildGrantHash
         uint48 expiry2 = uint48(block.timestamp + 2 hours);
         bytes memory sig2 = _ownerGrantSig(account, sessionKey, expiry2, address(0), bytes4(0));
-        validator.grantSession(account, sessionKey, expiry2, address(0), bytes4(0), sig2);
+        validator.grantSession(account, sessionKey, _sessionLegacy(expiry2, address(0), bytes4(0)), sig2);
         assertTrue(validator.isSessionActive(account, sessionKey));
     }
 
@@ -302,9 +331,11 @@ contract SessionKeyValidatorTest is Test {
         bytes4 sel = bytes4(keccak256("someFunc(uint256)"));
 
         vm.prank(owner);
-        validator.grantSessionDirect(account, sessionKey, uint48(block.timestamp + 1 hours), scope, sel);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), scope, sel));
 
-        (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked) = validator.sessions(account, sessionKey);
+        SessionKeyValidator.Session memory s = validator.getSession(account, sessionKey);
+        (uint48 expiry, address contractScope, bytes4 selectorScope, bool revoked) =
+            (s.expiry, s.contractScope, s.selectorScope, s.revoked);
         assertEq(contractScope, scope);
         assertEq(selectorScope, sel);
         assertFalse(revoked);
@@ -315,7 +346,7 @@ contract SessionKeyValidatorTest is Test {
 
     function _grantSession(address _account, address _sk, uint48 _expiry) internal {
         vm.prank(owner);
-        validator.grantSessionDirect(_account, _sk, _expiry, address(0), bytes4(0));
+        validator.grantSessionDirect(_account, _sk, _sessionLegacy(_expiry, address(0), bytes4(0)));
     }
 
     /// @dev Build the 105-byte signature for validator.validate()
@@ -344,7 +375,7 @@ contract SessionKeyValidatorTest is Test {
         address _contractScope,
         bytes4  _selectorScope
     ) internal view returns (bytes memory) {
-        bytes32 grantHash = validator.buildGrantHash(_account, _sk, _expiry, _contractScope, _selectorScope);
+        bytes32 grantHash = validator.buildGrantHash(_account, _sk, _sessionLegacy(_expiry, _contractScope, _selectorScope));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerKey, grantHash);
         return abi.encodePacked(r, s, v);
     }

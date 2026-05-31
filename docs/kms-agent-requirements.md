@@ -2,8 +2,40 @@
 
 > 文档类型：KMS 团队需求交付物
 > 作者：airaccount-contract 团队
-> 最后更新：2026-05-27
-> 关联：docs/agent-account-architecture.md §2, §4 · docs/agent-key-design.md
+> 最后更新：2026-05-30
+> 关联：docs/agent-account-architecture.md §2, §4 · docs/agent-key-design.md · **docs/2026-05-30-adr-session-key-unification.md**
+
+---
+
+> ## ⚠️ v0.17.2 重大变更通告(2026-05-30)
+>
+> **本文档下方关于 `AgentSessionKeyValidator`、66-byte 签名格式、`grantAgentSession`/`delegateSession` API 的描述属于 v0.17.1 历史口径,在 v0.17.2 已发生破坏性变更**。集成方请按以下新规实现:
+>
+> | 变更点 | v0.17.1 | v0.17.2(必须按这个做) |
+> |---|---|---|
+> | Validator 合约 | `AgentSessionKeyValidator`(独立 ERC-7579 validator,要 install) | **删除**。功能合并进 `SessionKeyValidator`(注册于 router 的 algId `0x08`,无需账户级 install) |
+> | UserOp.signature 布局 | `[0x08][ECDSA(65)]` = **66 bytes** | **ECDSA session**:`[0x08][account(20)][sessionKey(20)][ECDSA(65)]` = **106 bytes**<br>**P256 session**:`[0x08][account(20)][keyX(32)][keyY(32)][r(32)][s(32)]` = **149 bytes** |
+> | UserOp.nonce 高位路由 | 必须 `nonce >> 64 = AgentSessionKeyValidator 地址` | **不再走 nonce-key 路由**。普通 UserOp(nonce 高位 = 0)即可,base 自动按 sig[0]=0x08 + 长度分发到 `SessionKeyValidator.validate` |
+> | Grant API | `grantAgentSession(address sessionKey, AgentSessionConfig cfg)` | **`grantSession(address account, address sessionKey, Session cfg)`** 或 `grantSession(...,Session cfg, bytes ownerSig)`(EIP-191 owner sig,gasless)。`Session` struct 同时承载经典字段(`expiry/contractScope/selectorScope/revoked`)和 agent 字段(`velocityLimit/velocityWindow/callTargets[]/selectorAllowlist[]`) |
+> | EIP-191 typed-hash domain | (ASK 用 sessionKey 维度) | **`GRANT_SESSION_V2`**(ECDSA)/ **`GRANT_P256_SESSION_V2`**(P256),包含全部字段 hash(数组 hash 用 `keccak256(abi.encodePacked(arr))`) |
+> | `delegateSession`(sub-delegation) | 存在 | **v0.17.2 移除**,推迟到 v0.18+ |
+> | Scope/velocity 校验入口 | `enforceSessionScope` + `recordSpend` | **`checkSessionScope(account, keyOrHash, sessionType, dest, selector)`**(view,reverts on violation)+ **`recordCallForVelocity(account, keyOrHash, sessionType)`**(state-mutating;**只能由账户自己调** msg.sender == account) |
+>
+> **KMS 团队 action items**(同 issue [AAStarCommunity/AirAccount#7](https://github.com/AAStarCommunity/AirAccount/issues/7)):
+>
+> 1. `/kms/sign-agent` 在拼装 UserOp.signature 时:
+>    - 输出 **106 bytes**:`[0x08][AirAccount 地址(20)][session key 地址(20)][ECDSA(65)]`。前 1 字节固定 `0x08`(`ALG_SESSION_KEY`)。
+>    - 当前 ECDSA payload 仍为 EIP-191 包裹的 userOpHash(`toEthSignedMessageHash(userOpHash)`),由 session key EOA 签名。base 内部用 `tryRecover` 还原。
+>    - 防 cross-account 滥用:第 1-20 字节必须等于 UserOp.sender(account 地址),否则 base 直接拒。
+> 2. **UserOp.nonce 不再编码 validator 地址**——保持高位为 0 即可(走 base 内置 0x08 分发,不走 ERC-7579 nonce-key 路由)。
+> 3. Grant 流程:
+>    - 直接调:account 通过 UserOp 调 `SessionKeyValidator.grantSessionDirect(account, sessionKey, Session)`。
+>    - Off-chain 授权(DApp 后端):owner 用 KMS 签 `GRANT_SESSION_V2` typed hash,offchain 把 `(account, sessionKey, Session, ownerSig)` 投递到 `SessionKeyValidator.grantSession(...)`,任何人都可 relay(gasless)。
+>    - `Session` struct 即便只用经典字段也照填:`{expiry, contractScope, selectorScope, revoked=false, velocityLimit=0, velocityWindow=0, callTargets=[], selectorAllowlist=[]}` → 等价旧行为。
+> 4. **Revoke API 不变**:`revokeSession(account, sessionKey)` / `revokeP256Session(account, keyX, keyY)`。
+> 5. P256 session 现在真正生效(老版本 KI-7 描述的 P256 session 因 storage key 截尾不一致而静默失效,v0.17.2 已修)。
+>
+> 下方 v0.17.1 历史描述保留作 reference,**不要按它实现**。
 
 ---
 

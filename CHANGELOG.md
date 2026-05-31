@@ -8,6 +8,87 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.17.2] - 2026-05-30 (Session-Key Unification + Codex Pre-Release Findings)
+
+### Highlights
+- **Session-key system unified**: deleted `AgentSessionKeyValidator`, `AirAccountCompositeValidator`, `TierGuardHook` (~7.8 KB combined external bytecode). All session-key features (velocity rate limit, `callTargets[]`, `selectorAllowlist[]`, classic single contractScope/selectorScope) now live in a single enhanced `SessionKeyValidator` registered in the validator router at algId `0x08`.
+- All 2026-05-30 Codex pre-release findings addressed (H-1 / H-2 / M-1 / M-2 / M-3 / L-1 / L-2 / L-3) — see ADR `docs/2026-05-30-adr-session-key-unification.md` for the architecture rationale + Codex adversarial review responses (§6.5).
+- Two pre-existing bugs fixed along the way:
+  1. v0.17.x deploy script never registered `SessionKeyValidator` at algId 0x08 → session keys silently unusable on a fresh deploy.
+  2. M6.4 P256 session storage used full 256-bit `keccak256(x||y)` while `base._enforceGuard` looked up the 248-bit truncated form → P256 scope check was silently bypassed. Storage now uses `_p256StorageKey` everywhere.
+
+### Architecture changes
+- New `Session` struct in `SessionKeyValidator`: `{expiry, contractScope, selectorScope, revoked, velocityLimit, velocityWindow, callTargets[], selectorAllowlist[]}` — covers both the simple DApp/M6.4-style session AND the richer agent-grade controls.
+- New entry points on `SessionKeyValidator`:
+  - `checkSessionScope(account, keyOrHash, sessionType, dest, selector)` — view; reverts with specific errors (`CallTargetForbidden`, `SelectorForbidden`, `SessionExpired`, etc.) on violation.
+  - `recordCallForVelocity(account, keyOrHash, sessionType)` — non-view; mutates the velocity counter. `msg.sender == account` gate prevents cross-account griefing.
+- `base._enforceGuard` now per-call staticcalls `checkSessionScope` + calls `recordCallForVelocity` — single-execute and executeBatch paths uniformly covered.
+- New EIP-191 typed-hash domains `GRANT_SESSION_V2` / `GRANT_P256_SESSION_V2` include all new fields (velocity + array hashes); replaces the v0.16 typed hash (no live signatures existed).
+- `grantSession` / `grantSessionDirect` / `grantP256Session` / `grantP256SessionDirect` now take a `Session calldata cfg` struct (single API surface).
+
+### Security fixes
+- **H-1 (LOW)** — added an `AUDIT NOTE` block above `_setCallDataKey` documenting the identical-callData residual: griefing only, no asset redirect, requires owner-key compromise. Tracked for full hardening in [#52](https://github.com/AAStarCommunity/airaccount-contract/issues/52).
+- **H-2** — `AgentRegistry.registerAgent` no longer relies on the forgeable `accountId()` prefix string. Constructor takes `airAccountImplementation`; `registerAgent` checks `extcodehash(caller()) == validCloneCodeHash` (EIP-1167 minimal proxy bytecode pre-hashed at construction). Cannot be forged without deploying the canonical clone.
+- **M-1 + M-3** — `factory.defaultValidatorModule` / `defaultHookModule` / `agentSessionKeyValidator` fields + setter deleted (no per-account module install needed). Agent accounts now structurally identical to human accounts.
+- **M-2** — `ForceExitModule.executeForceExit` rewritten to call `account.executeFromExecutor(bytes32(0), [target||value||data])`; previously called the bridge with `{value: value}` from the module's own (always-zero) balance — feature was non-functional.
+- **L-1** — `_validateWeightedSignature` rejects trailing bytes after the last consumed signature (`cursor == sigData.length`).
+- **L-2** — `accountId()` returns `"airaccount.v7@0.17.2"` (was 0.16.0).
+- **L-3** — eliminated alongside the `TierGuardHook` deletion (the misleading-comment line ceased to exist).
+
+### Test results
+- 29 suites, 656 tests, 0 failed, 0 skipped.
+
+### EIP-170 budget (runtime bytecode; limit 24,576 B)
+| Contract | v0.17.1 | v0.17.2 | Headroom |
+|---|---|---|---|
+| AAStarAirAccountV7 | 22,697 | **21,592** | 2,984 |
+| SessionKeyValidator | 5,615 | 10,000 (est. after shim removal) | 14,576 |
+| AgentRegistry | (n/a old check) | 3,078 | 21,498 |
+| ForceExitModule | 1,477 | 4,833 | 19,743 |
+| AgentSessionKeyValidator | 5,123 | **deleted** | — |
+| AirAccountCompositeValidator | 1,222 | **deleted** | — |
+| TierGuardHook | 1,477 | **deleted** | — |
+
+### Coordination
+- KMS-team breaking change ahead-of-time notice: [AAStarCommunity/AirAccount#7](https://github.com/AAStarCommunity/AirAccount/issues/7). Sig format changes from 66 B → 106 B (ECDSA session) / 149 B (P256 session); session grants use a single `Session` struct.
+
+### ADR
+See `docs/2026-05-30-adr-session-key-unification.md` for full decision record (alternatives considered, Codex P0/P1/P2 review responses, B-1..B-4 sub-decisions).
+
+---
+
+## [v0.17.1] - 2026-05-26 (Diamond-Lite EIP-170 Fix)
+
+### Highlights
+- Account runtime exceeded EIP-170's 24,576-byte limit; fix splits the cold ERC-8004 agent + weighted-signature governance functions into a singleton `AirAccountExtension` reached through the account's `fallback`+`delegatecall` (diamond-lite). Zero capability loss; storage byte-identical via shared `AAStarAgentStorageLayout`.
+- HIGH-3 content-keyed transient validation queue (`keccak256(callData)` slot derivation).
+- `createAgentAccount` default-installs `AgentSessionKeyValidator` (hybrid policy, factory-admin set-once).
+- Published merged `abi/AAStarAirAccountV7.full.json` (V7 + `IAirAccountAgent`) so SDK/integrators can encode the fallback-routed agent functions.
+- Account runtime: ~22,697 B (was 27,975 B pre-split).
+- 798 unit tests.
+
+### Tag
+`v0.17.1` at commit `93eadac` (superseded by v0.17.2 — see above; v0.17.1 was tagged but never broadcast to any chain).
+
+---
+
+## [v0.17.0] - 2026-05-22 (M9 Security Hardening + ERC-8004 Official Integration)
+
+### Highlights
+- Factory front-run fix: salt now bound to the full config so an attacker cannot pre-create an account at the victim's counterfactual address with different parameters.
+- ERC-1271 `isValidSignature` path.
+- BLS / tier-check hardening.
+- ERC-7579 hook `typeId` correctness + multi-typeId module lifecycle.
+- Executor Tier-1 ceiling (executors cannot exceed Tier-1 spend).
+- Session cleanup on uninstall.
+- ERC-8004 official Identity / Reputation / Validation registries aligned (mainnet & testnet deterministic CREATE2 addresses pinned in `src/config/ERC8004Addresses.sol`).
+- Autonomous agent account model: owner = human (`msg.sender`), agentKey = session key. The agent never holds owner rights; the privilege boundary is the account, not the key.
+
+### Tag
+`v0.17.0` / `freeze/m9-v0.17.0` at commit `b8b9a7c`.
+
+---
+
 ## [v0.16.0] - 2026-03-21 (M7 In Progress — ERC-7579 Full Module Compliance + Agent Economy)
 
 ### M7 Milestone Status: **IN PROGRESS** 🔄

@@ -5,6 +5,7 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {IAirAccountAgent} from "../src/interfaces/IAirAccountAgent.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {AgentRegistry} from "../src/registries/AgentRegistry.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
@@ -23,10 +24,18 @@ contract MockEntryPoint {
 // Simulates an AirAccount contract that implements accountId() returning an
 // "airaccount." prefixed string. Wraps registry calls so msg.sender = address(this).
 
+/// @dev v0.17.2: AgentRegistry's H-2 check requires msg.sender to be an EIP-1167 clone
+///      of the bound implementation. So this mock is used as the IMPLEMENTATION; per-test
+///      "accounts" are real Clones.clone(impl) instances whose extcodehash matches the
+///      hash AgentRegistry expects. The constructor is replaced with an initialize() since
+///      clones don't run constructors.
 contract MockAirAccount {
     address public owner;
+    bool internal _initialized;
 
-    constructor(address _owner) {
+    function initialize(address _owner) external {
+        require(!_initialized, "Already init");
+        _initialized = true;
         owner = _owner;
     }
 
@@ -35,23 +44,17 @@ contract MockAirAccount {
         _;
     }
 
-    /// @dev Implements the ERC-7579 accountId() selector required by AgentRegistry HIGH-1 check.
+    /// @dev Retained for backward compat with tests that check accountId; H-2 no longer reads it.
     function accountId() external pure returns (string memory) {
-        return "airaccount.v7@0.16.0";
+        return "airaccount.v7@0.17.2";
     }
 
-    /// @notice Calls registry.registerAgent on behalf of the owner.
-    ///         msg.sender for the registry call will be address(this).
     function registerAgent(AgentRegistry reg, address agentWallet, bytes calldata sig) external onlyOwner {
         reg.registerAgent(agentWallet, sig);
     }
-
-    /// @notice Deregisters an agent wallet through the registry.
     function deregisterAgent(AgentRegistry reg, address agentWallet) external onlyOwner {
         reg.deregisterAgent(agentWallet);
     }
-
-    /// @notice Revokes an agent wallet through the registry.
     function revokeAgent(AgentRegistry reg, address agentWallet) external onlyOwner {
         reg.revokeAgent(agentWallet);
     }
@@ -98,8 +101,15 @@ contract AgentRegistryTest is Test {
     address public agentA;
     address public agentB;
 
+    /// @dev Implementation template — clones of this match AgentRegistry's H-2 extcodehash check.
+    MockAirAccount internal mockImpl;
+
     function setUp() public {
+        mockImpl = new MockAirAccount();
         registry = new AgentRegistry();
+        // v0.17.2 Codex P1 round 2: AgentRegistry uses factory-provenance whitelist.
+        // The test contract impersonates the factory: bind it, then mark each test "account" valid.
+        registry.bindFactory(address(this));
 
         aliceWallet  = vm.createWallet("alice");
         bobWallet    = vm.createWallet("bob");
@@ -111,8 +121,23 @@ contract AgentRegistryTest is Test {
         agentA = agentAWallet.addr;
         agentB = agentBWallet.addr;
 
-        aliceAccount = new MockAirAccount(alice);
-        bobAccount   = new MockAirAccount(bob);
+        // Real EIP-1167 clones to look-and-feel like factory output (extcodehash not relied on
+        // anymore, but kept for behavioural realism).
+        aliceAccount = MockAirAccount(Clones.clone(address(mockImpl)));
+        aliceAccount.initialize(alice);
+        registry.markValid(address(aliceAccount));
+        bobAccount = MockAirAccount(Clones.clone(address(mockImpl)));
+        bobAccount.initialize(bob);
+        registry.markValid(address(bobAccount));
+    }
+
+    /// @dev Create a new clone owned by `_owner` for tests that need extra mock accounts.
+    ///      Also marks the clone valid in the registry so it can call registerAgent.
+    function _newMockClone(address _owner) internal returns (MockAirAccount) {
+        MockAirAccount c = MockAirAccount(Clones.clone(address(mockImpl)));
+        c.initialize(_owner);
+        registry.markValid(address(c));
+        return c;
     }
 
     // ─── Signature helpers ────────────────────────────────────────────────────
@@ -160,6 +185,13 @@ contract AgentRegistryTest is Test {
         registry.registerAgent(agentA, sig);
     }
 
+    function test_BindFactory_nonDeployer_reverts() public {
+        AgentRegistry fresh = new AgentRegistry();
+        vm.prank(alice);
+        vm.expectRevert(AgentRegistry.NotDeployer.selector);
+        fresh.bindFactory(address(this));
+    }
+
     function test_RegisterAgent_contractWithoutAccountId_reverts() public {
         MockEntryPoint ep = new MockEntryPoint();
         bytes memory sig = _buildRegSig(agentAWallet.privateKey, address(ep), agentA);
@@ -199,8 +231,8 @@ contract AgentRegistryTest is Test {
 
     function test_RegisterAgent_frontRunPrevented() public {
         // Attacker Eve tries to register agentA but doesn't control agentA's key
-        MockAirAccount eveAccount = new MockAirAccount(makeAddr("eve"));
-        address eve = eveAccount.owner();
+        address eve = makeAddr("eve");
+        MockAirAccount eveAccount = _newMockClone(eve);
         Vm.Wallet memory eveWallet = vm.createWallet("eveKey");
 
         bytes memory attackSig = _buildRegSig(eveWallet.privateKey, address(eveAccount), agentA);
@@ -541,13 +573,17 @@ contract AgentRegistryTest is Test {
 
     // ─── setAgentWallet integration (account → registry) ─────────────────────
 
-    function test_SetAgentWalletCallsRegistry() public {
+    /// @dev Helper: deploy a V7 impl + an AgentRegistry + a V7 clone + bind & markValid.
+    ///      Returns (account-clone, registry).
+    function _setupV7CloneAndRegistry(address ownerAddr) internal returns (AAStarAirAccountV7, AgentRegistry) {
+        AAStarAirAccountV7 v7Impl = new AAStarAirAccountV7();
+        AgentRegistry v7Registry = new AgentRegistry();
+        // Bind THIS test contract as the registry's "factory" so we can call markValid below.
+        v7Registry.bindFactory(address(this));
+        AAStarAirAccountV7 clone = AAStarAirAccountV7(payable(Clones.clone(address(v7Impl))));
         MockEntryPoint ep = new MockEntryPoint();
-        AAStarAirAccountV7 account = new AAStarAirAccountV7();
-        address ownerAddr = makeAddr("accountOwner");
-
         uint8[] memory algs = new uint8[](0);
-        account.initialize(
+        clone.initialize(
             address(ep),
             ownerAddr,
             AAStarAirAccountBase.InitConfig({
@@ -559,16 +595,34 @@ contract AgentRegistryTest is Test {
                 initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
             })
         );
+        v7Registry.markValid(address(clone));
+        return (clone, v7Registry);
+    }
 
-        bytes memory sig = _buildRegSig(agentAWallet.privateKey, address(account), agentA);
+    function test_SetAgentWalletCallsRegistry() public {
+        address ownerAddr = makeAddr("accountOwner");
+        (AAStarAirAccountV7 account, AgentRegistry v7Registry) = _setupV7CloneAndRegistry(ownerAddr);
+
+        bytes memory sig = _buildRegSig_(agentAWallet.privateKey, address(account), agentA, address(v7Registry));
 
         vm.prank(ownerAddr);
         vm.expectEmit(true, true, false, false);
-        emit AAStarAirAccountBase.AgentWalletSet(1, agentA, address(registry));
-        IAirAccountAgent(address(account)).setAgentWallet(1, agentA, address(registry), sig);
+        emit AAStarAirAccountBase.AgentWalletSet(1, agentA, address(v7Registry));
+        IAirAccountAgent(address(account)).setAgentWallet(1, agentA, address(v7Registry), sig);
 
-        assertEq(registry.agentWalletOwner(agentA), address(account));
-        assertTrue(registry.isRegisteredAgent(agentA));
+        assertEq(v7Registry.agentWalletOwner(agentA), address(account));
+        assertTrue(v7Registry.isRegisteredAgent(agentA));
+    }
+
+    /// @dev Variant of _buildRegSig that uses a specific registry address (not the global `registry`).
+    function _buildRegSig_(uint256 agentPrivKey, address humanOwner, address agentWallet, address registryAddr)
+        internal view returns (bytes memory)
+    {
+        bytes32 regHash = keccak256(
+            abi.encodePacked("REGISTER_AGENT", block.chainid, registryAddr, humanOwner, agentWallet)
+        ).toEthSignedMessageHash();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(agentPrivKey, regHash);
+        return abi.encodePacked(r, s, v);
     }
 
     function test_SetAgentWalletCallsRegistry_notOwner_reverts() public {
@@ -622,31 +676,16 @@ contract AgentRegistryTest is Test {
     }
 
     function test_SetAgentWalletCallsRegistry_duplicateRegistration_reverts() public {
-        MockEntryPoint ep = new MockEntryPoint();
-        AAStarAirAccountV7 account = new AAStarAirAccountV7();
         address ownerAddr = makeAddr("accountOwner");
+        (AAStarAirAccountV7 account, AgentRegistry v7Registry) = _setupV7CloneAndRegistry(ownerAddr);
 
-        uint8[] memory algs = new uint8[](0);
-        account.initialize(
-            address(ep),
-            ownerAddr,
-            AAStarAirAccountBase.InitConfig({
-                guardians: [makeAddr("g0"), makeAddr("g1"), makeAddr("g2")],
-                dailyLimit: 0,
-                approvedAlgIds: algs,
-                minDailyLimit: 0,
-                initialTokens: new address[](0),
-                initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-            })
-        );
-
-        bytes memory sig = _buildRegSig(agentAWallet.privateKey, address(account), agentA);
+        bytes memory sig = _buildRegSig_(agentAWallet.privateKey, address(account), agentA, address(v7Registry));
 
         vm.prank(ownerAddr);
-        IAirAccountAgent(address(account)).setAgentWallet(1, agentA, address(registry), sig);
+        IAirAccountAgent(address(account)).setAgentWallet(1, agentA, address(v7Registry), sig);
 
         vm.prank(ownerAddr);
         vm.expectRevert(AAStarAirAccountBase.AgentRegistrationFailed.selector);
-        IAirAccountAgent(address(account)).setAgentWallet(2, agentA, address(registry), sig);
+        IAirAccountAgent(address(account)).setAgentWallet(2, agentA, address(v7Registry), sig);
     }
 }

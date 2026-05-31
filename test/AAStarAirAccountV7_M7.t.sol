@@ -169,8 +169,8 @@ contract AAStarAirAccountV7_M7Test is Test {
         account.installModule(typeId, module, sig);
     }
 
-    function test_accountId_is_0_16_0() public view {
-        assertEq(account.accountId(), "airaccount.v7@0.16.0");
+    function test_accountId_is_0_17_2() public view {
+        assertEq(account.accountId(), "airaccount.v7@0.17.2");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────
@@ -757,15 +757,17 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_validateUserOp_nonceKey_nonZeroValidationData_passedThrough() public {
-        // Regression for HIGH-1 fix: validators returning non-zero validationData (e.g. AgentSessionKeyValidator
-        // returns uint256(expiry) << 160) must still write algId via _storeValidatedAlgId.
-        // The gate changed from validationData==0 to validationData!=1 (SIG_VALIDATION_FAILED sentinel).
+        // Regression for HIGH-1 fix: validators returning non-zero validationData (e.g. an installed
+        // validator packing expiry as `uint256(expiry) << 160`) must still write algId via
+        // _storeValidatedAlgId. Gate is validationData != 1 (SIG_VALIDATION_FAILED sentinel).
+        // v0.17.2 Codex P1-#11: use a non-session-key algId so the nonce-key 0x08 rejection
+        // (in V7 validateUserOp) does NOT trigger. ALG_ECDSA (0x02) is fine for this regression check.
         _installWithG0(1, address(mockModule));
         uint256 expiry = block.timestamp + 3600;
-        uint256 nonZeroResult = uint256(expiry) << 160; // simulates AgentSessionKeyValidator success
+        uint256 nonZeroResult = uint256(expiry) << 160;
         mockModule.setValidateResult(nonZeroResult);
 
-        bytes memory sig = abi.encodePacked(uint8(0x08), new bytes(65)); // sig[0]=0x08, 65 zero bytes
+        bytes memory sig = abi.encodePacked(uint8(0x02), new bytes(65)); // sig[0]=ALG_ECDSA (not 0x08)
         uint256 nonce = uint256(uint192(uint160(address(mockModule)))) << 64;
 
         PackedUserOperation memory userOp = PackedUserOperation({
@@ -784,6 +786,38 @@ contract AAStarAirAccountV7_M7Test is Test {
         uint256 result = account.validateUserOp(userOp, keccak256("hash"), 0);
         // Non-zero validationData (expiry timestamp) should be passed through unchanged
         assertEq(result, nonZeroResult, "Non-zero validationData must be passed through");
+    }
+
+    /// @notice v0.17.2 Codex P1-#11 regression: nonce-key routed UserOp with sig[0] == ALG_SESSION_KEY (0x08)
+    ///         must be rejected (validationData = 1) to prevent session-scope bypass.
+    ///         Background: if a custom validator returned success for sig[0]=0x08, base._enforceGuard would
+    ///         observe `algId == ALG_SESSION_KEY` with `taggedSessionKey == 0` and skip the scope/velocity
+    ///         enforcement block entirely. Native base._validateSignature is the only path that may set
+    ///         taggedSessionKey, so nonce-key routing of 0x08 is now refused outright.
+    function test_validateUserOp_nonceKey_sessionKeyAlgId_rejected() public {
+        _installWithG0(1, address(mockModule));
+        mockModule.setValidateResult(0); // validator says "ok"
+
+        bytes memory sig = abi.encodePacked(uint8(0x08), new bytes(65)); // sig[0]=ALG_SESSION_KEY
+        uint256 nonce = uint256(uint192(uint160(address(mockModule)))) << 64;
+
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: address(account),
+            nonce: nonce,
+            initCode: "",
+            callData: "",
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: sig
+        });
+
+        vm.prank(address(ep));
+        uint256 result = account.validateUserOp(userOp, keccak256("hash"), 0);
+        // Even with the validator returning 0, V7 must force a failure when sig[0] is ALG_SESSION_KEY
+        // on the nonce-key path. This closes the session-scope bypass.
+        assertEq(result, 1, "session key via nonce-key route must be rejected");
     }
 
     function test_validateUserOp_fromNonEntryPoint_reverts() public {
