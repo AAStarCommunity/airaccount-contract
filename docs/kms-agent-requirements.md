@@ -28,9 +28,9 @@
 >    - 当前 ECDSA payload 仍为 EIP-191 包裹的 userOpHash(`toEthSignedMessageHash(userOpHash)`),由 session key EOA 签名。base 内部用 `tryRecover` 还原。
 >    - 防 cross-account 滥用:第 1-20 字节必须等于 UserOp.sender(account 地址),否则 base 直接拒。
 > 2. **UserOp.nonce 不再编码 validator 地址**——保持高位为 0 即可(走 base 内置 0x08 分发,不走 ERC-7579 nonce-key 路由)。
-> 3. Grant 流程:
->    - 直接调:account 通过 UserOp 调 `SessionKeyValidator.grantSessionDirect(account, sessionKey, Session)`。
->    - Off-chain 授权(DApp 后端):owner 用 KMS 签 `GRANT_SESSION_V2` typed hash,offchain 把 `(account, sessionKey, Session, ownerSig)` 投递到 `SessionKeyValidator.grantSession(...)`,任何人都可 relay(gasless)。
+> 3. Grant 流程(v0.17.2 round 3 收紧,2026-05-30):
+>    - **直接调(owner EOA only)**:owner 钱包**直接发交易**调 `SessionKeyValidator.grantSessionDirect(account, sessionKey, Session)`。⚠️ 不再接受 account 通过 UserOp 自调——曾经允许过(round 2),但发现 confused-deputy 通道:已存在的 unscoped session key 可让 account 反过来调 `grantSessionDirect` 给自己发新 session,绕过 owner 重签。Round 3 改为只接受 `msg.sender == _ownerOf(account)`。
+>    - **Off-chain 授权(推荐,所有 paymaster / UserOp / gasless 场景):** owner 用 KMS 签 `GRANT_SESSION_V2` typed hash,offchain 把 `(account, sessionKey, Session, ownerSig)` 投递到 `SessionKeyValidator.grantSession(...)`,任何 relayer 都可提交(gasless)。**这是 SDK / KMS 默认走的路径。**
 >    - `Session` struct 即便只用经典字段也照填:`{expiry, contractScope, selectorScope, revoked=false, velocityLimit=0, velocityWindow=0, callTargets=[], selectorAllowlist=[]}` → 等价旧行为。
 > 4. **Revoke API 不变**:`revokeSession(account, sessionKey)` / `revokeP256Session(account, keyX, keyY)`。
 > 5. P256 session 现在真正生效(老版本 KI-7 描述的 P256 session 因 storage key 截尾不一致而静默失效,v0.17.2 已修)。

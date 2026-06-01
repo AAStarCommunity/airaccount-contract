@@ -238,12 +238,14 @@ These are ecosystem standards still being finalized. No wallets currently pass t
 | Feature | Status |
 |---------|--------|
 | ERC-4337 v0.7 (validateUserOp) | ✅ Native |
-| ERC-7579 minimum shim (accountId, supportsModule) | ✅ M6 |
-| Multi-algorithm signing (ECDSA, P256, BLS, SessionKey) | ✅ Native |
+| ERC-7579 module surface (accountId, supportsModule, installModule, executeFromExecutor) | ✅ Partial (validator type 1 via router; executor type 2 used by `ForceExitModule`; fallback type 3 used internally for diamond-lite; hook type 4 surface available but no default hooks installed in v0.17.2) |
+| Multi-algorithm signing (ECDSA, P256, BLS, SessionKey, Weighted, Cumulative T2/T3) | ✅ Native (algIds 0x01–0x08 dispatched inline in `AAStarAirAccountBase`) |
 | EIP-7702 EOA bridge (AirAccountDelegate) | ✅ M6 |
 | Tiered signing (T1/T2/T3) | ✅ Native |
 
-AirAccount is one of the most complete ERC-4337 implementations among wallets listed on WalletBeat.
+> v0.17.2 update: `AgentSessionKeyValidator`, `AirAccountCompositeValidator`, and `TierGuardHook` were removed; all session-key features consolidated into the unified `SessionKeyValidator` registered in the validator router at algId `0x08`. ERC-7579 nonce-key validator routing infrastructure is retained for third-party modules that opt in. ERC-7715 / ERC-7710 standard alignment (wallet_grantPermissions / Delegation) is deferred to v0.18+ — see ADR `docs/2026-05-30-adr-session-key-unification.md` §6.5 P2-3.
+
+AirAccount is one of the most complete ERC-4337 implementations among wallets listed on WalletBeat — note "complete" here means native multi-algorithm support and EIP-7702 bridging, not exhaustive ERC-7579 module-ecosystem coverage.
 
 ---
 
@@ -379,7 +381,7 @@ absence of a companion frontend app (and one professional audit).
 | Funding Transparency | FUNDING.md, website | ✅ Contract is open source |
 | Fee Transparency | Gas estimate + limit UI | ✅ `guard.todaySpent()`, `getDeposit()`, events |
 | Chain Address Resolution | ERC-7828 resolver | ❌ Not in contract |
-| Account Abstraction | Bundler integration, ERC-5792 | ✅ Full ERC-4337 v0.7 + 7579 + 7702 |
+| Account Abstraction | Bundler integration, ERC-5792 | ✅ ERC-4337 v0.7 (full) + partial ERC-7579 module surface + EIP-7702 EOA bridge |
 | Transaction Batching | wallet_sendCalls | ✅ `executeBatch()` |
 
 **Stage 2 blockers at contract level: 2 (L2 force-exit, ERC-7828). Everything else is frontend.**
