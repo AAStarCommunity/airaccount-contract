@@ -1095,8 +1095,14 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         }
 
         // ERC20/DeFi token tier + daily limit enforcement (M5.1 + M6.6b)
+        // v0.17.2-beta.1 round 5 MEDIUM-2 (Codex): pass the RESOLVED algId here, not the
+        // pre-resolution `guardAlgId`. The weighted alg (0x07) resolves to 0x02/0x04/0x05;
+        // `_algTier(0x07)` returns 0, so passing 0x07 made every configured-token tier
+        // unsatisfiable under weighted signatures. The whitelist check above keeps using
+        // `guardAlgId` so approving 0x07 still covers its resolutions; only the tier check
+        // (which is what fails under weighted) gets the resolved algId.
         if (func.length >= 4 && guardAddr != address(0)) {
-            _checkTokenGuard(dest, func, guardAlgId);
+            _checkTokenGuard(dest, func, algId);
         }
 
         // SESSION KEY scope + velocity enforcement (v0.17.2 unified path).

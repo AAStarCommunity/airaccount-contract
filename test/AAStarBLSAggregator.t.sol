@@ -150,14 +150,20 @@ contract AAStarBLSAggregatorTest is Test {
         aggregator.validateSignatures(ops, new bytes(544));
     }
 
-    // ─── validateSignatures: invalid aggregated signature format ────────
+    // ─── validateSignatures: caller-supplied aggregate is IGNORED (v0.17.2-beta.1 round 5 HIGH-3) ──
+
+    /// @dev Round 5 HIGH-3: the `signature` parameter is no longer trusted/parsed. validateSignatures
+    ///      recomputes the aggregate from `userOps[i].signature`. These three legacy tests previously
+    ///      verified malformed-`signature` rejection; with the new binding, the revert now originates
+    ///      from `_extractBLSData(userOps[0].signature)` because userOps[0].signature is empty/malformed.
+    ///      We accept any revert (without specific selector) — the assertion is "still rejects bad input",
+    ///      just at the userOps-side path rather than the aggregate-side path.
 
     function test_validateSignatures_tooShortSignature_reverts() public {
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _makeUserOp(new bytes(0));
 
-        // Less than minimum 544 bytes (256 + 256 + 32)
-        vm.expectRevert(AAStarBLSAggregator.InvalidSignatureFormat.selector);
+        vm.expectRevert(); // userOps[0].signature too short → _extractBLSData reverts
         aggregator.validateSignatures(ops, new bytes(100));
     }
 
@@ -165,14 +171,13 @@ contract AAStarBLSAggregatorTest is Test {
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _makeUserOp(new bytes(0));
 
-        // aggBlsSig(256) + aggMsgPoint(256) + nodeCount=1(32) but missing the 32-byte nodeId
         bytes memory aggSig = abi.encodePacked(
-            new bytes(256),     // aggBlsSig
-            new bytes(256),     // aggMsgPoint
-            uint256(1)          // nodeCount = 1, but no nodeId data follows
+            new bytes(256),     // aggBlsSig — IGNORED in beta.1
+            new bytes(256),     // aggMsgPoint — IGNORED
+            uint256(1)          // nodeCount — IGNORED
         );
 
-        vm.expectRevert(AAStarBLSAggregator.InvalidSignatureFormat.selector);
+        vm.expectRevert(); // revert from _extractBLSData(empty userOps[0].signature)
         aggregator.validateSignatures(ops, aggSig);
     }
 
@@ -180,16 +185,55 @@ contract AAStarBLSAggregatorTest is Test {
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _makeUserOp(new bytes(0));
 
-        // nodeCount = 0, total length = 544 which matches 544 + 0*32
-        // This passes format check but should revert on blsAlgorithm.aggregateKeys with empty array
         bytes memory aggSig = abi.encodePacked(
             new bytes(256),
             new bytes(256),
             uint256(0)
         );
 
-        vm.expectRevert(AAStarBLSAlgorithm.NoNodesProvided.selector);
+        vm.expectRevert(); // empty userOps[0].signature → _extractBLSData reverts, NOT from supplied aggSig
         aggregator.validateSignatures(ops, aggSig);
+    }
+
+    // ─── Round 6 follow-up: per-UserOp infinity reject (HIGH-2 residual) ──────
+
+    /// @dev Codex round 6 BLOCKED on this: an infinity G2 in userOps[i].signature (for i ≥ 1)
+    ///      passed the previous "final aggregate only" infinity check because G2Add(valid, ∞)=valid.
+    ///      Fix: per-UserOp infinity check before G2Add. This test verifies the new path rejects.
+    function test_validateSignatures_perUserOpInfinityBlsSig_reverts() public {
+        // Build a "triple-sig" payload for userOps[i]: nodeIdsLength(32) | nodeIds(32) | blsSig(256) | msgPt(256) | ecdsa(65) | ecdsa(65)
+        bytes memory validishSig = _buildTripleSig(/* blsSigInfinity */ false, /* msgPtInfinity */ false);
+        bytes memory infBlsSig   = _buildTripleSig(/* blsSigInfinity */ true,  /* msgPtInfinity */ false);
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](2);
+        ops[0] = _makeUserOp(abi.encodePacked(uint8(0x01), validishSig));
+        ops[1] = _makeUserOp(abi.encodePacked(uint8(0x01), infBlsSig));
+
+        vm.expectRevert(AAStarBLSAggregator.AggregatedSignatureInvalid.selector);
+        aggregator.validateSignatures(ops, "");
+    }
+
+    function test_validateSignatures_perUserOpInfinityMsgPt_reverts() public {
+        bytes memory validishSig = _buildTripleSig(false, false);
+        bytes memory infMsgPt    = _buildTripleSig(false, true);
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](2);
+        ops[0] = _makeUserOp(abi.encodePacked(uint8(0x01), validishSig));
+        ops[1] = _makeUserOp(abi.encodePacked(uint8(0x01), infMsgPt));
+
+        vm.expectRevert(AAStarBLSAggregator.AggregatedSignatureInvalid.selector);
+        aggregator.validateSignatures(ops, "");
+    }
+
+    function test_validateSignatures_userOpZeroInfinityBlsSig_reverts() public {
+        // userOps[0]'s components are the initial aggSig/aggMsgPt — must also be checked.
+        bytes memory infBlsSig = _buildTripleSig(true, false);
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = _makeUserOp(abi.encodePacked(uint8(0x01), infBlsSig));
+
+        vm.expectRevert(AAStarBLSAggregator.AggregatedSignatureInvalid.selector);
+        aggregator.validateSignatures(ops, "");
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────
@@ -207,5 +251,24 @@ contract AAStarBLSAggregatorTest is Test {
             paymasterAndData: "",
             signature: sig
         });
+    }
+
+    /// @dev Build the post-`0x01`-prefix triple-sig body of a UserOp.signature:
+    ///      nodeIdsLength(32) | nodeIds(32 * 1) | blsSig(256) | msgPt(256) | ecdsa1(65) | ecdsa2(65) = 706 bytes
+    ///      blsSigInfinity / msgPtInfinity toggle whether the corresponding G2 point is all-zero.
+    function _buildTripleSig(bool blsSigInfinity, bool msgPtInfinity) internal pure returns (bytes memory) {
+        bytes memory nodeIds = abi.encodePacked(uint256(1), bytes32(uint256(0xAA)));
+        bytes memory blsSig  = blsSigInfinity ? new bytes(256) : _nonInfinityG2();
+        bytes memory msgPt   = msgPtInfinity  ? new bytes(256) : _nonInfinityG2();
+        bytes memory ecdsa   = new bytes(130); // 65 + 65 — payload not used by aggregator (only format checks reach this)
+        return abi.encodePacked(nodeIds, blsSig, msgPt, ecdsa);
+    }
+
+    /// @dev A non-infinity G2 point sentinel — just non-zero bytes so `_isG2Infinity` returns false.
+    ///      We don't need a valid curve point; the per-UserOp infinity check fires before any
+    ///      precompile call.
+    function _nonInfinityG2() internal pure returns (bytes memory g2) {
+        g2 = new bytes(256);
+        g2[0] = 0x01; // one non-zero byte is enough
     }
 }

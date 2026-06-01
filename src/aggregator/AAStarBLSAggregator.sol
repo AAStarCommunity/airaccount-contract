@@ -112,38 +112,76 @@ contract AAStarBLSAggregator is IAggregator {
     }
 
     /// @inheritdoc IAggregator
-    /// @dev Batch-verifies all UserOps with a single pairing check.
-    ///      Reverts if verification fails (EntryPoint expects revert on failure).
+    /// @dev v0.17.2-beta.1 round 5 HIGH-3 (Codex): the caller-supplied `signature` is
+    ///      now IGNORED. Without this binding, a malicious bundler could submit a valid
+    ///      aggregate for unrelated data while batching UserOps whose embedded BLS payloads
+    ///      were never included — turning batch verification into a reusable proof
+    ///      unrelated to the actual batch. We now recompute the aggregate from
+    ///      `userOps[i].signature` and pair against THAT — what the EntryPoint actually
+    ///      executes is what we verify.
     function validateSignatures(
         PackedUserOperation[] calldata userOps,
-        bytes calldata signature
+        bytes calldata /*signature*/
     ) external view override {
         if (userOps.length == 0) revert EmptyBatch();
 
-        // Parse aggregated signature
-        if (signature.length < 512 + 32) revert InvalidSignatureFormat();
+        // Recompute the aggregate from the actual UserOps in the batch.
+        (bytes32[] memory nodeIds, bytes memory aggSig, bytes memory aggMsgPt) =
+            _extractBLSData(userOps[0].signature);
 
-        bytes calldata aggBlsSig = signature[0:256];
-        bytes calldata aggMsgPt = signature[256:512];
-        uint256 nodeCount = uint256(bytes32(signature[512:544]));
+        // v0.17.2-beta.1 round 6 follow-up (Codex): PER-USEROP infinity reject.
+        //
+        // Round 5 HIGH-2 fix only checked infinity on the FINAL recomputed aggregate. Round 6
+        // verification caught the residual: a malicious bundler can submit `userOps[i]` whose
+        // embedded BLS sig/msgPt is infinity — G2Add(valid, infinity) = valid (identity element),
+        // so the final aggregate stays non-infinity and passes the post-aggregate check, BUT
+        // that UserOp's BLS factor is effectively never verified. Each per-UserOp component
+        // must therefore be rejected at infinity before G2Add.
+        if (_isG2Infinity(aggSig)) revert AggregatedSignatureInvalid();
+        if (_isG2Infinity(aggMsgPt)) revert AggregatedSignatureInvalid();
 
-        if (signature.length != 544 + nodeCount * 32) revert InvalidSignatureFormat();
+        for (uint256 i = 1; i < userOps.length; i++) {
+            (bytes32[] memory nodeIdsI, bytes memory blsSig, bytes memory msgPt) =
+                _extractBLSData(userOps[i].signature);
 
-        // Extract nodeIds
-        bytes32[] memory nodeIds = new bytes32[](nodeCount);
-        for (uint256 i = 0; i < nodeCount; i++) {
-            nodeIds[i] = bytes32(signature[544 + i * 32:576 + i * 32]);
+            // All UserOps in a batch must share the same node set (already enforced by
+            // aggregateSignatures; re-enforced here so validateSignatures is independent).
+            if (nodeIdsI.length != nodeIds.length) revert NodeSetMismatch();
+            for (uint256 j = 0; j < nodeIds.length; j++) {
+                if (nodeIdsI[j] != nodeIds[j]) revert NodeSetMismatch();
+            }
+
+            // Round 6 per-UserOp infinity reject (see comment above).
+            if (_isG2Infinity(blsSig)) revert AggregatedSignatureInvalid();
+            if (_isG2Infinity(msgPt)) revert AggregatedSignatureInvalid();
+
+            aggSig = _g2Add(aggSig, blsSig);
+            aggMsgPt = _g2Add(aggMsgPt, msgPt);
         }
 
-        // Get aggregated public key from BLS algorithm (uses cache if available)
+        // Defensive post-aggregate check (belt + suspenders against pathological sums-to-infinity
+        // among non-infinity per-UserOp components).
+        if (_isG2Infinity(aggSig)) revert AggregatedSignatureInvalid();
+        if (_isG2Infinity(aggMsgPt)) revert AggregatedSignatureInvalid();
+
+        // Get aggregated public key from BLS algorithm (cache removed in beta.1, always on-demand).
         bytes memory aggPK = blsAlgorithm.aggregateKeys(nodeIds);
 
         // Negate aggregated public key
         bytes memory negAggPK = _negateG1Point(aggPK);
 
-        // Pairing check: e(G, aggBlsSig) * e(-aggPK, aggMsgPt) = 1
-        bool valid = _verifyPairing(negAggPK, aggBlsSig, aggMsgPt);
+        // Pairing check: e(G, aggSig) * e(-aggPK, aggMsgPt) = 1
+        bool valid = _verifyPairing(negAggPK, aggSig, aggMsgPt);
         if (!valid) revert AggregatedSignatureInvalid();
+    }
+
+    /// @dev v0.17.2-beta.1 round 5 HIGH-2: G2 infinity (all-zero 256-byte encoding) check.
+    function _isG2Infinity(bytes memory point) internal pure returns (bool) {
+        if (point.length != 256) return false;
+        for (uint256 i = 0; i < 256; i++) {
+            if (point[i] != 0) return false;
+        }
+        return true;
     }
 
     // ─── Internal: BLS Data Extraction ──────────────────────────────
@@ -255,10 +293,13 @@ contract AAStarBLSAggregator is IAggregator {
 
     // ─── Internal: Pairing Verification ─────────────────────────────
 
+    /// @dev v0.17.2-beta.1 round 5 HIGH-3: blsSig + msgPoint now arrive as `bytes memory`
+    ///      because they're the result of in-memory `_g2Add` re-aggregation (not the
+    ///      caller-supplied calldata slice the prior trust-the-caller design used).
     function _verifyPairing(
         bytes memory negatedKey,
-        bytes calldata blsSig,
-        bytes calldata msgPoint
+        bytes memory blsSig,
+        bytes memory msgPoint
     ) internal view returns (bool isValid) {
         bytes memory gen = GENERATOR_POINT;
 
@@ -275,7 +316,9 @@ contract AAStarBLSAggregator is IAggregator {
             mstore(add(dst, 0x60), mload(add(genPtr, 0x60)))
 
             dst := add(pairingData, 128)
-            calldatacopy(dst, blsSig.offset, 256)
+            // memory-to-memory copy (Cancun MCOPY) — blsSig is now `bytes memory` after
+            // the round-5 HIGH-3 re-aggregation; skip length prefix.
+            mcopy(dst, add(blsSig, 0x20), 256)
 
             // Pair 2: (negatedKey, msgPoint)
             let nkPtr := add(negatedKey, 0x20)
@@ -286,7 +329,7 @@ contract AAStarBLSAggregator is IAggregator {
             mstore(add(dst, 0x60), mload(add(nkPtr, 0x60)))
 
             dst := add(pairingData, 512)
-            calldatacopy(dst, msgPoint.offset, 256)
+            mcopy(dst, add(msgPoint, 0x20), 256)
 
             // Call pairing precompile
             let resultPtr := mload(0x40)

@@ -317,6 +317,104 @@ contract AirAccountDelegateTest is Test {
 
     // ─── 5. executeBatch ─────────────────────────────────────────────────────
 
+    // ─── Round 5 MEDIUM-1 + round 6 ADD-TEST: ERC20 selector token guard ────────
+
+    /// @dev Round 5 MEDIUM-1 (Codex) — Round 6 ADD-TEST requirement.
+    ///      Delegate.execute(token, 0, transfer(...)) must now invoke guard.checkTokenTransaction.
+    ///      Previously ETH `value` was the only thing checked; ERC20 transfers slipped through.
+    function test_execute_erc20Transfer_unconfiguredToken_passes() public {
+        _initialize(1 ether);
+        address token = makeAddr("mockToken_unconfigured");
+        bytes memory callData = abi.encodeWithSignature(
+            "transfer(address,uint256)", makeAddr("recipient"), uint256(100)
+        );
+
+        // Token has no config → checkTokenTransaction returns true (passthrough), no revert.
+        // Verifies the ERC20 selector path is reached without breaking unconfigured-token flow.
+        vm.prank(eoa);
+        delegate.execute(token, 0, callData);
+    }
+
+    function test_execute_erc20Transfer_aboveTier1_reverts() public {
+        _initialize(1 ether);
+        address token = makeAddr("mockToken_USDClike");
+
+        // Configure: tier1 = 100 (single-sig), no tier2, daily = 1000.
+        // Direct EOA call → ECDSA tier 1; cumulative=200 > tier1=100 → required=2, provided=1 → revert.
+        AAStarGlobalGuard guard = AAStarGlobalGuard(delegate.getGuard());
+        vm.prank(eoa); // account-binding for onlyAccount modifier
+        guard.addTokenConfig(token, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100,
+            tier2Limit: 0,
+            dailyLimit: 1000
+        }));
+
+        bytes memory callData = abi.encodeWithSignature(
+            "transfer(address,uint256)", makeAddr("recipient"), uint256(200) // > tier1
+        );
+
+        // Round 7 ADD-PRECISE-SELECTOR (Codex): match the exact error + args.
+        vm.prank(eoa);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InsufficientTokenTier.selector, uint8(2), uint8(1)
+        ));
+        delegate.execute(token, 0, callData);
+    }
+
+    function test_execute_erc20Approve_aboveTier1_reverts() public {
+        _initialize(1 ether);
+        address token = makeAddr("mockToken_USDClike2");
+
+        AAStarGlobalGuard guard = AAStarGlobalGuard(delegate.getGuard());
+        vm.prank(eoa);
+        guard.addTokenConfig(token, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100,
+            tier2Limit: 0,
+            dailyLimit: 1000
+        }));
+
+        bytes memory callData = abi.encodeWithSignature(
+            "approve(address,uint256)", makeAddr("spender"), uint256(500) // > tier1
+        );
+
+        vm.prank(eoa);
+        vm.expectRevert(abi.encodeWithSelector(
+            AAStarGlobalGuard.InsufficientTokenTier.selector, uint8(2), uint8(1)
+        ));
+        delegate.execute(token, 0, callData);
+    }
+
+    function test_execute_nonERC20_calldata_skipsTokenGuard() public {
+        // Round 7 strengthening (Codex): the previous "no revert" assertion was weak —
+        // it would pass even if the selector check was broken (unconfigured-target ≈ passthrough).
+        // Strengthened: configure `target` as a token with strict tier1=1 limit. If the selector
+        // gate INCORRECTLY fired for non-ERC20 selectors, `_checkTokenGuard` would decode
+        // data[36:68] as a huge amount and tier-revert. With correct filtering, the configured
+        // tier is irrelevant and execute() completes normally.
+        _initialize(1 ether);
+        address target = makeAddr("nonERC20Target");
+
+        AAStarGlobalGuard guard = AAStarGlobalGuard(delegate.getGuard());
+        vm.prank(eoa);
+        guard.addTokenConfig(target, AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 1,         // strict — any non-zero amount would tier-revert under ECDSA
+            tier2Limit: 0,
+            dailyLimit: 100
+        }));
+
+        // Layout mirrors ERC20 transfer/approve calldata: selector(4) + addr(32) + amount(32) = 68 bytes.
+        // Selector is deliberately NOT ERC20 (0x12345678). If the filter accidentally fired, the
+        // decoded amount would be 1_000_000 ≫ tier1=1 and the call would revert.
+        bytes memory callData = abi.encodePacked(
+            bytes4(0x12345678),
+            bytes32(uint256(uint160(makeAddr("dummyAddr")))),  // padded address
+            bytes32(uint256(1_000_000))                         // amount
+        );
+
+        vm.prank(eoa);
+        delegate.execute(target, 0, callData); // MUST NOT revert — selector correctly filtered
+    }
+
     function test_executeBatch_succeeds() public {
         _initialize(2 ether);
         address t1 = makeAddr("t1");

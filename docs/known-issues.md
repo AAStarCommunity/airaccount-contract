@@ -1,7 +1,8 @@
 # AirAccount — Known Issues & Accepted Risks
 
-**Version**: v0.17.1 (diamond-lite, M9 + EIP-170 fix)
-**Last Updated**: 2026-05-27
+**Version**: v0.17.2-beta.1 (session-key unification + Codex 4-round + David review)
+**Last Updated**: 2026-05-31
+**Status**: pre-release beta — security audit pending tag
 **Purpose**: This document explicitly declares known limitations and accepted risks in AirAccount's design. It exists so that security auditors and users can make an informed decision. Items listed here are **intentional design trade-offs**, not bugs. Auditors should NOT file findings for these items unless they identify a new exploit path that makes the described risk worse than documented.
 
 ---
@@ -409,6 +410,90 @@ No on-chain contract change is implicated. This is an operational note so that t
 
 ---
 
+## KI-13 — ForceExit Tier-1 daily-limit constrains emergency exit
+
+**Severity**: Low (informational; matches Codex round 5 INFO-2 confirmation)
+**Affected Contract**: `ForceExitModule.sol` + `AAStarAirAccountV7.executeFromExecutor`
+**Category**: Emergency-exit ergonomics
+
+### Description
+
+`ForceExitModule.executeForceExit` routes through `account.executeFromExecutor(bytes32(0), [target||value||data])`, which is itself guarded by `_enforceGuard(..., ALG_ECDSA, ...)` at the executor level. The practical effect: emergency exits are capped by the account's **Tier 1 (single-signature) daily limit** at the time of exit, NOT by a higher emergency-tier allowance.
+
+### Risk
+
+Insufficient emergency-exit bandwidth for high-value accounts. Operational, not security: assets are not at risk, but slow drain over many days is required to fully evacuate.
+
+### Mitigation / Plan
+
+If product wants instant full-balance exit, introduce an explicit `ALG_EMERGENCY` algorithm + higher tier that ForceExit routes through. Tracked for v0.18+.
+
+### Auditor Note
+
+Codex round 5 INFO-2 explicitly confirmed: "This is not a vulnerability; it confirms the documented KI-13 concern is implemented as 'emergency exit is constrained by Tier-1 executor guard' rather than 'guard bypass for emergency drain.'"
+
+---
+
+## KI-14 — Calldata parsers disabled in v0.17.2-beta.1 (Codex round 5 HIGH-4 / HIGH-5)
+
+**Severity**: was HIGH (fail-open token tier bypass) → mitigated by **disabling parser deployment** in beta.1
+**Affected Contracts**: `src/parsers/RailgunParser.sol`, `src/parsers/UniswapV3Parser.sol`
+**Category**: DeFi protocol-aware token guard
+
+### Description
+
+Codex round 5 found two real fail-open + misdecoding issues:
+
+- **HIGH-4 (Uniswap)**: `UniswapV3Parser` misdecodes `exactInput`'s outer tuple offset (reads `amount` from the wrong field, derives `token` from the recipient instead of the path). Selectors `exactOutputSingle`, `exactOutput`, `multicall` return `(address(0), 0)` and the account's parser path fails open. Result: Tier-1 signer can swap > Tier-1 configured-token amounts.
+- **HIGH-5 (Railgun)**: `RailgunParser` reads only ONE fixed-offset item even though Railgun calldata can contain a multi-item array. Multi-item shield/transact calldata undercounts the tier-checked amount to the first item.
+
+### Mitigation (effective in beta.1)
+
+- `script/DeployV0172Beta.s.sol` **does NOT deploy** `RailgunParser` / `UniswapV3Parser`. `CalldataParserRegistry` is still deployed (cheap stub for future opt-in).
+- No account should call `setParserRegistry(parserRegistry)` AND register parsers on the registry until the parsers are rewritten.
+- Without the parser path active, the account's ERC20 native check (`transfer` / `approve` selectors) is the only token-amount guard; Uniswap-style multicalls flow through unchecked.
+
+### Risk while disabled
+
+Accounts that DON'T opt into parsers are unaffected. Accounts on v0.17.1 that historically opted into parsers should call `setParserRegistry(address(0))` before upgrading to v0.17.2 contracts.
+
+### Plan for beta.2 / final
+
+Rewrite both parsers with:
+- Proper ABI decoding (not fixed-offset reads)
+- Multi-item Railgun array support — sum all spends per token
+- Uniswap: handle `exactInput`'s wrapping tuple correctly; add `exactOutputSingle` / `exactOutput` / `multicall`; **fail closed** on unsupported selectors instead of returning `(0, 0)`
+
+Re-enable in `DeployV0172Beta.s.sol` once Codex re-reviews.
+
+---
+
+## KI-15 — EIP-7702 delegate has minimal token guard (no DeFi parser)
+
+**Severity**: Low (acknowledged limitation; partial mitigation of round 5 MEDIUM-1)
+**Affected Contract**: `AirAccountDelegate.sol`
+**Category**: 7702 delegated execution
+
+### Description
+
+v0.17.2-beta.1 round 5 MEDIUM-1 fix added ERC20 `transfer` / `approve` selector parsing to `AirAccountDelegate.execute` / `executeBatch` (closing the bypass where `execute(token, 0, transferCalldata)` skipped token tier check entirely). The delegate intentionally does NOT carry a parser registry — DeFi calldata (Uniswap multicall, Curve swaps, etc.) is NOT parsed and flows through with no ERC20 tier check on the delegated path.
+
+### Risk
+
+A 7702-delegated EOA used for DeFi protocol calls bypasses the token tier+daily check at the delegate boundary. Native AirAccount (non-7702) accounts have the parser path and are unaffected.
+
+### Mitigation
+
+- Document on the 7702 onboarding flow that "delegated execution covers ETH + ERC20 raw transfer/approve, not DeFi-protocol calldata".
+- High-value users should use a native AirAccount instead of EIP-7702 delegation when DeFi interaction is expected.
+- Future (v0.18+): extend the delegate with a minimal parser-registry pointer.
+
+### Auditor Note
+
+This is a delegate-specific limitation, NOT a regression. v0.17.1 had a strictly worse state (no ERC20 check on delegate at all). KI-1 documents the broader EIP-7702 raw-key bypass risk; this is the narrower in-contract DeFi-parser gap.
+
+---
+
 ## Summary Table
 
 | ID | Issue | Severity | Category | Fixable? |
@@ -425,3 +510,6 @@ No on-chain contract change is implicated. This is an operational note so that t
 | KI-10 | ForceExit proposal invalidated by guardian rotation | ~~Low~~ | Design decision | ✅ **Resolved (guardians snapshotted at propose time)** |
 | KI-11 | Validated-state transient re-read within identical calldata (HIGH-3 residual) | Low | Validation/execution split | Planned (#52) |
 | KI-12 | Leaked testnet key in historical records | Low | Operational | Rotate key |
+| KI-13 | ForceExit Tier-1 limit constrains emergency exit | Low (informational) | Emergency-exit | Planned v0.18+ |
+| KI-14 | Calldata parsers disabled in beta.1 (HIGH-4/5) | was HIGH, mitigated | Parser correctness | Planned beta.2 (rewrite parsers) |
+| KI-15 | 7702 delegate has minimal token guard (no DeFi parser) | Low | 7702 ergonomics | Planned v0.18+ |

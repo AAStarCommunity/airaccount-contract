@@ -19,8 +19,15 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     /// @dev All registered node identifiers
     bytes32[] public registeredNodes;
 
-    /// @dev Cached aggregated public keys: keccak256(sorted nodeIds) → aggregated G1 key
-    mapping(bytes32 => bytes) public cachedAggKeys;
+    /// @dev v0.17.2-beta.1 security review HIGH-1 (Codex round 5): the previous
+    ///      `cachedAggKeys` mapping has been removed. The cached aggregate was not
+    ///      invalidated on `updatePublicKey` / `revokePublicKey`, so a compromised
+    ///      key remained usable through any cached node set indefinitely. There is
+    ///      no safe per-call invalidation strategy without a per-node `keyVersion`,
+    ///      and the cache savings are small relative to the pairing precompile cost.
+    ///      The mapping is gone; aggregation is now always on-demand in `_aggregateNodeKeys`.
+    ///      `cacheAggregatedKey()` is retained as a deprecated no-op-revert for SDK
+    ///      callers that haven't migrated yet — they get a clear `CacheDeprecated` revert.
 
     /// @dev Contract owner for admin functions
     address public owner;
@@ -48,8 +55,6 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     event PublicKeyRegistered(bytes32 indexed nodeId, bytes publicKey);
     event PublicKeyUpdated(bytes32 indexed nodeId, bytes oldKey, bytes newKey);
     event PublicKeyRevoked(bytes32 indexed nodeId);
-    event AggKeyCached(bytes32 indexed setHash, uint256 nodeCount);
-    event AggKeyCacheInvalidated(bytes32 indexed nodeId);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     // ─── Errors ───────────────────────────────────────────────────────
@@ -65,6 +70,12 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     error InvalidSignatureLength();
     error InvalidMessageLength();
     error PairingFailed();
+    /// @dev v0.17.2-beta.1 round 5 HIGH-2 / LOW-2: reject G1/G2 point at infinity
+    ///      (all-zero encoding). Pairings involving infinity evaluate to the identity,
+    ///      which would let a caller satisfy BLS verification with a zero signature.
+    error BLSPointAtInfinity();
+    /// @dev v0.17.2-beta.1 round 5 HIGH-1: aggregate-key cache removed.
+    error CacheDeprecated();
 
     // ─── Modifiers ────────────────────────────────────────────────────
 
@@ -102,6 +113,11 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
         bytes calldata blsSignature = signature[nodeIdsBytes:nodeIdsBytes + G2_POINT_LENGTH];
         bytes calldata messagePoint = signature[nodeIdsBytes + G2_POINT_LENGTH:];
 
+        // v0.17.2-beta.1 round 5 HIGH-2: reject point-at-infinity. Pairings with infinity
+        // evaluate to identity and would let an owner-key-only attacker satisfy the BLS factor.
+        if (_isG2InfinityCalldata(blsSignature)) return 1;
+        if (_isG2InfinityCalldata(messagePoint)) return 1;
+
         bool valid = _validateBLSSignature(nodeIds, blsSignature, messagePoint);
         return valid ? 0 : 1;
     }
@@ -117,6 +133,9 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
         if (nodeIds.length == 0) revert NoNodesProvided();
         if (signature.length != G2_POINT_LENGTH) revert InvalidSignatureLength();
         if (messagePoint.length != G2_POINT_LENGTH) revert InvalidMessageLength();
+        // v0.17.2-beta.1 round 5 HIGH-2: reject infinity (see validate() above).
+        if (_isG2InfinityCalldata(signature)) revert BLSPointAtInfinity();
+        if (_isG2InfinityCalldata(messagePoint)) revert BLSPointAtInfinity();
         return _validateBLSSignature(nodeIds, signature, messagePoint);
     }
 
@@ -129,6 +148,8 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
         if (nodeIds.length == 0) revert NoNodesProvided();
         if (signature.length != G2_POINT_LENGTH) revert InvalidSignatureLength();
         if (messagePoint.length != G2_POINT_LENGTH) revert InvalidMessageLength();
+        if (_isG2InfinityCalldata(signature)) revert BLSPointAtInfinity();
+        if (_isG2InfinityCalldata(messagePoint)) revert BLSPointAtInfinity();
         return _validateBLSSignature(nodeIds, signature, messagePoint);
     }
 
@@ -150,14 +171,9 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     }
 
     /// @dev Aggregate public keys of registered nodes using G1Add precompile.
-    ///      Checks cache first; falls back to on-chain aggregation if not cached.
+    ///      Always on-demand (no cache). See `CacheDeprecated` notes above for why
+    ///      the previous `cachedAggKeys` mapping was removed in v0.17.2-beta.1.
     function _aggregateNodeKeys(bytes32[] memory nodeIds) internal view returns (bytes memory result) {
-        // Check cache
-        bytes32 setHash = computeSetHash(nodeIds);
-        bytes memory cached = cachedAggKeys[setHash];
-        if (cached.length == G1_POINT_LENGTH) return cached;
-
-        // Cache miss: aggregate from storage
         bytes32 firstNodeId = nodeIds[0];
         if (!isRegistered[firstNodeId]) revert NodeNotRegistered();
         result = registeredKeys[firstNodeId];
@@ -170,29 +186,49 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
         }
     }
 
-    /// @notice Pre-compute and cache an aggregated public key for a node set.
-    ///         Call this off-chain before submitting batched UserOps for gas savings.
-    /// @param nodeIds The node identifiers (order matters for hash)
-    function cacheAggregatedKey(bytes32[] calldata nodeIds) external {
-        if (nodeIds.length == 0) revert NoNodesProvided();
-
-        // Aggregate
-        bytes memory result = registeredKeys[nodeIds[0]];
-        if (!isRegistered[nodeIds[0]]) revert NodeNotRegistered();
-
-        for (uint256 i = 1; i < nodeIds.length; i++) {
-            if (!isRegistered[nodeIds[i]]) revert NodeNotRegistered();
-            result = _g1Add(result, registeredKeys[nodeIds[i]]);
-        }
-
-        bytes32 setHash = computeSetHash(nodeIds);
-        cachedAggKeys[setHash] = result;
-        emit AggKeyCached(setHash, nodeIds.length);
+    /// @notice DEPRECATED in v0.17.2-beta.1 — cache mechanism removed (Codex round 5 HIGH-1).
+    ///         The previous design cached aggregate keys per `keccak256(nodeIds)` but did not
+    ///         invalidate them on `updatePublicKey` / `revokePublicKey`, so a compromised key
+    ///         remained usable through any cached set. Aggregation is now always on-demand.
+    /// @dev SDK / NestJS backend callers that still invoke this will get a clear revert and
+    ///      can drop the call site — `_aggregateNodeKeys` no longer needs pre-warming.
+    function cacheAggregatedKey(bytes32[] calldata /*nodeIds*/) external pure {
+        revert CacheDeprecated();
     }
 
-    /// @notice Compute the cache key for a set of nodeIds
+    /// @notice Compute the cache key for a set of nodeIds (retained for off-chain compatibility).
     function computeSetHash(bytes32[] memory nodeIds) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(nodeIds));
+    }
+
+    // ─── Infinity-point rejection helpers (v0.17.2-beta.1 round 5 HIGH-2 / LOW-2) ──
+
+    /// @dev Returns true if a G1 point (128 bytes EIP-2537 format) is the point at infinity.
+    ///      EIP-2537 encodes infinity as all-zero bytes.
+    function _isG1Infinity(bytes memory point) internal pure returns (bool) {
+        if (point.length != G1_POINT_LENGTH) return false;
+        for (uint256 i = 0; i < G1_POINT_LENGTH; i++) {
+            if (point[i] != 0) return false;
+        }
+        return true;
+    }
+
+    /// @dev Same as above for G1 calldata bytes.
+    function _isG1InfinityCalldata(bytes calldata point) internal pure returns (bool) {
+        if (point.length != G1_POINT_LENGTH) return false;
+        for (uint256 i = 0; i < G1_POINT_LENGTH; i++) {
+            if (point[i] != 0) return false;
+        }
+        return true;
+    }
+
+    /// @dev Returns true if a G2 point (256 bytes EIP-2537 format) is the point at infinity.
+    function _isG2InfinityCalldata(bytes calldata point) internal pure returns (bool) {
+        if (point.length != G2_POINT_LENGTH) return false;
+        for (uint256 i = 0; i < G2_POINT_LENGTH; i++) {
+            if (point[i] != 0) return false;
+        }
+        return true;
     }
 
     /// @dev G1 point addition via EIP-2537 precompile with assembly
@@ -363,6 +399,8 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
         if (nodeId == bytes32(0)) revert InvalidNodeId();
         if (publicKey.length != G1_POINT_LENGTH) revert InvalidKeyLength();
         if (isRegistered[nodeId]) revert NodeAlreadyRegistered();
+        // v0.17.2-beta.1 round 5 LOW-2: refuse infinity G1 keys at registration time.
+        if (_isG1InfinityCalldata(publicKey)) revert BLSPointAtInfinity();
 
         registeredKeys[nodeId] = publicKey;
         isRegistered[nodeId] = true;
@@ -374,6 +412,7 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     function updatePublicKey(bytes32 nodeId, bytes calldata newPublicKey) external onlyOwner {
         if (!isRegistered[nodeId]) revert NodeNotRegistered();
         if (newPublicKey.length != G1_POINT_LENGTH) revert InvalidKeyLength();
+        if (_isG1InfinityCalldata(newPublicKey)) revert BLSPointAtInfinity();
 
         bytes memory oldKey = registeredKeys[nodeId];
         registeredKeys[nodeId] = newPublicKey;
@@ -408,6 +447,8 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
             if (nodeIds[i] == bytes32(0)) revert InvalidNodeId();
             if (publicKeys[i].length != G1_POINT_LENGTH) revert InvalidKeyLength();
             if (isRegistered[nodeIds[i]]) revert NodeAlreadyRegistered();
+            // v0.17.2-beta.1 round 5 LOW-2: refuse infinity G1 keys at registration time.
+            if (_isG1Infinity(publicKeys[i])) revert BLSPointAtInfinity();
 
             registeredKeys[nodeIds[i]] = publicKeys[i];
             isRegistered[nodeIds[i]] = true;
@@ -444,14 +485,10 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
         }
     }
 
-    /// @notice Public aggregation for external callers (e.g., BLSAggregator)
+    /// @notice Public aggregation for external callers (e.g., BLSAggregator).
+    ///         Always on-demand — cache removed in v0.17.2-beta.1 (see HIGH-1 above).
     function aggregateKeys(bytes32[] calldata nodeIds) external view returns (bytes memory) {
         if (nodeIds.length == 0) revert NoNodesProvided();
-
-        // Check cache first
-        bytes32 setHash = computeSetHash(nodeIds);
-        bytes memory cached = cachedAggKeys[setHash];
-        if (cached.length == G1_POINT_LENGTH) return cached;
 
         bytes memory result = registeredKeys[nodeIds[0]];
         if (!isRegistered[nodeIds[0]]) revert NodeNotRegistered();
