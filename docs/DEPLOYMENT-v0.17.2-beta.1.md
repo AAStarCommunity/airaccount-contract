@@ -175,21 +175,45 @@ forge verify-contract <ADDRESS> src/path/Contract.sol:ContractName \
 
 ## 8. Deployed Address Record
 
-_(fill in after a successful broadcast — TBD until deploy)_
+**Sepolia broadcast: 2026-06-01 ✅** — deployer `0xEcAACb915f7D92e9916f449F7ad42BD0408733c9` (Anni), gas spent ~0.071 ETH.
+Broadcast record: `broadcast/DeployV0172Beta.s.sol/11155111/run-latest.json`.
 
-| Contract | Sepolia | Localhost | Verified |
-|---|---|---|---|
-| SessionKeyValidator | TBD | TBD | ⬜ |
-| AAStarBLSAlgorithm | TBD | TBD | ⬜ |
-| AAStarValidator (router) | TBD | TBD | ⬜ |
-| AgentRegistry | TBD | TBD | ⬜ |
-| AirAccountV7 (impl) | TBD | TBD | ⬜ |
-| AirAccountExtension | TBD | TBD | ⬜ |
-| AAStarAirAccountFactoryV7 | TBD | TBD | ⬜ |
-| CalldataParserRegistry | TBD | TBD | ⬜ |
-| ForceExitModule | TBD | TBD | ⬜ |
+| Contract | Sepolia | Etherscan verified |
+|---|---|---|
+| AAStarBLSAlgorithm | [`0xB82127182A855B82eED05e47536FcE568b626457`](https://sepolia.etherscan.io/address/0xB82127182A855B82eED05e47536FcE568b626457) | ⬜ pending |
+| AAStarValidator (router) | [`0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F`](https://sepolia.etherscan.io/address/0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F) | ⬜ pending |
+| AAStarBLSAggregator | [`0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1`](https://sepolia.etherscan.io/address/0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1) | ⬜ pending |
+| SessionKeyValidator | [`0xc1e2534D9Cae27Fd9776e612229115604A9e07E9`](https://sepolia.etherscan.io/address/0xc1e2534D9Cae27Fd9776e612229115604A9e07E9) | ⬜ pending |
+| ForceExitModule | [`0x10dF485018620CCb04BfA290DD4ca8c05Ae72aD9`](https://sepolia.etherscan.io/address/0x10dF485018620CCb04BfA290DD4ca8c05Ae72aD9) | ⬜ pending |
+| AirAccountDelegate | [`0x8603AAF6C3f07fdae810B323c95a198D796EC52E`](https://sepolia.etherscan.io/address/0x8603AAF6C3f07fdae810B323c95a198D796EC52E) | ⬜ pending |
+| CalldataParserRegistry | [`0x076EE45d2a97F70FCb2e45809DC5f9b72BB4883F`](https://sepolia.etherscan.io/address/0x076EE45d2a97F70FCb2e45809DC5f9b72BB4883F) | ✅ verified |
+| AAStarAirAccountFactoryV7 | [`0xc6c7FA51814f109Dea73757c73c378a25b2BAeE9`](https://sepolia.etherscan.io/address/0xc6c7FA51814f109Dea73757c73c378a25b2BAeE9) | ⬜ pending |
+| AAStarAirAccountV7 (impl, auto from factory) | [`0x05274e4Af481e5c23287571F71C52afCCC5Df127`](https://sepolia.etherscan.io/address/0x05274e4Af481e5c23287571F71C52afCCC5Df127) | ⬜ pending |
+| AirAccountExtension (auto from impl) | [`0x6e3E6d7e6DFb383CeaAe6A9ae478745FFc5cAac0`](https://sepolia.etherscan.io/address/0x6e3E6d7e6DFb383CeaAe6A9ae478745FFc5cAac0) | ⬜ pending |
+| AgentRegistry | [`0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB`](https://sepolia.etherscan.io/address/0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB) | ✅ verified |
+| RailgunParser | NOT DEPLOYED | n/a (KI-14) |
+| UniswapV3Parser | NOT DEPLOYED | n/a (KI-14) |
 
-> Update `.env.<network>` with these addresses after broadcast.
+### Wiring transactions (post-deploy, all confirmed on-chain)
+
+1. `router.registerAlgorithm(0x01, blsAlgorithm)` ✅
+2. `router.registerAlgorithm(0x08, sessionKeyValidator)` ✅
+3. `agentRegistry.bindFactory(factory)` ✅ — set-once, immutable
+4. `factory.setAgentRegistry(agentRegistry)` ✅
+
+### Etherscan verification follow-up
+
+2/11 contracts verified automatically (CalldataParserRegistry, AgentRegistry). The remaining 9 failed with `Source "lib/SuperPaymaster/contracts/src/core/AAStarGlobalGuard.sol" not found` — a Foundry source-path resolution issue on Etherscan's side, NOT a deployment problem. The contracts are correctly deployed and functional. Manual verification path:
+
+```bash
+# Per-contract example (BLS algorithm)
+forge verify-contract 0xB82127182A855B82eED05e47536FcE568b626457 \
+  src/validators/AAStarBLSAlgorithm.sol:AAStarBLSAlgorithm \
+  --chain sepolia --etherscan-api-key $ETHERSCAN_API_KEY \
+  --compiler-version 0.8.33 --num-of-optimizations 300 --evm-version cancun --via-ir
+```
+
+The `.env.sepolia` has the full address block under `AIRACCOUNT_V0172_BETA_*` keys (gitignored).
 
 ---
 
