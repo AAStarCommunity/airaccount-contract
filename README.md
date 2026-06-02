@@ -3,16 +3,44 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-> ## Status: v0.17.1 (current)
+> ## Status: v0.17.2-beta.2 (current beta — 2026-06-02)
 >
-> Current line: tag [`v0.17.1`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.1). It builds on the **M8** (ERC-8004 official integration + autonomous agent accounts) and **M9** (security hardening: factory front-run, ERC-1271, BLS/tier checks, ERC-7579 hook typeId, executor Tier-1 ceiling) work tagged at `v0.17.0`, and adds:
-> - **EIP-170 diamond-lite fix**: `AAStarAirAccountV7` was over the 24,576-byte runtime limit (undeployable on real chains). The cold functions (ERC-8004 agent + weighted-signature config governance) moved into a singleton **`AirAccountExtension`**, reached via `fallback`+`delegatecall` (zero capability loss; storage layout byte-identical, verified). Account runtime: 27,975 → **21,872 B**.
-> - **HIGH-3 fix**: the transient validation queue is now content-keyed (`keccak256(callData)`), revert-safe across a same-account bundle.
-> - **Agent default-install (hybrid)**: agent accounts (`createAgentAccount`) default-install `AgentSessionKeyValidator`; regular accounts opt-in.
+> Latest tag: [`v0.17.2-beta.2`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.2-beta.2). Deployed + Etherscan-verified on Sepolia (11/11). Forge test **674/0/0**, on-chain E2E **79/79 PASS**.
 >
-> Full test suite green (**798 tests**); deployed on Sepolia + OP Sepolia.
+> ### Core features since v0.17.1
 >
-> ⚠️ **Integrators / SDK**: the account is now *diamond-lite* — the agent + weight-governance functions execute via fallback and are **absent from the raw `out/AAStarAirAccountV7.sol` ABI**. Use the merged **[`abi/AAStarAirAccountV7.full.json`](abi/AAStarAirAccountV7.full.json)** (run `scripts/build-full-abi.mjs`) to encode them. See [`docs/2026-05-26-diamond-lite-migration-impact.md`](docs/2026-05-26-diamond-lite-migration-impact.md).
+> Combined `v0.17.2-beta.1` + `v0.17.2-beta.2`:
+>
+> - **Session-key system unified** — deleted `AgentSessionKeyValidator` + `AirAccountCompositeValidator` + `TierGuardHook` (-7.8 KB combined bytecode). Single enhanced `SessionKeyValidator` at validator router algId `0x08` supports both classic single-target sessions and richer agent-grade controls (velocity, `callTargets[]`, `selectorAllowlist[]`, P256 passkey variant). Backward-compat shims removed.
+> - **8 rounds of Codex adversarial review + David human review** on PR #61 + PR #68. All Critical / High / Medium findings fixed:
+>   - BLS infinity-point bypass (per-UserOp + final aggregate checks)
+>   - Aggregator unbound-to-userOps fix (recompute from `userOps[i].signature`)
+>   - Weighted-sig token tier mismatch (pass resolved algId to `_checkTokenGuard`)
+>   - 7702 delegate ERC20 inline check (raw `transfer`/`approve` selectors)
+>   - ForceExit stale-guardian check (v0.17.2-beta.2)
+>   - AgentRegistry factory-provenance whitelist (H-2)
+>   - `bindFactory` deployer-only access control
+>   - 5-arg shim confused-deputy bypass closed
+> - **ForceExit stale-guardian fix (v0.17.2-beta.2)** — `approveForceExit` rejects signatures from rotated-out guardians (`SignerNoLongerGuardian`). One contract redeployed; other 10 keep beta.1 addresses.
+> - **6-phase on-chain E2E suite** against Sepolia deployment — 79/79 PASS, 100% non-deferred ABI coverage
+> - **Sepolia deploy + Etherscan verify (11/11)** + complete deploy runbook
+>
+> ### Core feature docs (key reading order)
+>
+> 1. [CHANGELOG.md](CHANGELOG.md) — release-by-release feature evolution
+> 2. [docs/DEPLOYMENT-v0.17.2-beta.1.md](docs/DEPLOYMENT-v0.17.2-beta.1.md) — full Sepolia deploy runbook
+> 3. [docs/DEPLOYMENT-v0.17.2-beta.2.md](docs/DEPLOYMENT-v0.17.2-beta.2.md) — beta.2 delta release (ForceExitModule only)
+> 4. [docs/contracts-inventory-v0.17.2-beta.1.md](docs/contracts-inventory-v0.17.2-beta.1.md) — 11 contracts × 4 wirings × algorithm-ID matrix
+> 5. [docs/security-review-v0.17.2-beta.1.md](docs/security-review-v0.17.2-beta.1.md) — Codex rounds 5-8 (pre-release gate)
+> 6. [docs/abi-coverage-v0.17.2-beta.1.md](docs/abi-coverage-v0.17.2-beta.1.md) — 80+ external functions: U (unit) / E (E2E) / deferred classification
+> 7. [docs/e2e-results-v0.17.2-beta.1.md](docs/e2e-results-v0.17.2-beta.1.md) — per-test on-chain result log
+> 8. [docs/forceexit-design-notes.md](docs/forceexit-design-notes.md) — ForceExit subsystem design + accepted residual risks
+> 9. [docs/known-issues.md](docs/known-issues.md) — KI-1..KI-15 accepted limitations + auditor notes
+> 10. [GitHub issue #67 v0.18 roadmap](https://github.com/AAStarCommunity/airaccount-contract/issues/67) — what's planned next
+>
+> ⚠️ **Integrators / SDK**: the account is *diamond-lite* — the agent + weight-governance functions execute via fallback and are **absent from the raw `out/AAStarAirAccountV7.sol` ABI**. Use the merged **[`abi/AAStarAirAccountV7.full.json`](abi/AAStarAirAccountV7.full.json)** (run `scripts/build-full-abi.mjs`) to encode them. See [`docs/2026-05-26-diamond-lite-migration-impact.md`](docs/2026-05-26-diamond-lite-migration-impact.md).
+>
+> ⚠️ **Not for mainnet yet**: this is a beta tag. Mainnet requires paid security audit + bug bounty + KMS/SuperPaymaster/SDK production-ready. See [DEPLOYMENT-v0.17.2-beta.1.md](docs/DEPLOYMENT-v0.17.2-beta.1.md) §1-3 for the full mainnet checklist.
 
 ---
 

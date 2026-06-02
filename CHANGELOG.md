@@ -8,6 +8,53 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.17.2-beta.2] - 2026-06-02 (ForceExit LOW-3 stale-guardian fix + Sepolia E2E + CI cleanup)
+
+Delta release on top of v0.17.2-beta.1. **One Solidity source change**: `ForceExitModule.sol` — LOW-3 partial fix (stale-guardian check). One contract redeployed; other 10 keep their addresses.
+
+### Security fix — Codex round 5 LOW-3 (partial, accepted scope)
+
+`approveForceExit` now verifies the recovered signer is in **both** the proposal's guardian snapshot AND the account's **current** guardian set. A guardian rotated out via `removeGuardian` + `addGuardian` between propose and approve will revert `SignerNoLongerGuardian` even though their signature still matches the snapshot.
+
+- **New error**: `error SignerNoLongerGuardian();`
+- Closes Codex round 5 LOW-3 scenario 2 (of 4). Scenarios 1 / 3 / 4 (stale target / stale intent / forgotten pre-arm + lost key) are accepted residual risk; rationale + v0.18 redesign tracked in [#66](https://github.com/AAStarCommunity/airaccount-contract/issues/66).
+- **Design stance evolved**: KI-10 (earlier round) previously concluded the snapshot mechanism is "Resolved" because guardian rotation CAN NOT invalidate approvals (continuity wins). beta.2 reverses this — rotation SHOULD invalidate approvals (freshness wins). See `docs/forceexit-design-notes.md` §5.
+
+### Sepolia deployment
+
+| Contract | Address | vs beta.1 |
+|---|---|---|
+| **ForceExitModule (NEW)** | `0xc7128A1F66DFf7B607d595371FCAEeAdC485CFC9` | redeployed ✅ Etherscan verified |
+| ~~ForceExitModule (deprecated)~~ | ~~`0x10dF485018620CCb04BfA290DD4ca8c05Ae72aD9`~~ | beta.1 version, still on-chain but DEPRECATED |
+| Other 10 contracts | unchanged from beta.1 | identical bytecode, identical addresses |
+
+**Migration**: zero. ForceExitModule is per-account ERC-7579 install (moduleTypeId=2), not factory-default. No production AirAccount on beta.1 has installed it.
+
+### Also in this release
+
+- **6-phase on-chain E2E suite** (`scripts/e2e-v0172/`) — 79/79 PASS on Sepolia, 100% non-deferred ABI coverage
+- **Etherscan verify workflow fixed** — `auto_detect_remappings = false` + explicit `account-abstraction/` remapping; all 11 contracts now verified
+- **CI workflow optimization** — removed redundant `forge build` from ABI verify step (~15 min saved/run; previously hung)
+- **Documentation**: `docs/DEPLOYMENT-v0.17.2-beta.2.md`, `docs/forceexit-design-notes.md`, `docs/abi-coverage-v0.17.2-beta.1.md`, `docs/e2e-results-v0.17.2-beta.1.md`
+- **GitHub issues opened**: [#66 ForceExit long-term tracking](https://github.com/AAStarCommunity/airaccount-contract/issues/66), [#67 v0.18 roadmap](https://github.com/AAStarCommunity/airaccount-contract/issues/67)
+- **PR #68 review follow-ups** (David, 2026-06-02): MEDIUM-1 TOCTOU-at-execute documented as accepted residual; LOW-1 KI-10 wording revised to reflect superseded design; LOW-3 verify script address updated; CHANGELOG (this entry) added.
+
+### Tests
+
+- forge test: **674/0/0** (29 suites, 3 new stale-guardian tests)
+- on-chain E2E (Sepolia): **79/79 PASS**
+
+### Known residual (documented, deferred)
+
+- **MEDIUM-1 TOCTOU at execute** (David PR #68 review): `executeForceExit` checks bitmap ≥ 2 but does NOT re-verify approving guardians are still current. Bob approves while still valid → rotated out → bit stays set → 2-of-3 still reached. **No production accounts installed beta.1 ForceExitModule, so window not exploitable now.** v0.18 redesign will re-check at execute time (max 3 staticcalls).
+- **NIT-1** (David): no `VERSION` constant on contracts; integrations cannot programmatically distinguish ForceExitModule beta.1 vs beta.2 from chain. Defer to v0.18.
+- LOW-3 scenarios 1/3/4 — see [#66](https://github.com/AAStarCommunity/airaccount-contract/issues/66).
+- KI-13 ForceExit Tier-1 daily-limit constraint — folded into v0.18 Emergency Asset Sweep redesign.
+- KI-14 parsers — currently mitigated by not-deploying.
+- KI-15 EIP-7702 delegate DeFi parser — tied to 7702 GTM decision.
+
+---
+
 ## [v0.17.2-beta.1] - 2026-05-31 (Session-Key Unification + Codex 4-Round Adversarial Review + David PR #61 Review)
 
 ### Highlights

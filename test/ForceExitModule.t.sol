@@ -368,11 +368,12 @@ contract ForceExitModuleTest is Test {
         module.approveForceExit(address(account), bobSig);
     }
 
-    /// @dev After rotation, the NEW guardian (Carol) can sign and her signature must pass
-    ///      (assuming the proposal-hash still matches her view — typically she'd sign
-    ///      the same proposal-hash that other guardians signed; dApp-layer guidance must
-    ///      surface this to her).
-    function test_approveForceExit_postRotation_newGuardian_succeeds() public {
+    /// @dev Renamed 2026-06-02 (David PR #68 NIT-2): name was `..._succeeds` but actually asserts a
+    ///      revert. Behavior under test: rotating a guardian after propose locks the proposal
+    ///      entirely — old guardian fails SignerNoLongerGuardian, new guardian fails
+    ///      InvalidGuardianSig (not in snapshot). Owner must re-propose with fresh snapshot.
+    ///      See docs/forceexit-design-notes.md §5.
+    function test_approveForceExit_postRotation_newGuardian_revertsInvalidGuardianSig() public {
         _installOp();
         address l1target = makeAddr("l1target");
         vm.warp(5001);

@@ -311,13 +311,20 @@ Auditors should confirm that `_executeSessionKeyCall()` correctly enforces `cont
 
 ---
 
-## KI-10 — ForceExit Proposal Invalidated by Guardian Set Change — ✅ RESOLVED (already implemented)
+## KI-10 — ForceExit Proposal Invalidated by Guardian Set Change — 🟡 SUPERSEDED by v0.17.2-beta.2 design change
 
 **Severity**: ~~Low~~ → **Resolved**
 **Affected Contract**: `ForceExitModule.sol` — `proposeForceExit` / `approveForceExit` / `executeForceExit`
 **Category**: Guardian management / social recovery consistency
 
-> **Resolved (verified in current code):** the guardian set **is** snapshotted at proposal time. `ExitProposal` has `address[3] guardians` (`// Snapshot from account at propose time`); `proposeForceExit()` fills it via `_readGuardians(msg.sender)`, and `approveForceExit()` matches the signer against `proposal.guardians` (the snapshot), **not** the live account guardian set. A later `updateGuardians()` therefore cannot invalidate approvals on an in-progress proposal. The description below documented the *pre-snapshot* design and no longer reflects the code. (Issue #59 was filed against the stale text and has been closed.)
+> **Superseded by v0.17.2-beta.2 (2026-06-02 — David PR #68 review LOW-1 fix):** The earlier "Resolved" claim — that snapshotting guardians at propose time means `updateGuardians()` **cannot** invalidate in-progress approvals — was a **DESIGN STANCE** ("continuity wins") that the v0.17.2-beta.2 LOW-3 fix **reverses** ("freshness wins"). See [`forceexit-design-notes.md`](forceexit-design-notes.md) §5 for the new policy.
+>
+> Current truth as of beta.2:
+> - The guardian snapshot is still stored in `ExitProposal.guardians` at propose time (KI-10's premise).
+> - But `approveForceExit()` now additionally checks the signer is in the account's **current** guardian set — a guardian rotated out via `removeGuardian` + `addGuardian` between propose and approve will revert `SignerNoLongerGuardian`.
+> - Effect: guardian rotation CAN invalidate in-progress approvals. KI-10's "Resolved" wording is obsolete; the underlying design has shifted.
+>
+> Issue #59 (filed against pre-snapshot text) remains closed because the snapshot mechanism itself is in place — it's the implication that was overturned, not the data structure.
 
 ### Description
 
@@ -530,7 +537,7 @@ This is a delegate-specific limitation, NOT a regression. v0.17.1 had a strictly
 | KI-7 | P256 precompile only on OP Stack chains | Medium | Deployment | Deployment-specific |
 | KI-8 | Weighted signature bitmap malleability | Informational | By design | N/A |
 | KI-9 | Session key scope checked in execution phase only | Medium | ERC-4337 constraint | No (protocol limit) |
-| KI-10 | ForceExit proposal invalidated by guardian rotation | ~~Low~~ | Design decision | ✅ **Resolved (guardians snapshotted at propose time)** |
+| KI-10 | ForceExit proposal invalidated by guardian rotation | ~~Low~~ → reinstated | Design decision **reversed in beta.2** | 🟡 **Superseded** — beta.2 makes rotation INVALIDATE approvals (LOW-3 stale-guardian fix); see forceexit-design-notes.md |
 | KI-11 | Validated-state transient re-read within identical calldata (HIGH-3 residual) | Low | Validation/execution split | Planned (#52) |
 | KI-12 | Leaked testnet key in historical records | Low | Operational | Rotate key |
 | KI-13 | ForceExit constrained by Tier-1 daily limit | Low | Operational UX | Deferred to v0.18 (dedicated bypass path) |
