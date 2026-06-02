@@ -86,6 +86,10 @@ contract ForceExitModule is IERC7579Module {
     error NotOwner();
     error NotInstalled();
     error ForceExitCallFailed();
+    /// @dev v0.17.2-beta.2 LOW-3 (Codex round 5 partial fix): signer is in the proposal's
+    ///      guardian snapshot but has since been rotated out of the account's current guardian
+    ///      set. Closes the "stale guardian" staleness scenario. See docs/forceexit-design-notes.md §5.
+    error SignerNoLongerGuardian();
 
     // ─── Events ────────────────────────────────────────────────────────────
 
@@ -168,9 +172,31 @@ contract ForceExitModule is IERC7579Module {
         // Recover signer
         address signer = msgHash.toEthSignedMessageHash().recover(guardianSig);
 
-        // Match signer to a guardian slot
+        // Match signer to a guardian slot in the SNAPSHOT (taken at propose time)
         uint256 bit = _guardianBit(proposal.guardians, signer);
         if (bit == type(uint256).max) revert InvalidGuardianSig();
+
+        // v0.17.2-beta.2 LOW-3 (Codex round 5 staleness fix, accepted scenario 2 of 4):
+        //
+        // The proposal's `guardians` field is a snapshot captured at propose time. If the
+        // owner subsequently rotates guardians (removeGuardian + addGuardian), the snapshot
+        // still contains the OLD guardian addresses — a removed guardian can submit an old
+        // signature and have it pass the snapshot check, giving them an approval bit even
+        // though they're no longer trusted by the account.
+        //
+        // Fix: additionally verify the signer is in the account's CURRENT guardian set.
+        // This forces guardian rotation to invalidate any in-flight ForceExit signatures
+        // from rotated-out guardians.
+        //
+        // The dApp layer is expected to warn users on rotateGuardian: "you have a pending
+        // ForceExit signed by <old guardian>; ask <new guardian> to re-sign". This contract
+        // change makes the signature truly invalid on-chain.
+        address[3] memory currentGuardians = _readGuardians(account);
+        bool stillCurrentGuardian = false;
+        for (uint256 i = 0; i < 3; i++) {
+            if (currentGuardians[i] == signer) { stillCurrentGuardian = true; break; }
+        }
+        if (!stillCurrentGuardian) revert SignerNoLongerGuardian();
 
         // Check not already approved
         if (proposal.approvalBitmap & (uint256(1) << bit) != 0) revert AlreadyApproved();
