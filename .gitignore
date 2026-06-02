@@ -22,3 +22,5 @@ cache/
 
 .claude/
 broadcast/
+deploy-v0172-beta-*.log
+broadcast/
