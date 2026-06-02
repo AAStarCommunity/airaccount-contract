@@ -25,7 +25,9 @@ jobs:
         working-directory: .
 
       - name: Verify merged full ABI is up to date (diamond-lite fallback surface)
-        run: |
-          forge build
-          node scripts/build-full-abi.mjs --check
+        # `forge test` above already produces all artifacts in `out/`; the prior
+        # `forge build` was a redundant cold rebuild (~15 min on via_ir +
+        # optimizer_runs=300), which kept hanging the runner. Removed 2026-06-02
+        # — build-full-abi.mjs reads from the artifacts forge test wrote.
+        run: node scripts/build-full-abi.mjs --check
         working-directory: .
