@@ -167,7 +167,7 @@ function approveForceExit(address account, bytes calldata guardianSig) external 
   - T2: Owner removes Bob, adds Carol via `removeGuardian` + `addGuardian` (Bob no longer current)
   - T3: anyone calls `executeForceExit` → passes (bitmap still ≥ 2, no re-check)
   - The effective approver set at execute is `{Alice, Bob-rotated-out}`, not `{Alice, Carol}`.
-- **Accepted as residual for beta.2**: no production AirAccount installed the beta.1 ForceExitModule (it's per-account ERC-7579 install, not factory-default), so this TOCTOU window is not exploitable today. **v0.18 redesign** (#66) will re-check at execute time:
+- **Accepted as residual for beta.2**: no production AirAccount installed the beta.1 ForceExitModule (it's per-account ERC-7579 install, not factory-default), so this TOCTOU window is not exploitable today. **Tracked in [#70](https://github.com/AAStarCommunity/airaccount-contract/issues/70)** as a v0.18 fix (will land alongside the broader #66 Emergency Asset Sweep redesign). Will re-check at execute time:
   ```solidity
   // Pseudocode for v0.18 fix
   for (uint256 i = 0; i < 3; i++) {

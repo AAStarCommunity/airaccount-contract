@@ -46,8 +46,8 @@ Delta release on top of v0.17.2-beta.1. **One Solidity source change**: `ForceEx
 
 ### Known residual (documented, deferred)
 
-- **MEDIUM-1 TOCTOU at execute** (David PR #68 review): `executeForceExit` checks bitmap ≥ 2 but does NOT re-verify approving guardians are still current. Bob approves while still valid → rotated out → bit stays set → 2-of-3 still reached. **No production accounts installed beta.1 ForceExitModule, so window not exploitable now.** v0.18 redesign will re-check at execute time (max 3 staticcalls).
-- **NIT-1** (David): no `VERSION` constant on contracts; integrations cannot programmatically distinguish ForceExitModule beta.1 vs beta.2 from chain. Defer to v0.18.
+- **MEDIUM-1 TOCTOU at execute** (David PR #68 review): `executeForceExit` checks bitmap ≥ 2 but does NOT re-verify approving guardians are still current. Bob approves while still valid → rotated out → bit stays set → 2-of-3 still reached. **No production accounts installed beta.1 ForceExitModule, so window not exploitable now.** Tracked in [#70](https://github.com/AAStarCommunity/airaccount-contract/issues/70) — v0.18 redesign will re-check at execute time (max 3 staticcalls).
+- **NIT-1** (David): no `VERSION` constant on contracts; integrations cannot programmatically distinguish ForceExitModule beta.1 vs beta.2 from chain. Tracked in [#71](https://github.com/AAStarCommunity/airaccount-contract/issues/71) — defer to v0.18.
 - LOW-3 scenarios 1/3/4 — see [#66](https://github.com/AAStarCommunity/airaccount-contract/issues/66).
 - KI-13 ForceExit Tier-1 daily-limit constraint — folded into v0.18 Emergency Asset Sweep redesign.
 - KI-14 parsers — currently mitigated by not-deploying.
