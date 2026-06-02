@@ -180,16 +180,16 @@ Broadcast record: `broadcast/DeployV0172Beta.s.sol/11155111/run-latest.json`.
 
 | Contract | Sepolia | Etherscan verified |
 |---|---|---|
-| AAStarBLSAlgorithm | [`0xB82127182A855B82eED05e47536FcE568b626457`](https://sepolia.etherscan.io/address/0xB82127182A855B82eED05e47536FcE568b626457) | ⬜ pending |
-| AAStarValidator (router) | [`0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F`](https://sepolia.etherscan.io/address/0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F) | ⬜ pending |
-| AAStarBLSAggregator | [`0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1`](https://sepolia.etherscan.io/address/0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1) | ⬜ pending |
-| SessionKeyValidator | [`0xc1e2534D9Cae27Fd9776e612229115604A9e07E9`](https://sepolia.etherscan.io/address/0xc1e2534D9Cae27Fd9776e612229115604A9e07E9) | ⬜ pending |
-| ForceExitModule | [`0x10dF485018620CCb04BfA290DD4ca8c05Ae72aD9`](https://sepolia.etherscan.io/address/0x10dF485018620CCb04BfA290DD4ca8c05Ae72aD9) | ⬜ pending |
-| AirAccountDelegate | [`0x8603AAF6C3f07fdae810B323c95a198D796EC52E`](https://sepolia.etherscan.io/address/0x8603AAF6C3f07fdae810B323c95a198D796EC52E) | ⬜ pending |
+| AAStarBLSAlgorithm | [`0xB82127182A855B82eED05e47536FcE568b626457`](https://sepolia.etherscan.io/address/0xB82127182A855B82eED05e47536FcE568b626457) | ✅ verified |
+| AAStarValidator (router) | [`0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F`](https://sepolia.etherscan.io/address/0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F) | ✅ verified |
+| AAStarBLSAggregator | [`0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1`](https://sepolia.etherscan.io/address/0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1) | ✅ verified |
+| SessionKeyValidator | [`0xc1e2534D9Cae27Fd9776e612229115604A9e07E9`](https://sepolia.etherscan.io/address/0xc1e2534D9Cae27Fd9776e612229115604A9e07E9) | ✅ verified |
+| ForceExitModule | [`0x10dF485018620CCb04BfA290DD4ca8c05Ae72aD9`](https://sepolia.etherscan.io/address/0x10dF485018620CCb04BfA290DD4ca8c05Ae72aD9) | ✅ verified |
+| AirAccountDelegate | [`0x8603AAF6C3f07fdae810B323c95a198D796EC52E`](https://sepolia.etherscan.io/address/0x8603AAF6C3f07fdae810B323c95a198D796EC52E) | ✅ verified |
 | CalldataParserRegistry | [`0x076EE45d2a97F70FCb2e45809DC5f9b72BB4883F`](https://sepolia.etherscan.io/address/0x076EE45d2a97F70FCb2e45809DC5f9b72BB4883F) | ✅ verified |
-| AAStarAirAccountFactoryV7 | [`0xc6c7FA51814f109Dea73757c73c378a25b2BAeE9`](https://sepolia.etherscan.io/address/0xc6c7FA51814f109Dea73757c73c378a25b2BAeE9) | ⬜ pending |
-| AAStarAirAccountV7 (impl, auto from factory) | [`0x05274e4Af481e5c23287571F71C52afCCC5Df127`](https://sepolia.etherscan.io/address/0x05274e4Af481e5c23287571F71C52afCCC5Df127) | ⬜ pending |
-| AirAccountExtension (auto from impl) | [`0x6e3E6d7e6DFb383CeaAe6A9ae478745FFc5cAac0`](https://sepolia.etherscan.io/address/0x6e3E6d7e6DFb383CeaAe6A9ae478745FFc5cAac0) | ⬜ pending |
+| AAStarAirAccountFactoryV7 | [`0xc6c7FA51814f109Dea73757c73c378a25b2BAeE9`](https://sepolia.etherscan.io/address/0xc6c7FA51814f109Dea73757c73c378a25b2BAeE9) | ✅ verified |
+| AAStarAirAccountV7 (impl, auto from factory) | [`0x05274e4Af481e5c23287571F71C52afCCC5Df127`](https://sepolia.etherscan.io/address/0x05274e4Af481e5c23287571F71C52afCCC5Df127) | ✅ verified |
+| AirAccountExtension (auto from impl) | [`0x6e3E6d7e6DFb383CeaAe6A9ae478745FFc5cAac0`](https://sepolia.etherscan.io/address/0x6e3E6d7e6DFb383CeaAe6A9ae478745FFc5cAac0) | ✅ verified |
 | AgentRegistry | [`0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB`](https://sepolia.etherscan.io/address/0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB) | ✅ verified |
 | RailgunParser | NOT DEPLOYED | n/a (KI-14) |
 | UniswapV3Parser | NOT DEPLOYED | n/a (KI-14) |
@@ -201,17 +201,25 @@ Broadcast record: `broadcast/DeployV0172Beta.s.sol/11155111/run-latest.json`.
 3. `agentRegistry.bindFactory(factory)` ✅ — set-once, immutable
 4. `factory.setAgentRegistry(agentRegistry)` ✅
 
-### Etherscan verification follow-up
+### Etherscan verification — ALL 11/11 ✅
 
-2/11 contracts verified automatically (CalldataParserRegistry, AgentRegistry). The remaining 9 failed with `Source "lib/SuperPaymaster/contracts/src/core/AAStarGlobalGuard.sol" not found` — a Foundry source-path resolution issue on Etherscan's side, NOT a deployment problem. The contracts are correctly deployed and functional. Manual verification path:
+Initial auto-verify failed for 9/11 with `Source "lib/SuperPaymaster/contracts/src/..." not found`. Root cause: foundry was auto-discovering remappings from the `lib/SuperPaymaster` submodule's own `foundry.toml` (which has `src = "contracts/src"`), polluting the standard JSON sent to Etherscan with `SuperPaymaster/=lib/SuperPaymaster/` and similar.
 
-```bash
-# Per-contract example (BLS algorithm)
-forge verify-contract 0xB82127182A855B82eED05e47536FcE568b626457 \
-  src/validators/AAStarBLSAlgorithm.sol:AAStarBLSAlgorithm \
-  --chain sepolia --etherscan-api-key $ETHERSCAN_API_KEY \
-  --compiler-version 0.8.33 --num-of-optimizations 300 --evm-version cancun --via-ir
+**Fix**: in `foundry.toml`, set:
+
+```toml
+[profile.default]
+auto_detect_remappings = false  # CRITICAL — without this, lib/SuperPaymaster pollutes verification
+...
+remappings = [
+    "@account-abstraction/=lib/account-abstraction/contracts/",
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "forge-std/=lib/forge-std/src/",
+    "account-abstraction/=lib/account-abstraction/contracts/",  # for `import "account-abstraction/..."` (no @ prefix; used by AirAccountDelegate)
+]
 ```
+
+Then re-run `bash scripts/verify-v0172-beta.sh` (covers all 8 unverified contracts in one pass). All 11/11 now verified on Sepolia Etherscan.
 
 The `.env.sepolia` has the full address block under `AIRACCOUNT_V0172_BETA_*` keys (gitignored).
 
