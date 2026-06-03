@@ -50,7 +50,7 @@ verify_one() {
 verify_one "0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F" "src/validators/AAStarValidator.sol:AAStarValidator"
 verify_one "0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1" "src/aggregator/AAStarBLSAggregator.sol:AAStarBLSAggregator" "$AGG_CTOR"
 verify_one "0xc1e2534D9Cae27Fd9776e612229115604A9e07E9" "src/validators/SessionKeyValidator.sol:SessionKeyValidator"
-verify_one "0x10dF485018620CCb04BfA290DD4ca8c05Ae72aD9" "src/core/ForceExitModule.sol:ForceExitModule"
+verify_one "0xc7128A1F66DFf7B607d595371FCAEeAdC485CFC9" "src/core/ForceExitModule.sol:ForceExitModule"
 verify_one "0x8603AAF6C3f07fdae810B323c95a198D796EC52E" "src/core/AirAccountDelegate.sol:AirAccountDelegate"
 verify_one "0xc6c7FA51814f109Dea73757c73c378a25b2BAeE9" "src/core/AAStarAirAccountFactoryV7.sol:AAStarAirAccountFactoryV7" "$FACTORY_CTOR"
 verify_one "0x05274e4Af481e5c23287571F71C52afCCC5Df127" "src/core/AAStarAirAccountV7.sol:AAStarAirAccountV7"

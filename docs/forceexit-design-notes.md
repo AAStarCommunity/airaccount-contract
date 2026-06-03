@@ -161,6 +161,27 @@ function approveForceExit(address account, bytes calldata guardianSig) external 
 ### What this does NOT prevent
 
 - Scenario 1, 3, 4 (stale target, stale intent, forgotten pre-arm) — these require either expiry or owner discipline.
+- **Scenario 5 — TOCTOU at execute time** (David PR #68 MEDIUM-1, 2026-06-02): the stale-guardian check fires only in `approveForceExit`. `executeForceExit` only verifies the bitmap count ≥ `APPROVAL_THRESHOLD`, NOT that each previously-approving guardian is still current. So:
+  - T0: account proposes; Alice (g0) signs → bit 0 set
+  - T1: Bob (g1) signs → bit 1 set → bitmap = 2 = threshold reached
+  - T2: Owner removes Bob, adds Carol via `removeGuardian` + `addGuardian` (Bob no longer current)
+  - T3: anyone calls `executeForceExit` → passes (bitmap still ≥ 2, no re-check)
+  - The effective approver set at execute is `{Alice, Bob-rotated-out}`, not `{Alice, Carol}`.
+- **Accepted as residual for beta.2**: no production AirAccount installed the beta.1 ForceExitModule (it's per-account ERC-7579 install, not factory-default), so this TOCTOU window is not exploitable today. **Tracked in [#70](https://github.com/AAStarCommunity/airaccount-contract/issues/70)** as a v0.18 fix (will land alongside the broader #66 Emergency Asset Sweep redesign). Will re-check at execute time:
+  ```solidity
+  // Pseudocode for v0.18 fix
+  for (uint256 i = 0; i < 3; i++) {
+      if ((proposal.approvalBitmap & (1 << i)) == 0) continue;
+      address snapshotGuardian = proposal.guardians[i];
+      address[3] memory current = _readGuardians(account);
+      bool stillCurrent;
+      for (uint256 j = 0; j < 3; j++) {
+          if (current[j] == snapshotGuardian) { stillCurrent = true; break; }
+      }
+      if (!stillCurrent) revert ApproverNoLongerGuardian();
+  }
+  ```
+  Cost: at most 3 staticcalls (one per set bit). Reasonable.
 
 ### Test plan
 
