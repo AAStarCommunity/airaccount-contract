@@ -44,6 +44,88 @@ A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments
 
 ---
 
+## ⭐ 8 Core Capabilities — what AirAccount gives you
+
+| # | Capability | What you can do |
+|---|------------|------------------|
+| 1 | **WebAuthn / Passkey login** | Fingerprint/face/PIN = account. No password/seed. P-256 verified onchain via EIP-7212 |
+| 2 | **Tiered multisig** | Single WebAuthn (<$100) → dual-factor (<$1K) → multi-sig (>$1K). Onchain $-gated |
+| 3 | **Session Key + Agent** | One `SessionKeyValidator` for both classic and agent modes: velocity / callTargets / selectorAllowlist / P256 passkey. Agent never holds owner rights |
+| 4 | **ERC-8004 Agent economy** | Official Identity / Reputation / Validation registries + factory-provenance whitelist |
+| 5 | **Social Recovery (3-2-72h)** | 3 guardians, 2-of-3 threshold, 72h timelock. cancelRecovery is 2-of-3 vote (NOT owner) |
+| 6 | **ForceExit emergency drain** | L2→L1 bridge withdrawal (Optimism / Arbitrum). beta.2 stale-guardian hardened |
+| 7 | **EIP-7702 EOA upgrade** | `AirAccountDelegate` makes an existing EOA an AirAccount via one type-4 tx |
+| 8 | **ERC-4337 v0.7 + ERC-7579 modular** | Standard paymaster, modular validator/executor/hook. SuperPaymaster plug-and-play |
+
+Bytecode-budget detail: see "**Diamond-lite**" note in the warning above. SDK consumers use the merged `abi/AAStarAirAccountV7.full.json` and see zero behavioural difference.
+
+---
+
+## 🛠 Integrate in 5 steps
+
+```typescript
+import { AirAccount, SuperPaymaster } from '@aastar/sdk';
+
+// 1. Create account (WebAuthn → P-256 keys in TEE)
+const account = await AirAccount.create({ provider: 'webauthn', chain: 'sepolia' });
+
+// 2. Send gasless tx (pay gas in community xPNTs, not ETH)
+const tx = await SuperPaymaster.sendGasless({
+  account, to: contractAddress, data: callData, paymentToken: 'xPNTs',
+});
+
+// 3. Grant a velocity-rate-limited session key to a dApp
+await account.installModule({
+  type: 'session-key',
+  policy: {
+    duration: 3600,
+    callTargets: [dapp],
+    selectorAllowlist: ['0xa9059cbb'],
+    velocity: { window: 3600, max: parseEther('0.1') },
+  },
+});
+
+// 4. Set 3 social-recovery guardians
+await account.setGuardians([guardianA, guardianB, guardianC]);
+
+// 5. (Optional) Install ForceExit for L2→L1 emergency drain
+await account.installModule({
+  type: 'force-exit',
+  destinationL1: ownerEOA,
+  amount: parseEther('0.5'),
+});
+```
+
+ABIs + Sepolia addresses synced to `@aastar/core@0.18.x` (SDK PR #42). Use **pnpm**, **viem** (project conventions).
+
+---
+
+## 🌐 Ecosystem stack — testnet today, Cos72 tomorrow
+
+```
+Cos72 (v0.19 PoC target — MushroomDAO community OS)
+  ↓ email register → community identity → gasless governance / tasks
+SuperPaymaster v5.3.3-beta.2 (Sepolia testnet — gasless w/ community tokens)
+  ↓ ERC-4337 standard paymaster
+AirAccount v0.17.2-beta.2 (this release)          ◄── you are here
+  ↓ TEE-signed userOps
+KMS v0.18.x (production — kms.aastar.io)
+```
+
+All four layers ERC-4337 v0.7 standard, plug-in compatible.
+
+| Layer | State |
+|-------|-------|
+| KMS | ✅ Production (`kms.aastar.io`), TEE-attested |
+| AirAccount (this release) | ✅ Sepolia beta, 11/11 Etherscan verified |
+| SuperPaymaster | ✅ Sepolia Testnet Live (v5.3.3-beta.2, security-hardened beta) — mainnet pending external audit |
+| AAStar SDK | ✅ v0.18 sync in flight (SDK PR #42) |
+| Cos72 | ⏳ v0.19 PoC target |
+
+**Announcement copy for socials** (Twitter / Discord / Blog): see [`docs/announcements/`](docs/announcements/) — three ready-to-publish formats.
+
+---
+
 ## Quick Start
 
 ```bash
