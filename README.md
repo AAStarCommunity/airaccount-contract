@@ -105,7 +105,7 @@ ABIs + Sepolia addresses synced to `@aastar/core@0.18.x` (SDK PR #42). Use **pnp
 ```
 Cos72 (v0.19 PoC target — MushroomDAO community OS)
   ↓ email register → community identity → gasless governance / tasks
-SuperPaymaster v5.x (production — gasless w/ community tokens)
+SuperPaymaster v5.3.3-beta.2 (Sepolia testnet — gasless w/ community tokens)
   ↓ ERC-4337 standard paymaster
 AirAccount v0.17.2-beta.2 (this release)          ◄── you are here
   ↓ TEE-signed userOps
@@ -118,7 +118,7 @@ All four layers ERC-4337 v0.7 standard, plug-in compatible.
 |-------|-------|
 | KMS | ✅ Production (`kms.aastar.io`), TEE-attested |
 | AirAccount (this release) | ✅ Sepolia beta, 11/11 Etherscan verified |
-| SuperPaymaster v5.x | ✅ Sepolia deployed (v5.3.0-dev, UUPS) — multi-chain rollout in progress |
+| SuperPaymaster | ✅ Sepolia Testnet Live (v5.3.3-beta.2, security-hardened beta) — mainnet pending external audit |
 | AAStar SDK | ✅ v0.18 sync in flight (SDK PR #42) |
 | Cos72 | ⏳ v0.19 PoC target |
 
