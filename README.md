@@ -118,7 +118,7 @@ All four layers ERC-4337 v0.7 standard, plug-in compatible.
 |-------|-------|
 | KMS | ✅ Production (`kms.aastar.io`), TEE-attested |
 | AirAccount (this release) | ✅ Sepolia beta, 11/11 Etherscan verified |
-| SuperPaymaster v5.x | ✅ Production, 7-chain stable |
+| SuperPaymaster v5.x | ✅ Sepolia deployed (v5.3.0-dev, UUPS) — multi-chain rollout in progress |
 | AAStar SDK | ✅ v0.18 sync in flight (SDK PR #42) |
 | Cos72 | ⏳ v0.19 PoC target |
 
