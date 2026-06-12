@@ -1,6 +1,6 @@
 # AirAccount v0.17.2-beta.3 — Deployment Record
 
-**Status**: DEPLOYED on Sepolia  
+**Status**: DEPLOYED on Sepolia (complete)  
 **Date**: 2026-06-12  
 **Network**: Sepolia (chainId 11155111)  
 **Deployer**: `0xEcAACb915f7D92e9916f449F7ad42BD0408733c9` (Anni)
@@ -21,7 +21,7 @@
 
 **Router is now finalized**: `AAStarValidator.finalizeSetup()` was called after registration. Future algorithm changes require `proposeAlgorithm` → 7-day timelock → `executeProposal`.
 
-**AgentRegistry limitation**: `AgentRegistry.bindFactory` is set-once (bound to beta.2 factory). New beta.3 accounts will NOT auto-register in AgentRegistry until a new AgentRegistry is deployed.
+**AgentRegistry re-deployed**: `bindFactory` is set-once per registry instance. A new AgentRegistry is deployed for every release that ships a new Factory. The beta.3 AgentRegistry is fully wired: `bindFactory(factory)` + `factory.setAgentRegistry(registry)` both called.
 
 ---
 
@@ -37,6 +37,7 @@
 | **AAStarAirAccountFactoryV7** | `0xfc6234bbd6283610659211347c6309904be86b0a` | [tx](https://sepolia.etherscan.io/tx/0xf713c41b4981b82200dac5747ed33ccf181ce9043ac7c8eb77bad261388d406c) | 9,340,279 |
 | **AAStarAirAccountV7 (impl)** | `0xe33EeCF21AAC2B776b49A4dd52BA8b7e683dE9C3` | (deployed by factory) | — |
 | **AirAccountExtension** | `0xB3c7312bA52dF306DE1cBa781B91f3AfA7e86F99` | (deployed by impl) | — |
+| **AgentRegistry** | `0x9e8f576cad8a8f949181fd10d9ad1c49a7b0bc17` | [tx](https://sepolia.etherscan.io/tx/0x31b74f1e6060426efb4f3fc57a88ce8b535aaa204115b981f4cd8801a0e4dc15) | 808,200 |
 
 ### Wiring TXs
 
@@ -45,6 +46,8 @@
 | `router.registerAlgorithm(0x01, BLS)` | [tx](https://sepolia.etherscan.io/tx/0x2f5eb902872a6ab847171a49044ac206262dae272c90517b176d5c36d3384d28) |
 | `router.registerAlgorithm(0x08, SessionKeyValidator)` | [tx](https://sepolia.etherscan.io/tx/0x9a4d090bc1781e76e2fd175f3f2765a0e0c6e81009a4621e8786bf3881dffc3e) |
 | `router.finalizeSetup()` | [tx](https://sepolia.etherscan.io/tx/0x42e5f747f5610b54fbb1797639d9e9e38b1d8d421f656ed9a7a73de925e1064b) |
+| `agentRegistry.bindFactory(factory)` | [tx](https://sepolia.etherscan.io/tx/0xb040a3ddf179c701427de2b2689f132936e9d5c6dc8a8b085be5c4f6a5952794) |
+| `factory.setAgentRegistry(agentRegistry)` | [tx](https://sepolia.etherscan.io/tx/0xe65930629f9fc782afb33cb1a913f5e8f0d859c4800f850462ff247baece465c) |
 
 ### Unchanged from beta.2
 
@@ -54,7 +57,7 @@
 | AAStarBLSAggregator | `0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1` |
 | AirAccountDelegate (EIP-7702) | `0x8603AAF6C3f07fdae810B323c95a198D796EC52E` |
 | CalldataParserRegistry | `0x076EE45d2a97F70FCb2e45809DC5f9b72BB4883F` |
-| AgentRegistry | `0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB` |
+| ~~AgentRegistry (beta.2, deprecated)~~ | ~~`0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB`~~ |
 
 ### Algorithm Registry (new router)
 
