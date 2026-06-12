@@ -1218,6 +1218,28 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertEq(account.tier2Limit(), tier2, "tier2 should be updated");
     }
 
+    function test_modifyTierLimitsWithGuardians_replaySameNonce_reverts() public {
+        uint256 tier1 = 0.5 ether;
+        uint256 tier2 = 5 ether;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        // Sigs are over nonce=0 (first call on fresh account)
+        bytes memory sig0 = _modifyTierSig(g0Wallet, tier1, tier2, deadline);
+        bytes memory sig1 = _modifyTierSig(g1Wallet, tier1, tier2, deadline);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = sig0;
+        sigs[1] = sig1;
+
+        vm.prank(ownerWallet.addr);
+        account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
+        // _tierLimitNonce is now 1. Replaying the same nonce=0 sigs must fail.
+
+        // After nonce increments to 1, old nonce=0 sigs recover wrong addresses → NotGuardian
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
+        account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
+    }
+
     // ─── Gnosis Safe multisig guardian (issue #42) ────────────────────────────
     //
     // TODO: Add full social recovery test where the community guardian is a Gnosis Safe
