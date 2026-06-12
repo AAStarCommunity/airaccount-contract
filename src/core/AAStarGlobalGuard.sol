@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.33;
 
+import {AlgTierLib} from "../utils/AlgTierLib.sol";
+
 /// @title AAStarGlobalGuard — Immutable spending guard bound to an AA account
 /// @notice Deployed BY the account contract at construction. Cannot be removed or transferred.
 /// @dev Configuration is monotonic: daily limit can only decrease, algorithms can only be added,
@@ -8,6 +10,8 @@ pragma solidity ^0.8.33;
 ///      Guard.account is immutable — social recovery changes Account.owner, not Account address,
 ///      so guard always remains functional regardless of key rotation.
 contract AAStarGlobalGuard {
+    using AlgTierLib for uint8;
+
     // ─── Token Config Struct ─────────────────────────────────────
 
     /// @notice Per-token spending tier configuration (in token's native units)
@@ -270,13 +274,9 @@ contract AAStarGlobalGuard {
 
     // ─── Internal ───────────────────────────────────────────────
 
-    /// @dev Maps algId to security tier level. Must stay in sync with account's _algTier.
-    ///      When new algIds are added to the account, update this mapping too.
+    /// @dev Maps algId to security tier level.
+    ///      Delegates to AlgTierLib — add new algIds there only.
     function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == 0x05 || algId == 0x01) return 3;                  // ALG_CUMULATIVE_T3, ALG_BLS legacy triple
-        if (algId == 0x04) return 2;                                    // CUMULATIVE_T2 (P256 + BLS dual-factor)
-        if (algId == 0x02 || algId == 0x03 || algId == 0x06 || algId == 0x08) return 1; // ECDSA, P256, COMBINED_T1, SESSION_KEY
-        // ALG_WEIGHTED (0x07) is resolved to a concrete algId before reaching the guard
-        return 0;
+        return AlgTierLib.algTier(algId);
     }
 }
