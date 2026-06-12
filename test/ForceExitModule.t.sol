@@ -36,6 +36,16 @@ contract MockArbSys {
     }
 }
 
+/// @dev A bare contract with no guardians() getter — simulates non-standard ERC-7579 account
+contract NoGuardiansAccount {
+    ForceExitModule internal _module;
+    constructor(ForceExitModule m) { _module = m; }
+    function tryInstall() external {
+        _module.onInstall(abi.encode(uint8(1)));
+    }
+    receive() external payable {}
+}
+
 /// @dev Simulates an AirAccount that exposes guardians(i) and owner()
 contract MockAirAccount {
     address public owner;
@@ -202,6 +212,12 @@ contract ForceExitModuleTest is Test {
         assertFalse(module.isInitialized(address(account)));
         _installOp();
         assertTrue(module.isInitialized(address(account)));
+    }
+
+    function test_onInstall_incompatibleAccount_reverts() public {
+        NoGuardiansAccount bad = new NoGuardiansAccount(module);
+        vm.expectRevert(ForceExitModule.IncompatibleAccount.selector);
+        bad.tryInstall();
     }
 
     // ─── onUninstall ─────────────────────────────────────────────────────────

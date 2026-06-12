@@ -327,7 +327,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
             tier2Limit: 100e6,
             dailyLimit: 5000e6
         });
-        vm.expectRevert("Invalid default token config");
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.InvalidDefaultTokenConfig.selector, mockToken));
         new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
     }
 
@@ -343,7 +343,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
             tier2Limit: 1000e6,
             dailyLimit: 0    // tier limits set but no daily — invalid
         });
-        vm.expectRevert("Invalid default token config");
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.InvalidDefaultTokenConfig.selector, mockToken));
         new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
     }
 
@@ -390,7 +390,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         tokens[0] = address(0); // zero address
         AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1);
         configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
-        vm.expectRevert("Default token address zero");
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.DefaultTokenAddressZero.selector, address(0)));
         new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
     }
 
@@ -403,7 +403,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](2);
         configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         configs[1] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
-        vm.expectRevert("Duplicate default token");
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.DuplicateDefaultToken.selector, mockToken));
         new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
     }
 

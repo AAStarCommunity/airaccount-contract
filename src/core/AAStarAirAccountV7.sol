@@ -33,6 +33,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
+    /// @notice Semantic version of this contract deployment. Used by SDKs for programmatic version detection.
+    string public constant ACCOUNT_VERSION = "0.17.2";
+
     /// @dev Implementation constructor. Does NOT disable initializers so that direct `new` in tests works.
     ///      The factory deploys one shared implementation and uses Clones for user accounts.
     constructor() {}
@@ -115,9 +118,17 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         return _installedModules[moduleTypeId][module];
     }
 
-    /// @notice ERC-1271: on-chain signature validation (used by ERC-7579 tooling and DeFi protocols).
-    ///         Validates that the signature was produced by this account's owner.
-    ///         The caller is responsible for passing the correct hash (may be pre-EIP-191).
+    /// @notice ERC-1271: on-chain signature validation used by ERC-7579 tooling and DeFi protocols.
+    ///         Validates that the ECDSA signature was produced by this account's owner.
+    /// @dev IMPORTANT — hash behaviour: this function does NOT apply any EIP-191 prefix.
+    ///      The `hash` parameter must be the exact bytes32 the owner signed.
+    ///      - EIP-712 / DeFi flows (Permit2, OpenSea, etc.): pass the typed-data struct hash directly.
+    ///        The owner signs this hash without a personal_sign prefix, so no prefix is applied here.
+    ///      - personal_sign / MetaMask eth_sign flows: the wallet adds the EIP-191 prefix before signing,
+    ///        so the caller must pass keccak256("\x19Ethereum Signed Message:\n32" || rawHash) as `hash`.
+    ///      This matches the behaviour of Gnosis Safe and most production ERC-1271 implementations.
+    ///      Note: internally, UserOp validation (_validateECDSA) does apply toEthSignedMessageHash()
+    ///      because EOA wallets sign userOpHash with personal_sign — these are two separate paths.
     /// @return magicValue 0x1626ba7e if valid, 0xffffffff otherwise
     function isValidSignature(bytes32 hash, bytes calldata sig) external view returns (bytes4) {
         // Standard ERC-1271: recover directly from hash, no additional prefix.
