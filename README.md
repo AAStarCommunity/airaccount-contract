@@ -3,9 +3,9 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-> ## Status: v0.17.2-beta.2 (current beta — 2026-06-02)
+> ## Status: v0.17.2-beta.3 (current beta — 2026-06-12)
 >
-> Latest tag: [`v0.17.2-beta.2`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.2-beta.2). Deployed + Etherscan-verified on Sepolia (11/11). Forge test **674/0/0**, on-chain E2E **79/79 PASS**.
+> Latest tag: [`v0.17.2-beta.3`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.2-beta.3). Deployed + Etherscan-verified on Sepolia. Forge test **723/0/0**, on-chain E2E PASS.
 >
 > ### Core features since v0.17.1
 >
@@ -107,7 +107,7 @@ Cos72 (v0.19 PoC target — MushroomDAO community OS)
   ↓ email register → community identity → gasless governance / tasks
 SuperPaymaster v5.3.3-beta.2 (Sepolia testnet — gasless w/ community tokens)
   ↓ ERC-4337 standard paymaster
-AirAccount v0.17.2-beta.2 (this release)          ◄── you are here
+AirAccount v0.17.2-beta.3 (this release)          ◄── you are here
   ↓ TEE-signed userOps
 KMS v0.18.x (production — kms.aastar.io)
 ```
@@ -237,13 +237,22 @@ WalletBeat evaluates wallets across Stage 0, 1, 2. AirAccount is a **smart contr
 
 ---
 
-## Deployed Contracts (Sepolia)
+## Deployed Contracts (Sepolia) — v0.17.2-beta.3
 
 | Contract | Address |
 |----------|---------|
 | EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
-| M5 Factory (current live) | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` |
-| M6 E2E Account (salt=701) | `0xfab5b2cf392c862b455dcfafac5a414d459b6dcc` |
+| Factory | `0xfc6234bbd6283610659211347c6309904be86b0a` |
+| Implementation | `0xe33EeCF21AAC2B776b49A4dd52BA8b7e683dE9C3` |
+| Extension | `0xB3c7312bA52dF306DE1cBa781B91f3AfA7e86F99` |
+| ValidatorRouter | `0x3c2b06f50300912794f29de031b33dd37bb8d6c6` |
+| BLSAlgorithm | `0xB82127182A855B82eED05e47536FcE568b626457` |
+| SessionKeyValidator | `0x655ca2e9a2d1178f7fbcea1856560d1e0c657ebf` |
+| ForceExitModule | `0xdb396ca2dc279f9bcb95fa3d8275f77c9f0c8702` |
+| AgentRegistry | `0x9e8f576cad8a8f949181fd10d9ad1c49a7b0bc17` |
+| BLSAggregator | `0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1` |
+
+ABI: use [`abi/AAStarAirAccountV7.full.json`](abi/AAStarAirAccountV7.full.json) (64 functions — includes diamond-lite `AirAccountExtension` selectors).
 
 ---
 
