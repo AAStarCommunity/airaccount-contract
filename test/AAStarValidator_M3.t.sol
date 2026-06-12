@@ -12,8 +12,9 @@ contract AAStarValidatorM3Test is Test {
     address public algAddr2 = address(0xB2);
 
     function setUp() public {
-        vm.prank(owner);
+        vm.startPrank(owner);
         router = new AAStarValidator();
+        vm.stopPrank();
     }
 
     // ─── Proposal Lifecycle ──────────────────────────────────────────
