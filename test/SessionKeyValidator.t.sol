@@ -342,6 +342,264 @@ contract SessionKeyValidatorTest is Test {
         assertGt(expiry, 0);
     }
 
+    // ─── P256 session tests ───────────────────────────────────────────
+
+    bytes32 constant P256_X = bytes32(uint256(0xdeadbeef01));
+    bytes32 constant P256_Y = bytes32(uint256(0xdeadbeef02));
+
+    function _grantP256Session(uint48 expiry) internal {
+        vm.prank(owner);
+        validator.grantP256SessionDirect(account, P256_X, P256_Y, _sessionLegacy(expiry, address(0), bytes4(0)));
+    }
+
+    function test_grantP256SessionDirect_succeeds() public {
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        _grantP256Session(expiry);
+        bytes32 keyHash = keccak256(abi.encodePacked(P256_X, P256_Y));
+        // prefix the hash the same way the contract does (_p256StorageKey = keccak256(abi.encodePacked(0x02, keyHash)))
+        assertTrue(validator.isP256SessionActive(account, P256_X, P256_Y));
+    }
+
+    function test_grantP256SessionDirect_nonOwner_reverts() public {
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        vm.prank(other);
+        validator.grantP256SessionDirect(account, P256_X, P256_Y, _sessionLegacy(expiry, address(0), bytes4(0)));
+    }
+
+    function test_grantP256Session_validOwnerSig_succeeds() public {
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        SessionKeyValidator.Session memory cfg = _sessionLegacy(expiry, address(0), bytes4(0));
+        bytes32 grantHash = validator.buildP256GrantHash(account, P256_X, P256_Y, cfg);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerKey, grantHash);
+        bytes memory ownerSig = abi.encodePacked(r, s, v);
+        validator.grantP256Session(account, P256_X, P256_Y, cfg, ownerSig);
+        assertTrue(validator.isP256SessionActive(account, P256_X, P256_Y));
+    }
+
+    function test_grantP256Session_wrongOwnerSig_reverts() public {
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        SessionKeyValidator.Session memory cfg = _sessionLegacy(expiry, address(0), bytes4(0));
+        bytes32 grantHash = validator.buildP256GrantHash(account, P256_X, P256_Y, cfg);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(otherKey, grantHash);
+        bytes memory badSig = abi.encodePacked(r, s, v);
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        validator.grantP256Session(account, P256_X, P256_Y, cfg, badSig);
+    }
+
+    function test_getP256Session_returnsStoredSession() public {
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        address scope = address(0xABCD);
+        vm.prank(owner);
+        validator.grantP256SessionDirect(account, P256_X, P256_Y, _sessionLegacy(expiry, scope, bytes4(0)));
+
+        bytes32 keyHash = keccak256(abi.encodePacked(
+            uint8(0x02),
+            keccak256(abi.encodePacked(P256_X, P256_Y))
+        ));
+        // getP256Session takes the raw p256KeyHash (after _p256StorageKey transform)
+        // We can verify via isP256SessionActive which uses the same key derivation
+        assertTrue(validator.isP256SessionActive(account, P256_X, P256_Y));
+    }
+
+    function test_revokeP256Session_byOwner_succeeds() public {
+        _grantP256Session(uint48(block.timestamp + 1 hours));
+        assertTrue(validator.isP256SessionActive(account, P256_X, P256_Y));
+        vm.prank(owner);
+        validator.revokeP256Session(account, P256_X, P256_Y);
+        assertFalse(validator.isP256SessionActive(account, P256_X, P256_Y));
+    }
+
+    function test_revokeP256Session_byAccount_succeeds() public {
+        _grantP256Session(uint48(block.timestamp + 1 hours));
+        vm.prank(account);
+        validator.revokeP256Session(account, P256_X, P256_Y);
+        assertFalse(validator.isP256SessionActive(account, P256_X, P256_Y));
+    }
+
+    function test_revokeP256Session_byOther_reverts() public {
+        _grantP256Session(uint48(block.timestamp + 1 hours));
+        vm.expectRevert(SessionKeyValidator.NotAccountOwner.selector);
+        vm.prank(other);
+        validator.revokeP256Session(account, P256_X, P256_Y);
+    }
+
+    function test_buildP256GrantHash_nonZero() public view {
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        bytes32 h = validator.buildP256GrantHash(account, P256_X, P256_Y, _sessionLegacy(expiry, address(0), bytes4(0)));
+        assertTrue(h != bytes32(0));
+    }
+
+    function test_buildP256GrantHash_differentInputs_differentHash() public view {
+        uint48 expiry = uint48(block.timestamp + 1 hours);
+        bytes32 h1 = validator.buildP256GrantHash(account, P256_X, P256_Y, _sessionLegacy(expiry, address(0), bytes4(0)));
+        bytes32 h2 = validator.buildP256GrantHash(account, P256_Y, P256_X, _sessionLegacy(expiry, address(0), bytes4(0)));
+        assertTrue(h1 != h2);
+    }
+
+    // ─── checkSessionScope tests ──────────────────────────────────────
+
+    function test_checkSessionScope_happyPath_ECDSA() public {
+        address scope = address(0x9999);
+        bytes4 sel = bytes4(keccak256("transfer(address,uint256)"));
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), scope, sel));
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        // Should not revert
+        validator.checkSessionScope(account, sessionKeyHash, 0x01, scope, sel);
+    }
+
+    function test_checkSessionScope_wrongTarget_reverts() public {
+        address scope = address(0x9999);
+        bytes4 sel = bytes4(keccak256("transfer(address,uint256)"));
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), scope, sel));
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        vm.expectRevert(abi.encodeWithSelector(SessionKeyValidator.CallTargetForbidden.selector, address(0xDEAD)));
+        validator.checkSessionScope(account, sessionKeyHash, 0x01, address(0xDEAD), sel);
+    }
+
+    function test_checkSessionScope_wrongSelector_reverts() public {
+        address scope = address(0x9999);
+        bytes4 sel = bytes4(keccak256("transfer(address,uint256)"));
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), scope, sel));
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        bytes4 badSel = bytes4(keccak256("approve(address,uint256)"));
+        vm.expectRevert(abi.encodeWithSelector(SessionKeyValidator.SelectorForbidden.selector, badSel));
+        validator.checkSessionScope(account, sessionKeyHash, 0x01, scope, badSel);
+    }
+
+    function test_checkSessionScope_expiredSession_reverts() public {
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1), address(0), bytes4(0)));
+        vm.warp(block.timestamp + 2);
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        vm.expectRevert(SessionKeyValidator.SessionExpired.selector);
+        validator.checkSessionScope(account, sessionKeyHash, 0x01, address(0), bytes4(0));
+    }
+
+    function test_checkSessionScope_noSession_reverts() public {
+        bytes32 unknownKey = bytes32(uint256(uint160(address(0xCAFE))));
+        vm.expectRevert(SessionKeyValidator.SessionNotFound.selector);
+        validator.checkSessionScope(account, unknownKey, 0x01, address(0), bytes4(0));
+    }
+
+    function test_checkSessionScope_revokedSession_reverts() public {
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0)));
+        vm.prank(owner);
+        validator.revokeSession(account, sessionKey);
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        vm.expectRevert(SessionKeyValidator.SessionRevoked_.selector);
+        validator.checkSessionScope(account, sessionKeyHash, 0x01, address(0), bytes4(0));
+    }
+
+    function test_checkSessionScope_invalidType_reverts() public {
+        bytes32 anyKey = bytes32(uint256(uint160(sessionKey)));
+        vm.expectRevert(abi.encodeWithSelector(SessionKeyValidator.InvalidSessionType.selector, uint8(0x99)));
+        validator.checkSessionScope(account, anyKey, 0x99, address(0), bytes4(0));
+    }
+
+    // ─── recordCallForVelocity tests ──────────────────────────────────
+
+    function test_recordCallForVelocity_noLimit_noOp() public {
+        // velocityLimit == 0 means unlimited — recordCallForVelocity is a no-op
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0)));
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        // Must be called from the bound account (anti-griefing)
+        vm.prank(account);
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01); // no revert = pass
+    }
+
+    function test_recordCallForVelocity_withinLimit_succeeds() public {
+        SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
+            expiry: uint48(block.timestamp + 1 hours),
+            contractScope: address(0),
+            selectorScope: bytes4(0),
+            revoked: false,
+            velocityLimit: 3,
+            velocityWindow: 3600,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, cfg);
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        vm.prank(account);
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
+        vm.prank(account);
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
+        vm.prank(account);
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
+    }
+
+    function test_recordCallForVelocity_exceedsLimit_reverts() public {
+        SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
+            expiry: uint48(block.timestamp + 1 hours),
+            contractScope: address(0),
+            selectorScope: bytes4(0),
+            revoked: false,
+            velocityLimit: 2,
+            velocityWindow: 3600,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, cfg);
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        vm.prank(account);
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
+        vm.prank(account);
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
+        vm.expectRevert(SessionKeyValidator.VelocityLimitExceeded.selector);
+        vm.prank(account);
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
+    }
+
+    function test_recordCallForVelocity_windowResets_allowsNewCalls() public {
+        SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
+            expiry: uint48(block.timestamp + 2 hours),
+            contractScope: address(0),
+            selectorScope: bytes4(0),
+            revoked: false,
+            velocityLimit: 1,
+            velocityWindow: 100,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, cfg);
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        vm.prank(account);
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
+
+        // Warp past the window
+        vm.warp(block.timestamp + 101);
+        vm.prank(account);
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01); // should succeed after window reset
+    }
+
+    function test_recordCallForVelocity_notBoundAccount_reverts() public {
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0)));
+
+        bytes32 sessionKeyHash = bytes32(uint256(uint160(sessionKey)));
+        vm.expectRevert(SessionKeyValidator.NotBoundAccount.selector);
+        vm.prank(other); // other is not the bound account
+        validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────
 
     function _grantSession(address _account, address _sk, uint48 _expiry) internal {

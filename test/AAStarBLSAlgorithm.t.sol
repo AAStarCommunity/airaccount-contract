@@ -253,4 +253,50 @@ contract AAStarBLSAlgorithmTest is Test {
         uint256 result = bls.validate(bytes32(0), new bytes(512));
         assertEq(result, 1);
     }
+
+    // ─── aggregateKeys ────────────────────────────────────────────────
+
+    function test_aggregateKeys_emptyNodeIds_reverts() public {
+        vm.expectRevert(AAStarBLSAlgorithm.NoNodesProvided.selector);
+        bls.aggregateKeys(new bytes32[](0));
+    }
+
+    function test_aggregateKeys_unregisteredNode_reverts() public {
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = NODE1; // not registered
+        vm.expectRevert(AAStarBLSAlgorithm.NodeNotRegistered.selector);
+        bls.aggregateKeys(ids);
+    }
+
+    function test_aggregateKeys_singleNode_returnsKey() public {
+        bls.registerPublicKey(NODE1, pubKey1);
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = NODE1;
+        // Single node: loop body never executes, no EIP-2537 precompile needed
+        bytes memory result = bls.aggregateKeys(ids);
+        assertEq(result, pubKey1);
+    }
+
+    function test_aggregateKeys_twoNodes_returnsG1Point() public {
+        // Two nodes calls _g1Add (EIP-2537 G1Add precompile 0x0b).
+        // Foundry includes EIP-2537 precompiles regardless of evm_version config.
+        bls.registerPublicKey(NODE1, pubKey1);
+        bls.registerPublicKey(NODE2, pubKey2);
+        bytes32[] memory ids = new bytes32[](2);
+        ids[0] = NODE1;
+        ids[1] = NODE2;
+        bytes memory result = bls.aggregateKeys(ids);
+        assertEq(result.length, 128); // G1 point = 128 bytes
+    }
+
+    // ─── g2Add ────────────────────────────────────────────────────────
+
+    function test_g2Add_returnsG2Point() public {
+        // EIP-2537 G2Add precompile (0x0e). Foundry includes EIP-2537 precompiles
+        // in its EVM regardless of the evm_version config value.
+        bytes memory p1 = new bytes(256);
+        bytes memory p2 = new bytes(256);
+        bytes memory result = bls.g2Add(p1, p2);
+        assertEq(result.length, 256); // G2 point = 256 bytes
+    }
 }

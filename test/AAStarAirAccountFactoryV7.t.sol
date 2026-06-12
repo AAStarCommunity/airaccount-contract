@@ -597,4 +597,130 @@ contract AAStarAirAccountFactoryV7Test is Test {
         address account = factory.createAccountWithDefaults(ownerA, 3, g1Wallet.addr, sig1, g2Wallet.addr, sig2, 0.5 ether);
         assertTrue(account.code.length > 0, "matching dailyLimit must deploy");
     }
+
+    // ─── createAgentAccount + getAgentAddress ────────────────────────
+
+    Vm.Wallet agentWallet;
+    Vm.Wallet guardian2Wallet;
+    bytes32 constant AGENT_ID = keccak256("test-agent-id");
+
+    function _agentKeySig(address humanOwner, uint48 deadline) internal view returns (bytes memory) {
+        bytes32 raw = keccak256(abi.encodePacked(
+            "ACCEPT_AGENT_KEY", block.chainid, address(factory),
+            agentWallet.addr, humanOwner, AGENT_ID, deadline
+        ));
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(agentWallet.privateKey, ethHash);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _agentGuardian2Sig(address humanOwner, uint48 deadline) internal view returns (bytes memory) {
+        bytes32 raw = keccak256(abi.encodePacked(
+            "ACCEPT_AGENT_GUARDIAN", block.chainid, address(factory),
+            agentWallet.addr, humanOwner, AGENT_ID, deadline
+        ));
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", raw));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(guardian2Wallet.privateKey, ethHash);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _setupAgentWallets() internal {
+        agentWallet    = vm.createWallet("agentKey");
+        guardian2Wallet = vm.createWallet("agentGuardian2");
+    }
+
+    function test_createAgentAccount_happyPath() public {
+        _setupAgentWallets();
+        uint48 deadline = uint48(block.timestamp + 1 hours);
+        bytes memory akSig  = _agentKeySig(ownerA, deadline);
+        bytes memory g2Sig  = _agentGuardian2Sig(ownerA, deadline);
+
+        vm.prank(ownerA);
+        address agentAcc = factory.createAgentAccount(
+            agentWallet.addr, AGENT_ID, guardian2Wallet.addr, g2Sig, akSig, deadline, TEST_DAILY_LIMIT
+        );
+        assertTrue(agentAcc.code.length > 0, "agent account must be deployed");
+    }
+
+    function test_createAgentAccount_idempotent() public {
+        _setupAgentWallets();
+        uint48 deadline = uint48(block.timestamp + 1 hours);
+        bytes memory akSig  = _agentKeySig(ownerA, deadline);
+        bytes memory g2Sig  = _agentGuardian2Sig(ownerA, deadline);
+
+        vm.prank(ownerA);
+        address acc1 = factory.createAgentAccount(agentWallet.addr, AGENT_ID, guardian2Wallet.addr, g2Sig, akSig, deadline, TEST_DAILY_LIMIT);
+        vm.prank(ownerA);
+        address acc2 = factory.createAgentAccount(agentWallet.addr, AGENT_ID, guardian2Wallet.addr, g2Sig, akSig, deadline, TEST_DAILY_LIMIT);
+        assertEq(acc1, acc2, "same params must return same address");
+    }
+
+    function test_getAgentAddress_matchesDeployed() public {
+        _setupAgentWallets();
+        uint48 deadline = uint48(block.timestamp + 1 hours);
+        bytes memory akSig = _agentKeySig(ownerA, deadline);
+        bytes memory g2Sig = _agentGuardian2Sig(ownerA, deadline);
+
+        address predicted = factory.getAgentAddress(ownerA, agentWallet.addr, AGENT_ID);
+
+        vm.prank(ownerA);
+        address deployed = factory.createAgentAccount(agentWallet.addr, AGENT_ID, guardian2Wallet.addr, g2Sig, akSig, deadline, TEST_DAILY_LIMIT);
+
+        assertEq(predicted, deployed, "getAgentAddress must match deployed address");
+    }
+
+    function test_createAgentAccount_zeroAgentKey_reverts() public {
+        _setupAgentWallets();
+        uint48 deadline = uint48(block.timestamp + 1 hours);
+        bytes memory dummy = new bytes(65);
+        vm.expectRevert(AAStarAirAccountFactoryV7.AgentKeyRequired.selector);
+        vm.prank(ownerA);
+        factory.createAgentAccount(address(0), AGENT_ID, guardian2Wallet.addr, dummy, dummy, deadline, TEST_DAILY_LIMIT);
+    }
+
+    function test_createAgentAccount_zeroGuardian2_reverts() public {
+        _setupAgentWallets();
+        uint48 deadline = uint48(block.timestamp + 1 hours);
+        bytes memory dummy = new bytes(65);
+        vm.expectRevert(AAStarAirAccountFactoryV7.Guardian2Required.selector);
+        vm.prank(ownerA);
+        factory.createAgentAccount(agentWallet.addr, AGENT_ID, address(0), dummy, dummy, deadline, TEST_DAILY_LIMIT);
+    }
+
+    function test_createAgentAccount_zeroDailyLimit_reverts() public {
+        _setupAgentWallets();
+        uint48 deadline = uint48(block.timestamp + 1 hours);
+        bytes memory dummy = new bytes(65);
+        vm.expectRevert(AAStarAirAccountFactoryV7.DailyLimitRequired.selector);
+        vm.prank(ownerA);
+        factory.createAgentAccount(agentWallet.addr, AGENT_ID, guardian2Wallet.addr, dummy, dummy, deadline, 0);
+    }
+
+    function test_createAgentAccount_expiredDeadline_reverts() public {
+        _setupAgentWallets();
+        uint48 deadline = uint48(block.timestamp - 1); // already expired
+        bytes memory dummy = new bytes(65);
+        vm.expectRevert(AAStarAirAccountFactoryV7.GuardianSigExpired.selector);
+        vm.prank(ownerA);
+        factory.createAgentAccount(agentWallet.addr, AGENT_ID, guardian2Wallet.addr, dummy, dummy, deadline, TEST_DAILY_LIMIT);
+    }
+
+    function test_createAgentAccount_callerIsGuardian2_reverts() public {
+        _setupAgentWallets();
+        uint48 deadline = uint48(block.timestamp + 1 hours);
+        bytes memory dummy = new bytes(65);
+        vm.expectRevert(AAStarAirAccountFactoryV7.CallerCannotBeGuardian2.selector);
+        vm.prank(guardian2Wallet.addr); // caller == guardian2
+        factory.createAgentAccount(agentWallet.addr, AGENT_ID, guardian2Wallet.addr, dummy, dummy, deadline, TEST_DAILY_LIMIT);
+    }
+
+    function test_createAgentAccount_agentKeyEqualsGuardian2_reverts() public {
+        _setupAgentWallets();
+        uint48 deadline = uint48(block.timestamp + 1 hours);
+        bytes memory dummy = new bytes(65);
+        vm.expectRevert(AAStarAirAccountFactoryV7.AgentKeyCannotBeGuardian2.selector);
+        vm.prank(ownerA);
+        // agentKey == guardian2
+        factory.createAgentAccount(agentWallet.addr, AGENT_ID, agentWallet.addr, dummy, dummy, deadline, TEST_DAILY_LIMIT);
+    }
 }
