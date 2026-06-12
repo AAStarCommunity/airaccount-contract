@@ -10,8 +10,6 @@ import {AlgTierLib} from "../utils/AlgTierLib.sol";
 ///      Guard.account is immutable — social recovery changes Account.owner, not Account address,
 ///      so guard always remains functional regardless of key rotation.
 contract AAStarGlobalGuard {
-    using AlgTierLib for uint8;
-
     // ─── Token Config Struct ─────────────────────────────────────
 
     /// @notice Per-token spending tier configuration (in token's native units)
