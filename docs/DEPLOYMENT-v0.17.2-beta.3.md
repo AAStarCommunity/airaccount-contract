@@ -1,9 +1,9 @@
 # AirAccount v0.17.2-beta.3 — Deployment Record
 
-**Status**: PENDING — fill in after Sepolia redeployment  
-**Date**: TBD  
+**Status**: DEPLOYED on Sepolia  
+**Date**: 2026-06-12  
 **Network**: Sepolia (chainId 11155111)  
-**Deployer**: TBD
+**Deployer**: `0xEcAACb915f7D92e9916f449F7ad42BD0408733c9` (Anni)
 
 ---
 
@@ -11,6 +11,7 @@
 
 | Change | Impact |
 |--------|--------|
+| `AAStarValidator` — M3 governance timelock (`proposeAlgorithm` + 7-day timelock + `executeProposal`) | **New router address** — existing accounts must call `setValidator(newRouter)` to use new SessionKeyValidator |
 | `AAStarAirAccountV7` — `ACCOUNT_VERSION = "0.17.2"` | New implementation address |
 | `AAStarAirAccountFactoryV7` — custom errors + `FACTORY_VERSION` | New factory address |
 | `ForceExitModule` — `IncompatibleAccount` + assembly `_countBits` + `MODULE_VERSION` | New module address |
@@ -18,68 +19,90 @@
 | `AAStarAirAccountBase` — assembly `_popcount` (via impl) | Covered by new impl |
 | `AAStarGlobalGuard` — constructor custom error (deployed per-account) | New accounts get updated guard; existing accounts unaffected |
 
-**No behavioral changes** — existing accounts on beta.2 do NOT need migration.
+**Router is now finalized**: `AAStarValidator.finalizeSetup()` was called after registration. Future algorithm changes require `proposeAlgorithm` → 7-day timelock → `executeProposal`.
+
+**AgentRegistry limitation**: `AgentRegistry.bindFactory` is set-once (bound to beta.2 factory). New beta.3 accounts will NOT auto-register in AgentRegistry until a new AgentRegistry is deployed.
 
 ---
 
 ## Sepolia Contract Addresses
 
-| Contract | Address | Notes |
+### Newly Deployed (beta.3)
+
+| Contract | Address | TX | Gas |
+|---|---|---|---|
+| **AAStarValidator (router)** | `0x3c2b06f50300912794f29de031b33dd37bb8d6c6` | [tx](https://sepolia.etherscan.io/tx/0x3ef5ddf6eab1ee48ab79b84d926c6ebee53ff614b1c6000a6d28f41abb697230) | 508,016 |
+| **ForceExitModule** | `0xdb396ca2dc279f9bcb95fa3d8275f77c9f0c8702` | [tx](https://sepolia.etherscan.io/tx/0x1d8b7a275b8fd9850ecc50fe3ae0ac891a2ad69578262f03deed6dd4700dc119) | 1,199,803 |
+| **SessionKeyValidator** | `0x655ca2e9a2d1178f7fbcea1856560d1e0c657ebf` | [tx](https://sepolia.etherscan.io/tx/0x9e6324827cd1aa7e7b17a6a70fe9b2eb08a7588fcfac22b4580d0041799368de) | 2,274,029 |
+| **AAStarAirAccountFactoryV7** | `0xfc6234bbd6283610659211347c6309904be86b0a` | [tx](https://sepolia.etherscan.io/tx/0xf713c41b4981b82200dac5747ed33ccf181ce9043ac7c8eb77bad261388d406c) | 9,340,279 |
+| **AAStarAirAccountV7 (impl)** | `0xe33EeCF21AAC2B776b49A4dd52BA8b7e683dE9C3` | (deployed by factory) | — |
+| **AirAccountExtension** | `0xB3c7312bA52dF306DE1cBa781B91f3AfA7e86F99` | (deployed by impl) | — |
+
+### Wiring TXs
+
+| Action | TX |
+|---|---|
+| `router.registerAlgorithm(0x01, BLS)` | [tx](https://sepolia.etherscan.io/tx/0x2f5eb902872a6ab847171a49044ac206262dae272c90517b176d5c36d3384d28) |
+| `router.registerAlgorithm(0x08, SessionKeyValidator)` | [tx](https://sepolia.etherscan.io/tx/0x9a4d090bc1781e76e2fd175f3f2765a0e0c6e81009a4621e8786bf3881dffc3e) |
+| `router.finalizeSetup()` | [tx](https://sepolia.etherscan.io/tx/0x42e5f747f5610b54fbb1797639d9e9e38b1d8d421f656ed9a7a73de925e1064b) |
+
+### Unchanged from beta.2
+
+| Contract | Address |
+|---|---|
+| AAStarBLSAlgorithm | `0xB82127182A855B82eED05e47536FcE568b626457` |
+| AAStarBLSAggregator | `0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1` |
+| AirAccountDelegate (EIP-7702) | `0x8603AAF6C3f07fdae810B323c95a198D796EC52E` |
+| CalldataParserRegistry | `0x076EE45d2a97F70FCb2e45809DC5f9b72BB4883F` |
+| AgentRegistry | `0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB` |
+
+### Algorithm Registry (new router)
+
+| algId | Contract | Address |
 |---|---|---|
-| **AAStarAirAccountV7 (impl)** | `TBD` | New deploy — ACCOUNT_VERSION |
-| **AAStarAirAccountFactoryV7** | `TBD` | New deploy — FACTORY_VERSION + custom errors |
-| **ForceExitModule** | `TBD` | New deploy — MODULE_VERSION + IncompatibleAccount |
-| **SessionKeyValidator** | `TBD` | New deploy — MODULE_VERSION |
-| AAStarValidator (router) | `0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F` | unchanged |
-| BLSAlgorithm | `0xc2096E8D04beb3C337bb388F5352710d62De0287` | unchanged |
-| AirAccountDelegate (7702) | (see beta.1 record) | unchanged |
-| CompositeValidator | `0x7442631286f7a93487ccf9bebae28d37c88574c6` | unchanged |
-| TierGuardHook | `0xea1d2eaa73b7e6757303b29968ded26868be20b8` | unchanged |
-| WeightedECDSAValidator | (see beta.1 record) | unchanged |
+| `0x01` | AAStarBLSAlgorithm | `0xB82127182A855B82eED05e47536FcE568b626457` |
+| `0x08` | SessionKeyValidator | `0x655ca2e9a2d1178f7fbcea1856560d1e0c657ebf` |
 
 > **Deprecated (do not use)**  
+> OLD router (beta.1/beta.2): `0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F`  
 > ForceExitModule beta.2: `0xc7128A1F66DFf7B607d595371FCAEeAdC485CFC9`  
 > ForceExitModule beta.1: `0x10dF485018620CCb04BfA290DD4ca8c05Ae72aD9`
 
 ---
 
-## Deployment Commands
-
-```bash
-# 1. Build + verify locally
-forge build
-forge test --summary  # must be 679+/0/0
-
-# 2. Deploy (adjust salt as needed)
-npx tsx scripts/deploy-beta3.ts --network sepolia
-
-# 3. Verify on Etherscan
-forge verify-contract <IMPL_ADDR> src/core/AAStarAirAccountV7.sol:AAStarAirAccountV7 \
-  --chain sepolia --etherscan-api-key $ETHERSCAN_API_KEY
-
-# 4. Register SessionKeyValidator at algId 0x08 (if not already)
-cast send $VALIDATOR_ROUTER "registerAlgorithm(uint8,address)" 0x08 $SESSION_KEY_VALIDATOR \
-  --rpc-url $SEPOLIA_RPC --private-key $DEPLOYER_PK
-
-# 5. Run E2E suite against new addresses
-npx tsx scripts/e2e-v0172/run-all.ts --network sepolia
-```
-
----
-
 ## SDK Update Required
 
-After redeployment, update in `@aastar/core`:
-1. `abi/AAStarAirAccountV7.full.json` — 64 functions (already updated in this repo)
-2. Contract addresses for Sepolia (fill in table above, then sync to SDK)
-3. Factory custom error selectors (replace string-based error matching)
+After this deployment, update in `@aastar/core`:
 
-SDK tracking issue: TBD (see SDK repo)
+1. **Contract addresses for Sepolia** — use table above
+2. **`abi/AAStarAirAccountV7.full.json`** — 64 functions (already updated in this repo)
+3. **Factory custom error selectors** — replace string-based error matching with typed selectors
+4. **Router address** — all accounts must point to new router `0x3c2b06f50300912794f29de031b33dd37bb8d6c6`
+
+SDK tracking issue: [AAStarCommunity/aastar-sdk#48](https://github.com/AAStarCommunity/aastar-sdk/issues/48)
 
 ---
 
 ## Migration Guide for Existing Users
 
-**No action required.** Existing accounts deployed on beta.2 factory continue to work normally. The old factory and old ForceExitModule addresses remain on-chain but are considered deprecated.
+**Validator router has changed.** Existing accounts deployed on beta.1 or beta.2 that use BLS or session-key signing must call:
 
-Users who have installed `ForceExitModule` from beta.2 can optionally reinstall from the beta.3 address to get the `IncompatibleAccount` protection. This is optional and only relevant if they plan to use ForceExit.
+```solidity
+account.setValidator(0x3c2b06f50300912794f29de031b33dd37bb8d6c6);
+```
+
+This is a one-time owner call. ECDSA signing (owner key) continues to work without migration.
+
+**No action required** for accounts that only use ECDSA signing.
+
+The old factory and old module addresses remain on-chain but are considered deprecated for new deployments.
+
+---
+
+## Deployment Script
+
+```bash
+pnpm tsx scripts/deploy-v0172-beta3.ts
+```
+
+See `scripts/deploy-v0172-beta3.ts` for the full deployment and wiring logic.
