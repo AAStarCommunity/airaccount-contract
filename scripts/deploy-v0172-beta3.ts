@@ -1,29 +1,31 @@
 /**
  * deploy-v0172-beta3.ts — Incremental deploy for v0.17.2-beta.3
  *
- * Deploys ONLY the contracts that changed vs beta.2:
+ * Contracts deployed (5 new + 1 re-deployed infra):
  *   1. AAStarValidator (router)       NEW — M3 governance timelock
  *   2. ForceExitModule                MODULE_VERSION + IncompatibleAccount guard
  *   3. SessionKeyValidator            MODULE_VERSION
  *   4. AAStarAirAccountFactoryV7      FACTORY_VERSION + custom errors
  *        └─ auto-deploys AAStarAirAccountV7 impl (ACCOUNT_VERSION)
+ *   5. AgentRegistry                  MANDATORY re-deploy — bindFactory is set-once;
+ *                                     must be re-deployed every time a new Factory is deployed
+ *
+ * Circular dependency resolution:
+ *   Factory is deployed first (gets an address) → AgentRegistry is deployed (deployer = Anni)
+ *   → agentRegistry.bindFactory(factory) → factory.setAgentRegistry(agentRegistry)
  *
  * Reused from beta.2 (addresses unchanged):
  *   AAStarBLSAlgorithm  0xB82127182A855B82eED05e47536FcE568b626457
  *   AAStarBLSAggregator 0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1
  *   AirAccountDelegate  0x8603AAF6C3f07fdae810B323c95a198D796EC52E
  *   CalldataParserRegistry 0x076EE45d2a97F70FCb2e45809DC5f9b72BB4883F
- *   AgentRegistry       0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB
  *
- * Post-deploy wiring:
- *   newRouter.registerAlgorithm(0x01, blsAlgorithm)   — re-register BLS
- *   newRouter.registerAlgorithm(0x08, newSessionKeyValidator)
- *   newRouter.finalizeSetup()                          — lock router (use timelock for future changes)
- *
- * NOTE: AgentRegistry (0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB) is set-once bound
- *       to the beta.2 factory and CANNOT be rebound. New accounts via beta.3 factory
- *       will not be auto-registered in AgentRegistry (no SuperPaymaster eligibility)
- *       until a new AgentRegistry is deployed and bound to the beta.3 factory.
+ * Post-deploy wiring (5 steps):
+ *   router.registerAlgorithm(0x01, blsAlgorithm)
+ *   router.registerAlgorithm(0x08, sessionKeyValidator)
+ *   router.finalizeSetup()                          — lock router
+ *   agentRegistry.bindFactory(factory)              — MANDATORY
+ *   factory.setAgentRegistry(agentRegistry)         — MANDATORY
  *
  * Usage:
  *   pnpm tsx scripts/deploy-v0172-beta3.ts
@@ -47,11 +49,10 @@ import { sepolia } from "viem/chains";
 config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
 // ── Unchanged beta.2 addresses ──────────────────────────────────────────────
-const BLS_ALGORITHM     = "0xB82127182A855B82eED05e47536FcE568b626457" as Address;
-const AGENT_REGISTRY    = "0xc60E7D1d13027Ed63a899926ba1a9A2692f1D9EB" as Address;
-const ENTRYPOINT        = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
-const ALG_BLS           = 0x01;
-const ALG_SESSION_KEY   = 0x08;
+const BLS_ALGORITHM  = "0xB82127182A855B82eED05e47536FcE568b626457" as Address;
+const ENTRYPOINT     = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
+const ALG_BLS        = 0x01;
+const ALG_SESSION_KEY = 0x08;
 
 // ── Env ─────────────────────────────────────────────────────────────────────
 const PRIVATE_KEY = (process.env.PRIVATE_KEY_ANNI ?? process.env.PRIVATE_KEY) as Hex;
@@ -109,12 +110,11 @@ async function main() {
   if (!COMMUNITY)   { console.error("ERROR: COMMUNITY_GUARDIAN_ADDRESS not set"); process.exit(1); }
 
   const deployer = privateKeyToAccount(PRIVATE_KEY);
-  console.log("=== Deploy AirAccount v0.17.2-beta.3 (incremental) ===");
+  console.log("=== Deploy AirAccount (incremental) ===");
   console.log(`Deployer:     ${deployer.address}`);
   console.log(`Community:    ${COMMUNITY}`);
   console.log(`EntryPoint:   ${ENTRYPOINT}`);
   console.log(`BLSAlgorithm: ${BLS_ALGORITHM}  (unchanged)`);
-  console.log(`AgentReg:     ${AGENT_REGISTRY}  (unchanged)`);
   console.log("");
 
   const { pub: pub0 } = makeClients(RPC_URLS[0], deployer);
@@ -126,7 +126,7 @@ async function main() {
   console.log("");
 
   // ── 1. Deploy AAStarValidator (new router with M3 governance timelock) ───
-  console.log("[1/4] Deploy AAStarValidator router (M3 governance timelock)...");
+  console.log("[1/5] Deploy AAStarValidator router (M3 governance timelock)...");
   const routerAddr = await withRetry("AAStarValidator", async (rpcUrl) => {
     const { pub, wal } = makeClients(rpcUrl, deployer);
     const art = loadArtifact("AAStarValidator");
@@ -140,7 +140,7 @@ async function main() {
   console.log(`  AAStarValidator: ${routerAddr}\n`);
 
   // ── 2. Deploy ForceExitModule ─────────────────────────────────────────────
-  console.log("[2/4] Deploy ForceExitModule (MODULE_VERSION + IncompatibleAccount guard)...");
+  console.log("[2/5] Deploy ForceExitModule (MODULE_VERSION + IncompatibleAccount guard)...");
   const forceExitAddr = await withRetry("ForceExitModule", async (rpcUrl) => {
     const { pub, wal } = makeClients(rpcUrl, deployer);
     const art = loadArtifact("ForceExitModule");
@@ -154,7 +154,8 @@ async function main() {
   console.log(`  ForceExitModule: ${forceExitAddr}\n`);
 
   // ── 3. Deploy SessionKeyValidator ────────────────────────────────────────
-  console.log("[3/4] Deploy SessionKeyValidator (MODULE_VERSION)...");
+  // Gas: 10297 bytes × 200 gas/byte (EIP-170 code deposit) = 2,059,400 → need > 2M
+  console.log("[3/5] Deploy SessionKeyValidator (MODULE_VERSION)...");
   const sessionKeyAddr = await withRetry("SessionKeyValidator", async (rpcUrl) => {
     const { pub, wal } = makeClients(rpcUrl, deployer);
     const art = loadArtifact("SessionKeyValidator");
@@ -168,7 +169,7 @@ async function main() {
   console.log(`  SessionKeyValidator: ${sessionKeyAddr}\n`);
 
   // ── 4. Deploy Factory (auto-deploys Impl + Extension) ────────────────────
-  console.log("[4/4] Deploy Factory + Impl (FACTORY_VERSION + ACCOUNT_VERSION + custom errors)...");
+  console.log("[4/5] Deploy Factory + Impl (FACTORY_VERSION + ACCOUNT_VERSION + custom errors)...");
   const { factoryAddr, implAddr, extensionAddr } = await withRetry("Factory", async (rpcUrl) => {
     const { pub, wal } = makeClients(rpcUrl, deployer);
     const fA = loadArtifact("AAStarAirAccountFactoryV7");
@@ -196,52 +197,83 @@ async function main() {
   console.log(`  Impl:      ${implAddr}`);
   console.log(`  Extension: ${extensionAddr}\n`);
 
+  // ── 5. Deploy AgentRegistry ───────────────────────────────────────────────
+  // MANDATORY: bindFactory is set-once. A new AgentRegistry must be deployed for every
+  // new Factory. Without this, new accounts cannot registerAgent and SuperPaymaster
+  // will not sponsor them (isValidAccount never set).
+  console.log("[5/5] Deploy AgentRegistry (MANDATORY — bindFactory is set-once per registry)...");
+  const agentRegistryAddr = await withRetry("AgentRegistry", async (rpcUrl) => {
+    const { pub, wal } = makeClients(rpcUrl, deployer);
+    const art = loadArtifact("AgentRegistry");
+    const hash = await wal.sendTransaction({
+      data: encodeDeployData({ abi: art.abi, bytecode: art.bytecode, args: [] }),
+      gas: 1_500_000n,
+    });
+    const r = await waitTx(pub, hash, "AgentRegistry");
+    return r.contractAddress!;
+  });
+  console.log(`  AgentRegistry: ${agentRegistryAddr}\n`);
+
   // ── Wiring ────────────────────────────────────────────────────────────────
   const { pub, wal } = makeClients(RPC_URLS[0], deployer);
   const routerAbi = [
     { name: "registerAlgorithm", type: "function", inputs: [{ type: "uint8" }, { type: "address" }], outputs: [], stateMutability: "nonpayable" },
     { name: "finalizeSetup", type: "function", inputs: [], outputs: [], stateMutability: "nonpayable" },
   ];
-  console.log("[Wire 1/3] newRouter.registerAlgorithm(0x01, BLS)...");
+  const registryAbi = [
+    { name: "bindFactory", type: "function", inputs: [{ type: "address" }], outputs: [], stateMutability: "nonpayable" },
+  ];
+  const factoryAbi = [
+    { name: "setAgentRegistry", type: "function", inputs: [{ type: "address" }], outputs: [], stateMutability: "nonpayable" },
+  ];
+
+  console.log("[Wire 1/5] router.registerAlgorithm(0x01, BLS)...");
   {
     const hash = await wal.writeContract({ address: routerAddr, abi: routerAbi, functionName: "registerAlgorithm", args: [ALG_BLS, BLS_ALGORITHM] });
     await waitTx(pub, hash, "registerAlgorithm(BLS)");
   }
 
-  console.log("[Wire 2/3] newRouter.registerAlgorithm(0x08, new SessionKeyValidator)...");
+  console.log("[Wire 2/5] router.registerAlgorithm(0x08, SessionKeyValidator)...");
   {
     const hash = await wal.writeContract({ address: routerAddr, abi: routerAbi, functionName: "registerAlgorithm", args: [ALG_SESSION_KEY, sessionKeyAddr] });
     await waitTx(pub, hash, "registerAlgorithm(SessionKey)");
   }
 
-  console.log("[Wire 3/3] newRouter.finalizeSetup() — lock router (use proposeAlgorithm for future)...");
+  console.log("[Wire 3/5] router.finalizeSetup() — lock router (use proposeAlgorithm for future changes)...");
   {
     const hash = await wal.writeContract({ address: routerAddr, abi: routerAbi, functionName: "finalizeSetup", args: [] });
     await waitTx(pub, hash, "finalizeSetup");
   }
 
+  console.log("[Wire 4/5] agentRegistry.bindFactory(factory) — MANDATORY...");
+  {
+    const hash = await wal.writeContract({ address: agentRegistryAddr, abi: registryAbi, functionName: "bindFactory", args: [factoryAddr] });
+    await waitTx(pub, hash, "bindFactory");
+  }
+
+  console.log("[Wire 5/5] factory.setAgentRegistry(agentRegistry) — MANDATORY...");
+  {
+    const hash = await wal.writeContract({ address: factoryAddr, abi: factoryAbi, functionName: "setAgentRegistry", args: [agentRegistryAddr] });
+    await waitTx(pub, hash, "setAgentRegistry");
+  }
+
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("");
-  console.log("=== v0.17.2-beta.3 Deployment Summary ===");
-  console.log(`AAStarValidator (new router):      ${routerAddr}`);
+  console.log("=== Deployment Summary ===");
+  console.log(`AAStarValidator (router):          ${routerAddr}`);
   console.log(`ForceExitModule:                   ${forceExitAddr}`);
   console.log(`SessionKeyValidator:               ${sessionKeyAddr}`);
   console.log(`AAStarAirAccountFactoryV7:         ${factoryAddr}`);
   console.log(`AAStarAirAccountV7 (impl):         ${implAddr}`);
   console.log(`AirAccountExtension:               ${extensionAddr}`);
+  console.log(`AgentRegistry:                     ${agentRegistryAddr}`);
   console.log("");
-  console.log("=== Unchanged from beta.2 ===");
+  console.log("=== Unchanged ===");
   console.log(`AAStarBLSAlgorithm:                ${BLS_ALGORITHM}`);
-  console.log(`AgentRegistry:                     ${AGENT_REGISTRY}  (factory binding unchanged — beta.2 factory)`);
   console.log("");
-  console.log("NOTES:");
-  console.log("  1. Existing accounts with OLD router (0x29edC0e59C7cCcd89334139556Bc254bBC1B1E2F)");
-  console.log("     must call setValidator(<newRouterAddr>) to use the new SessionKeyValidator.");
-  console.log("  2. AgentRegistry.bindFactory is set-once (bound to beta.2 factory).");
-  console.log("     New beta.3 accounts will NOT auto-register in AgentRegistry.");
-  console.log("     A new AgentRegistry deployment is required for full beta.3 SuperPaymaster integration.");
-  console.log("");
-  console.log("Add addresses to DEPLOYMENT-v0.17.2-beta.3.md and update SDK issue AAStarCommunity/aastar-sdk#48");
+  console.log("MIGRATION NOTE:");
+  console.log("  Existing accounts pointing to the OLD router must call:");
+  console.log(`  account.setValidator(${routerAddr})`);
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });
