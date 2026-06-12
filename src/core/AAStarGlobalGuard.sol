@@ -70,6 +70,7 @@ contract AAStarGlobalGuard {
     ///      tier1 <= tier2 <= dailyLimit (when non-zero) must hold, otherwise
     ///      the daily limit silently caps users below their configured tier max.
     error InvalidTokenConfig(address token, uint256 tier1, uint256 tier2, uint256 daily);
+    error TokenConfigLengthMismatch();
 
     // ─── Modifier ───────────────────────────────────────────────
 
@@ -107,7 +108,7 @@ contract AAStarGlobalGuard {
         address[] memory _initialTokens,
         TokenConfig[] memory _initialConfigs
     ) {
-        require(_initialTokens.length == _initialConfigs.length, "length mismatch");
+        if (_initialTokens.length != _initialConfigs.length) revert TokenConfigLengthMismatch();
         account = _account;
         dailyLimit = _dailyLimit;
         minDailyLimit = _minDailyLimit;

@@ -582,7 +582,7 @@ contract M5ScenarioTests is Test {
         bytes memory sig2 = _guardianAcceptSig(g2Wallet, aliceWallet.addr, 0);
 
         // Zero address as guardian1
-        vm.expectRevert("Guardians required");
+        vm.expectRevert(AAStarAirAccountFactoryV7.GuardiansRequired.selector);
         factory.createAccountWithDefaults(
             aliceWallet.addr, 0,
             address(0), emptySig,
@@ -643,7 +643,7 @@ contract M5ScenarioTests is Test {
         bytes memory sig1 = _guardianAcceptSig(g1Wallet, aliceWallet.addr, 0);
         bytes memory sig2 = _guardianAcceptSig(g2Wallet, aliceWallet.addr, 0);
 
-        vm.expectRevert("Daily limit required");
+        vm.expectRevert(AAStarAirAccountFactoryV7.DailyLimitRequired.selector);
         factory.createAccountWithDefaults(
             aliceWallet.addr, 0,
             g1Wallet.addr, sig1,

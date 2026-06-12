@@ -31,6 +31,9 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
+    /// @notice Semantic version of this module deployment. Used by SDKs for programmatic version detection.
+    string public constant MODULE_VERSION = "0.17.2";
+
     // ─── Constants ────────────────────────────────────────────────────
 
     /// @dev EIP-7212 P256 verification precompile

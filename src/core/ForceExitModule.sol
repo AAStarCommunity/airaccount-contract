@@ -38,6 +38,9 @@ contract ForceExitModule is IERC7579Module {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
+    /// @notice Semantic version of this module deployment. Used by SDKs for programmatic version detection.
+    string public constant MODULE_VERSION = "0.17.2";
+
     // ─── Constants ─────────────────────────────────────────────────────────
 
     uint8 public constant L2_TYPE_OPTIMISM = 1;
@@ -90,6 +93,8 @@ contract ForceExitModule is IERC7579Module {
     ///      guardian snapshot but has since been rotated out of the account's current guardian
     ///      set. Closes the "stale guardian" staleness scenario. See docs/forceexit-design-notes.md §5.
     error SignerNoLongerGuardian();
+    /// @dev Account does not expose the guardians(uint256) getter required by this module.
+    error IncompatibleAccount();
 
     // ─── Events ────────────────────────────────────────────────────────────
 
@@ -103,6 +108,13 @@ contract ForceExitModule is IERC7579Module {
     /// @notice Initialize the module for the calling account.
     /// @param data abi.encode(uint8 l2Type) — 1=OP Stack, 2=Arbitrum
     function onInstall(bytes calldata data) external override {
+        // Verify the account exposes guardians(uint256) with a real guardian at index 0.
+        // Fail loudly at install time rather than producing a zombie module that can never
+        // accumulate approvals (all approveForceExit calls would revert with InvalidGuardianSig).
+        (bool ok, bytes memory ret) = msg.sender.staticcall(abi.encodeWithSignature("guardians(uint256)", uint256(0)));
+        if (!ok || ret.length < 32) revert IncompatibleAccount();
+        if (abi.decode(ret, (address)) == address(0)) revert IncompatibleAccount();
+
         _initialized[msg.sender] = true;
         if (data.length == 0) return;
         uint8 l2Type = abi.decode(data, (uint8));
@@ -368,11 +380,16 @@ contract ForceExitModule is IERC7579Module {
         return type(uint256).max;
     }
 
-    /// @dev Count the number of set bits in a uint256 (popcount)
+    /// @dev Counts set bits using parallel bit-manipulation (Hamming weight).
+    ///      Overflow note: returns 0 instead of 256 when all 256 bits are set.
+    ///      Unreachable here: approvalBitmap has at most 3 bits set (3-guardian threshold).
     function _countBits(uint256 bitmap) internal pure returns (uint256 count) {
-        while (bitmap != 0) {
-            count += bitmap & 1;
-            bitmap >>= 1;
+        assembly {
+            bitmap := sub(bitmap, and(shr(1, bitmap), 0x5555555555555555555555555555555555555555555555555555555555555555))
+            bitmap := add(and(bitmap, 0x3333333333333333333333333333333333333333333333333333333333333333),
+                          and(shr(2, bitmap), 0x3333333333333333333333333333333333333333333333333333333333333333))
+            bitmap := and(add(bitmap, shr(4, bitmap)), 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f)
+            count := shr(248, mul(bitmap, 0x0101010101010101010101010101010101010101010101010101010101010101))
         }
     }
 }

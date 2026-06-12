@@ -18,6 +18,9 @@ contract AAStarAirAccountFactoryV7 {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
+    /// @notice Semantic version of this factory deployment. Used by SDKs for programmatic version detection.
+    string public constant FACTORY_VERSION = "0.17.2";
+
     /// @dev Shared implementation contract — all user accounts are clones of this address.
     ///      Deployed atomically in the factory constructor. Never call initialize() on this address directly.
     address public immutable implementation;
@@ -66,6 +69,22 @@ contract AAStarAirAccountFactoryV7 {
     error AgentRegistryAlreadySet();
     error AgentRegistryNotContract();
     error AgentRegistryMarkValidFailed();
+    error TokenConfigLengthMismatch();
+    error DefaultTokenAddressZero(address token);
+    error DuplicateDefaultToken(address token);
+    error InvalidDefaultTokenConfig(address token);
+    error GuardiansRequired();
+    error GuardiansMustBeDistinct();
+    error AgentKeyRequired();
+    error Guardian2Required();
+    error CallerCannotBeGuardian2();
+    error AgentKeyCannotBeGuardian2();
+    error DailyLimitRequired();
+    error GuardianSigExpired();
+    error DeadlineTooFarInFuture();
+    error HumanOwnerCannotBeCommunityGuardian();
+    error Guardian2CannotBeCommunityGuardian();
+    error AgentKeyCannotBeCommunityGuardian();
 
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
@@ -80,7 +99,7 @@ contract AAStarAirAccountFactoryV7 {
         address[] memory defaultTokens,
         AAStarGlobalGuard.TokenConfig[] memory defaultConfigs
     ) {
-        require(defaultTokens.length == defaultConfigs.length, "Token/config length mismatch");
+        if (defaultTokens.length != defaultConfigs.length) revert TokenConfigLengthMismatch();
         // Deploy shared implementation. All user accounts are EIP-1167 clones of this address.
         implementation = address(new AAStarAirAccountV7());
         entryPoint = _entryPoint;
@@ -88,10 +107,10 @@ contract AAStarAirAccountFactoryV7 {
         factoryAdmin = msg.sender; // for set-once setAgentRegistry post-deploy
         for (uint256 i = 0; i < defaultTokens.length; i++) {
             address tok = defaultTokens[i];
-            require(tok != address(0), "Default token address zero");
+            if (tok == address(0)) revert DefaultTokenAddressZero(tok);
             // Dedup check: O(n^2) but n is small (≤10 expected) and this is deploy-time only
             for (uint256 j = 0; j < i; j++) {
-                require(_defaultTokenAddresses[j] != tok, "Duplicate default token");
+                if (_defaultTokenAddresses[j] == tok) revert DuplicateDefaultToken(tok);
             }
             // Validate tier/daily relationship eagerly — invalid configs revert here rather
             // than failing silently for every createAccountWithDefaults call.
@@ -100,7 +119,7 @@ contract AAStarAirAccountFactoryV7 {
                 || (cfg.tier2Limit > 0 && cfg.dailyLimit > 0 && cfg.dailyLimit < cfg.tier2Limit)
                 || (cfg.tier1Limit > 0 && cfg.tier2Limit == 0 && cfg.dailyLimit > 0 && cfg.dailyLimit < cfg.tier1Limit)
                 || ((cfg.tier1Limit > 0 || cfg.tier2Limit > 0) && cfg.dailyLimit == 0);
-            require(!bad, "Invalid default token config");
+            if (bad) revert InvalidDefaultTokenConfig(tok);
             _defaultTokenAddresses.push(tok);
             _defaultTokenConfigs.push(cfg);
         }
@@ -230,9 +249,9 @@ contract AAStarAirAccountFactoryV7 {
         bytes calldata guardian2Sig,
         uint256 dailyLimit
     ) external returns (address account) {
-        require(guardian1 != address(0) && guardian2 != address(0), "Guardians required");
-        require(guardian1 != guardian2, "Guardians must be distinct");
-        require(dailyLimit > 0, "Daily limit required"); // F72: guard must be configured
+        if (guardian1 == address(0) || guardian2 == address(0)) revert GuardiansRequired();
+        if (guardian1 == guardian2) revert GuardiansMustBeDistinct();
+        if (dailyLimit == 0) revert DailyLimitRequired(); // F72: guard must be configured
 
         // Verify both guardians signed the domain-separated acceptance message (F56 — M5.3)
         // chainId + address(this) prevent replay across chains and factories with same owner+salt.
@@ -299,20 +318,20 @@ contract AAStarAirAccountFactoryV7 {
         uint48 deadline,
         uint256 dailyLimit
     ) external returns (address account) {
-        require(agentKey != address(0), "Agent key required");
-        require(guardian2 != address(0), "Guardian2 required");
-        require(msg.sender != guardian2, "Caller cannot be guardian2");
-        require(agentKey != guardian2, "Agent key cannot be guardian2");
-        require(dailyLimit > 0, "Daily limit required");
-        require(block.timestamp <= deadline, "Guardian sig expired");
-        require(deadline <= block.timestamp + MAX_GUARDIAN_SIG_TTL, "Deadline too far in future");
+        if (agentKey == address(0)) revert AgentKeyRequired();
+        if (guardian2 == address(0)) revert Guardian2Required();
+        if (msg.sender == guardian2) revert CallerCannotBeGuardian2();
+        if (agentKey == guardian2) revert AgentKeyCannotBeGuardian2();
+        if (dailyLimit == 0) revert DailyLimitRequired();
+        if (block.timestamp > deadline) revert GuardianSigExpired();
+        if (deadline > block.timestamp + MAX_GUARDIAN_SIG_TTL) revert DeadlineTooFarInFuture();
 
         // Uniqueness prechecks: none of the three guardians may be the community guardian,
         // preventing an attacker from using the factory's own defaultCommunityGuardian as
         // guardian2 (or as the human caller) to trivially satisfy social-recovery thresholds.
-        require(msg.sender != defaultCommunityGuardian, "Human owner cannot be community guardian");
-        require(guardian2 != defaultCommunityGuardian, "Guardian2 cannot be community guardian");
-        require(agentKey != defaultCommunityGuardian, "Agent key cannot be community guardian");
+        if (msg.sender == defaultCommunityGuardian) revert HumanOwnerCannotBeCommunityGuardian();
+        if (guardian2 == defaultCommunityGuardian) revert Guardian2CannotBeCommunityGuardian();
+        if (agentKey == defaultCommunityGuardian) revert AgentKeyCannotBeCommunityGuardian();
 
         // Verify agentKey consents to being bound as this account's agent (session) key.
         // (owner = msg.sender/human, set at initialize below; agentKey is NOT the owner.)
