@@ -108,10 +108,12 @@ contract ForceExitModule is IERC7579Module {
     /// @notice Initialize the module for the calling account.
     /// @param data abi.encode(uint8 l2Type) — 1=OP Stack, 2=Arbitrum
     function onInstall(bytes calldata data) external override {
-        // Verify the account exposes guardians(uint256) — required for approveForceExit.
-        // Fail loudly at install time rather than silently at approve time.
-        (bool ok,) = msg.sender.staticcall(abi.encodeWithSignature("guardians(uint256)", uint256(0)));
-        if (!ok) revert IncompatibleAccount();
+        // Verify the account exposes guardians(uint256) with a real guardian at index 0.
+        // Fail loudly at install time rather than producing a zombie module that can never
+        // accumulate approvals (all approveForceExit calls would revert with InvalidGuardianSig).
+        (bool ok, bytes memory ret) = msg.sender.staticcall(abi.encodeWithSignature("guardians(uint256)", uint256(0)));
+        if (!ok || ret.length < 32) revert IncompatibleAccount();
+        if (abi.decode(ret, (address)) == address(0)) revert IncompatibleAccount();
 
         _initialized[msg.sender] = true;
         if (data.length == 0) return;

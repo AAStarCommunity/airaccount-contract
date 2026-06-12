@@ -220,6 +220,15 @@ contract ForceExitModuleTest is Test {
         bad.tryInstall();
     }
 
+    function test_onInstall_zeroGuardian_reverts() public {
+        // Account has guardians() getter but returns address(0) for index 0.
+        // Without the return-value check this would install silently, creating a zombie module.
+        MockAirAccount zeroGuard = new MockAirAccount(owner, [address(0), address(0), address(0)]);
+        vm.expectRevert(ForceExitModule.IncompatibleAccount.selector);
+        vm.prank(address(zeroGuard));
+        module.onInstall(abi.encode(uint8(1)));
+    }
+
     // ─── onUninstall ─────────────────────────────────────────────────────────
 
     function test_onUninstall_clearsState() public {
