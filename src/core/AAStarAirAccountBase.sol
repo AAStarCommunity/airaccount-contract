@@ -10,6 +10,7 @@ import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 import {ICalldataParser, ICalldataParserRegistry} from "../interfaces/ICalldataParser.sol";
 import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
 import {AirAccountExtension} from "./AirAccountExtension.sol";
+import {AlgTierLib} from "../utils/AlgTierLib.sol";
 
 /**
  * @title AAStarAirAccountBase
@@ -919,24 +920,9 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     }
 
     /// @dev Map algId to its security tier level.
-    ///
-    ///      Tier model (cumulative factors):
-    ///        Tier 1 — single factor:  ECDSA (0x02) or bare P256 passkey (0x03)
-    ///        Tier 2 — dual factor:    P256 passkey + BLS DVT co-sign (0x04)
-    ///        Tier 3 — triple factor:  P256 + BLS + Guardian ECDSA (0x05) or legacy BLS triple (0x01)
-    ///
-    ///      Bare P256 passkey (0x03) is Tier 1 — it is the default single-factor auth
-    ///      for all standard transactions. DVT co-sign (BLS) is required for Tier 2+.
+    ///      Delegates to AlgTierLib — add new algIds there only.
     function _algTier(uint8 algId) internal pure returns (uint8) {
-        if (algId == ALG_CUMULATIVE_T3) return 3;     // P256 + BLS + Guardian ECDSA
-        if (algId == ALG_BLS) return 3;               // legacy BLS triple (ECDSA×2 + BLS, M2 format)
-        if (algId == ALG_CUMULATIVE_T2) return 2;     // P256 + BLS DVT co-sign
-        if (algId == ALG_ECDSA) return 1;             // bare ECDSA
-        if (algId == ALG_P256) return 1;              // bare P256 passkey (single-factor)
-        if (algId == ALG_COMBINED_T1) return 1;       // zero-trust combined (P256 + ECDSA)
-        if (algId == ALG_SESSION_KEY) return 1;       // session key (ephemeral, time-limited, Tier 1)
-        if (algId == ALG_WEIGHTED) return 0;          // weighted: tier resolved from accumulated weight in execute()
-        return 0;                                      // unknown algId — fails all tier enforcement
+        return AlgTierLib.algTier(algId);
     }
 
     // ─── Execution ────────────────────────────────────────────────────

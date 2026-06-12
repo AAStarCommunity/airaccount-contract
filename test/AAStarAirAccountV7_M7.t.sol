@@ -83,6 +83,35 @@ contract MockRegistry {
     }
 }
 
+// ─── Re-entrant executor for reentrancy guard tests ──────────────────────────
+
+/// @dev Re-entrant executor for reentrancy guard tests.
+///      When attemptReentry() is called, it tries to call executeFromExecutor on the account itself.
+///      Stores whether the re-entry attempt was blocked by the nonReentrant guard.
+contract ReentrantExecutor {
+    bool public reentrancyWasBlocked;
+    address public accountAddr;
+
+    function setAccount(address a) external { accountAddr = a; }
+    function onInstall(bytes calldata) external {}
+    function onUninstall(bytes calldata) external {}
+
+    function validateUserOp(PackedUserOperation calldata, bytes32) external pure returns (uint256) { return 0; }
+    function isValidSignatureWithSender(address, bytes32, bytes calldata) external pure returns (bytes4) { return 0x1626ba7e; }
+
+    /// @dev Called by account.executeFromExecutor → tries to re-enter
+    function attemptReentry() external {
+        bytes memory innerCall = abi.encodePacked(address(0), uint256(0));
+        (bool ok,) = accountAddr.call(
+            abi.encodeWithSignature("executeFromExecutor(bytes32,bytes)", bytes32(0), innerCall)
+        );
+        reentrancyWasBlocked = !ok;
+    }
+
+    receive() external payable {}
+    fallback() external payable {}
+}
+
 /// @title AAStarAirAccountV7_M7Test — M7 ERC-7579 module management tests
 contract AAStarAirAccountV7_M7Test is Test {
     using MessageHashUtils for bytes32;
@@ -312,6 +341,29 @@ contract AAStarAirAccountV7_M7Test is Test {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
         account.installModule(1, address(mockModule), ""); // empty initData — no guardian sig
+    }
+
+    /// @notice Account with zero guardians: even with threshold=70 (1 sig required),
+    ///         any provided sig recovers to an address not in the guardian list → NotGuardian.
+    ///         The factory enforces >=2 guardians; this test bypasses the factory to document
+    ///         the account-level behavior when initialize is called with all-zero guardian slots.
+    function test_installModule_zeroGuardianAccount_reverts() public {
+        AAStarAirAccountV7 noGuardAccount = new AAStarAirAccountV7();
+        uint8[] memory algs = new uint8[](0);
+        noGuardAccount.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            dailyLimit: 0,
+            approvedAlgIds: algs,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        }));
+
+        // threshold=0 → defaults to 70 → sigsRequired=1; but no guardian exists → NotGuardian
+        bytes memory anySig = _installSig(g0Wallet, address(noGuardAccount), 1, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
+        noGuardAccount.installModule(1, address(mockModule), anySig);
     }
 
     function test_installModule_wrongGuardianSig_reverts() public {
@@ -649,16 +701,27 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_executeFromExecutor_reentrancy_reverts() public {
-        // Test that the nonReentrant guard works: executor calls back into executeFromExecutor
-        _installWithG0(2, address(mockModule));
+        // Deploy and install a re-entrant executor module
+        ReentrantExecutor reentrant = new ReentrantExecutor();
+        reentrant.setAccount(address(account));
 
-        // We can't easily test reentrancy without a re-entrant mock — just verify the guard is present
-        // by checking a normal call succeeds (confirming tstore(0,0) cleanup after the call)
+        bytes memory sig = _installSig(g0Wallet, address(account), 2, address(reentrant));
+        vm.prank(ownerWallet.addr);
+        account.installModule(2, address(reentrant), sig);
+
+        // Call executeFromExecutor with calldata that triggers reentrant.attemptReentry()
+        // attemptReentry() calls back into account.executeFromExecutor — the nonReentrant guard must block it
         bytes32 mode = bytes32(0);
-        bytes memory calldata_ = abi.encodePacked(address(mockTarget), uint256(0), abi.encodeCall(MockTarget.setValue, (1)));
-        vm.prank(address(mockModule));
+        bytes memory calldata_ = abi.encodePacked(
+            address(reentrant),
+            uint256(0),
+            abi.encodeCall(ReentrantExecutor.attemptReentry, ())
+        );
+        vm.prank(address(reentrant));
         account.executeFromExecutor(mode, calldata_);
-        assertEq(mockTarget.value(), 1);
+
+        // The inner re-entry into executeFromExecutor was blocked by the nonReentrant guard (tstore(0,1))
+        assertTrue(reentrant.reentrancyWasBlocked(), "re-entrant executeFromExecutor should be blocked by nonReentrant guard");
     }
 
     // ─── validateUserOp: nonce-key validator routing ──────────────────────────
@@ -1054,4 +1117,138 @@ contract AAStarAirAccountV7_M7Test is Test {
         vm.expectRevert(AAStarAirAccountBase.ModuleAlreadyInstalled.selector);
         account.installModule(1, address(mockModule), sig);
     }
+
+    // ─── Transient storage: identical-callData collision (known limitation, issue #52) ──────────
+
+    /// @notice Document the transient storage key collision when two UserOps share identical callData.
+    /// @dev HIGH-3 design: algId is stored at keccak256(keccak256(callData), ALG_ID_SLOT_BASE).
+    ///      Within one bundle, if two UserOps have the same callData, the second validateUserOp
+    ///      overwrites the first op's algId slot. In a real bundle op1's execute() would then
+    ///      consume op2's algId — a known limitation tracked in issue #52.
+    ///      This test confirms the overwrite is observable so the limitation is documented.
+    function test_bundle_identicalCallData_secondValidateOverwritesFirst() public {
+        _installWithG0(1, address(mockModule));
+        mockModule.setValidateResult(0); // validator always returns success
+
+        // Both UserOps share the same callData — so they map to the same transient storage slot.
+        bytes memory sharedCallData = abi.encodeCall(MockTarget.setValue, (99));
+        // Nonce key = mockModule address → routes through installed validator module
+        uint256 nonce = uint256(uint192(uint160(address(mockModule)))) << 64;
+
+        // op1: sig[0]=0x02 → algId=ECDSA (tier 1) stored via nonce-key routing
+        PackedUserOperation memory op1 = PackedUserOperation({
+            sender: address(account), nonce: nonce, initCode: "",
+            callData: sharedCallData, accountGasLimits: bytes32(0),
+            preVerificationGas: 0, gasFees: bytes32(0), paymasterAndData: "",
+            signature: abi.encodePacked(uint8(0x02), new bytes(65))
+        });
+        // op2: sig[0]=0x04 → algId=CUMULATIVE_T2 (tier 2), same callData as op1
+        PackedUserOperation memory op2 = PackedUserOperation({
+            sender: address(account), nonce: nonce + 1, initCode: "",
+            callData: sharedCallData, accountGasLimits: bytes32(0),
+            preVerificationGas: 0, gasFees: bytes32(0), paymasterAndData: "",
+            signature: abi.encodePacked(uint8(0x04), new bytes(65))
+        });
+
+        vm.startPrank(address(ep));
+        // op1 validate: stores algId=0x02 (ECDSA) at transient slot keyed by keccak256(sharedCallData)
+        account.validateUserOp(op1, keccak256(abi.encode(op1)), 0);
+        assertEq(account.getCurrentAlgId(), 0x02, "op1 should store ECDSA algId=0x02");
+
+        // op2 validate: SAME callData → SAME transient slot → overwrites op1's algId with 0x04
+        account.validateUserOp(op2, keccak256(abi.encode(op2)), 0);
+        vm.stopPrank();
+
+        // After op2 validate, the slot now holds 0x04 (op2's tier-2 algId).
+        // If execute() for op1 runs now, it reads 0x04 instead of the expected 0x02.
+        assertEq(account.getCurrentAlgId(), 0x04,
+            "op2 algId 0x04 overwrote op1 algId 0x02 (known limitation: identical callData in same bundle)");
+    }
+
+    // ─── modifyTierLimitsWithGuardians: deadline path ─────────────────────────
+
+    /// @notice Build guardian signature for modifyTierLimitsWithGuardians.
+    ///         Hash: keccak256(abi.encode(account, chainId, nonce=0, "MODIFY_TIER_LIMITS", tier1, tier2, deadline))
+    function _modifyTierSig(Vm.Wallet memory w, uint256 tier1, uint256 tier2, uint256 deadline)
+        internal view returns (bytes memory)
+    {
+        bytes32 raw = keccak256(abi.encode(
+            address(account), block.chainid, uint256(0), "MODIFY_TIER_LIMITS", tier1, tier2, deadline
+        ));
+        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(raw);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_modifyTierLimitsWithGuardians_expiredDeadline_reverts() public {
+        uint256 tier1 = 0.5 ether;
+        uint256 tier2 = 5 ether;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        // Two guardian sigs (RECOVERY_THRESHOLD=2) signed over the deadline
+        bytes memory sig0 = _modifyTierSig(g0Wallet, tier1, tier2, deadline);
+        bytes memory sig1 = _modifyTierSig(g1Wallet, tier1, tier2, deadline);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = sig0;
+        sigs[1] = sig1;
+
+        // Advance past deadline
+        vm.warp(deadline + 1);
+
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.TierLimitSigExpired.selector);
+        account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
+    }
+
+    function test_modifyTierLimitsWithGuardians_validDeadline_succeeds() public {
+        uint256 tier1 = 0.5 ether;
+        uint256 tier2 = 5 ether;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        bytes memory sig0 = _modifyTierSig(g0Wallet, tier1, tier2, deadline);
+        bytes memory sig1 = _modifyTierSig(g1Wallet, tier1, tier2, deadline);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = sig0;
+        sigs[1] = sig1;
+
+        vm.prank(ownerWallet.addr);
+        account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
+
+        assertEq(account.tier1Limit(), tier1, "tier1 should be updated");
+        assertEq(account.tier2Limit(), tier2, "tier2 should be updated");
+    }
+
+    function test_modifyTierLimitsWithGuardians_replaySameNonce_reverts() public {
+        uint256 tier1 = 0.5 ether;
+        uint256 tier2 = 5 ether;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        // Sigs are over nonce=0 (first call on fresh account)
+        bytes memory sig0 = _modifyTierSig(g0Wallet, tier1, tier2, deadline);
+        bytes memory sig1 = _modifyTierSig(g1Wallet, tier1, tier2, deadline);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = sig0;
+        sigs[1] = sig1;
+
+        vm.prank(ownerWallet.addr);
+        account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
+        // _tierLimitNonce is now 1. Replaying the same nonce=0 sigs must fail.
+
+        // After nonce increments to 1, old nonce=0 sigs recover wrong addresses → NotGuardian
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
+        account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
+    }
+
+    // ─── Gnosis Safe multisig guardian (issue #42) ────────────────────────────
+    //
+    // TODO: Add full social recovery test where the community guardian is a Gnosis Safe
+    //       multisig. The test requires:
+    //       1. Deploy a minimal Gnosis Safe (or a contract that implements ERC-1271)
+    //       2. Use it as guardian[2] during account creation
+    //       3. Trigger social recovery: owner signs, gnosis-safe signs (via ERC-1271)
+    //       4. Assert recovery succeeds
+    //
+    // Tracked in: https://github.com/AAStarCommunity/airaccount-contract/issues/42
+    // Deferred: requires deploying Gnosis Safe contracts in test environment (significant setup).
 }
