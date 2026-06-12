@@ -8,6 +8,83 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.17.2-beta.3] - 2026-06-12 (AlgTierLib refactor + quick-wins: version constants, custom errors, ForceExit hardening)
+
+Delta release on top of v0.17.2-beta.2. **Code quality & observability release** — no behavioral changes to existing accounts. 4 contracts redeployed with version constants; existing accounts unaffected.
+
+### New: Version constants (on-chain SDK version detection)
+
+All main contracts now expose a `string public constant` version string, eliminating the need for off-chain version tracking:
+
+| Contract | Constant | Value |
+|---|---|---|
+| `AAStarAirAccountV7` | `ACCOUNT_VERSION` | `"0.17.2"` |
+| `AAStarAirAccountFactoryV7` | `FACTORY_VERSION` | `"0.17.2"` |
+| `ForceExitModule` | `MODULE_VERSION` | `"0.17.2"` |
+| `SessionKeyValidator` | `MODULE_VERSION` | `"0.17.2"` |
+
+**SDK impact**: `abi/AAStarAirAccountV7.full.json` updated to 64 functions (+`ACCOUNT_VERSION` getter). SDK must update ABI. See [SDK issue](#) for tracking.
+
+### Refactor: AlgTierLib — single source of truth for algId→tier mapping
+
+Extracted `_algTier()` logic into `src/utils/AlgTierLib.sol` (internal library, compile-time inlined — zero gas overhead). Both `AAStarAirAccountBase` and `AAStarGlobalGuard` delegate to it. Previously maintained independently with a "must stay in sync" comment.
+
+- **No behavioral change**: tier mapping is identical.
+- **Maintenance benefit**: adding a new algId requires editing one file only.
+
+### Fix: Factory — custom errors replace `require(string)`
+
+All 15+ `require(condition, "string")` in `AAStarAirAccountFactoryV7` constructor, `createAccountWithDefaults`, and `createAgentAccount` replaced with typed custom errors. Same in `AAStarGlobalGuard` constructor.
+
+**SDK impact**: if SDK catches factory errors by string message (e.g. `"Guardians required"`), switch to selector-based matching. New error names: `GuardiansRequired`, `GuardiansMustBeDistinct`, `DailyLimitRequired`, `AgentKeyRequired`, `Guardian2Required`, `CallerCannotBeGuardian2`, `AgentKeyCannotBeGuardian2`, `GuardianSigExpired`, `DeadlineTooFarInFuture`, `HumanOwnerCannotBeCommunityGuardian`, `Guardian2CannotBeCommunityGuardian`, `AgentKeyCannotBeCommunityGuardian`, `TokenConfigLengthMismatch`, `DefaultTokenAddressZero`, `DuplicateDefaultToken`, `InvalidDefaultTokenConfig`.
+
+### Fix: ForceExitModule — incompatible account detection at install time
+
+`onInstall` now verifies `guardians(0)` exists AND returns a non-zero address, failing loudly with `IncompatibleAccount` instead of creating a zombie module (installed but unable to accumulate approvals).
+
+- **New error**: `error IncompatibleAccount();`
+- Prevents a confusing UX state where the module appears installed but `approveForceExit` always reverts.
+
+### Gas: Assembly Hamming weight (popcount)
+
+`_popcount()` in `AAStarAirAccountBase` and `_countBits()` in `ForceExitModule` replaced with parallel bit-manipulation (standard Hamming weight algorithm). ~5-8x fewer opcodes for 3-guardian bitmaps. Semantically identical.
+
+### isValidSignature NatSpec clarification
+
+Improved `isValidSignature` NatSpec to explicitly document hash-prefix behavior: does NOT apply EIP-191 prefix; DeFi protocols (Permit2, OpenSea) pass struct hash directly; personal_sign callers must pre-prefix. Matches Gnosis Safe behavior. No code change.
+
+### Tests: 5 new paths added (PR #73)
+
+| Test | What it covers |
+|---|---|
+| `test_executeFromExecutor_reentrancy_reverts` | Proper re-entrant executor mock (ReentrantExecutor) confirms tstore nonReentrant guard blocks inner call |
+| `test_installModule_zeroGuardianAccount_reverts` | Direct `initialize` with all-zero guardians → `NotGuardian` on installModule |
+| `test_bundle_identicalCallData_secondValidateOverwritesFirst` | Documents known #52 limitation: two UserOps with identical callData share tslot; second validate overwrites first |
+| `test_modifyTierLimitsWithGuardians_expiredDeadline_reverts` | Guardian sig with past deadline → `TierLimitSigExpired` |
+| `test_modifyTierLimitsWithGuardians_replaySameNonce_reverts` | After first call, replaying nonce=0 sigs → `NotGuardian` (nonce increments, old sigs recover wrong address) |
+| `test_ACCOUNT_VERSION_constant` | `account.ACCOUNT_VERSION() == "0.17.2"` |
+| `test_onInstall_incompatibleAccount_reverts` | `ForceExitModule.onInstall` by a bare contract without `guardians()` → `IncompatibleAccount` |
+| `test_onInstall_zeroGuardian_reverts` | Account with `guardians(0) == address(0)` → `IncompatibleAccount` |
+
+### Sepolia deployment
+
+> **Note**: Addresses TBD — fill in after redeployment. See `docs/DEPLOYMENT-v0.17.2-beta.3.md`.
+
+| Contract | Address | vs beta.2 |
+|---|---|---|
+| **AAStarAirAccountV7 implementation (NEW)** | `TBD` | redeployed — ACCOUNT_VERSION |
+| **AAStarAirAccountFactoryV7 (NEW)** | `TBD` | redeployed — custom errors + FACTORY_VERSION |
+| **ForceExitModule (NEW)** | `TBD` | redeployed — IncompatibleAccount + MODULE_VERSION |
+| **SessionKeyValidator (NEW)** | `TBD` | redeployed — MODULE_VERSION |
+| Other 7 contracts | unchanged from beta.2 | identical bytecode, identical addresses |
+
+### Tests
+
+- forge test: **681/0/0** (29 suites, 7 new tests across PR #73 + PR #85)
+- on-chain E2E: pending re-run against beta.3 addresses
+
+---
+
 ## [v0.17.2-beta.2] - 2026-06-02 (ForceExit LOW-3 stale-guardian fix + Sepolia E2E + CI cleanup)
 
 Delta release on top of v0.17.2-beta.1. **One Solidity source change**: `ForceExitModule.sol` — LOW-3 partial fix (stale-guardian check). One contract redeployed; other 10 keep their addresses.
