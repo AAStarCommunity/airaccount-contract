@@ -1164,4 +1164,69 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertEq(account.getCurrentAlgId(), 0x04,
             "op2 algId 0x04 overwrote op1 algId 0x02 (known limitation: identical callData in same bundle)");
     }
+
+    // ─── modifyTierLimitsWithGuardians: deadline path ─────────────────────────
+
+    /// @notice Build guardian signature for modifyTierLimitsWithGuardians.
+    ///         Hash: keccak256(abi.encode(account, chainId, nonce=0, "MODIFY_TIER_LIMITS", tier1, tier2, deadline))
+    function _modifyTierSig(Vm.Wallet memory w, uint256 tier1, uint256 tier2, uint256 deadline)
+        internal view returns (bytes memory)
+    {
+        bytes32 raw = keccak256(abi.encode(
+            address(account), block.chainid, uint256(0), "MODIFY_TIER_LIMITS", tier1, tier2, deadline
+        ));
+        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(raw);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_modifyTierLimitsWithGuardians_expiredDeadline_reverts() public {
+        uint256 tier1 = 0.5 ether;
+        uint256 tier2 = 5 ether;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        // Two guardian sigs (RECOVERY_THRESHOLD=2) signed over the deadline
+        bytes memory sig0 = _modifyTierSig(g0Wallet, tier1, tier2, deadline);
+        bytes memory sig1 = _modifyTierSig(g1Wallet, tier1, tier2, deadline);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = sig0;
+        sigs[1] = sig1;
+
+        // Advance past deadline
+        vm.warp(deadline + 1);
+
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.TierLimitSigExpired.selector);
+        account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
+    }
+
+    function test_modifyTierLimitsWithGuardians_validDeadline_succeeds() public {
+        uint256 tier1 = 0.5 ether;
+        uint256 tier2 = 5 ether;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        bytes memory sig0 = _modifyTierSig(g0Wallet, tier1, tier2, deadline);
+        bytes memory sig1 = _modifyTierSig(g1Wallet, tier1, tier2, deadline);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = sig0;
+        sigs[1] = sig1;
+
+        vm.prank(ownerWallet.addr);
+        account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
+
+        assertEq(account.tier1Limit(), tier1, "tier1 should be updated");
+        assertEq(account.tier2Limit(), tier2, "tier2 should be updated");
+    }
+
+    // ─── Gnosis Safe multisig guardian (issue #42) ────────────────────────────
+    //
+    // TODO: Add full social recovery test where the community guardian is a Gnosis Safe
+    //       multisig. The test requires:
+    //       1. Deploy a minimal Gnosis Safe (or a contract that implements ERC-1271)
+    //       2. Use it as guardian[2] during account creation
+    //       3. Trigger social recovery: owner signs, gnosis-safe signs (via ERC-1271)
+    //       4. Assert recovery succeeds
+    //
+    // Tracked in: https://github.com/AAStarCommunity/airaccount-contract/issues/42
+    // Deferred: requires deploying Gnosis Safe contracts in test environment (significant setup).
 }
