@@ -114,15 +114,15 @@ export interface E2EResult {
   evidence?: string;
 }
 
-const RESULT_FILE = resolve(REPO_ROOT, "docs", "e2e-results-v0.17.2-beta.1.md");
+const RESULT_FILE = resolve(REPO_ROOT, "docs", "e2e-results-v0.17.2-beta.3.md");
 
 export function initResultFile(): void {
   if (existsSync(RESULT_FILE)) return;
-  const header = `# E2E Test Results — v0.17.2-beta.1 (Sepolia)
+  const header = `# E2E Test Results — v0.17.2-beta.3 (Sepolia)
 
-**Deployment**: 2026-06-01 (see \`docs/DEPLOYMENT-v0.17.2-beta.1.md\` §8 for addresses).
+**Deployment**: 2026-06-12 (see \`docs/DEPLOYMENT-v0.17.2-beta.3.md\` for addresses).
 **Test infrastructure**: TypeScript + viem (\`scripts/e2e-v0172/\`).
-**Coverage matrix**: \`docs/abi-coverage-v0.17.2-beta.1.md\`.
+**Coverage matrix**: \`docs/abi-coverage-v0.17.2-beta.3.md\`.
 
 Each row below is a single E2E test run; results are appended chronologically.
 

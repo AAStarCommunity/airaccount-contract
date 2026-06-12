@@ -1255,4 +1255,106 @@ contract AAStarAirAccountV7_M7Test is Test {
     //
     // Tracked in: https://github.com/AAStarCommunity/airaccount-contract/issues/42
     // Deferred: requires deploying Gnosis Safe contracts in test environment (significant setup).
+
+    // ─── guardAddTokenConfig ──────────────────────────────────────────────────
+
+    function _deployAccountWithGuard() internal returns (AAStarAirAccountV7 acct, AAStarGlobalGuard grd) {
+        acct = new AAStarAirAccountV7();
+        address predictedAddr = address(acct);
+        uint8[] memory algs = new uint8[](0);
+        grd = new AAStarGlobalGuard(
+            predictedAddr,
+            1 ether,       // dailyLimit
+            algs,
+            0,             // minDailyLimit
+            new address[](0),
+            new AAStarGlobalGuard.TokenConfig[](0)
+        );
+        acct.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
+            guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
+            dailyLimit: 1 ether,
+            approvedAlgIds: algs,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        }), address(grd));
+    }
+
+    function test_guardAddTokenConfig_addsToken() public {
+        (AAStarAirAccountV7 acct,) = _deployAccountWithGuard();
+        address token = address(0xABCD);
+        AAStarGlobalGuard.TokenConfig memory cfg = AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 100e18,
+            tier2Limit: 500e18,
+            dailyLimit: 1000e18
+        });
+        vm.prank(ownerWallet.addr);
+        acct.guardAddTokenConfig(token, cfg);
+        // Verify config was stored in the guard
+        AAStarGlobalGuard grd = AAStarGlobalGuard(acct.guard());
+        (uint256 t1, uint256 t2, uint256 daily) = grd.tokenConfigs(token);
+        assertEq(t1, 100e18);
+        assertEq(t2, 500e18);
+        assertEq(daily, 1000e18);
+    }
+
+    function test_guardAddTokenConfig_onlyOwner_reverts() public {
+        (AAStarAirAccountV7 acct,) = _deployAccountWithGuard();
+        AAStarGlobalGuard.TokenConfig memory cfg = AAStarGlobalGuard.TokenConfig({
+            tier1Limit: 1e18,
+            tier2Limit: 2e18,
+            dailyLimit: 3e18
+        });
+        vm.prank(randomWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotOwner.selector);
+        acct.guardAddTokenConfig(address(0xABCD), cfg);
+    }
+
+    // ─── getCurrentSessionKey ─────────────────────────────────────────────────
+
+    function test_getCurrentSessionKey_returnsZeroOutsideUserOp() public view {
+        // Transient storage is empty outside a UserOp execution — always returns 0
+        bytes32 key = account.getCurrentSessionKey();
+        assertEq(key, bytes32(0));
+    }
+
+    // ─── initializeAgentAccount ───────────────────────────────────────────────
+
+    function test_initializeAgentAccount_setsOwnerAndGuardians() public {
+        AAStarAirAccountV7 agentAcct = new AAStarAirAccountV7();
+        uint8[] memory algs = new uint8[](0);
+        agentAcct.initializeAgentAccount(
+            address(ep),
+            ownerWallet.addr,
+            AAStarAirAccountBase.InitConfig({
+                guardians: [g0Wallet.addr, g1Wallet.addr, address(0)],
+                dailyLimit: 0,
+                approvedAlgIds: algs,
+                minDailyLimit: 0,
+                initialTokens: new address[](0),
+                initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            }),
+            address(0) // no guard
+        );
+        assertEq(agentAcct.owner(), ownerWallet.addr);
+        assertEq(agentAcct.guardianCount(), 2);
+        assertEq(agentAcct.guardians(0), g0Wallet.addr);
+        assertEq(agentAcct.guardians(1), g1Wallet.addr);
+    }
+
+    function test_initializeAgentAccount_cannotCallTwice() public {
+        AAStarAirAccountV7 agentAcct = new AAStarAirAccountV7();
+        uint8[] memory algs = new uint8[](0);
+        AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
+            guardians: [g0Wallet.addr, address(0), address(0)],
+            dailyLimit: 0,
+            approvedAlgIds: algs,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+        agentAcct.initializeAgentAccount(address(ep), ownerWallet.addr, cfg, address(0));
+        vm.expectRevert(); // initializer modifier: InvalidInitialization
+        agentAcct.initializeAgentAccount(address(ep), ownerWallet.addr, cfg, address(0));
+    }
 }

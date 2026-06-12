@@ -124,10 +124,10 @@ const tests: TestCase[] = [
 
   // ─── Validator router negatives ───────────────────────────────────
   {
-    name: "N-ROUTER.1 registerAlgorithm(0x01, existing) reverts AlgorithmAlreadyRegistered",
+    name: "N-ROUTER.1 registerAlgorithm after finalizeSetup() reverts SetupAlreadyClosed",
     run: async () => {
-      // ALG 0x01 is already wired to blsAlgorithm; trying to re-register should revert.
-      // From the deployer (annie) so OnlyOwner doesn't fire first.
+      // beta.3: router was finalized — registerAlgorithm reverts SetupAlreadyClosed.
+      // Prior betas would have reverted AlgorithmAlreadyRegistered.
       const { selector } = await expectRevert(
         () => publicClient.simulateContract({
           address: ADDR.validatorRouter, abi: routerAbi,
@@ -135,9 +135,9 @@ const tests: TestCase[] = [
           args: [1, ADDR.blsAlgorithm],
           account: annie.address,
         }),
-        "AlgorithmAlreadyRegistered()",
+        "SetupAlreadyClosed()",
       );
-      return { notes: `selector=${selector}` };
+      return { notes: `router locked after beta.3 deploy — selector=${selector}` };
     },
   },
   {
