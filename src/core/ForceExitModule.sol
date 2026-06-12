@@ -381,6 +381,8 @@ contract ForceExitModule is IERC7579Module {
     }
 
     /// @dev Counts set bits using parallel bit-manipulation (Hamming weight).
+    ///      Overflow note: returns 0 instead of 256 when all 256 bits are set.
+    ///      Unreachable here: approvalBitmap has at most 3 bits set (3-guardian threshold).
     function _countBits(uint256 bitmap) internal pure returns (uint256 count) {
         assembly {
             bitmap := sub(bitmap, and(shr(1, bitmap), 0x5555555555555555555555555555555555555555555555555555555555555555))

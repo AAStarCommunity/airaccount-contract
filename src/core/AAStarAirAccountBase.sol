@@ -1453,6 +1453,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
     /// @dev Counts set bits using parallel bit-manipulation (Hamming weight / population count).
     ///      Equivalent to the while-loop version but ~5-8x fewer opcodes for typical 3-guardian bitmaps.
+    ///      Note: the final mul+shr step overflows when all 256 bits are set (returns 0 instead of 256).
+    ///      Unreachable for all callers: max bitmap width is 3 guardians or a bounded weighted-signer set.
     function _popcount(uint256 x) internal pure returns (uint256 count) {
         assembly {
             x := sub(x, and(shr(1, x), 0x5555555555555555555555555555555555555555555555555555555555555555))
