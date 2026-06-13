@@ -8,6 +8,46 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.17.2-beta.4] - 2026-06-13 (Bundler-compatible algId — guard accounts work through any ERC-4337 bundler)
+
+Fixes the headline limitation that guard-enabled accounts could **not** transact through a standard ERC-4337 bundler. Non-behavioral for existing accounts; new impl + factory deployed (existing beta.3 clones are non-upgradable and keep old behavior — migrate to the beta.4 factory for bundler use).
+
+### The problem
+The validated `algId` was passed validate→execute via EIP-1153 transient storage. A bundler's `eth_estimateUserOperationGas` simulates validation and execution in **separate `eth_call`s**, which clears transient storage → `execute` saw `algId=0` → guard reverted `AlgorithmNotApproved(0)`. Cross-phase transient storage is a recognized anti-pattern (Trail of Bits, "Six mistakes in ERC-4337 smart accounts").
+
+### The fix (industry-standard — ZeroDev Kernel / Alchemy Modular Account pattern)
+- **Algorithm whitelist moved from `AAStarGlobalGuard` onto the account** (single source of truth, slot 24) and enforced in `validateUserOp` — an ERC-7562-legal own-storage read. The guard became pure accounting: `checkTransaction`→`recordSpend(value)`, `checkTokenTransaction`→`recordTokenSpend(token,amount,algId)`. `approveAlgorithm`/`approvedAlgorithms`/`AlgorithmNotApproved` removed from the guard; `guardApproveAlgorithm` now writes the account.
+- **Implemented ERC-4337 v0.7 `executeUserOp(userOp, userOpHash)`** — execution re-derives `algId` directly from `userOp.signature` in-frame (`_populateExecAlg` + self-`delegatecall`), eliminating the cross-`eth_call` transient dependency. **Restricted to dispatching `execute`/`executeBatch` only** (rejects a nested `executeUserOp`/arbitrary selector with `UnsupportedInnerSelector` — closes a tier/whitelist bypass where a nested, never-validated signature could forge a high algId).
+- **Per-op ETH tier gate added to `validateUserOp`** (fail-fast). Cumulative/daily tier stays execution-authoritative (ERC-7562 forbids reading the unstaked guard's `todaySpent` during validation) and is surfaced to clients at gas estimation.
+- **EIP-7702 `AirAccountDelegate` aligned** — ECDSA-only, constant algId, `recordSpend`/`recordTokenSpend`.
+
+### Review
+Opus + Codex web-researched the industry standard and adversarially reviewed (4 rounds). Codex found + we fixed 1 CRITICAL (nested-executeUserOp tier bypass) + 2 MEDIUM (per-op vs cumulative tier; resolved as ERC-7562-inherent + documented). Final: SHIP. Capability/value claims independently challenged by Opus.
+
+### Verification
+- **731 unit tests** pass (new `test/Beta4AlgIdBundlerFix.t.sol`: split-simulation reproducer, tier re-derivation, whitelist gate, nesting rejection, per-op tier).
+- **EIP-170:** account 23,419 bytes (1,157 free).
+- **Sepolia E2E 45/45** (Phase 08-12). Headline: a guard-enabled account's self-paying UserOp landed via the Pimlico bundler — tx [`0x48934dee…`](https://sepolia.etherscan.io/tx/0x48934dee021a7401d6196646dd07f023b3b18cd9a11aa110f4871971e3c74faf).
+
+### Deployed (Sepolia)
+| Contract | Address |
+|---|---|
+| Factory | [`0x3a9127a5f0b4ca734d54629d0c3ad9f52739c071`](https://sepolia.etherscan.io/address/0x3a9127a5f0b4ca734d54629d0c3ad9f52739c071) |
+| Implementation | [`0x0321Fa7261Ad5945e4B3f0c73aFD7D9392E39796`](https://sepolia.etherscan.io/address/0x0321Fa7261Ad5945e4B3f0c73aFD7D9392E39796) |
+| Extension | [`0x20FB2A65a52Fc6507FdD51260f055017a2BA2860`](https://sepolia.etherscan.io/address/0x20FB2A65a52Fc6507FdD51260f055017a2BA2860) |
+| AirAccountDelegate | [`0x4bda4849b80cc444fb2da65beec0724005c6675c`](https://sepolia.etherscan.io/address/0x4bda4849b80cc444fb2da65beec0724005c6675c) |
+| AgentRegistry | [`0xe1320c35485b4d7817866a8d0d8f77dd58202253`](https://sepolia.etherscan.io/address/0xe1320c35485b4d7817866a8d0d8f77dd58202253) |
+
+Reused unchanged: ValidatorRouter `0x3c2b06f5…`, SessionKeyValidator `0x655ca2e9…`, ForceExitModule `0xdb396ca2…`, BLSAlgorithm `0xB8212718…`, BLSAggregator `0xBAc3f249…`.
+
+### SDK impact (see aastar-sdk#51)
+(1) wrap bundler callData with the `executeUserOp` selector for guard accounts; (2) read the whitelist from `account.approvedAlgorithms`; (3) guard ABI renamed → consume regenerated `abi/AAStarAirAccountV7.full.json`.
+
+### Docs
+`docs/beta4-impact-assessment.md`, `docs/beta4-algid-bundler-fix-design.md`, `docs/beta4-e2e-tx-capability-map.md`, `docs/abi/` (auto-generated; `pnpm gen:abi-docs`).
+
+---
+
 ## [v0.17.2-beta.3] - 2026-06-12 (AlgTierLib refactor + quick-wins: version constants, custom errors, ForceExit hardening)
 
 Delta release on top of v0.17.2-beta.2. **Code quality & observability release** — no behavioral changes to existing accounts. 4 contracts redeployed with version constants; existing accounts unaffected.

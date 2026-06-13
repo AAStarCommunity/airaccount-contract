@@ -32,7 +32,13 @@ import { sepolia } from "viem/chains";
 config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
 const ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
-const PRIORITY_FEE = 2_000_000_000n; // 2 gwei tip — attractive enough to be included promptly
+
+// Priority fee (tip). Adaptive: use max(network-suggested, floor); env-overridable. A fixed tip
+// can be too low under congestion (txn parked) or wastefully high when the network is quiet.
+const PRIORITY_FEE_FLOOR = 1_500_000_000n; // 1.5 gwei floor — enough to be picked up on Sepolia
+const PRIORITY_FEE_OVERRIDE = process.env.DEPLOY_PRIORITY_FEE_GWEI
+  ? BigInt(Math.round(Number(process.env.DEPLOY_PRIORITY_FEE_GWEI) * 1e9))
+  : 0n;
 
 const PRIVATE_KEY = (process.env.PRIVATE_KEY_ANNI ?? process.env.PRIVATE_KEY) as Hex;
 const COMMUNITY   = process.env.COMMUNITY_GUARDIAN_ADDRESS as Address;
@@ -50,10 +56,17 @@ function loadArtifact(name: string) {
 function pub(rpcUrl: string) { return createPublicClient({ chain: sepolia, transport: http(rpcUrl, { timeout: 60_000 }) }); }
 function wal(rpcUrl: string) { return createWalletClient({ account: deployer, chain: sepolia, transport: http(rpcUrl, { timeout: 60_000 }) }); }
 
+function maxBig(a: bigint, b: bigint): bigint { return a > b ? a : b; }
+
 async function fees(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
-  const block = await pub(RPC_URLS[0]).getBlock();
+  const client = pub(RPC_URLS[0]);
+  const block = await client.getBlock();
   const base = block.baseFeePerGas ?? 10_000_000_000n;
-  return { maxFeePerGas: base * 2n + PRIORITY_FEE, maxPriorityFeePerGas: PRIORITY_FEE };
+  // Network-suggested tip (eth_maxPriorityFeePerGas), with a floor; env override wins if set.
+  let suggested = PRIORITY_FEE_FLOOR;
+  try { suggested = await client.estimateMaxPriorityFeePerGas(); } catch { /* fall back to floor */ }
+  const priority = PRIORITY_FEE_OVERRIDE > 0n ? PRIORITY_FEE_OVERRIDE : maxBig(suggested, PRIORITY_FEE_FLOOR);
+  return { maxFeePerGas: base * 2n + priority, maxPriorityFeePerGas: priority };
 }
 
 /** Poll the receipt across ALL RPCs without ever re-sending the tx. */
