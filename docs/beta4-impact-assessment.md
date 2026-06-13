@@ -48,6 +48,27 @@ The **ETH tier** check (signature tier vs ETH value) was **already in the accoun
 
 ---
 
+## 3a. Why ERC-7562 forbids reading the (unstaked) guard in validation
+
+This is *the* constraint that shapes the whole design: it dictates what can move to `validateUserOp` and what must stay in execution.
+
+**Why the rules exist.** In ERC-4337 a bundler **simulates `validateUserOp` off-chain** to decide whether to include a UserOp — it will not pay gas for an op that ultimately fails. A malicious account could make validation pass during simulation but behave differently once mined (e.g. by reading some external storage that another transaction changed in between), making the bundler include a doomed op and eat the gas — a DoS on bundlers. ERC-7562 (the validation rules) prevents this by restricting which storage `validateUserOp` may touch.
+
+**What validation may read/write.**
+1. The account's **own** storage (slots at the account's address) — unrestricted.
+2. **Associated storage** of another contract: a slot of the form `keccak256(account ‖ x)` (i.e. a mapping keyed by the account address) in contract `A`; **or** *all* of `A`'s storage if `A` is **staked** (a stake makes `A` accountable — misbehavior can be throttled/slashed).
+3. It may **not** read arbitrary storage of an **unstaked external** contract whose slots are not keyed by the account — precisely because that storage can change between simulation and inclusion, so validation results couldn't be trusted.
+
+**Why AirAccount's guard is out of bounds.** `AAStarGlobalGuard` is a **separate, per-account, unstaked** contract, and its state (`approvedAlgorithms`, `dailySpent`, `tokenConfigs`) uses **plain slots** (one guard per account — not a mapping keyed by the account address). So to ERC-7562 it is exactly "an unstaked external contract with non-associated storage" → `validateUserOp` **cannot read it**. This is the original reason all guard checks lived in execution (and why algId had to be smuggled forward via transient storage — the thing the bundler split-simulation then cleared).
+
+**What this lets beta.4 do, and not do:**
+- The **algorithm whitelist** is a static set, so it was **moved onto the account's own storage** (slot 24) — now `validateUserOp` may read it legally, and the whitelist is enforced authoritatively in validation. ✅
+- The **cumulative / daily tier** needs `guard.todaySpent()` — a counter that *lives in the guard* and *changes on every spend*, i.e. exactly the kind of mutable external state the rules forbid in validation. So it **must stay in execution** (surfaced to clients at gas-estimation time via the `executeUserOp` simulation). Only the **per-op** tier (this op's value vs the account-local thresholds — own storage) can run in validation.
+
+One line: *the bundler-safety rules confine validation reads to the account's own / associated / staked storage; a per-account unstaked guard qualifies for none of those, so its mutable counters are unreadable in validation — the static whitelist could move to the account, the dynamic limits could not.*
+
+---
+
 ## 4. Call timing / sequencing
 
 **Before:** `validateUserOp` `tstore(algId)` → (bundler clears transient between eth_calls) → `execute` `tload(algId)` → `guard.checkTransaction(value, algId)`. Broke under bundler split-simulation (algId=0).
