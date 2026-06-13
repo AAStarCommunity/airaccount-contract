@@ -114,7 +114,7 @@ contract AAStarAirAccountSessionKeyTest is Test {
 
         acct = new AAStarAirAccountV7();
         address g = address(new AAStarGlobalGuard(
-            address(acct), 0, algIds, 0,
+            address(acct), 0, 0,
             new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
         ));
         acct.initialize(address(ep), owner_, cfg, g);
@@ -330,7 +330,7 @@ contract ParserTryCatchTest is Test {
 
         account = new AAStarAirAccountV7();
         address g = address(new AAStarGlobalGuard(
-            address(account), 1 ether, algIds, 0,
+            address(account), 1 ether, 0,
             new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
         ));
         account.initialize(address(ep), owner_, cfg, g);
@@ -436,7 +436,7 @@ contract SessionKeyBatchScopeTest is Test {
 
         account = new AAStarAirAccountV7();
         address g = address(new AAStarGlobalGuard(
-            address(account), 0, algIds, 0,
+            address(account), 0, 0,
             new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
         ));
         account.initialize(address(ep), owner_, cfg, g);

@@ -89,6 +89,11 @@ export const wJason: WalletClient = createWalletClient({
   chain: sepolia,
   transport: fallback(rpcs.map((u) => http(u, { timeout: 20_000 }))),
 });
+export const wBob: WalletClient = createWalletClient({
+  account: bob,
+  chain: sepolia,
+  transport: fallback(rpcs.map((u) => http(u, { timeout: 20_000 }))),
+});
 
 // ─── ABI loading ────────────────────────────────────────────────────────
 

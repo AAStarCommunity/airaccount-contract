@@ -46,7 +46,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @param _owner Initial account owner (ECDSA signer)
     /// @param _config Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed)
     function initialize(address _entryPoint, address _owner, InitConfig calldata _config) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, address(0));
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, address(0), _config.approvedAlgIds);
     }
 
     /// @notice Initialize this account with a pre-deployed guard.
@@ -58,7 +58,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @param _config Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr)
     /// @param _guardAddr Pre-deployed AAStarGlobalGuard address bound to this account's address
     function initialize(address _entryPoint, address _owner, InitConfig calldata _config, address _guardAddr) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
     }
 
     /// @notice Initialize an autonomous-agent account.
@@ -75,7 +75,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         InitConfig calldata _config,
         address _guardAddr
     ) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
     }
 
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────
@@ -206,9 +206,106 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         } else {
             validationData = _validateSignature(userOpHash, userOp.signature);
         }
+
+        // v0.17.2-beta.4: AUTHORITATIVE algorithm-whitelist gate.
+        // The whitelist now lives in the account's OWN storage (single source of truth), so it can
+        // be read here during validation — ERC-7562 permits reading the account's own storage, but
+        // NOT the separate unstaked guard's. Enforcing it here (rather than in the guard at execution)
+        // is what makes guard-enabled accounts work through a bundler: the previous design read the
+        // algId from cross-eth_call transient storage, which the bundler clears between its separate
+        // validation and execution simulations → algId=0 → AlgorithmNotApproved(0). This gate runs in
+        // BOTH estimation and real handleOps. SIG_VALIDATION_FAILED (1) is the only failure sentinel.
+        if (validationData != 1 && address(guard) != address(0)) {
+            uint8 a = _consumeValidatedAlgId();
+            if (!approvedAlgorithms[a]) {
+                return 1; // SIG_VALIDATION_FAILED — algorithm not whitelisted for this account
+            }
+            // Per-op ETH tier gate (fail-fast). Reject an obviously under-tier op here rather than
+            // letting execution revert with InsufficientTier. NOTE (Codex MEDIUM, accepted): this is
+            // a PER-OP check only. The CUMULATIVE daily-spend tier (todaySpent + value) cannot be
+            // checked in validation because todaySpent lives in the unstaked guard contract and
+            // ERC-7562 forbids reading it during validation. Cumulative tier stays authoritative in
+            // execution (_enforceGuard) and is surfaced to clients at gas-estimation time (the
+            // executeUserOp simulation reverts on any cumulative violation before submission).
+            if (tier1Limit > 0 || tier2Limit > 0) {
+                uint8 resolved = (a == ALG_WEIGHTED) ? _resolveWeightedAlgId(_consumeValidatedWeight()) : a;
+                if (!_validationTierOk(resolved, userOp.callData)) {
+                    return 1; // SIG_VALIDATION_FAILED — signature tier below the value's required tier
+                }
+            }
+        }
+
         if (missingAccountFunds > 0) {
             _payPrefund(missingAccountFunds);
         }
+    }
+
+    /// @notice ERC-4337 v0.7 IAccountExecute entrypoint (v0.17.2-beta.4).
+    /// @dev When `userOp.callData` begins with this selector, the EntryPoint calls THIS function with
+    ///      the FULL userOp (incl. signature) instead of calling `callData` directly. That lets the
+    ///      execution phase re-derive the validated algId DIRECTLY from `userOp.signature` — in the
+    ///      same call frame, deterministically, in both bundler estimation and real handleOps — with
+    ///      no dependency on cross-eth_call transient storage. We populate the same-frame algId queue
+    ///      from the signature, then self-`delegatecall` the inner execute()/executeBatch() calldata
+    ///      (delegatecall preserves msg.sender == EntryPoint, so execute() consumes the algId we just
+    ///      stored and runs its existing tier/guard logic with the correct algId).
+    /// @dev Reverts when executeUserOp's inner calldata is not execute()/executeBatch().
+    error UnsupportedInnerSelector();
+
+    function executeUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash
+    ) external onlyEntryPoint {
+        bytes calldata inner = userOp.callData[4:]; // strip the executeUserOp selector
+        // SECURITY (Codex CRITICAL): only execute()/executeBatch() may be dispatched. A nested
+        // executeUserOp (or any other selector) is rejected — otherwise the nested op's signature is
+        // NEVER validated, so _populateExecAlg would trust a forged algId prefix and bypass the
+        // tier/whitelist gate, executing a high-value/high-tier call off a tier-1 outer signature.
+        if (inner.length < 4) revert UnsupportedInnerSelector();
+        bytes4 innerSel = bytes4(inner[:4]);
+        if (innerSel != this.execute.selector && innerSel != this.executeBatch.selector) {
+            revert UnsupportedInnerSelector();
+        }
+        // Key the algId queue by the INNER calldata so the self-delegatecall (whose msg.data == inner,
+        // matching execute()'s _setCallDataKey(keccak256(msg.data))) reads exactly what we store here.
+        _setCallDataKey(keccak256(inner));
+        _populateExecAlg(userOpHash, userOp.signature);
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool ok, bytes memory ret) = address(this).delegatecall(inner);
+        if (!ok) {
+            assembly { revert(add(ret, 0x20), mload(ret)) }
+        }
+    }
+
+    /// @dev v0.17.2-beta.4: per-op ETH tier check for the validateUserOp gate. Decodes the ETH
+    ///      value(s) from the userOp callData (unwrapping the executeUserOp selector if present, then
+    ///      execute/executeBatch) and verifies the provided signature tier covers requiredTier(value).
+    ///      Returns true (no rejection) for callData that does not move ETH through execute/executeBatch
+    ///      (those paths carry no value-tier obligation here). The cumulative/daily tier is still
+    ///      enforced authoritatively in execution; this is the fail-fast per-op gate.
+    function _validationTierOk(uint8 resolvedAlgId, bytes calldata callData) internal view returns (bool) {
+        bytes calldata cd = callData;
+        // Unwrap the ERC-4337 v0.7 executeUserOp wrapper if present.
+        if (cd.length >= 4 && bytes4(cd[:4]) == this.executeUserOp.selector) {
+            if (cd.length < 8) return true;
+            cd = cd[4:];
+        }
+        if (cd.length < 4) return true;
+        bytes4 sel = bytes4(cd[:4]);
+        uint8 provided = _algTier(resolvedAlgId);
+
+        if (sel == this.execute.selector) {
+            // execute(address dest, uint256 value, bytes func): value at [4+32 : 4+64]
+            if (cd.length < 68) return true;
+            uint256 value = uint256(bytes32(cd[36:68]));
+            return provided >= requiredTier(value);
+        }
+        // executeBatch and all other selectors: tier is enforced authoritatively per-call in
+        // execution (_enforceGuard, with cumulative daily spend) and surfaced at gas estimation via
+        // the executeUserOp simulation. We deliberately do NOT decode batch values here — a per-op
+        // batch check in validation would be inconsistent with the execution-side CUMULATIVE check
+        // (Codex MEDIUM) and would cost significant bytecode. Single execute() is the fast-fail case.
+        return true;
     }
 
     // ─── ERC-7579 Module Management (M7.2) ────────────────────────────
@@ -369,7 +466,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
         // Full guard enforcement at Tier 1: cumulative ETH tier + daily limit + algorithm
         // whitelist + ERC20/token limits. skipEthCheck=false (executor path holds correct msg.sender).
-        _enforceGuard(value, ALG_ECDSA, ALG_ECDSA, bytes32(0), target, data, false);
+        _enforceGuard(value, ALG_ECDSA, bytes32(0), target, data, false);
 
         returnData = new bytes[](1);
         (bool success, bytes memory result) = target.call{value: value}(data);

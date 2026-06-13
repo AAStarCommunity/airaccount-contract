@@ -3,43 +3,46 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-> ## Status: v0.17.2-beta.2 (current beta — 2026-06-02)
->
-> Latest tag: [`v0.17.2-beta.2`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.2-beta.2). Deployed + Etherscan-verified on Sepolia (11/11). Forge test **674/0/0**, on-chain E2E **79/79 PASS**.
->
-> ### Core features since v0.17.1
->
-> Combined `v0.17.2-beta.1` + `v0.17.2-beta.2`:
->
-> - **Session-key system unified** — deleted `AgentSessionKeyValidator` + `AirAccountCompositeValidator` + `TierGuardHook` (-7.8 KB combined bytecode). Single enhanced `SessionKeyValidator` at validator router algId `0x08` supports both classic single-target sessions and richer agent-grade controls (velocity, `callTargets[]`, `selectorAllowlist[]`, P256 passkey variant). Backward-compat shims removed.
-> - **8 rounds of Codex adversarial review + David human review** on PR #61 + PR #68. All Critical / High / Medium findings fixed:
->   - BLS infinity-point bypass (per-UserOp + final aggregate checks)
->   - Aggregator unbound-to-userOps fix (recompute from `userOps[i].signature`)
->   - Weighted-sig token tier mismatch (pass resolved algId to `_checkTokenGuard`)
->   - 7702 delegate ERC20 inline check (raw `transfer`/`approve` selectors)
->   - ForceExit stale-guardian check (v0.17.2-beta.2)
->   - AgentRegistry factory-provenance whitelist (H-2)
->   - `bindFactory` deployer-only access control
->   - 5-arg shim confused-deputy bypass closed
-> - **ForceExit stale-guardian fix (v0.17.2-beta.2)** — `approveForceExit` rejects signatures from rotated-out guardians (`SignerNoLongerGuardian`). One contract redeployed; other 10 keep beta.1 addresses.
-> - **6-phase on-chain E2E suite** against Sepolia deployment — 79/79 PASS, 100% non-deferred ABI coverage
-> - **Sepolia deploy + Etherscan verify (11/11)** + complete deploy runbook
->
-> ### Core feature docs (key reading order)
->
-> 1. [CHANGELOG.md](CHANGELOG.md) — release-by-release feature evolution
-> 2. [docs/DEPLOYMENT-v0.17.2-beta.1.md](docs/DEPLOYMENT-v0.17.2-beta.1.md) — full Sepolia deploy runbook
-> 3. [docs/DEPLOYMENT-v0.17.2-beta.2.md](docs/DEPLOYMENT-v0.17.2-beta.2.md) — beta.2 delta release (ForceExitModule only)
-> 4. [docs/contracts-inventory-v0.17.2-beta.1.md](docs/contracts-inventory-v0.17.2-beta.1.md) — 11 contracts × 4 wirings × algorithm-ID matrix
-> 5. [docs/security-review-v0.17.2-beta.1.md](docs/security-review-v0.17.2-beta.1.md) — Codex rounds 5-8 (pre-release gate)
-> 6. [docs/abi-coverage-v0.17.2-beta.1.md](docs/abi-coverage-v0.17.2-beta.1.md) — 80+ external functions: U (unit) / E (E2E) / deferred classification
-> 7. [docs/e2e-results-v0.17.2-beta.1.md](docs/e2e-results-v0.17.2-beta.1.md) — per-test on-chain result log
-> 8. [docs/forceexit-design-notes.md](docs/forceexit-design-notes.md) — ForceExit subsystem design + accepted residual risks
-> 9. [docs/known-issues.md](docs/known-issues.md) — KI-1..KI-15 accepted limitations + auditor notes
-> 10. [GitHub issue #67 v0.18 roadmap](https://github.com/AAStarCommunity/airaccount-contract/issues/67) — what's planned next
->
+## Status: v0.17.2-beta.3 — 2026-06-12
+
+Latest tag: [`v0.17.2-beta.3`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.2-beta.3). Deployed + Etherscan-verified on Sepolia. Forge test **723/0/0**, on-chain E2E **79/79 PASS**.
+
+### Core features since v0.17.1
+
+Combined `v0.17.2-beta.1` + `v0.17.2-beta.2`:
+
+- **Session-key system unified** — deleted `AgentSessionKeyValidator` + `AirAccountCompositeValidator` + `TierGuardHook` (-7.8 KB combined bytecode). Single enhanced `SessionKeyValidator` at validator router algId `0x08` supports both classic single-target sessions and richer agent-grade controls (velocity, `callTargets[]`, `selectorAllowlist[]`, P256 passkey variant). Backward-compat shims removed.
+- **8 rounds of Codex adversarial review + David human review** on PR #61 + PR #68. All Critical / High / Medium findings fixed:
+  - BLS infinity-point bypass (per-UserOp + final aggregate checks)
+  - Aggregator unbound-to-userOps fix (recompute from `userOps[i].signature`)
+  - Weighted-sig token tier mismatch (pass resolved algId to `_checkTokenGuard`)
+  - 7702 delegate ERC20 inline check (raw `transfer`/`approve` selectors)
+  - ForceExit stale-guardian check (v0.17.2-beta.2)
+  - AgentRegistry factory-provenance whitelist (H-2)
+  - `bindFactory` deployer-only access control
+  - 5-arg shim confused-deputy bypass closed
+- **ForceExit stale-guardian fix (v0.17.2-beta.2)** — `approveForceExit` rejects signatures from rotated-out guardians (`SignerNoLongerGuardian`). One contract redeployed; other 10 keep beta.1 addresses.
+- **Phase 08-12 E2E verified (2026-06-11~12)** — 45 new on-chain tests covering multi-account creation, execute variants, session keys, guardian recovery + modules, ERC-4337 UserOp via Pimlico bundler. Full suite: **79/79 PASS**, 100% non-deferred ABI coverage.
+- **Sepolia deploy + Etherscan verify (11/11)** + complete deploy runbook
+
+### Key docs
+
+1. [CHANGELOG.md](CHANGELOG.md) — release-by-release feature evolution
+2. [docs/DEPLOYMENT-v0.17.2-beta.1.md](docs/DEPLOYMENT-v0.17.2-beta.1.md) — full Sepolia deploy runbook
+3. [docs/DEPLOYMENT-v0.17.2-beta.2.md](docs/DEPLOYMENT-v0.17.2-beta.2.md) — beta.2 delta release (ForceExitModule only)
+4. [docs/contracts-inventory-v0.17.2-beta.1.md](docs/contracts-inventory-v0.17.2-beta.1.md) — 11 contracts × 4 wirings × algorithm-ID matrix
+5. [docs/security-review-v0.17.2-beta.1.md](docs/security-review-v0.17.2-beta.1.md) — Codex rounds 5-8 (pre-release gate)
+6. [docs/abi-coverage-v0.17.2-beta.1.md](docs/abi-coverage-v0.17.2-beta.1.md) — 80+ external functions: U (unit) / E (E2E) / deferred classification
+7. [docs/e2e-results-v0.17.2-beta.3.md](docs/e2e-results-v0.17.2-beta.3.md) — Phase 08-12 on-chain result log (45 tests, all PASS)
+8. [docs/tx-analysis-v0.17.2-beta.3.md](docs/tx-analysis-v0.17.2-beta.3.md) — TX categories ↔ AirAccount feature mapping + Codex TX verification
+9. [docs/pimlico-bundler-compatibility.md](docs/pimlico-bundler-compatibility.md) — bundler split-simulation deep-dive (algId / prefund)
+10. [docs/e2e-v0172-beta3-pitfalls-and-results.md](docs/e2e-v0172-beta3-pitfalls-and-results.md) — Phase 08-12 pitfalls and lessons learned
+11. [docs/forceexit-design-notes.md](docs/forceexit-design-notes.md) — ForceExit subsystem design + accepted residual risks
+12. [docs/known-issues.md](docs/known-issues.md) — KI-1..KI-15 accepted limitations + auditor notes
+13. [GitHub issue #67 v0.18 roadmap](https://github.com/AAStarCommunity/airaccount-contract/issues/67) — what's planned next
+
 > ⚠️ **Integrators / SDK**: the account is *diamond-lite* — the agent + weight-governance functions execute via fallback and are **absent from the raw `out/AAStarAirAccountV7.sol` ABI**. Use the merged **[`abi/AAStarAirAccountV7.full.json`](abi/AAStarAirAccountV7.full.json)** (run `scripts/build-full-abi.mjs`) to encode them. See [`docs/2026-05-26-diamond-lite-migration-impact.md`](docs/2026-05-26-diamond-lite-migration-impact.md).
->
+
 > ⚠️ **Not for mainnet yet**: this is a beta tag. Mainnet requires paid security audit + bug bounty + KMS/SuperPaymaster/SDK production-ready. See [DEPLOYMENT-v0.17.2-beta.1.md](docs/DEPLOYMENT-v0.17.2-beta.1.md) §1-3 for the full mainnet checklist.
 
 ---
@@ -107,7 +110,7 @@ Cos72 (v0.19 PoC target — MushroomDAO community OS)
   ↓ email register → community identity → gasless governance / tasks
 SuperPaymaster v5.3.3-beta.2 (Sepolia testnet — gasless w/ community tokens)
   ↓ ERC-4337 standard paymaster
-AirAccount v0.17.2-beta.2 (this release)          ◄── you are here
+AirAccount v0.17.2-beta.3 (this release)          ◄── you are here
   ↓ TEE-signed userOps
 KMS v0.18.x (production — kms.aastar.io)
 ```
@@ -130,15 +133,19 @@ All four layers ERC-4337 v0.7 standard, plug-in compatible.
 
 ```bash
 forge build
-forge test --summary          # 622 tests
-pnpm tsx scripts/test-m7-e2e.ts          # M7 full E2E (Sepolia)
-pnpm tsx scripts/test-force-exit-e2e.ts  # M7.5 ForceExit E2E (OP Sepolia)
-pnpm tsx scripts/test-railgun-parser-e2e.ts  # M7.11 Railgun E2E (Sepolia)
+forge test --summary          # 723 tests
+
+# v0.17.2-beta.3 on-chain E2E (Sepolia) — run Phases 08/10 in parallel, 09 and 11 must be serial
+pnpm tsx scripts/e2e-v0172/08-multi-account-types.ts    # Phase 08: account creation variants
+pnpm tsx scripts/e2e-v0172/09-execute-transactions.ts   # Phase 09: execute (run alone — Jason wallet)
+pnpm tsx scripts/e2e-v0172/10-session-key-txns.ts       # Phase 10: session keys
+pnpm tsx scripts/e2e-v0172/11-guardian-recovery-module.ts  # Phase 11: guardian + social recovery + modules
+pnpm tsx scripts/e2e-v0172/12-userop-bundler.ts         # Phase 12: ERC-4337 UserOp via Pimlico
 ```
 
 ---
 
-## Contracts (v0.17.1 — full list)
+## Contracts (v0.17.2-beta.3)
 
 What AirAccount ships and what each contract does. **Deploy** column: `singleton` = deployed once per chain (shared); `per-account` = created on demand; `per-factory` = created by the Factory; `external` = not ours, referenced at a known address.
 
@@ -159,17 +166,14 @@ What AirAccount ships and what each contract does. **Deploy** column: `singleton
 | `AAStarValidator` | Algorithm router: algId → algorithm address | singleton |
 | `AAStarBLSAlgorithm` | BLS aggregate signature verification (DVT co-sign) | singleton |
 | `AAStarBLSAggregator` | ERC-4337 IAggregator for batched BLS UserOps | singleton |
-| `AirAccountCompositeValidator` | ERC-7579 validator: weighted / cumulative composite signatures (Factory default validator) | singleton |
-| `SessionKeyValidator` | Time-limited scoped session keys (algId 0x08) | singleton |
-| `AgentSessionKeyValidator` | Agent session keys: velocity limit + callTarget/selector allowlist (prompt-injection defense) | singleton |
+| `SessionKeyValidator` | Unified session key validator (algId `0x08`): classic single-target sessions + agent-grade controls (velocity, `callTargets[]`, `selectorAllowlist[]`, P256 passkey). Replaced `AgentSessionKeyValidator` + `AirAccountCompositeValidator` in v0.17.2-beta.1 | singleton |
 
 **Signature algorithms (algId):** ECDSA `0x02`, P256/WebAuthn `0x03`, Cumulative T2 (P256+BLS) `0x04`, Cumulative T3 (P256+BLS+Guardian) `0x05`, Combined T1 (P256∧ECDSA) `0x06`, Weighted multi-sig `0x07`, Session Key `0x08`, BLS triple `0x01`.
 
 ### Hooks / executor modules (ERC-7579)
 | Contract | Role | Deploy |
 |---|---|---|
-| `TierGuardHook` | ERC-7579 hook (type 4): tier + session-scope enforcement on execute (Factory default hook) | singleton |
-| `ForceExitModule` | Guardian-gated L2→L1 force exit (OP Stack / Arbitrum) | singleton |
+| `ForceExitModule` | Guardian-gated L2→L1 force exit (OP Stack / Arbitrum); beta.2 stale-guardian hardened | singleton |
 
 ### Registries
 | Contract | Role | Deploy |
@@ -188,7 +192,7 @@ What AirAccount ships and what each contract does. **Deploy** column: `singleton
 | EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | canonical, all chains |
 | ERC-8004 Identity / Reputation / Validation | see `src/config/ERC8004Addresses.sol` | official "Trustless Agents" registries, deterministic CREATE2 |
 
-> Deployment order, wiring, and run commands: see [`docs/DEPLOYMENT-v0.17.1.md`](docs/DEPLOYMENT-v0.17.1.md).
+> Deployment order, wiring, and run commands: see [`docs/DEPLOYMENT-v0.17.2-beta.1.md`](docs/DEPLOYMENT-v0.17.2-beta.1.md).
 
 ---
 
@@ -203,6 +207,7 @@ What AirAccount ships and what each contract does. **Deploy** column: `singleton
 | M5 — ERC20 Guard + Guardian Accept | ✅ | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` | 298 |
 | M6 — Session Key + Weighted MultiSig + EIP-7702 | ✅ | `0x34282bef82e14af3cc61fecaa60eab91d3a82d46` | 446 |
 | M7 — ERC-7579 + Agent Economy + WalletBeat + L2 ForceExit + Railgun | ✅ | `0x9D0735E3096C02eC63356F21d6ef79586280289f` | 622 |
+| **v0.17.2-beta.3** — Security hardening, diamond-lite, Phase 08-12 E2E | ✅ | `0xfc6234bbd6283610659211347c6309904be86b0a` | **723** |
 
 ---
 
@@ -237,13 +242,22 @@ WalletBeat evaluates wallets across Stage 0, 1, 2. AirAccount is a **smart contr
 
 ---
 
-## Deployed Contracts (Sepolia)
+## Deployed Contracts (Sepolia) — v0.17.2-beta.3
 
 | Contract | Address |
 |----------|---------|
 | EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
-| M5 Factory (current live) | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` |
-| M6 E2E Account (salt=701) | `0xfab5b2cf392c862b455dcfafac5a414d459b6dcc` |
+| Factory | `0xfc6234bbd6283610659211347c6309904be86b0a` |
+| Implementation | `0xe33EeCF21AAC2B776b49A4dd52BA8b7e683dE9C3` |
+| Extension | `0xB3c7312bA52dF306DE1cBa781B91f3AfA7e86F99` |
+| ValidatorRouter | `0x3c2b06f50300912794f29de031b33dd37bb8d6c6` |
+| BLSAlgorithm | `0xB82127182A855B82eED05e47536FcE568b626457` |
+| SessionKeyValidator | `0x655ca2e9a2d1178f7fbcea1856560d1e0c657ebf` |
+| ForceExitModule | `0xdb396ca2dc279f9bcb95fa3d8275f77c9f0c8702` |
+| AgentRegistry | `0x9e8f576cad8a8f949181fd10d9ad1c49a7b0bc17` |
+| BLSAggregator | `0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1` |
+
+ABI: use [`abi/AAStarAirAccountV7.full.json`](abi/AAStarAirAccountV7.full.json) (64 functions — includes diamond-lite `AirAccountExtension` selectors).
 
 ---
 
@@ -314,37 +328,37 @@ WalletBeat evaluates wallets across Stage 0, 1, 2. AirAccount is a **smart contr
 
 ---
 
-## Deploy to Sepolia (M6 r3)
+## Deploy to Sepolia (v0.17.2-beta.3)
+
+v0.17.2-beta.3 is already deployed on Sepolia — see **Deployed Contracts** table above. To deploy a new factory instance:
 
 ```bash
-# Requires ../SuperPaymaster/.env.sepolia with PRIVATE_KEY
-chmod +x deploy-factory.sh
-./deploy-factory.sh sepolia
-# → prints AIRACCOUNT_FACTORY=<addr> and AIRACCOUNT_IMPL=<addr>
-# → add AIRACCOUNT_M6_R3_FACTORY=<addr> to .env.sepolia
+# Requires .env.sepolia with PRIVATE_KEY and SEPOLIA_RPC_URL
+forge script script/DeployFactoryV7.s.sol --rpc-url $SEPOLIA_RPC_URL \
+  --private-key $PRIVATE_KEY --broadcast --verify -vvv
+# → prints Factory and Implementation addresses
+# → update AIRACCOUNT_V0172_BETA_FACTORY in .env.sepolia
 ```
 
 ## Deploy to OP Mainnet
 
 ```bash
-# Requires ../SuperPaymaster/.env.op-mainnet with DEPLOYER_ACCOUNT=optimism-deployer (cast wallet)
-./deploy-factory.sh op-mainnet
-# → runs: forge script script/DeployFactoryM6.s.sol --account optimism-deployer
-# After deploy:
-pnpm tsx scripts/test-op-e2e.ts
+# Requires .env.op-mainnet with DEPLOYER_ACCOUNT (cast wallet)
+forge script script/DeployFactoryV7.s.sol --rpc-url $OP_MAINNET_RPC_URL \
+  --account optimism-deployer --broadcast --verify -vvv
 ```
 
 ---
 
-## Integration Tests (after M6 factory deploy)
+## Integration Tests (v0.17.2-beta.3 — Sepolia)
 
 ```bash
-# Sepolia — full E2E weighted signatures + session keys
-pnpm tsx scripts/test-m6-weighted-e2e.ts
-pnpm tsx scripts/test-session-key-e2e.ts
-
-# OP Mainnet
-pnpm tsx scripts/test-op-e2e.ts
+# Run all phases (Phase 09 must run alone — Jason wallet nonce conflict with Phase 11)
+pnpm tsx scripts/e2e-v0172/08-multi-account-types.ts      # 8 tests — account variants
+pnpm tsx scripts/e2e-v0172/09-execute-transactions.ts     # 10 tests — execute (run standalone)
+pnpm tsx scripts/e2e-v0172/10-session-key-txns.ts         # 11 tests — session keys
+pnpm tsx scripts/e2e-v0172/11-guardian-recovery-module.ts # 12 tests — guardian + module install/uninstall
+pnpm tsx scripts/e2e-v0172/12-userop-bundler.ts           # 4 tests  — ERC-4337 UserOp via Pimlico
 ```
 
 ---
@@ -353,7 +367,7 @@ pnpm tsx scripts/test-op-e2e.ts
 
 ```bash
 forge build                          # compile
-forge test                           # 622 unit tests
+forge test                           # 723 unit tests
 forge test --match-path test/SessionKeyValidator.t.sol -v   # specific suite
 forge test --summary                 # per-suite breakdown
 ```

@@ -43,12 +43,12 @@ contract MockP256FailW {
 
 /// @title WeightedSignatureTest — Unit tests for M6.1 (algId 0x07) + M6.2 (guardian weight governance)
 contract WeightedSignatureTest is Test {
-    function _initWithGuard(AAStarAirAccountV7 acct, address ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
+    function _initWithGuard(AAStarAirAccountV7 acct, address _ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
         address g = address(0);
         if (cfg.dailyLimit > 0) {
-            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
+            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
         }
-        acct.initialize(ep, _owner, cfg, g);
+        acct.initialize(_ep, _owner, cfg, g);
     }
     using MessageHashUtils for bytes32;
     using ECDSA for bytes32;
@@ -488,14 +488,13 @@ contract WeightedSignatureTest is Test {
         // HIGH-3: callData must equal the executed call so the content-keyed weight queue resolves.
         op.callData = abi.encodeWithSelector(tieredAcc.execute.selector, target, uint256(0.5 ether), bytes(""));
 
+        // v0.17.2-beta.4: insufficient tier is now rejected FAST in validateUserOp (returns 1) — the
+        // op (0.5 ETH needs tier 2, weighted resolves to tier 1) never reaches execution, so the
+        // bundler never includes a doomed op. Previously this was deferred to an execution-phase
+        // InsufficientTier(2,1) revert (which wasted the account's EntryPoint deposit on gas).
+        target; // silence unused
         vm.prank(address(ep));
-        assertEq(tieredAcc.validateUserOp(op, userOpHash, 0), 0);
-
-        // Execute 0.5 ETH (tier2 required: >0.1ETH) but weight only resolves to tier1 → revert
-        vm.prank(address(ep));
-        // Full encoding needed since InsufficientTier has parameters (uint8, uint8)
-        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountBase.InsufficientTier.selector, uint8(2), uint8(1)));
-        tieredAcc.execute(target, 0.5 ether, "");
+        assertEq(tieredAcc.validateUserOp(op, userOpHash, 0), 1, "under-tier op rejected in validation");
     }
 
     // ─── 4. M6.2: Guardian Consent for Weakening Changes ──────────────────────

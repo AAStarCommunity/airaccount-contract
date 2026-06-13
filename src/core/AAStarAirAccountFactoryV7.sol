@@ -201,7 +201,6 @@ contract AAStarAirAccountFactoryV7 {
             guardAddr = address(new AAStarGlobalGuard(
                 account,
                 config.dailyLimit,
-                config.approvedAlgIds,
                 config.minDailyLimit,
                 config.initialTokens,
                 config.initialTokenConfigs
@@ -277,7 +276,6 @@ contract AAStarAirAccountFactoryV7 {
         address guardAddr = address(new AAStarGlobalGuard(
             account,
             config.dailyLimit,
-            config.approvedAlgIds,
             config.minDailyLimit,
             config.initialTokens,
             config.initialTokenConfigs
@@ -371,7 +369,6 @@ contract AAStarAirAccountFactoryV7 {
         address guardAddr = address(new AAStarGlobalGuard(
             account,
             config.dailyLimit,
-            config.approvedAlgIds,
             config.minDailyLimit,
             config.initialTokens,
             config.initialTokenConfigs

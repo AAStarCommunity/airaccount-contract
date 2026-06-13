@@ -206,6 +206,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     event ValidatorSet(address indexed validator);
     event AggregatorSet(address indexed aggregator);
     event GuardInitialized(address indexed guard, uint256 dailyLimit);
+    event AlgorithmApproved(uint8 indexed algId);
     event ParserRegistrySet(address indexed registry);
     event P256KeySet(bytes32 x, bytes32 y);
     event TierLimitsSet(uint256 tier1, uint256 tier2);
@@ -304,10 +305,18 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         address _owner,
         address[3] memory _guardians,
         uint256 _minDailyLimit,
-        address _guardAddr
+        address _guardAddr,
+        uint8[] memory _approvedAlgIds
     ) internal {
         entryPoint = _entryPoint;
         owner = _owner;
+
+        // v0.17.2-beta.4: the algorithm whitelist is owned by the account (single source of truth)
+        // and enforced during validateUserOp. Populate it from the init config (empty = no guard).
+        for (uint256 i = 0; i < _approvedAlgIds.length; i++) {
+            approvedAlgorithms[_approvedAlgIds[i]] = true;
+            emit AlgorithmApproved(_approvedAlgIds[i]);
+        }
 
         // Initialize guardians (skip address(0) slots)
         for (uint8 i = 0; i < 3; i++) {
@@ -416,9 +425,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
     // ─── Guard Configuration (monotonic: only tighten, never loosen) ─
 
-    /// @notice Approve a new algorithm in the guard (add-only, never revoke)
+    /// @notice Approve a new algorithm (add-only, never revoke).
+    /// @dev v0.17.2-beta.4: writes the account's own whitelist (single source of truth) instead of
+    ///      the guard. The whitelist is enforced in validateUserOp. Name kept for ABI stability.
     function guardApproveAlgorithm(uint8 algId) external onlyOwner {
-        guard.approveAlgorithm(algId);
+        approvedAlgorithms[algId] = true;
+        emit AlgorithmApproved(algId);
     }
 
     /// @notice Decrease the guard's ETH daily limit (tighten-only, never increase)
@@ -548,6 +560,45 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             }
         }
         return validator.validateSignature(userOpHash, signature);
+    }
+
+    /// @dev v0.17.2-beta.4: re-derive and store the validated algId (+ weight / session key) for the
+    ///      EXECUTION frame, directly from the signature, in the same call as execute(). Used by
+    ///      executeUserOp(). Mirrors _validateSignature's STORE side (prefix routing) WITHOUT
+    ///      re-verifying crypto — except ALG_WEIGHTED, whose tier depends on accumulated weight, so it
+    ///      is re-accumulated. Safe because validateUserOp already verified the signature, bound it to
+    ///      this algId, and enforced the whitelist; execution only needs the algId for tier/accounting.
+    function _populateExecAlg(bytes32 userOpHash, bytes calldata signature) internal {
+        if (signature.length == 0) return;
+        uint8 firstByte = uint8(signature[0]);
+
+        if (firstByte == ALG_WEIGHTED) {
+            _storeValidatedAlgId(ALG_WEIGHTED);
+            // Re-accumulate weight (re-verifies weighted components) so execute() resolves the tier.
+            _validateWeightedSignature(userOpHash, signature[1:]);
+            return;
+        }
+        if (firstByte == ALG_SESSION_KEY) {
+            if (signature.length < 21 || address(bytes20(signature[1:21])) != address(this)) return;
+            _storeValidatedAlgId(ALG_SESSION_KEY);
+            if (signature.length == 106) {
+                address ecdsaKey = address(bytes20(signature[21:41]));
+                _storeSessionKey(bytes32(uint256(0x01) << 248 | uint256(uint160(ecdsaKey))));
+            } else if (signature.length == 149) {
+                bytes32 p256Hash = keccak256(abi.encodePacked(bytes32(signature[21:53]), bytes32(signature[53:85])));
+                _storeSessionKey(bytes32(uint256(0x02) << 248 | (uint256(p256Hash) & type(uint248).max)));
+            }
+            return;
+        }
+        if (firstByte == ALG_P256 && signature.length == 65) { _storeValidatedAlgId(ALG_P256); return; }
+        if (firstByte == ALG_ECDSA && signature.length == 66) { _storeValidatedAlgId(ALG_ECDSA); return; }
+        if (firstByte == ALG_COMBINED_T1 && signature.length == 130) { _storeValidatedAlgId(ALG_COMBINED_T1); return; }
+        if (firstByte == ALG_BLS || firstByte == ALG_CUMULATIVE_T2 || firstByte == ALG_CUMULATIVE_T3) {
+            _storeValidatedAlgId(firstByte);
+            return;
+        }
+        if (signature.length == 65) { _storeValidatedAlgId(ALG_ECDSA); return; } // raw ECDSA (M1 compat)
+        _storeValidatedAlgId(firstByte); // external validator-router algId
     }
 
     /// @dev Inline ECDSA validation using direct ecrecover precompile.
@@ -933,15 +984,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         uint256 value,
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
-        // HIGH-3: key the transient queue reads by this op's callData (== validated userOp.callData
-        // on the EntryPoint path). Set BEFORE hook dispatch so getCurrentAlgId()/getCurrentSessionKey()
-        // peeks resolve to this op's entries.
+        // Key the transient algId queue by this op's callData (== validated userOp.callData on the
+        // EntryPoint path, set identically in executeUserOp). Set BEFORE hook dispatch.
         _setCallDataKey(keccak256(msg.data));
-        // Hook dispatch BEFORE consuming algId — getCurrentAlgId() peeks at current queue entry.
         bool hookActive = _activeHook != address(0);
         if (hookActive) _dispatchHook(value);
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
-        uint8 guardAlgId = algId;   // preserve pre-resolution algId for guard whitelist check
         if (algId == ALG_WEIGHTED) {
             algId = _resolveWeightedAlgId(_consumeValidatedWeight());
         }
@@ -952,7 +1000,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // TierGuardHook cannot call it because guard.checkTransaction has onlyAccount (msg.sender==account),
         // and the hook is a separate contract. Passing false here ensures daily limits are enforced
         // regardless of whether a hook is active.
-        _enforceGuard(value, algId, guardAlgId, taggedSessionKey, dest, func, false);
+        _enforceGuard(value, algId, taggedSessionKey, dest, func, false);
         _call(dest, value, func);
     }
 
@@ -969,7 +1017,6 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // userOp.callData on the EntryPoint path).
         _setCallDataKey(keccak256(msg.data));
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
-        uint8 guardAlgId = algId;   // preserve pre-resolution algId for guard whitelist check
         if (algId == ALG_WEIGHTED) {
             algId = _resolveWeightedAlgId(_consumeValidatedWeight());
         }
@@ -989,7 +1036,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // Note: hook dispatch is NOT called for executeBatch — preCheck is single-execute only.
         // The built-in guard still enforces limits per-call via _enforceGuard.
         for (uint256 i = 0; i < dest.length; i++) {
-            _enforceGuard(value[i], algId, guardAlgId, taggedSessionKey, dest[i], func[i], false);
+            _enforceGuard(value[i], algId, taggedSessionKey, dest[i], func[i], false);
             _call(dest[i], value[i], func[i]);
         }
     }
@@ -1044,17 +1091,17 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (!ok) revert HookReverted();
     }
 
-    /// @param algId      Resolved algorithm id (post-weighted-resolution). Used for tier checks.
-    /// @param guardAlgId Pre-resolution algorithm id. Passed to guard whitelist check so that
-    ///                   approving ALG_WEIGHTED(0x07) covers its tier resolutions (0x02/0x04/0x05).
-    ///                   Equals algId for all non-weighted algorithms.
+    /// @param algId      Resolved algorithm id (post-weighted-resolution). Used for tier checks and
+    ///                   token-tier accounting. v0.17.2-beta.4: the algorithm WHITELIST is no longer
+    ///                   checked here — it is enforced authoritatively in validateUserOp against the
+    ///                   account's own storage. This function does tier checks + spend accounting only.
     /// @param taggedSessionKey Pre-consumed session key identifier (bytes32(0) if not a session key op).
     ///        Consumed ONCE by execute()/executeBatch() so every call in a batch shares the same
     ///        scope restrictions — preventing scope bypass on calls 2+ in a batch.
-    /// @param skipEthCheck When true, skip guard.checkTransaction (hook already called it to avoid
+    /// @param skipEthCheck When true, skip guard.recordSpend (hook already metered it to avoid
     ///        double-counting the daily ETH limit). false for direct owner calls and executeBatch
     ///        when no hook is active.
-    function _enforceGuard(uint256 value, uint8 algId, uint8 guardAlgId, bytes32 taggedSessionKey, address dest, bytes calldata func, bool skipEthCheck) internal {
+    function _enforceGuard(uint256 value, uint8 algId, bytes32 taggedSessionKey, address dest, bytes calldata func, bool skipEthCheck) internal {
         // Cache guard address: avoids 3 separate SLOADs (COLD ~2100 + 2×WARM ~100 = ~2300 gas total)
         address guardAddr = address(guard);
 
@@ -1070,14 +1117,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             }
         }
 
-        // ETH daily limit + algorithm whitelist (writes dailySpent so next batch call sees updated value)
-        // guardAlgId: pre-resolution algId so guard whitelist sees ALG_WEIGHTED(0x07) when that's what
-        // was approved — approving 0x07 should not require separately approving resolved 0x02/0x04/0x05.
-        //
-        // skipEthCheck is always false from execute() — the account holds the correct msg.sender for
-        // guard.checkTransaction's onlyAccount modifier. TierGuardHook cannot call it directly.
+        // ETH daily limit accounting (writes dailySpent so next batch call sees the updated value).
+        // v0.17.2-beta.4: the algorithm whitelist is enforced in validateUserOp, not here.
+        // skipEthCheck is always false from execute(); a hook path may meter separately to avoid
+        // double-counting the daily ETH limit.
         if (guardAddr != address(0) && !skipEthCheck) {
-            guard.checkTransaction(value, guardAlgId);
+            guard.recordSpend(value);
         }
 
         // ERC20/DeFi token tier + daily limit enforcement (M5.1 + M6.6b)
@@ -1195,21 +1240,9 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         }
     }
 
-    /// @notice Peek at the current UserOp's algId without consuming it.
-    ///         Called by TierGuardHook.preCheck() during execute() so the hook enforces tier
-    ///         limits using the same algId as the guard. Returns 0 (ALG_NONE) if none stored.
-    function getCurrentAlgId() external view returns (uint256 algId) {
-        uint256 slot = _queueSlot(ALG_ID_SLOT_BASE);
-        assembly { algId := tload(slot) }
-    }
-
-    /// @notice Peek at the current UserOp's session key without consuming it.
-    ///         Called by TierGuardHook.preCheck() for session scope enforcement (M8.P2).
-    ///         Top byte: 0x01 = ECDSA session (lower 20 bytes = address), 0x02 = P256 session.
-    function getCurrentSessionKey() external view returns (bytes32 taggedId) {
-        uint256 slot = _queueSlot(SESSION_KEY_SLOT_BASE);
-        assembly { taggedId := tload(slot) }
-    }
+    // v0.17.2-beta.4: getCurrentAlgId()/getCurrentSessionKey() REMOVED. Their only consumer was
+    // TierGuardHook (deleted in beta.1); with executeUserOp re-deriving algId from the signature
+    // in-frame, no external peek into the transient queue is needed. Removing them reclaims EIP-170.
 
     /// @dev Store the validated algId for the current UserOp (keyed by callData content).
     function _storeValidatedAlgId(uint8 algId) internal {
@@ -1259,7 +1292,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
                 if (parser != address(0)) {
                     try ICalldataParser(parser).parseTokenTransfer(data) returns (address tok, uint256 amt) {
                         if (tok != address(0) && amt > 0) {
-                            guard.checkTokenTransaction(tok, amt, algId);
+                            guard.recordTokenSpend(tok, amt, algId);
                             tokenHandled = true;
                         }
                     } catch {}
@@ -1269,7 +1302,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (!tokenHandled && data.length >= 68) {
             bytes4 sel = bytes4(data[:4]);
             if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
-                guard.checkTokenTransaction(dest, abi.decode(data[36:68], (uint256)), algId);
+                guard.recordTokenSpend(dest, abi.decode(data[36:68], (uint256)), algId);
             }
         }
     }

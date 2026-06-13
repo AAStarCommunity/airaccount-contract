@@ -65,7 +65,7 @@ contract AAStarAirAccountM5_8Test is Test {
 
         account = new AAStarAirAccountV7();
         // Guard has dailyLimit=0 but approves algorithm 0x06 — deploy it even with zero limit
-        address g = address(new AAStarGlobalGuard(address(account), config.dailyLimit, config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
+        address g = address(new AAStarGlobalGuard(address(account), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
         account.initialize(entryPointAddr, ownerWallet.addr, config, g);
 
         vm.deal(address(account), 10 ether);
@@ -217,8 +217,7 @@ contract AAStarAirAccountM5_8Test is Test {
 
     function test_algId_0x06_isApprovedByDefault() public view {
         // Account was created with only 0x06 approved — verify guard approves it
-        AAStarGlobalGuard g = account.guard();
-        assertTrue(g.approvedAlgorithms(ALG_COMBINED_T1), "0x06 should be approved");
+        assertTrue(account.approvedAlgorithms(ALG_COMBINED_T1), "0x06 should be approved");
     }
 
     // ─── 7. Factory approves 0x06 by default ─────────────────────────

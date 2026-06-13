@@ -623,7 +623,7 @@ contract AAStarAirAccountV7_M7Test is Test {
         algs[0] = 0x02; // ECDSA approved
         AAStarAirAccountV7 gacct = new AAStarAirAccountV7();
         AAStarGlobalGuard guard = new AAStarGlobalGuard(
-            address(gacct), 2 ether, algs, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
+            address(gacct), 2 ether, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
         );
         gacct.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
@@ -1122,52 +1122,11 @@ contract AAStarAirAccountV7_M7Test is Test {
         account.installModule(1, address(mockModule), sig);
     }
 
-    // ─── Transient storage: identical-callData collision (known limitation, issue #52) ──────────
-
-    /// @notice Document the transient storage key collision when two UserOps share identical callData.
-    /// @dev HIGH-3 design: algId is stored at keccak256(keccak256(callData), ALG_ID_SLOT_BASE).
-    ///      Within one bundle, if two UserOps have the same callData, the second validateUserOp
-    ///      overwrites the first op's algId slot. In a real bundle op1's execute() would then
-    ///      consume op2's algId — a known limitation tracked in issue #52.
-    ///      This test confirms the overwrite is observable so the limitation is documented.
-    function test_bundle_identicalCallData_secondValidateOverwritesFirst() public {
-        _installWithG0(1, address(mockModule));
-        mockModule.setValidateResult(0); // validator always returns success
-
-        // Both UserOps share the same callData — so they map to the same transient storage slot.
-        bytes memory sharedCallData = abi.encodeCall(MockTarget.setValue, (99));
-        // Nonce key = mockModule address → routes through installed validator module
-        uint256 nonce = uint256(uint192(uint160(address(mockModule)))) << 64;
-
-        // op1: sig[0]=0x02 → algId=ECDSA (tier 1) stored via nonce-key routing
-        PackedUserOperation memory op1 = PackedUserOperation({
-            sender: address(account), nonce: nonce, initCode: "",
-            callData: sharedCallData, accountGasLimits: bytes32(0),
-            preVerificationGas: 0, gasFees: bytes32(0), paymasterAndData: "",
-            signature: abi.encodePacked(uint8(0x02), new bytes(65))
-        });
-        // op2: sig[0]=0x04 → algId=CUMULATIVE_T2 (tier 2), same callData as op1
-        PackedUserOperation memory op2 = PackedUserOperation({
-            sender: address(account), nonce: nonce + 1, initCode: "",
-            callData: sharedCallData, accountGasLimits: bytes32(0),
-            preVerificationGas: 0, gasFees: bytes32(0), paymasterAndData: "",
-            signature: abi.encodePacked(uint8(0x04), new bytes(65))
-        });
-
-        vm.startPrank(address(ep));
-        // op1 validate: stores algId=0x02 (ECDSA) at transient slot keyed by keccak256(sharedCallData)
-        account.validateUserOp(op1, keccak256(abi.encode(op1)), 0);
-        assertEq(account.getCurrentAlgId(), 0x02, "op1 should store ECDSA algId=0x02");
-
-        // op2 validate: SAME callData → SAME transient slot → overwrites op1's algId with 0x04
-        account.validateUserOp(op2, keccak256(abi.encode(op2)), 0);
-        vm.stopPrank();
-
-        // After op2 validate, the slot now holds 0x04 (op2's tier-2 algId).
-        // If execute() for op1 runs now, it reads 0x04 instead of the expected 0x02.
-        assertEq(account.getCurrentAlgId(), 0x04,
-            "op2 algId 0x04 overwrote op1 algId 0x02 (known limitation: identical callData in same bundle)");
-    }
+    // v0.17.2-beta.4: removed test_bundle_identicalCallData_secondValidateOverwritesFirst.
+    // It documented the HIGH-3 cross-phase transient algId collision (issue #52), observed via the
+    // now-removed getCurrentAlgId() getter. That concern is obsolete: execution (executeUserOp)
+    // re-derives algId from the signature in-frame and never reads the validate-phase transient slot,
+    // so a same-callData bundle collision can no longer feed a wrong algId into execution.
 
     // ─── modifyTierLimitsWithGuardians: deadline path ─────────────────────────
 
@@ -1265,7 +1224,6 @@ contract AAStarAirAccountV7_M7Test is Test {
         grd = new AAStarGlobalGuard(
             predictedAddr,
             1 ether,       // dailyLimit
-            algs,
             0,             // minDailyLimit
             new address[](0),
             new AAStarGlobalGuard.TokenConfig[](0)
@@ -1310,13 +1268,7 @@ contract AAStarAirAccountV7_M7Test is Test {
         acct.guardAddTokenConfig(address(0xABCD), cfg);
     }
 
-    // ─── getCurrentSessionKey ─────────────────────────────────────────────────
-
-    function test_getCurrentSessionKey_returnsZeroOutsideUserOp() public view {
-        // Transient storage is empty outside a UserOp execution — always returns 0
-        bytes32 key = account.getCurrentSessionKey();
-        assertEq(key, bytes32(0));
-    }
+    // v0.17.2-beta.4: removed test_getCurrentSessionKey_returnsZeroOutsideUserOp (getter removed).
 
     // ─── initializeAgentAccount ───────────────────────────────────────────────
 

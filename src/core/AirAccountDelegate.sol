@@ -159,16 +159,15 @@ contract AirAccountDelegate {
         if (ECDSA.recover(domainHash.toEthSignedMessageHash(), g2Sig) != guardian2)
             revert InvalidGuardianSignature(guardian2);
 
-        // Deploy a guard bound to this EOA (address(this) = the EOA)
-        uint8[] memory algIds = new uint8[](1);
-        algIds[0] = ALG_ECDSA;
+        // Deploy a guard bound to this EOA (address(this) = the EOA).
+        // v0.17.2-beta.4: guard is pure accounting; no algorithm whitelist. The delegate only ever
+        // authorizes owner ECDSA in validateUserOp, so a separate algorithm whitelist is moot.
         address[] memory emptyTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory emptyCfgs = new AAStarGlobalGuard.TokenConfig[](0);
 
         address guardAddr = address(new AAStarGlobalGuard(
             address(this),   // account = this EOA
             dailyLimit,
-            algIds,
             0,               // minDailyLimit
             emptyTokens,
             emptyCfgs
@@ -252,11 +251,13 @@ contract AirAccountDelegate {
         DelegateStorage storage ds = _ds();
         if (!ds.initialized) revert NotInitialized();
 
-        uint8 algId = msg.sender == address(ENTRY_POINT) ? _consumeAlgId() : ALG_ECDSA;
+        // v0.17.2-beta.4: delegate only authorizes owner ECDSA, so algId is always ALG_ECDSA.
+        // This removes the cross-phase transient dependency that broke bundler estimation.
+        uint8 algId = ALG_ECDSA;
 
-        // Guard: ETH daily limit + algorithm whitelist + ERC20 transfer/approve tier check.
+        // Guard: ETH daily limit + ERC20 transfer/approve tier check (pure accounting, no whitelist).
         if (address(ds.guard) != address(0)) {
-            AAStarGlobalGuard(ds.guard).checkTransaction(value, algId);
+            AAStarGlobalGuard(ds.guard).recordSpend(value);
             _checkTokenGuard(ds.guard, dest, data, algId);
         }
 
@@ -279,11 +280,12 @@ contract AirAccountDelegate {
 
         if (dest.length != value.length || dest.length != data.length) revert ArrayLengthMismatch();
 
-        uint8 algId = msg.sender == address(ENTRY_POINT) ? _consumeAlgId() : ALG_ECDSA;
+        // v0.17.2-beta.4: delegate is ECDSA-only → algId constant; no cross-phase transient needed.
+        uint8 algId = ALG_ECDSA;
 
         for (uint256 i = 0; i < dest.length; i++) {
             if (address(ds.guard) != address(0)) {
-                AAStarGlobalGuard(ds.guard).checkTransaction(value[i], algId);
+                AAStarGlobalGuard(ds.guard).recordSpend(value[i]);
                 _checkTokenGuard(ds.guard, dest[i], data[i], algId);
             }
             _call(dest[i], value[i], data[i]);
@@ -300,7 +302,7 @@ contract AirAccountDelegate {
         if (data.length < 68) return;
         bytes4 sel = bytes4(data[:4]);
         if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
-            AAStarGlobalGuard(guardAddr).checkTokenTransaction(
+            AAStarGlobalGuard(guardAddr).recordTokenSpend(
                 dest,
                 abi.decode(data[36:68], (uint256)),
                 algId
