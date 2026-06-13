@@ -46,6 +46,11 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     uint256 internal constant MAX_CALL_TARGETS = 20;
     uint256 internal constant MAX_SELECTORS    = 30;
 
+    /// @dev Per-account session-key cap (issue #83). Bounds unbounded session-key
+    ///      registration (storage griefing / DoS by a buggy dApp or compromised owner).
+    ///      Counts ECDSA + P256 sessions together. A revoke frees a slot.
+    uint256 internal constant MAX_SESSION_KEYS_PER_ACCOUNT = 50;
+
     /// @dev sessionType tags carried in the transient identifier bytes32 (set by base).
     uint8 internal constant SESSION_TYPE_ECDSA = 0x01;
     uint8 internal constant SESSION_TYPE_P256  = 0x02;
@@ -63,9 +68,13 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         bytes4[]  selectorAllowlist;   // non-empty: selector must be in list (priority over selectorScope)
     }
 
+    /// @dev Sliding-window velocity counter state (issue #57). `callCount` is the number of
+    ///      calls in the current window anchored at `windowStart`; `prevCount` is the previous
+    ///      window's final count, weighted into the rolling estimate to kill the boundary burst.
     struct SessionState {
         uint256 callCount;
         uint256 windowStart;
+        uint256 prevCount;
     }
 
     // ─── Storage ──────────────────────────────────────────────────────
@@ -83,6 +92,11 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     /// @notice Revocation nonces. Included in grant typed-hash so prior owner sigs invalidated on revoke.
     mapping(address => mapping(address => uint256)) public grantNonces;
     mapping(address => mapping(bytes32 => uint256)) public grantNonces_p256;
+
+    /// @notice Number of session-key slots currently consumed per account (issue #83).
+    ///         Counts ECDSA and P256 sessions together; enforced against
+    ///         MAX_SESSION_KEYS_PER_ACCOUNT on grant, released on revoke.
+    mapping(address => uint256) public sessionKeyCount;
 
     // ─── Events ──────────────────────────────────────────────────────
 
@@ -114,6 +128,8 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     error SelectorForbidden(bytes4 selector);
     error VelocityLimitExceeded();
     error InvalidSessionType(uint8 sessionType);
+    /// @dev Per-account session-key cap reached (issue #83). Revoke an existing session to free a slot.
+    error TooManySessionKeys();
 
     // ─── IAAStarAlgorithm.validate() — view, mempool-safe ────────────
 
@@ -137,13 +153,10 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         if (block.timestamp >= s.expiry) return 1;
 
         // Velocity early-reject (view, would-exceed). SSTORE happens in recordCallForVelocity (execute phase).
-        if (s.velocityLimit > 0) {
-            SessionState storage state = sessionStates[account][sessionKey];
-            // If we're still inside the current window AND the limit is already hit → reject.
-            // If the window has rolled over (block.timestamp >= windowStart + window), recordCall will reset.
-            if (block.timestamp < state.windowStart + s.velocityWindow && state.callCount >= s.velocityLimit) {
-                return 1;
-            }
+        // Mirrors the sliding-window estimate used on the execute side (issue #57).
+        if (s.velocityLimit > 0 &&
+            _velocityWouldExceed(sessionStates[account][sessionKey], s.velocityLimit, s.velocityWindow)) {
+            return 1;
         }
 
         bytes32 ethHash = userOpHash.toEthSignedMessageHash();
@@ -166,11 +179,9 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         if (s.revoked) return 1;
         if (block.timestamp >= s.expiry) return 1;
 
-        if (s.velocityLimit > 0) {
-            SessionState storage state = sessionStates_p256[account][keyHash];
-            if (block.timestamp < state.windowStart + s.velocityWindow && state.callCount >= s.velocityLimit) {
-                return 1;
-            }
+        if (s.velocityLimit > 0 &&
+            _velocityWouldExceed(sessionStates_p256[account][keyHash], s.velocityLimit, s.velocityWindow)) {
+            return 1;
         }
 
         // EIP-7212 P256 verification (sha256-wrapped userOpHash)
@@ -197,6 +208,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         address recovered = grantHash.recover(ownerSig);
         if (recovered != _ownerOf(account)) revert NotAccountOwner();
 
+        _reserveSlot(account, _sessions[account][sessionKey]);
         _storeSession(account, sessionKey, cfg);
     }
 
@@ -217,6 +229,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         if (msg.sender != _ownerOf(account)) revert NotAccountOwner();
         _validateCfg(cfg);
         _checkNotExists(account, sessionKey);
+        _reserveSlot(account, _sessions[account][sessionKey]);
         _storeSession(account, sessionKey, cfg);
     }
 
@@ -226,7 +239,9 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     ///      (a compromised session key can be turned off promptly without an EOA tx).
     function revokeSession(address account, address sessionKey) external {
         if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
-        _sessions[account][sessionKey].revoked = true;
+        Session storage s = _sessions[account][sessionKey];
+        _releaseSlot(account, s);
+        s.revoked = true;
         grantNonces[account][sessionKey]++;
         emit SessionRevoked(account, sessionKey);
     }
@@ -248,6 +263,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         address recovered = grantHash.recover(ownerSig);
         if (recovered != _ownerOf(account)) revert NotAccountOwner();
 
+        _reserveSlot(account, _sessions_p256[account][keyHash]);
         _storeP256Session(account, keyHash, cfg);
     }
 
@@ -263,6 +279,7 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         _validateCfg(cfg);
         bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
         _checkP256NotExists(account, keyHash);
+        _reserveSlot(account, _sessions_p256[account][keyHash]);
         _storeP256Session(account, keyHash, cfg);
     }
 
@@ -270,7 +287,9 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     function revokeP256Session(address account, bytes32 p256KeyX, bytes32 p256KeyY) external {
         if (msg.sender != _ownerOf(account) && msg.sender != account) revert NotAccountOwner();
         bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(p256KeyX, p256KeyY)));
-        _sessions_p256[account][keyHash].revoked = true;
+        Session storage s = _sessions_p256[account][keyHash];
+        _releaseSlot(account, s);
+        s.revoked = true;
         grantNonces_p256[account][keyHash]++;
         emit P256SessionRevoked(account, keyHash);
     }
@@ -344,12 +363,15 @@ contract SessionKeyValidator is IAAStarAlgorithm {
 
         if (s.velocityLimit == 0) return; // unlimited
 
-        if (block.timestamp >= state.windowStart + s.velocityWindow) {
-            state.windowStart = block.timestamp;
-            state.callCount = 0;
-        }
-        if (state.callCount >= s.velocityLimit) revert VelocityLimitExceeded();
-        state.callCount++;
+        // Sliding-window counter (issue #57). Roll the stored window forward to `now`, then
+        // gate on the weighted estimate so the rolling rate can never exceed velocityLimit —
+        // unlike the old fixed window, which allowed up to 2*limit-1 calls across a boundary.
+        (uint256 ws, uint256 cc, uint256 pc, uint256 elapsed) =
+            _rollWindow(state.windowStart, state.callCount, state.prevCount, s.velocityWindow, block.timestamp);
+        if (_slidingEstimate(cc, pc, s.velocityWindow, elapsed) >= s.velocityLimit) revert VelocityLimitExceeded();
+        state.windowStart = ws;
+        state.callCount   = cc + 1;
+        state.prevCount   = pc;
     }
 
     // ─── View accessors ──────────────────────────────────────────────
@@ -386,6 +408,59 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     }
 
     // ─── Internal helpers ────────────────────────────────────────────
+
+    /// @dev Reserve a session-key slot against the per-account cap (issue #83). `existing` is the
+    ///      storage slot being (re)granted — guaranteed inactive here by the prior _checkNotExists.
+    ///      If the slot already holds a live count (granted previously, expired but never revoked),
+    ///      the re-grant reuses that count and consumes nothing new. Otherwise consume one slot,
+    ///      reverting if the per-account cap is already reached.
+    function _reserveSlot(address account, Session storage existing) internal {
+        if (existing.expiry != 0 && !existing.revoked) return; // re-grant of expired-unrevoked slot: reuse count
+        uint256 c = sessionKeyCount[account];
+        if (c >= MAX_SESSION_KEYS_PER_ACCOUNT) revert TooManySessionKeys();
+        sessionKeyCount[account] = c + 1;
+    }
+
+    /// @dev Release a session-key slot on revoke (issue #83). Only decrements when the slot
+    ///      currently holds a live count, making repeated/already-revoked revokes idempotent.
+    function _releaseSlot(address account, Session storage existing) internal {
+        if (existing.expiry != 0 && !existing.revoked && sessionKeyCount[account] > 0) {
+            sessionKeyCount[account] -= 1;
+        }
+    }
+
+    /// @dev Sliding-window normalisation (issue #57 / KI-4). Rolls the stored counter state to
+    ///      `nowTs` without mutating storage: drops both counts after two stale windows, otherwise
+    ///      shifts the current count into `prevCount` once a full window has elapsed. Returns the
+    ///      (advanced) window start, current count, previous count, and elapsed seconds in window.
+    ///      Caller guarantees `window > 0` (enforced by _validateCfg when velocityLimit > 0).
+    function _rollWindow(uint256 windowStart, uint256 callCount, uint256 prevCount, uint256 window, uint256 nowTs)
+        internal pure returns (uint256 ws, uint256 cc, uint256 pc, uint256 elapsed)
+    {
+        if (nowTs <= windowStart) return (windowStart, callCount, prevCount, 0);
+        uint256 e = nowTs - windowStart;
+        if (e >= 2 * window) return (nowTs, 0, 0, 0);                              // both windows stale
+        if (e >= window)      return (windowStart + window, 0, callCount, e - window); // rolled exactly one window
+        return (windowStart, callCount, prevCount, e);
+    }
+
+    /// @dev Weighted call-count estimate over the trailing `window` seconds: the current window's
+    ///      count plus the previous window's count scaled by the fraction still inside the sliding
+    ///      view, (window - elapsed)/window. Integer division floors (slightly favours the caller).
+    function _slidingEstimate(uint256 cc, uint256 pc, uint256 window, uint256 elapsed)
+        internal pure returns (uint256)
+    {
+        return cc + (pc * (window - elapsed)) / window;
+    }
+
+    /// @dev View-only velocity gate mirroring recordCallForVelocity's sliding-window estimate.
+    function _velocityWouldExceed(SessionState storage state, uint256 limit, uint256 window)
+        internal view returns (bool)
+    {
+        (, uint256 cc, uint256 pc, uint256 elapsed) =
+            _rollWindow(state.windowStart, state.callCount, state.prevCount, window, block.timestamp);
+        return _slidingEstimate(cc, pc, window, elapsed) >= limit;
+    }
 
     function _validateCfg(Session calldata cfg) internal view {
         if (cfg.expiry == 0) revert InvalidExpiry();
