@@ -57,6 +57,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     /// @dev Recovery threshold: 2 out of 3 guardians
     uint256 internal constant RECOVERY_THRESHOLD = 2;
 
+    /// @dev Account version / signature epoch folded into EVERY guardian-/owner-signed
+    ///      operational hash (issue #84). v0.18 = epoch 4. Binding the version means a
+    ///      signature collected against this contract version cannot be replayed against a
+    ///      future version deployed at the same CREATE2 address with the same salt.
+    ///      Bump this constant whenever a new account version is released.
+    uint8 internal constant GUARDIAN_SIG_VERSION = 4;
+
     // ─── State ────────────────────────────────────────────────────────
 
     // `entryPoint` (slot 0) and `owner` (slot 1) are declared in AAStarAgentStorageLayout so the
@@ -383,6 +390,23 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         emit TierLimitsSet(_tier1, _tier2);
     }
 
+    /// @dev Build the eth-signed digest a guardian/owner must sign for an operational request.
+    ///      Every guardian-signed domain folds in GUARDIAN_SIG_VERSION + chainId + address(this),
+    ///      so a signature is bound to (this contract version, this chain, this account, this op).
+    ///      Using this single builder keeps all guardian-signed hashes consistent (issues #75, #84)
+    ///      rather than ad-hoc per call site.
+    /// @param opLabel Operation tag, e.g. "INSTALL_MODULE" / "MODIFY_TIER_LIMITS".
+    /// @param opData  abi.encode of the operation-specific fields, INCLUDING any per-op nonce.
+    function _guardianOpHash(string memory opLabel, bytes memory opData)
+        internal
+        view
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(
+            GUARDIAN_SIG_VERSION, block.chainid, address(this), opLabel, opData
+        )).toEthSignedMessageHash();
+    }
+
     /// @notice Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.
     ///         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.
     ///         Security principle: the authorization level to change a spending guard must match
@@ -402,9 +426,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (block.timestamp > deadline) revert TierLimitSigExpired();
         if (guardianSigs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
 
-        bytes32 changeHash = keccak256(abi.encode(
-            address(this), block.chainid, _tierLimitNonce, "MODIFY_TIER_LIMITS", _tier1, _tier2, deadline
-        )).toEthSignedMessageHash();
+        bytes32 changeHash = _guardianOpHash(
+            "MODIFY_TIER_LIMITS",
+            abi.encode(_tierLimitNonce, _tier1, _tier2, deadline)
+        );
 
         uint256 approvalBitmap = 0;
         for (uint256 i = 0; i < guardianSigs.length; i++) {
@@ -1341,14 +1366,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         address guardianToRemove = _getGuardian(index);
         // Hash binds to the actual guardian address (not just index) to prevent mismatch
         // if slot order ever changes without incrementing the nonce.
-        bytes32 removalHash = keccak256(abi.encode(
-            address(this),
-            block.chainid,
-            _guardianRemovalNonce,
+        bytes32 ethHash = _guardianOpHash(
             "REMOVE_GUARDIAN",
-            guardianToRemove
-        ));
-        bytes32 ethHash = removalHash.toEthSignedMessageHash();
+            abi.encode(_guardianRemovalNonce, guardianToRemove)
+        );
 
         uint256 approvalBitmap = 0;
         for (uint256 i = 0; i < guardianSigs.length; i++) {

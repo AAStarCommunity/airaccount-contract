@@ -118,6 +118,14 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         return _installedModules[moduleTypeId][module];
     }
 
+    /// @notice Current module-management nonce (issue #75). A guardian signing an installModule /
+    ///         uninstallModule request must fold this value into the signed hash; it increments
+    ///         after every successful install AND uninstall, so a signature cannot be replayed
+    ///         after an uninstall+reinstall cycle.
+    function moduleManagementNonce() external view returns (uint256) {
+        return _moduleManagementNonce;
+    }
+
     /// @notice ERC-1271: on-chain signature validation used by ERC-7579 tooling and DeFi protocols.
     ///         Validates that the ECDSA signature was produced by this account's owner.
     /// @dev IMPORTANT — hash behaviour: this function does NOT apply any EIP-191 prefix.
@@ -338,7 +346,8 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @param module Module contract address (must be deployed)
     /// @param initData Layout: guardian sig(s) prepended, then module init data.
     ///   Guardian sig count: 0 if threshold<=40, 1 if threshold<=70, 2 if threshold=100.
-    ///   Sig hash: keccak256("INSTALL_MODULE" || chainId || account || moduleTypeId || module).toEthSignedMessageHash()
+    ///   Sig hash: _guardianOpHash("INSTALL_MODULE", abi.encode(moduleTypeId, module, moduleInitDataHash, moduleManagementNonce))
+    ///   = keccak256(abi.encode(GUARDIAN_SIG_VERSION, chainId, account, "INSTALL_MODULE", opData)).toEthSignedMessageHash()
     ///   Bytes after the sig(s) are passed as initData to onInstall(bytes).
     function installModule(
         uint256 moduleTypeId,
@@ -360,11 +369,12 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
             // v3-MEDIUM fix: sig binds keccak256(moduleInitData) to prevent config-swap attacks.
             // Guardian signs over both the module identity AND the module init configuration.
             bytes32 moduleInitDataHash = keccak256(initData[sigEnd:]);
+            // #84: version-bound domain. #75: _moduleManagementNonce defeats replay after reinstall.
             _checkGuardianSigs(
-                keccak256(abi.encodePacked(
-                    "INSTALL_MODULE", block.chainid, address(this),
-                    moduleTypeId, module, moduleInitDataHash
-                )).toEthSignedMessageHash(),
+                _guardianOpHash(
+                    "INSTALL_MODULE",
+                    abi.encode(moduleTypeId, module, moduleInitDataHash, _moduleManagementNonce)
+                ),
                 initData, sigsRequired
             );
         }
@@ -395,6 +405,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
             if (!_ok) revert ModuleInstallCallbackFailed(moduleTypeId, module);
         }
 
+        // #75: advance the nonce so this guardian signature cannot be replayed after uninstall.
+        unchecked { _moduleManagementNonce++; }
+
         emit ModuleInstalled(moduleTypeId, module);
     }
 
@@ -402,7 +415,8 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @dev Requires min(guardianCount, 2) guardian sigs.
     ///      Accounts with fewer than 2 real guardians use all available guardian sigs
     ///      so that modules are never permanently locked even on minimal-guardian accounts.
-    ///      Sig hash: keccak256("UNINSTALL_MODULE" || chainId || account || moduleTypeId || module).toEthSignedMessageHash()
+    ///      Sig hash: _guardianOpHash("UNINSTALL_MODULE", abi.encode(moduleTypeId, module, moduleManagementNonce))
+    ///      = keccak256(abi.encode(GUARDIAN_SIG_VERSION, chainId, account, "UNINSTALL_MODULE", opData)).toEthSignedMessageHash()
     function uninstallModule(
         uint256 moduleTypeId,
         address module,
@@ -413,9 +427,12 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
             && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
 
         uint8 sigsRequired = _guardianCount < 2 ? _guardianCount : 2;
+        // #84: version-bound domain. #75: _moduleManagementNonce defeats replay after reinstall.
         _checkGuardianSigs(
-            keccak256(abi.encodePacked("UNINSTALL_MODULE", block.chainid, address(this), moduleTypeId, module))
-                .toEthSignedMessageHash(),
+            _guardianOpHash(
+                "UNINSTALL_MODULE",
+                abi.encode(moduleTypeId, module, _moduleManagementNonce)
+            ),
             deInitData, sigsRequired
         );
 
@@ -432,6 +449,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         if (!stillLive) {
             _callLifecycle(SEL_ON_UNINSTALL, module); // best-effort
         }
+
+        // #75: advance the nonce so this guardian signature cannot be replayed on reinstall.
+        unchecked { _moduleManagementNonce++; }
 
         emit ModuleUninstalled(moduleTypeId, module);
     }

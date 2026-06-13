@@ -60,10 +60,15 @@ contract SocialRecoveryTest is Test {
         vm.stopPrank();
     }
 
+    // GUARDIAN_SIG_VERSION (issue #84) — mirror of the internal constant in AAStarAirAccountBase.
+    uint8 internal constant GUARDIAN_SIG_VERSION = 4;
+
     // Signs over the guardian's actual address (not just index) — matches the updated contract hash.
+    // #84: version-bound domain via _guardianOpHash; opData = abi.encode(nonce, guardianAddr).
     function _signRemoval(uint256 privKey, address guardianAddr, uint256 nonce) internal view returns (bytes memory) {
         bytes32 removalHash = keccak256(abi.encode(
-            address(account), block.chainid, nonce, "REMOVE_GUARDIAN", guardianAddr
+            GUARDIAN_SIG_VERSION, block.chainid, address(account), "REMOVE_GUARDIAN",
+            abi.encode(nonce, guardianAddr)
         ));
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(removalHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privKey, ethHash);
