@@ -115,4 +115,10 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     ///      eliminating the dual-source desync the mirror approach would have created.
     ///      Only approveAlgorithm() mutates it (monotonic add). Appended at slot 24 — never reorder.
     mapping(uint8 => bool) public approvedAlgorithms;                                     // slot 24
+
+    /// @dev Monotonic nonce for ERC-7579 module install/uninstall guardian signatures (issue #75).
+    ///      Incremented after every successful installModule AND uninstallModule so a guardian
+    ///      signature collected for one install can never be replayed after an uninstall+reinstall.
+    ///      Appended at slot 25 — never reorder.
+    uint256 internal _moduleManagementNonce;                                              // slot 25
 }

@@ -169,11 +169,17 @@ contract AAStarAirAccountV7_M7Test is Test {
         return _installSigWithData(w, acct, moduleTypeId, module, "");
     }
 
+    // GUARDIAN_SIG_VERSION (issue #84) — mirror of the internal constant in AAStarAirAccountBase.
+    uint8 internal constant GUARDIAN_SIG_VERSION = 4;
+
     function _installSigWithData(Vm.Wallet memory w, address acct, uint256 moduleTypeId, address module, bytes memory moduleInitData)
         internal view returns (bytes memory)
     {
-        bytes32 raw = keccak256(abi.encodePacked(
-            "INSTALL_MODULE", block.chainid, acct, moduleTypeId, module, keccak256(moduleInitData)
+        // #84 version-bound domain + #75 module-management nonce, via _guardianOpHash.
+        uint256 nonce = AAStarAirAccountV7(payable(acct)).moduleManagementNonce();
+        bytes32 raw = keccak256(abi.encode(
+            GUARDIAN_SIG_VERSION, block.chainid, acct, "INSTALL_MODULE",
+            abi.encode(moduleTypeId, module, keccak256(moduleInitData), nonce)
         ));
         bytes32 ethHash = raw.toEthSignedMessageHash();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
@@ -183,8 +189,11 @@ contract AAStarAirAccountV7_M7Test is Test {
     function _uninstallSig(Vm.Wallet memory w, address acct, uint256 moduleTypeId, address module)
         internal view returns (bytes memory)
     {
-        bytes32 raw = keccak256(abi.encodePacked(
-            "UNINSTALL_MODULE", block.chainid, acct, moduleTypeId, module
+        // #84 version-bound domain + #75 module-management nonce, via _guardianOpHash.
+        uint256 nonce = AAStarAirAccountV7(payable(acct)).moduleManagementNonce();
+        bytes32 raw = keccak256(abi.encode(
+            GUARDIAN_SIG_VERSION, block.chainid, acct, "UNINSTALL_MODULE",
+            abi.encode(moduleTypeId, module, nonce)
         ));
         bytes32 ethHash = raw.toEthSignedMessageHash();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);
@@ -1027,6 +1036,66 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
     }
 
+    // ─── #75: module-management nonce defeats replay-after-reinstall ───────────
+
+    /// @notice #75 — a guardian install signature captured for the first install MUST NOT be
+    ///         replayable to reinstall the same module after an uninstall. The module-management
+    ///         nonce advances on every install AND uninstall, so the captured sig no longer
+    ///         recovers to a guardian against the new hash.
+    function test_installModule_replayAfterReinstall_reverts() public {
+        // Capture the guardian sig while nonce == 0, then perform the first install (nonce 0 -> 1).
+        assertEq(account.moduleManagementNonce(), 0);
+        bytes memory capturedSig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        account.installModule(1, address(mockModule), capturedSig);
+        assertEq(account.moduleManagementNonce(), 1);
+
+        // Uninstall (nonce 1 -> 2).
+        bytes memory u0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory u1 = _uninstallSig(g1Wallet, address(account), 1, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        account.uninstallModule(1, address(mockModule), abi.encodePacked(u0, u1));
+        assertEq(account.moduleManagementNonce(), 2);
+
+        // Replay the original (nonce-0) sig — recovered address is no longer a guardian → revert.
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
+        account.installModule(1, address(mockModule), capturedSig);
+
+        // A fresh sig (built at the current nonce) still works.
+        bytes memory freshSig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        account.installModule(1, address(mockModule), freshSig);
+        assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
+    }
+
+    // ─── #84: contract version / epoch bound into the signed hash ──────────────
+
+    /// @notice #84 — proves GUARDIAN_SIG_VERSION is LOAD-BEARING in the install hash (not ignored).
+    ///         Paired control: the SAME install op differs ONLY in the version field. The wrong-version
+    ///         sig must revert; the correct-version sig (same nonce, same args) must then succeed —
+    ///         so the only thing that gated the first was the version, proving it's folded into the digest.
+    ///         (A bare wrong-version-reverts test would pass even if the contract ignored version, since
+    ///         any digest change → different recovered address → NotGuardian.)
+    function test_installModule_versionIsLoadBearing() public {
+        // Negative: same op, only GUARDIAN_SIG_VERSION+1 differs.
+        bytes32 raw = keccak256(abi.encode(
+            uint8(GUARDIAN_SIG_VERSION + 1), block.chainid, address(account), "INSTALL_MODULE",
+            abi.encode(uint256(1), address(mockModule), keccak256(bytes("")), account.moduleManagementNonce())
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(g0Wallet.privateKey, raw.toEthSignedMessageHash());
+        bytes memory wrongVerSig = abi.encodePacked(r, s, v);
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
+        account.installModule(1, address(mockModule), wrongVerSig);
+
+        // Positive control: identical op with the CORRECT version (same nonce — the revert didn't bump it).
+        bytes memory goodSig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        account.installModule(1, address(mockModule), goodSig);
+        assertTrue(account.isModuleInstalled(1, address(mockModule), ""), "correct-version install must succeed");
+    }
+
     // ─── Private helpers ──────────────────────────────────────────────────────
 
     /// @dev Deploy a fresh account with a specific _installModuleThreshold.
@@ -1131,12 +1200,15 @@ contract AAStarAirAccountV7_M7Test is Test {
     // ─── modifyTierLimitsWithGuardians: deadline path ─────────────────────────
 
     /// @notice Build guardian signature for modifyTierLimitsWithGuardians.
-    ///         Hash: keccak256(abi.encode(account, chainId, nonce=0, "MODIFY_TIER_LIMITS", tier1, tier2, deadline))
+    ///         Hash via _guardianOpHash: keccak256(abi.encode(VERSION, chainId, account,
+    ///         "MODIFY_TIER_LIMITS", abi.encode(nonce=0, tier1, tier2, deadline))). nonce=0 because
+    ///         these tests run on fresh accounts where _tierLimitNonce is still 0.
     function _modifyTierSig(Vm.Wallet memory w, uint256 tier1, uint256 tier2, uint256 deadline)
         internal view returns (bytes memory)
     {
         bytes32 raw = keccak256(abi.encode(
-            address(account), block.chainid, uint256(0), "MODIFY_TIER_LIMITS", tier1, tier2, deadline
+            GUARDIAN_SIG_VERSION, block.chainid, address(account), "MODIFY_TIER_LIMITS",
+            abi.encode(uint256(0), tier1, tier2, deadline)
         ));
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(raw);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, ethHash);

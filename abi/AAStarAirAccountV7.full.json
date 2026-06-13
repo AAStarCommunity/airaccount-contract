@@ -770,6 +770,19 @@
     },
     {
       "type": "function",
+      "name": "moduleManagementNonce",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "onERC721Received",
       "inputs": [
         {

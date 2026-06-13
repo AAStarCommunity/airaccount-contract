@@ -1165,7 +1165,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 54 · **Events:** 27 · **Errors:** 54
+- **Functions:** 55 · **Events:** 27 · **Errors:** 54
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1204,6 +1204,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x112d3a7d` | `isModuleInstalled(uint256,address,bytes)` | view | — | ERC-7579: check whether a module is installed.         Checks the unified module registry for supported types (1,2,4).         Note: the built-in ECDSA validator is registered at initialize time. |
 | `0x1626ba7e` | `isValidSignature(bytes32,bytes)` | view | — | ERC-1271: on-chain signature validation used by ERC-7579 tooling and DeFi protocols.         Validates that the ECDSA signature was produced by this account's owner. |
 | `0x3fe81b6a` | `modifyTierLimitsWithGuardians(uint256,uint256,uint256,bytes[])` | nonpayable | — | Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.         Security principle: the authorization level to change a spending guard must match         the tier level being guarded (spending at T2 requires a guardian; modifying T2 does too). |
+| `0x2c364ef6` | `moduleManagementNonce()` | view | — | Current module-management nonce (issue #75). A guardian signing an installModule /         uninstallModule request must fold this value into the signed hash; it increments         after every successful install AND uninstall, so a signature cannot be replayed         after an uninstall+reinstall cycle. |
 | `0x150b7a02` | `onERC721Received(address,address,uint256,bytes)` | pure | — | ERC-721 receiver — required because official ERC-8004 IdentityRegistry uses _safeMint.         Without this, minting an agent identity NFT directly to this account would revert. |
 | `0x8da5cb5b` | `owner()` | view | — | Account owner and ECDSA signer (mutable for social recovery) |
 | `0x863ee512` | `p256KeyX()` | view | — | P256 public key x-coordinate |
@@ -1527,7 +1528,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `moduleTypeId` | `uint256` | 1=Validator, 2=Executor, 3=Hook |
 | `module` | `address` | Module contract address (must be deployed) |
-| `initData` | `bytes` | Layout: guardian sig(s) prepended, then module init data.   Guardian sig count: 0 if threshold<=40, 1 if threshold<=70, 2 if threshold=100.   Sig hash: keccak256("INSTALL_MODULE" \|\| chainId \|\| account \|\| moduleTypeId \|\| module).toEthSignedMessageHash()   Bytes after the sig(s) are passed as initData to onInstall(bytes). |
+| `initData` | `bytes` | Layout: guardian sig(s) prepended, then module init data.   Guardian sig count: 0 if threshold<=40, 1 if threshold<=70, 2 if threshold=100.   Sig hash: _guardianOpHash("INSTALL_MODULE", abi.encode(moduleTypeId, module, moduleInitDataHash, moduleManagementNonce))   = keccak256(abi.encode(GUARDIAN_SIG_VERSION, chainId, account, "INSTALL_MODULE", opData)).toEthSignedMessageHash()   Bytes after the sig(s) are passed as initData to onInstall(bytes). |
 
 #### `isModuleInstalled(uint256 moduleTypeId, address module, bytes arg2)`
 
@@ -1574,6 +1575,16 @@ Authoritative, auto-generated reference for every external/public function, even
 | `_tier2` | `uint256` | New Tier 2 threshold (dual-factor limit). 0 = T2 not used. |
 | `deadline` | `uint256` | Signature expiry timestamp — guardians must sign within this window.                      Prevents long-term signature hoarding and delayed replay attacks. |
 | `guardianSigs` | `bytes[]` | ECDSA signatures from RECOVERY_THRESHOLD distinct guardians. |
+
+#### `moduleManagementNonce()`
+
+`0x2c364ef6` · view · access: —
+
+> Current module-management nonce (issue #75). A guardian signing an installModule /         uninstallModule request must fold this value into the signed hash; it increments         after every successful install AND uninstall, so a signature cannot be replayed         after an uninstall+reinstall cycle.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
 
 #### `onERC721Received(address arg0, address arg1, uint256 arg2, bytes arg3)`
 
@@ -1779,7 +1790,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 > ERC-7579: Uninstall a module.
 
-*@dev* Requires min(guardianCount, 2) guardian sigs.      Accounts with fewer than 2 real guardians use all available guardian sigs      so that modules are never permanently locked even on minimal-guardian accounts.      Sig hash: keccak256("UNINSTALL_MODULE" \|\| chainId \|\| account \|\| moduleTypeId \|\| module).toEthSignedMessageHash()
+*@dev* Requires min(guardianCount, 2) guardian sigs.      Accounts with fewer than 2 real guardians use all available guardian sigs      so that modules are never permanently locked even on minimal-guardian accounts.      Sig hash: _guardianOpHash("UNINSTALL_MODULE", abi.encode(moduleTypeId, module, moduleManagementNonce))      = keccak256(abi.encode(GUARDIAN_SIG_VERSION, chainId, account, "UNINSTALL_MODULE", opData)).toEthSignedMessageHash()
 
 | param | type | description |
 |---|---|---|
