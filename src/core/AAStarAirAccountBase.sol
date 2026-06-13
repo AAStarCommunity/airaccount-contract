@@ -984,11 +984,9 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         uint256 value,
         bytes calldata func
     ) external onlyOwnerOrEntryPoint nonReentrant {
-        // HIGH-3: key the transient queue reads by this op's callData (== validated userOp.callData
-        // on the EntryPoint path). Set BEFORE hook dispatch so getCurrentAlgId()/getCurrentSessionKey()
-        // peeks resolve to this op's entries.
+        // Key the transient algId queue by this op's callData (== validated userOp.callData on the
+        // EntryPoint path, set identically in executeUserOp). Set BEFORE hook dispatch.
         _setCallDataKey(keccak256(msg.data));
-        // Hook dispatch BEFORE consuming algId — getCurrentAlgId() peeks at current queue entry.
         bool hookActive = _activeHook != address(0);
         if (hookActive) _dispatchHook(value);
         uint8 algId = msg.sender == entryPoint ? _consumeValidatedAlgId() : ALG_ECDSA;
@@ -1242,18 +1240,9 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         }
     }
 
-    /// @notice Peek at the current UserOp's algId without consuming it (transient, content-keyed).
-    function getCurrentAlgId() external view returns (uint256 algId) {
-        uint256 slot = _queueSlot(ALG_ID_SLOT_BASE);
-        assembly { algId := tload(slot) }
-    }
-
-    /// @notice Peek at the current UserOp's session key without consuming it.
-    ///         Top byte: 0x01 = ECDSA session (lower 20 bytes = address), 0x02 = P256 session.
-    function getCurrentSessionKey() external view returns (bytes32 taggedId) {
-        uint256 slot = _queueSlot(SESSION_KEY_SLOT_BASE);
-        assembly { taggedId := tload(slot) }
-    }
+    // v0.17.2-beta.4: getCurrentAlgId()/getCurrentSessionKey() REMOVED. Their only consumer was
+    // TierGuardHook (deleted in beta.1); with executeUserOp re-deriving algId from the signature
+    // in-frame, no external peek into the transient queue is needed. Removing them reclaims EIP-170.
 
     /// @dev Store the validated algId for the current UserOp (keyed by callData content).
     function _storeValidatedAlgId(uint8 algId) internal {

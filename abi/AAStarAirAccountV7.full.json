@@ -303,32 +303,6 @@
     },
     {
       "type": "function",
-      "name": "getCurrentAlgId",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "algId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getCurrentSessionKey",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "taggedId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "getDeposit",
       "inputs": [],
       "outputs": [
