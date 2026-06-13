@@ -117,6 +117,52 @@ contract MockAirAccount {
     receive() external payable {}
 }
 
+/// @dev An account that exposes guardians()/owner() normally but can be toggled to revert
+///      its guardians(uint256) getter — simulates a non-standard / broken account that passes
+///      onInstall (guardians valid at install) but later fails the getter. Used to prove the
+///      v0.18 issue #77 fix: `_readGuardians` reverts IncompatibleAccount instead of silently
+///      degrading to address(0).
+contract MockBreakableAccount {
+    address public owner;
+    address[3] private _guardianSlots;
+    bool public broken;
+
+    constructor(address _owner, address[3] memory g) {
+        owner = _owner;
+        _guardianSlots = g;
+    }
+
+    function setBroken(bool b) external { broken = b; }
+
+    function guardians(uint256 i) external view returns (address) {
+        require(!broken, "guardians getter broken");
+        if (i < 3) return _guardianSlots[i];
+        return address(0);
+    }
+
+    function installModule(ForceExitModule module, bytes calldata data) external {
+        module.onInstall(data);
+    }
+
+    function proposeExit(ForceExitModule module, address target, uint256 value, bytes calldata data) external {
+        module.proposeForceExit(target, value, data);
+    }
+
+    function executeFromExecutor(bytes32 /* mode */, bytes calldata executionCalldata)
+        external returns (bytes[] memory returnData)
+    {
+        address target = address(bytes20(executionCalldata[0:20]));
+        uint256 value  = uint256(bytes32(executionCalldata[20:52]));
+        bytes calldata data = executionCalldata[52:];
+        returnData = new bytes[](1);
+        (bool ok, bytes memory ret) = target.call{value: value}(data);
+        require(ok, "executor call failed");
+        returnData[0] = ret;
+    }
+
+    receive() external payable {}
+}
+
 // ─── Test ──────────────────────────────────────────────────────────────────
 
 /// @title ForceExitModuleTest — Unit tests for ForceExitModule (C10)
@@ -589,6 +635,125 @@ contract ForceExitModuleTest is Test {
         // Proposal cleared after execution
         (address target,,,,,) = _pendingExitFields(address(account));
         assertEq(target, address(0));
+    }
+
+    // ─── v0.18 issue #70: TOCTOU re-verification at execute ───────────────────
+
+    /// @dev 2 approvals recorded, then one approver is rotated out before execute.
+    ///      Live approver count drops to 1 (< threshold) → ApproverNoLongerGuardian.
+    ///      Proves the fix the approve-time check cannot cover (bit already set).
+    function test_executeForceExit_revertsIfApproverRotatedOut() public {
+        _installOp();
+        address l1target = makeAddr("l1target");
+        vm.warp(20000);
+        account.proposeExit(module, l1target, 0, "");
+
+        // g0 and g1 both approve while still current → bitmap = 3, threshold met.
+        bytes memory sig0 = _guardianSig(G0_KEY, address(account), l1target, 0, "", 20000);
+        bytes memory sig1 = _guardianSig(G1_KEY, address(account), l1target, 0, "", 20000);
+        module.approveForceExit(address(account), sig0);
+        module.approveForceExit(address(account), sig1);
+
+        // Owner rotates g1 out (slot 1 → Carol) AFTER the approval bit was set.
+        account.rotateGuardian(1, makeAddr("carol"));
+
+        // Only g0 is still a current guardian → liveApprovals = 1 < APPROVAL_THRESHOLD.
+        vm.expectRevert(ForceExitModule.ApproverNoLongerGuardian.selector);
+        module.executeForceExit(address(account));
+    }
+
+    /// @dev No rotation between approve and execute → live approver count unchanged → succeeds.
+    function test_executeForceExit_unchangedApprovers_succeeds() public {
+        vm.etch(L2_TO_L1_MESSAGE_PASSER_OP, address(mockPasser).code);
+
+        _installOp();
+        address l1target = makeAddr("l1target");
+        vm.warp(20100);
+        account.proposeExit(module, l1target, 0, "");
+
+        bytes memory sig0 = _guardianSig(G0_KEY, address(account), l1target, 0, "", 20100);
+        bytes memory sig1 = _guardianSig(G1_KEY, address(account), l1target, 0, "", 20100);
+        module.approveForceExit(address(account), sig0);
+        module.approveForceExit(address(account), sig1);
+
+        module.executeForceExit(address(account));
+
+        // Proposal cleared → execution went through.
+        (address target,,,,,) = _pendingExitFields(address(account));
+        assertEq(target, address(0));
+    }
+
+    /// @dev 3 approvals, then ONE approver rotated out → 2 live approvers still ≥ threshold.
+    ///      Confirms the fix is count-based (intersection ≥ threshold), NOT
+    ///      revert-on-any-rotation. With 3-of-3 approved, losing 1 still executes.
+    function test_executeForceExit_threeApprovals_oneRotatedOut_stillSucceeds() public {
+        vm.etch(L2_TO_L1_MESSAGE_PASSER_OP, address(mockPasser).code);
+
+        _installOp();
+        address l1target = makeAddr("l1target");
+        vm.warp(20200);
+        account.proposeExit(module, l1target, 0, "");
+
+        bytes memory sig0 = _guardianSig(G0_KEY, address(account), l1target, 0, "", 20200);
+        bytes memory sig1 = _guardianSig(G1_KEY, address(account), l1target, 0, "", 20200);
+        bytes memory sig2 = _guardianSig(G2_KEY, address(account), l1target, 0, "", 20200);
+        module.approveForceExit(address(account), sig0);
+        module.approveForceExit(address(account), sig1);
+        module.approveForceExit(address(account), sig2);
+
+        // Rotate g2 out — g0 and g1 remain → 2 live approvers ≥ threshold.
+        account.rotateGuardian(2, makeAddr("dave"));
+
+        module.executeForceExit(address(account));
+
+        (address target,,,,,) = _pendingExitFields(address(account));
+        assertEq(target, address(0));
+    }
+
+    // ─── v0.18 issue #77: _readGuardians fails loudly on non-standard accounts ─
+
+    /// @dev Account passes onInstall (guardians valid) but its guardians() getter later reverts.
+    ///      `_readGuardians` (reached via approveForceExit) must revert IncompatibleAccount
+    ///      explicitly rather than silently returning address(0) for every slot.
+    function test_approveForceExit_brokenGuardiansGetter_revertsIncompatibleAccount() public {
+        address[3] memory g = [g0, g1, g2];
+        MockBreakableAccount broken = new MockBreakableAccount(owner, g);
+        broken.installModule(module, abi.encode(L2_TYPE_OPTIMISM));
+
+        address l1target = makeAddr("l1target");
+        vm.warp(21000);
+        broken.proposeExit(module, l1target, 0, "");
+
+        // Break the getter after propose snapshot is taken.
+        broken.setBroken(true);
+
+        bytes memory sig0 = _guardianSig(G0_KEY, address(broken), l1target, 0, "", 21000);
+        vm.expectRevert(ForceExitModule.IncompatibleAccount.selector);
+        module.approveForceExit(address(broken), sig0);
+    }
+
+    /// @dev Same incompatibility surfaced at execute time: the live-approver re-check reads
+    ///      guardians via `_readGuardians`, which must revert IncompatibleAccount, not silently
+    ///      treat the account as having an empty guardian set.
+    function test_executeForceExit_brokenGuardiansGetter_revertsIncompatibleAccount() public {
+        address[3] memory g = [g0, g1, g2];
+        MockBreakableAccount broken = new MockBreakableAccount(owner, g);
+        broken.installModule(module, abi.encode(L2_TYPE_OPTIMISM));
+
+        address l1target = makeAddr("l1target");
+        vm.warp(21100);
+        broken.proposeExit(module, l1target, 0, "");
+
+        bytes memory sig0 = _guardianSig(G0_KEY, address(broken), l1target, 0, "", 21100);
+        bytes memory sig1 = _guardianSig(G1_KEY, address(broken), l1target, 0, "", 21100);
+        module.approveForceExit(address(broken), sig0);
+        module.approveForceExit(address(broken), sig1);
+
+        // Break the getter after approvals are recorded; execute must fail loudly.
+        broken.setBroken(true);
+
+        vm.expectRevert(ForceExitModule.IncompatibleAccount.selector);
+        module.executeForceExit(address(broken));
     }
 
     function test_getPendingExit_afterPropose_returnsGuardians() public {
