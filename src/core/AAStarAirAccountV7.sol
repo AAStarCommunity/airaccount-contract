@@ -126,9 +126,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     ///      Integration guide for callers:
     ///
     ///      • EIP-712 / DeFi flows (Permit2, OpenSea, CoW, most DeFi protocols):
-    ///        Pass the EIP-712 struct hash (the final `hashStruct` or `domainSeparator XOR msgHash`
-    ///        produced by `TypedDataEncoder`). The owner signs this hash directly (no personal_sign
-    ///        prefix is added by the protocol). Pass that same bytes32 here — no wrapping needed.
+    ///        Pass the final EIP-712 digest, i.e. `keccak256("\x19\x01" || domainSeparator || hashStruct)`
+    ///        (what `TypedDataEncoder.hash(...)` / ethers `_signTypedData` produce). The owner signs this
+    ///        digest directly (no personal_sign prefix). Pass that same bytes32 here — no wrapping needed.
     ///
     ///      • personal_sign / MetaMask `eth_sign` flows:
     ///        The wallet prepends the EIP-191 prefix "\x19Ethereum Signed Message:\n32" before
