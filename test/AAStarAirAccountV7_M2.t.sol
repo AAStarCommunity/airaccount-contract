@@ -38,6 +38,13 @@ contract MockSuccessAlgorithm is IAAStarAlgorithm {
     }
 }
 
+/// @dev Mock algorithm that always FAILS — stands in for a BLS aggregate that does not verify.
+contract MockFailAlgorithm is IAAStarAlgorithm {
+    function validate(bytes32, bytes calldata) external pure override returns (uint256) {
+        return 1;
+    }
+}
+
 contract AAStarAirAccountV7_M2Test is Test {
     MockEntryPointM2 entryPointMock;
     AAStarAirAccountV7 account;
@@ -234,6 +241,51 @@ contract AAStarAirAccountV7_M2Test is Test {
         vm.prank(entryPointAddr);
         uint256 result = account.validateUserOp(userOp, userOpHash, 0);
         assertEq(result, 0, "Valid triple sig with mock BLS should pass");
+    }
+
+    // ─── issue #45 CRITICAL: aggregator bypass is closed ──────────────
+
+    /// @dev setAggregator must reject any nonzero value (the batch path bypasses the on-chain
+    ///      userOpHash→hashToG2 binding and is permanently disabled).
+    function test_setAggregator_nonzero_reverts() public {
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.AggregatorDisabled.selector);
+        account.setAggregator(address(0xBEEF));
+
+        // address(0) is still accepted (no-op) and leaves the slot at 0.
+        vm.prank(ownerWallet.addr);
+        account.setAggregator(address(0));
+        assertEq(account.blsAggregator(), address(0), "aggregator must stay disabled");
+    }
+
+    /// @dev LOAD-BEARING regression: even if the blsAggregator storage slot is forced to a
+    ///      nonzero address (simulating a restored bypass / a pre-locked deployment), an ALG_BLS
+    ///      op with a VALID owner aaSignature but a BLS aggregate that does NOT verify must STILL
+    ///      be REJECTED — the on-chain BLS factor is never skipped.
+    ///      This test FAILS if the aggregator short-circuit in _validateTripleSignature is restored
+    ///      (it would return the aggregator address instead of 1).
+    function test_tripleSignature_aggregatorSlotForced_blsStillVerified() public {
+        vm.prank(ownerWallet.addr);
+        account.setValidator(address(router));
+
+        // Register a BLS algorithm that ALWAYS fails verification.
+        MockFailAlgorithm failAlg = new MockFailAlgorithm();
+        router.registerAlgorithm(0x01, address(failAlg));
+
+        // Force blsAggregator (slot 3) to a nonzero address, bypassing the setAggregator lock.
+        vm.store(address(account), bytes32(uint256(3)), bytes32(uint256(uint160(address(0xBEEF)))));
+        assertEq(account.blsAggregator(), address(0xBEEF), "precondition: aggregator slot forced nonzero");
+
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        // Valid owner aaSignature + bogus BLS data.
+        bytes memory tripSig = _buildTripleSig(userOpHash, ownerWallet, ownerWallet);
+        userOp.signature = abi.encodePacked(uint8(0x01), tripSig);
+
+        vm.prank(entryPointAddr);
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "BLS factor must be verified on-chain regardless of aggregator slot");
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────

@@ -2026,6 +2026,11 @@
     },
     {
       "type": "error",
+      "name": "AggregatorDisabled",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "AlreadyApproved",
       "inputs": []
     },

@@ -341,7 +341,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountBase
 
 - **Source:** `src/core/AAStarAirAccountBase.sol`
-- **Functions:** 39 · **Events:** 27 · **Errors:** 53
+- **Functions:** 39 · **Events:** 27 · **Errors:** 54
 - **Title:** AAStarAirAccountBase
 - Non-upgradable ERC-4337 smart wallet base with algId-based signature routing,         tiered verification, P256 passkey, social recovery, and global guard.
 
@@ -378,7 +378,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x7ee76082` | `proposeRecovery(address)` | nonpayable | — | Propose a recovery: change owner to a new address.         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals. |
 | `0x34e33bf6` | `removeGuardian(uint8,bytes[])` | nonpayable | onlyOwner | Remove a guardian by index.         Requires >= RECOVERY_THRESHOLD distinct guardian signatures to prevent unilateral removal.         Cannot remove when only 2 guardians remain (minimum 2 must be kept). |
 | `0xd0771689` | `requiredTier(uint256)` | view | — |  |
-| `0xf9120af6` | `setAggregator(address)` | nonpayable | onlyOwner |  |
+| `0xf9120af6` | `setAggregator(address)` | nonpayable | onlyOwner | issue #45 Fix 1: the batch BLS aggregator is permanently disabled. Its batch         pairing cannot bind N distinct userOpHashes to per-op message points, so routing         through it would bypass the on-chain userOpHash→hash_to_curve binding that the BLS         tiers rely on. Only `address(0)` is settable; any nonzero value reverts. The storage         slot is retained for forward-compat / a future redesigned aggregator. |
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | nonpayable | onlyOwner |  |
 | `0x148d13d1` | `setParserRegistry(address)` | nonpayable | onlyOwner | Set the calldata parser registry for DeFi protocol support.         Can be updated by owner (unlike guard which is immutable).         Set to address(0) to disable parser support. |
 | `0x7b471153` | `setTierLimits(uint256,uint256)` | nonpayable | onlyOwner | Set tier thresholds — INITIAL SETUP ONLY.         Callable exactly once, ever. After the first configuration (here or via         modifyTierLimitsWithGuardians), this function is permanently locked.         Any subsequent modification (increase, decrease, or disable) must go through         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current         limit values closes the bypass where a guardian reset to (0,0) would otherwise         re-open owner-only configuration. |
@@ -696,6 +696,8 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0xf9120af6` · nonpayable · access: onlyOwner
 
+> issue #45 Fix 1: the batch BLS aggregator is permanently disabled. Its batch         pairing cannot bind N distinct userOpHashes to per-op message points, so routing         through it would bypass the on-chain userOpHash→hash_to_curve binding that the BLS         tiers rely on. Only `address(0)` is settable; any nonzero value reverts. The storage         slot is retained for forward-compat / a future redesigned aggregator.
+
 | param | type | description |
 |---|---|---|
 | `_aggregator` | `address` |  |
@@ -834,6 +836,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|
 | `0x71a31c27` | `AgentRegistrationFailed()` |
 | `0xcf38f997` | `AgentSessionBatchNotSupported()` |
+| `0xac373e68` | `AggregatorDisabled()` |
 | `0x101f817a` | `AlreadyApproved()` |
 | `0x0f5ff7bf` | `AlreadyCancelVoted()` |
 | `0xa24a13a6` | `ArrayLengthMismatch()` |
@@ -1165,7 +1168,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 55 · **Events:** 27 · **Errors:** 54
+- **Functions:** 55 · **Events:** 27 · **Errors:** 55
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1214,7 +1217,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x7ee76082` | `proposeRecovery(address)` | nonpayable | — | Propose a recovery: change owner to a new address.         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals. |
 | `0x34e33bf6` | `removeGuardian(uint8,bytes[])` | nonpayable | — | Remove a guardian by index.         Requires >= RECOVERY_THRESHOLD distinct guardian signatures to prevent unilateral removal.         Cannot remove when only 2 guardians remain (minimum 2 must be kept). |
 | `0xd0771689` | `requiredTier(uint256)` | view | — |  |
-| `0xf9120af6` | `setAggregator(address)` | nonpayable | — |  |
+| `0xf9120af6` | `setAggregator(address)` | nonpayable | — | issue #45 Fix 1: the batch BLS aggregator is permanently disabled. Its batch         pairing cannot bind N distinct userOpHashes to per-op message points, so routing         through it would bypass the on-chain userOpHash→hash_to_curve binding that the BLS         tiers rely on. Only `address(0)` is settable; any nonzero value reverts. The storage         slot is retained for forward-compat / a future redesigned aggregator. |
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | nonpayable | — |  |
 | `0x148d13d1` | `setParserRegistry(address)` | nonpayable | — | Set the calldata parser registry for DeFi protocol support.         Can be updated by owner (unlike guard which is immutable).         Set to address(0) to disable parser support. |
 | `0x7b471153` | `setTierLimits(uint256,uint256)` | nonpayable | — | Set tier thresholds — INITIAL SETUP ONLY.         Callable exactly once, ever. After the first configuration (here or via         modifyTierLimitsWithGuardians), this function is permanently locked.         Any subsequent modification (increase, decrease, or disable) must go through         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current         limit values closes the bypass where a guardian reset to (0,0) would otherwise         re-open owner-only configuration. |
@@ -1694,6 +1697,8 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0xf9120af6` · nonpayable · access: —
 
+> issue #45 Fix 1: the batch BLS aggregator is permanently disabled. Its batch         pairing cannot bind N distinct userOpHashes to per-op message points, so routing         through it would bypass the on-chain userOpHash→hash_to_curve binding that the BLS         tiers rely on. Only `address(0)` is settable; any nonzero value reverts. The storage         slot is retained for forward-compat / a future redesigned aggregator.
+
 | param | type | description |
 |---|---|---|
 | `_aggregator` | `address` |  |
@@ -1892,6 +1897,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|
 | `0x71a31c27` | `AgentRegistrationFailed()` |
 | `0xcf38f997` | `AgentSessionBatchNotSupported()` |
+| `0xac373e68` | `AggregatorDisabled()` |
 | `0x101f817a` | `AlreadyApproved()` |
 | `0x0f5ff7bf` | `AlreadyCancelVoted()` |
 | `0xa24a13a6` | `ArrayLengthMismatch()` |

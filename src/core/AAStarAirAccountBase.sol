@@ -195,6 +195,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     error InstallModuleUnauthorized();
     error HookReverted();
 
+    /// @dev issue #45 Fix 1: the batch BLS aggregator is permanently disabled (its batch pairing
+    ///      cannot bind per-op userOpHashes). setAggregator reverts on any nonzero value.
+    error AggregatorDisabled();
+
     // M6.1 / M6.2
     error WeightConfigNotInitialized();
 
@@ -362,9 +366,15 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         emit ValidatorSet(_validator);
     }
 
+    /// @notice issue #45 Fix 1: the batch BLS aggregator is permanently disabled. Its batch
+    ///         pairing cannot bind N distinct userOpHashes to per-op message points, so routing
+    ///         through it would bypass the on-chain userOpHash→hash_to_curve binding that the BLS
+    ///         tiers rely on. Only `address(0)` is settable; any nonzero value reverts. The storage
+    ///         slot is retained for forward-compat / a future redesigned aggregator.
     function setAggregator(address _aggregator) external onlyOwner {
-        blsAggregator = _aggregator;
-        emit AggregatorSet(_aggregator);
+        if (_aggregator != address(0)) revert AggregatorDisabled();
+        blsAggregator = address(0);
+        emit AggregatorSet(address(0));
     }
 
     /// @notice Set the calldata parser registry for DeFi protocol support.
@@ -801,10 +811,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
      *   1. aaSignature validates userOpHash (owner authorizes this specific UserOp)
      *   2. BLS aggregate is verified against hash_to_curve(userOpHash) on-chain (binds to this op)
      *
-     * NOTE (issue #45): the blsAggregator batch path is INCOMPATIBLE with Option B — a single
-     * batch pairing cannot bind N distinct userOpHashes to one aggregated message point. It is
-     * left here for ABI continuity but `blsAggregator` MUST remain unset (address(0)) for this
-     * algorithm; the batch aggregator needs a separate redesign before it can be re-enabled.
+     * NOTE (issue #45): the blsAggregator batch path has been REMOVED. A single batch pairing
+     * cannot bind N distinct userOpHashes to per-op message points, so routing through it would
+     * skip the on-chain recompute+bind below. `_callBLSValidator` (with the userOpHash binding) is
+     * now ALWAYS used. `setAggregator` additionally rejects any nonzero value (AggregatorDisabled),
+     * so the bypass cannot be re-introduced even by the owner.
      */
     function _validateTripleSignature(
         bytes32 userOpHash,
@@ -831,14 +842,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         address recovered = hash.recover(aaSignature);
         if (recovered != owner) return 1;
 
-        // If aggregator is set, return aggregator address for batch verification.
-        // (Disabled under issue #45 Fix 1 — see NOTE above; keep blsAggregator == address(0).)
-        if (blsAggregator != address(0)) {
-            return uint256(uint160(blsAggregator));
-        }
-
-        // SECURITY 2: BLS aggregate verification via validator router (standalone mode).
-        // Payload omits the nodeIdsLength prefix: [nodeIds][blsSig]; point recomputed on-chain.
+        // SECURITY 2: BLS aggregate verification via validator router — ALWAYS on-chain.
+        // The aggregator short-circuit was removed (issue #45): the message point is recomputed
+        // from userOpHash inside _callBLSValidator and the pairing is verified against it, so the
+        // BLS factor can never be skipped. Payload omits the nodeIdsLength prefix: [nodeIds][blsSig].
         bytes calldata blsPayload = sigData[32:baseOffset + 256];
         return _callBLSValidator(userOpHash, blsPayload);
     }

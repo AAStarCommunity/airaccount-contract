@@ -223,10 +223,17 @@ contract AAStarAirAccountV7M3Test is Test {
     // ─── Aggregator Configuration ────────────────────────────────────
 
     function test_setAggregator() public {
-        address agg = address(0xAA);
+        // issue #45 Fix 1: the batch aggregator is permanently disabled — only address(0) is
+        // settable; any nonzero value reverts (it would bypass the on-chain userOpHash→hashToG2
+        // binding). See test/AAStarAirAccountV7_M2.t.sol for the bypass-regression coverage.
         vm.prank(ownerAddr);
-        account.setAggregator(agg);
-        assertEq(account.blsAggregator(), agg);
+        vm.expectRevert(abi.encodeWithSignature("AggregatorDisabled()"));
+        account.setAggregator(address(0xAA));
+
+        // address(0) remains a valid no-op.
+        vm.prank(ownerAddr);
+        account.setAggregator(address(0));
+        assertEq(account.blsAggregator(), address(0));
     }
 
     function test_setAggregator_onlyOwner() public {

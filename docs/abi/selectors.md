@@ -479,6 +479,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xab143c06` | `Reentrancy()` | AAStarAirAccountBase |
 | `0xac241e11` | `EmptySignature()` | AAStarValidator |
 | `0xac2edbf6` | `WeightChangeTimelockNotExpired()` | AAStarAirAccountBase |
+| `0xac373e68` | `AggregatorDisabled()` | AAStarAirAccountBase |
 | `0xadbf5bb3` | `DefaultTokenAddressZero(address)` | AAStarAirAccountFactoryV7 |
 | `0xb06ebf3d` | `FailedDeployment()` | AAStarAirAccountFactoryV7 |
 | `0xb891ab5c` | `AggregatedSignatureInvalid()` | AAStarBLSAggregator |
