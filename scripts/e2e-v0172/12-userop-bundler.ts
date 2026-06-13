@@ -26,7 +26,7 @@
 import {
   keccak256, encodePacked,
   toHex, concat, type Hash, type Address,
-  parseEther, formatEther, encodeFunctionData,
+  parseEther, formatEther, encodeFunctionData, toFunctionSelector,
 } from "viem";
 import {
   ADDR, publicClient, wAnnie, annie, jason, bob,
@@ -49,13 +49,32 @@ const v7Abi       = loadAbi("AAStarAirAccountV7");
 
 const ENTRY_POINT  = ADDR.entryPoint;
 const SALT         = BigInt(Math.floor(Date.now() / 1000)) + 12_000n;
-// DAILY_LIMIT = 0 → no guard deployed.
-// Guard-deployed accounts check approvedAlgorithms[algId] inside execute(), but the bundler
-// simulates validateUserOp and execute() in SEPARATE eth_calls. Transient storage (tstore/tload)
-// used to pass algId between validate→execute is cleared between those separate calls, so
-// algId=0 reaches checkTransaction(0, algId) → AlgorithmNotApproved(0).
-// With no guard (dailyLimit=0), _enforceGuard returns immediately → no algId check in simulation.
-const DAILY_LIMIT  = 0n;
+// v0.17.2-beta.4: use a GUARD-ENABLED account (dailyLimit > 0) — the exact case that was broken
+// before. The whitelist now lives on the account (enforced in validateUserOp), and the callData is
+// wrapped with executeUserOp so execution re-derives algId from the signature in-frame. The bundler's
+// split simulation no longer hits algId=0 → no AlgorithmNotApproved(0). This is the on-chain proof.
+const DAILY_LIMIT  = parseEther("0.02"); // guard active
+
+// ERC-4337 v0.7 executeUserOp selector — the EntryPoint routes wrapped callData to executeUserOp.
+const EXECUTE_USER_OP_SELECTOR = toFunctionSelector(
+  "executeUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)",
+);
+
+// Wrap inner execute/executeBatch calldata for the bundler path.
+function wrapForBundler(innerCallData: `0x${string}`): `0x${string}` {
+  return concat([EXECUTE_USER_OP_SELECTOR, innerCallData]);
+}
+
+// Guardian acceptance signature for createAccountWithDefaults (EIP-191 over the domain hash).
+async function guardianAcceptSig(
+  signer: typeof jason | typeof bob, owner: Address, salt: bigint, dailyLimit: bigint,
+): Promise<`0x${string}`> {
+  const raw = keccak256(encodePacked(
+    ["string", "uint256", "address", "address", "uint256", "uint256"],
+    ["ACCEPT_GUARDIAN", BigInt(11155111), ADDR.factory, owner, salt, dailyLimit],
+  ));
+  return signer.signMessage({ message: { raw } });
+}
 
 let account: Address = "0x" as Address;
 
@@ -161,37 +180,37 @@ function buildUserOpForHash(
 
 const tests: TestCase[] = [
   {
-    name: "UO.1 createAccount (dailyLimit=0, no guard) — UserOp-test account",
+    name: "UO.1 createAccountWithDefaults (GUARD-ENABLED) — the case that was broken pre-beta.4",
     run: async () => {
-      // createAccountWithDefaults requires dailyLimit > 0 (DailyLimitRequired guard).
-      // Use createAccount with InitConfig dailyLimit=0 so no AAStarGlobalGuard is deployed.
-      // Without a guard, _enforceGuard() returns immediately — avoids the bundler transient-
-      // storage simulation split issue where algId=0 would reach checkTransaction().
-      const config = {
-        guardians: [jason.address, bob.address, "0x0000000000000000000000000000000000000000"] as [Address, Address, Address],
-        dailyLimit: 0n,
-        approvedAlgIds: [] as number[],
-        minDailyLimit: 0n,
-        initialTokens: [] as Address[],
-        initialTokenConfigs: [] as unknown[],
-      };
-
+      // v0.17.2-beta.4: deploy a real guard-enabled account (dailyLimit > 0). Pre-beta.4 this could
+      // NOT go through the bundler (AlgorithmNotApproved(0) from cleared transient algId). Now the
+      // whitelist is on the account + executeUserOp re-derives algId, so it works.
       account = (await publicClient.readContract({
         address: ADDR.factory, abi: factoryAbi,
-        functionName: "getAddress",
-        args: [annie.address, SALT, config],
+        functionName: "getAddressWithDefaults",
+        args: [annie.address, SALT, jason.address, bob.address, DAILY_LIMIT],
       })) as Address;
+
+      const sig1 = await guardianAcceptSig(jason, annie.address, SALT, DAILY_LIMIT);
+      const sig2 = await guardianAcceptSig(bob,   annie.address, SALT, DAILY_LIMIT);
 
       const hash = await wAnnie.writeContract({
         address: ADDR.factory,
         abi: factoryAbi,
-        functionName: "createAccount",
-        args: [annie.address, SALT, config],
+        functionName: "createAccountWithDefaults",
+        args: [annie.address, SALT, jason.address, sig1, bob.address, sig2, DAILY_LIMIT],
         chain: null,
         account: annie,
       });
       const { gasUsed } = await waitTx(hash);
-      return { txHash: hash, gas: gasUsed, notes: `UserOp-test account (no guard) = ${account}` };
+
+      // Confirm the account owns the whitelist (single source of truth) and ECDSA is approved.
+      const ecdsaApproved = await publicClient.readContract({
+        address: account, abi: v7Abi, functionName: "approvedAlgorithms", args: [0x02],
+      }) as boolean;
+      if (!ecdsaApproved) throw new Error("ECDSA (0x02) not approved on the account whitelist");
+
+      return { txHash: hash, gas: gasUsed, notes: `GUARD-ENABLED account = ${account} (ECDSA whitelisted ✓)` };
     },
   },
   {
@@ -234,11 +253,14 @@ const tests: TestCase[] = [
         args: [account, 0n],
       }) as bigint;
 
-      const callData = encodeFunctionData({
+      // v0.17.2-beta.4: wrap the inner execute() calldata with the executeUserOp selector so the
+      // EntryPoint routes execution to executeUserOp (which re-derives algId from the signature).
+      const innerCallData = encodeFunctionData({
         abi: baseAbi,
         functionName: "execute",
         args: [account, 0n, "0x"],
       });
+      const callData = wrapForBundler(innerCallData as `0x${string}`);
 
       // Step 1: Get Pimlico's current gas price — use exactly these fees in both the UserOp
       // and the hash so the bundler cannot adjust them (which would cause AA24).

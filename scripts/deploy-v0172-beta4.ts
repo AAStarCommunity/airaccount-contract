@@ -3,18 +3,18 @@
  *
  * Only the contracts changed by the beta.4 fix are redeployed:
  *   1. AAStarAirAccountFactoryV7   — auto-deploys new AAStarAirAccountV7 impl + AirAccountExtension
- *                                    (account: executeUserOp + account-owned whitelist + validation gate;
- *                                     guard: pure accounting recordSpend/recordTokenSpend)
  *   2. AirAccountDelegate          — EIP-7702 path aligned (ECDSA-only, recordSpend/recordTokenSpend)
  *   3. AgentRegistry               — MANDATORY re-deploy (bindFactory is set-once per factory)
  *
- * REUSED unchanged (addresses from .env.sepolia, not redeployed):
- *   AAStarValidator (router), SessionKeyValidator, ForceExitModule, AAStarBLSAlgorithm,
- *   AAStarBLSAggregator, CalldataParserRegistry.
+ * REUSED unchanged (from .env.sepolia): AAStarValidator (router), SessionKeyValidator,
+ * ForceExitModule, AAStarBLSAlgorithm, AAStarBLSAggregator, CalldataParserRegistry.
  *
- * Wiring:
- *   agentRegistry.bindFactory(factory)        — MANDATORY
- *   factory.setAgentRegistry(agentRegistry)   — MANDATORY
+ * Wiring: agentRegistry.bindFactory(factory); factory.setAgentRegistry(agentRegistry).
+ *
+ * v0.17.2-beta.4 deploy-robustness fix: each tx is SENT ONCE (never re-sent on a receipt-wait
+ * timeout — re-sending caused nonce conflicts / stuck duplicates), then its receipt is polled
+ * across all RPCs. An explicit priority fee (2 gwei) is set so txns are not parked with a near-zero
+ * tip (the prior failure mode).
  *
  * Usage: pnpm tsx scripts/deploy-v0172-beta4.ts
  */
@@ -23,8 +23,8 @@ import { config } from "dotenv";
 import { resolve } from "path";
 import { readFileSync } from "fs";
 import {
-  createPublicClient, createWalletClient, http, encodeDeployData, formatEther,
-  type Address, type Hex,
+  createPublicClient, createWalletClient, http, encodeDeployData, encodeFunctionData,
+  formatEther, type Address, type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
@@ -32,6 +32,7 @@ import { sepolia } from "viem/chains";
 config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
 const ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
+const PRIORITY_FEE = 2_000_000_000n; // 2 gwei tip — attractive enough to be included promptly
 
 const PRIVATE_KEY = (process.env.PRIVATE_KEY_ANNI ?? process.env.PRIVATE_KEY) as Hex;
 const COMMUNITY   = process.env.COMMUNITY_GUARDIAN_ADDRESS as Address;
@@ -40,104 +41,109 @@ const RPC_URLS = [
   process.env.SEPOLIA_RPC_URL, process.env.SEPOLIA_RPC_URL2, process.env.SEPOLIA_RPC_URL3,
 ].filter(Boolean) as string[];
 
+const deployer = privateKeyToAccount(PRIVATE_KEY);
+
 function loadArtifact(name: string) {
   const a = JSON.parse(readFileSync(resolve(import.meta.dirname, `../out/${name}.sol/${name}.json`), "utf-8"));
   return { abi: a.abi as unknown[], bytecode: a.bytecode.object as Hex };
 }
-function makeClients(rpcUrl: string, account: ReturnType<typeof privateKeyToAccount>) {
-  const transport = http(rpcUrl, { timeout: 300_000 });
-  return { pub: createPublicClient({ chain: sepolia, transport }), wal: createWalletClient({ account, chain: sepolia, transport }) };
+function pub(rpcUrl: string) { return createPublicClient({ chain: sepolia, transport: http(rpcUrl, { timeout: 60_000 }) }); }
+function wal(rpcUrl: string) { return createWalletClient({ account: deployer, chain: sepolia, transport: http(rpcUrl, { timeout: 60_000 }) }); }
+
+async function fees(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+  const block = await pub(RPC_URLS[0]).getBlock();
+  const base = block.baseFeePerGas ?? 10_000_000_000n;
+  return { maxFeePerGas: base * 2n + PRIORITY_FEE, maxPriorityFeePerGas: PRIORITY_FEE };
 }
-async function waitTx(pub: ReturnType<typeof createPublicClient>, hash: Hex, label: string) {
+
+/** Poll the receipt across ALL RPCs without ever re-sending the tx. */
+async function waitReceiptAnyRpc(hash: Hex, label: string) {
   console.log(`  TX(${label}): https://sepolia.etherscan.io/tx/${hash}`);
-  const r = await pub.waitForTransactionReceipt({ hash, timeout: 600_000 });
-  if (r.status !== "success") throw new Error(`${label} reverted`);
-  console.log(`  Gas: ${r.gasUsed}  Block: ${r.blockNumber}`);
-  return r;
-}
-async function withRetry<T>(label: string, fn: (rpcUrl: string) => Promise<T>): Promise<T> {
-  for (const rpcUrl of RPC_URLS) {
-    try { console.log(`  [${label}] RPC: ${rpcUrl.slice(0, 55)}...`); return await fn(rpcUrl); }
-    catch (err: any) { console.warn(`  [${label}] failed: ${err.message?.slice(0, 120)}`); }
+  for (let attempt = 0; attempt < 90; attempt++) { // ~7.5 min
+    for (const rpcUrl of RPC_URLS) {
+      try {
+        const r = await pub(rpcUrl).getTransactionReceipt({ hash });
+        if (r) {
+          if (r.status !== "success") throw new Error(`${label} reverted (status=${r.status})`);
+          console.log(`  Gas: ${r.gasUsed}  Block: ${r.blockNumber}`);
+          return r;
+        }
+      } catch (e: any) {
+        if (String(e.message ?? "").includes("reverted")) throw e;
+        // else: not mined yet on this RPC — keep polling
+      }
+    }
+    await new Promise((res) => setTimeout(res, 5000));
   }
-  throw new Error(`All RPCs failed for: ${label}`);
+  throw new Error(`${label}: receipt not found after polling — check ${hash}`);
+}
+
+async function deployOnce(label: string, artifactName: string, args: unknown[], gas: bigint): Promise<Address> {
+  const art = loadArtifact(artifactName);
+  const f = await fees();
+  const hash = await wal(RPC_URLS[0]).sendTransaction({
+    data: encodeDeployData({ abi: art.abi, bytecode: art.bytecode, args }),
+    gas, ...f,
+  });
+  const r = await waitReceiptAnyRpc(hash, label);
+  return r.contractAddress!;
+}
+
+async function callOnce(label: string, to: Address, abi: unknown[], functionName: string, args: unknown[], gas: bigint) {
+  const f = await fees();
+  const hash = await wal(RPC_URLS[0]).sendTransaction({
+    to, data: encodeFunctionData({ abi, functionName, args } as any), gas, ...f,
+  });
+  await waitReceiptAnyRpc(hash, label);
 }
 
 async function main() {
   if (!PRIVATE_KEY) { console.error("ERROR: PRIVATE_KEY_ANNI (or PRIVATE_KEY) not set"); process.exit(1); }
   if (!COMMUNITY)   { console.error("ERROR: COMMUNITY_GUARDIAN_ADDRESS not set"); process.exit(1); }
 
-  const deployer = privateKeyToAccount(PRIVATE_KEY);
   console.log("=== Deploy AirAccount v0.17.2-beta.4 (bundler-compat algId fix) ===");
   console.log(`Deployer:   ${deployer.address}`);
   console.log(`Community:  ${COMMUNITY}`);
   console.log(`EntryPoint: ${ENTRYPOINT}\n`);
 
-  const { pub: pub0 } = makeClients(RPC_URLS[0], deployer);
-  const bal = await pub0.getBalance({ address: deployer.address });
+  const bal = await pub(RPC_URLS[0]).getBalance({ address: deployer.address });
   console.log(`Balance:    ${formatEther(bal)} ETH`);
   if (bal < 30_000_000_000_000_000n) { console.error("ERROR: balance below 0.03 ETH"); process.exit(1); }
   console.log("");
 
   // ── 1. Factory (auto-deploys Impl + Extension) ──────────────────────────────
   console.log("[1/3] Deploy Factory + Impl + Extension (beta.4)...");
-  const { factoryAddr, implAddr, extensionAddr } = await withRetry("Factory", async (rpcUrl) => {
-    const { pub, wal } = makeClients(rpcUrl, deployer);
-    const fA = loadArtifact("AAStarAirAccountFactoryV7");
-    const hash = await wal.sendTransaction({
-      gas: 10_000_000n,
-      data: encodeDeployData({ abi: fA.abi, bytecode: fA.bytecode, args: [ENTRYPOINT, COMMUNITY, [], []] }),
-    });
-    const r = await waitTx(pub, hash, "Factory");
-    const factory = r.contractAddress!;
-    const impl = await pub.readContract({ address: factory, abi: fA.abi, functionName: "implementation" }) as Address;
-    const ext = await pub.readContract({
-      address: impl,
-      abi: [{ name: "agentExtension", type: "function", inputs: [], outputs: [{ type: "address" }], stateMutability: "view" }],
-      functionName: "agentExtension",
-    }).catch(() => "0x0000000000000000000000000000000000000000") as Address;
-    return { factoryAddr: factory, implAddr: impl, extensionAddr: ext };
-  });
+  const factoryAddr = await deployOnce("Factory", "AAStarAirAccountFactoryV7", [ENTRYPOINT, COMMUNITY, [], []], 10_000_000n);
+  const fAbi = loadArtifact("AAStarAirAccountFactoryV7").abi;
+  const implAddr = await pub(RPC_URLS[0]).readContract({ address: factoryAddr, abi: fAbi, functionName: "implementation" }) as Address;
+  const extensionAddr = await pub(RPC_URLS[0]).readContract({
+    address: implAddr,
+    abi: [{ name: "agentExtension", type: "function", inputs: [], outputs: [{ type: "address" }], stateMutability: "view" }],
+    functionName: "agentExtension",
+  }).catch(() => "0x0000000000000000000000000000000000000000") as Address;
   console.log(`  Factory:   ${factoryAddr}`);
   console.log(`  Impl:      ${implAddr}`);
   console.log(`  Extension: ${extensionAddr}\n`);
 
   // ── 2. AirAccountDelegate (EIP-7702, changed in beta.4) ─────────────────────
   console.log("[2/3] Deploy AirAccountDelegate (beta.4)...");
-  const delegateAddr = await withRetry("AirAccountDelegate", async (rpcUrl) => {
-    const { pub, wal } = makeClients(rpcUrl, deployer);
-    const art = loadArtifact("AirAccountDelegate");
-    const hash = await wal.sendTransaction({
-      data: encodeDeployData({ abi: art.abi, bytecode: art.bytecode, args: [] }), gas: 3_000_000n,
-    });
-    const r = await waitTx(pub, hash, "AirAccountDelegate");
-    return r.contractAddress!;
-  });
+  const delegateAddr = await deployOnce("AirAccountDelegate", "AirAccountDelegate", [], 3_000_000n);
   console.log(`  AirAccountDelegate: ${delegateAddr}\n`);
 
   // ── 3. AgentRegistry (MANDATORY per-factory) ────────────────────────────────
   console.log("[3/3] Deploy AgentRegistry (bindFactory is set-once)...");
-  const agentRegistryAddr = await withRetry("AgentRegistry", async (rpcUrl) => {
-    const { pub, wal } = makeClients(rpcUrl, deployer);
-    const art = loadArtifact("AgentRegistry");
-    const hash = await wal.sendTransaction({
-      data: encodeDeployData({ abi: art.abi, bytecode: art.bytecode, args: [] }), gas: 1_500_000n,
-    });
-    const r = await waitTx(pub, hash, "AgentRegistry");
-    return r.contractAddress!;
-  });
+  const agentRegistryAddr = await deployOnce("AgentRegistry", "AgentRegistry", [], 1_500_000n);
   console.log(`  AgentRegistry: ${agentRegistryAddr}\n`);
 
   // ── Wiring ──────────────────────────────────────────────────────────────────
-  const { pub, wal } = makeClients(RPC_URLS[0], deployer);
   const registryAbi = [{ name: "bindFactory", type: "function", inputs: [{ type: "address" }], outputs: [], stateMutability: "nonpayable" }];
-  const factoryAbi  = [{ name: "setAgentRegistry", type: "function", inputs: [{ type: "address" }], outputs: [], stateMutability: "nonpayable" }];
+  const factoryWireAbi = [{ name: "setAgentRegistry", type: "function", inputs: [{ type: "address" }], outputs: [], stateMutability: "nonpayable" }];
 
   console.log("[Wire 1/2] agentRegistry.bindFactory(factory)...");
-  await waitTx(pub, await wal.writeContract({ address: agentRegistryAddr, abi: registryAbi, functionName: "bindFactory", args: [factoryAddr] }), "bindFactory");
+  await callOnce("bindFactory", agentRegistryAddr, registryAbi, "bindFactory", [factoryAddr], 200_000n);
 
   console.log("[Wire 2/2] factory.setAgentRegistry(agentRegistry)...");
-  await waitTx(pub, await wal.writeContract({ address: factoryAddr, abi: factoryAbi, functionName: "setAgentRegistry", args: [agentRegistryAddr] }), "setAgentRegistry");
+  await callOnce("setAgentRegistry", factoryAddr, factoryWireAbi, "setAgentRegistry", [agentRegistryAddr], 200_000n);
 
   console.log("\n=== beta.4 Deployment Summary — update .env.sepolia ===");
   console.log(`AIRACCOUNT_V0172_BETA_FACTORY=${factoryAddr}`);

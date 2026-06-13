@@ -3,9 +3,9 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-## Status: v0.17.2-beta.3 — 2026-06-12
+## Status: v0.17.2-beta.4 — 2026-06-13
 
-Latest tag: [`v0.17.2-beta.3`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.2-beta.3). Deployed + Etherscan-verified on Sepolia. Forge test **723/0/0**, on-chain E2E **79/79 PASS**.
+Latest: **v0.17.2-beta.4** — bundler-compatible algId fix (`executeUserOp` + account-owned whitelist). Guard-enabled accounts now work through a standard ERC-4337 bundler (on-chain verified via Pimlico). Deployed on Sepolia. Forge test **731/0/0**, on-chain E2E PASS (Phase 08-12). See [`docs/beta4-impact-assessment.md`](docs/beta4-impact-assessment.md) + [`docs/beta4-algid-bundler-fix-design.md`](docs/beta4-algid-bundler-fix-design.md). Prior: [`v0.17.2-beta.3`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.17.2-beta.3).
 
 ### Core features since v0.17.1
 
@@ -207,7 +207,8 @@ What AirAccount ships and what each contract does. **Deploy** column: `singleton
 | M5 — ERC20 Guard + Guardian Accept | ✅ | `0xd72a236d84be6c388a8bc7deb64afd54704ae385` | 298 |
 | M6 — Session Key + Weighted MultiSig + EIP-7702 | ✅ | `0x34282bef82e14af3cc61fecaa60eab91d3a82d46` | 446 |
 | M7 — ERC-7579 + Agent Economy + WalletBeat + L2 ForceExit + Railgun | ✅ | `0x9D0735E3096C02eC63356F21d6ef79586280289f` | 622 |
-| **v0.17.2-beta.3** — Security hardening, diamond-lite, Phase 08-12 E2E | ✅ | `0xfc6234bbd6283610659211347c6309904be86b0a` | **723** |
+| **v0.17.2-beta.3** — Security hardening, diamond-lite, Phase 08-12 E2E | ✅ | `0xfc6234bbd6283610659211347c6309904be86b0a` | 723 |
+| **v0.17.2-beta.4** — Bundler-compat algId (executeUserOp + account whitelist) | ✅ | `0x3a9127a5f0b4ca734d54629d0c3ad9f52739c071` | **731** |
 
 ---
 
@@ -242,20 +243,25 @@ WalletBeat evaluates wallets across Stage 0, 1, 2. AirAccount is a **smart contr
 
 ---
 
-## Deployed Contracts (Sepolia) — v0.17.2-beta.3
+## Deployed Contracts (Sepolia) — v0.17.2-beta.4
 
-| Contract | Address |
-|----------|---------|
-| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
-| Factory | `0xfc6234bbd6283610659211347c6309904be86b0a` |
-| Implementation | `0xe33EeCF21AAC2B776b49A4dd52BA8b7e683dE9C3` |
-| Extension | `0xB3c7312bA52dF306DE1cBa781B91f3AfA7e86F99` |
-| ValidatorRouter | `0x3c2b06f50300912794f29de031b33dd37bb8d6c6` |
-| BLSAlgorithm | `0xB82127182A855B82eED05e47536FcE568b626457` |
-| SessionKeyValidator | `0x655ca2e9a2d1178f7fbcea1856560d1e0c657ebf` |
-| ForceExitModule | `0xdb396ca2dc279f9bcb95fa3d8275f77c9f0c8702` |
-| AgentRegistry | `0x9e8f576cad8a8f949181fd10d9ad1c49a7b0bc17` |
-| BLSAggregator | `0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1` |
+beta.4 redeployed Factory/Impl/Extension/Delegate/AgentRegistry (bundler-compat algId fix). Router/SessionKeyValidator/ForceExit/BLS/Aggregator/Parser are reused unchanged from beta.3.
+
+| Contract | Address | Changed in beta.4 |
+|----------|---------|---|
+| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | — (canonical) |
+| Factory | `0x3a9127a5f0b4ca734d54629d0c3ad9f52739c071` | ✅ |
+| Implementation | `0x0321Fa7261Ad5945e4B3f0c73aFD7D9392E39796` | ✅ |
+| Extension | `0x20FB2A65a52Fc6507FdD51260f055017a2BA2860` | ✅ |
+| AirAccountDelegate (EIP-7702) | `0x4bda4849b80cc444fb2da65beec0724005c6675c` | ✅ |
+| AgentRegistry | `0xe1320c35485b4d7817866a8d0d8f77dd58202253` | ✅ (bindFactory set-once) |
+| ValidatorRouter | `0x3c2b06f50300912794f29de031b33dd37bb8d6c6` | reused |
+| BLSAlgorithm | `0xB82127182A855B82eED05e47536FcE568b626457` | reused |
+| SessionKeyValidator | `0x655ca2e9a2d1178f7fbcea1856560d1e0c657ebf` | reused |
+| ForceExitModule | `0xdb396ca2dc279f9bcb95fa3d8275f77c9f0c8702` | reused |
+| BLSAggregator | `0xBAc3f24946d0eb15189E1c01e38182e5B078Bbc1` | reused |
+
+> **beta.4 fix:** guard-enabled accounts now work through a standard ERC-4337 bundler. The algorithm whitelist moved to the account (single source of truth, enforced in `validateUserOp`), and `executeUserOp` re-derives the signature algId in-frame — eliminating the cross-eth_call transient dependency that broke bundler estimation. On-chain verified: a guard-enabled account's self-paying UserOp landed via Pimlico (Phase 12). See [`docs/beta4-impact-assessment.md`](docs/beta4-impact-assessment.md).
 
 ABI: use [`abi/AAStarAirAccountV7.full.json`](abi/AAStarAirAccountV7.full.json) (64 functions — includes diamond-lite `AirAccountExtension` selectors).
 
