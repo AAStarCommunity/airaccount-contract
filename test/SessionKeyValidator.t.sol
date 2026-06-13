@@ -559,6 +559,42 @@ contract SessionKeyValidatorTest is Test {
         validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
     }
 
+    /// @notice #57 adversarial (Codex WS-C LOW) — calls clustered at the END of window N. The weighted
+    ///         limiter must DAMPEN the boundary burst: crossing into N+1 must NOT reset the budget to a
+    ///         fresh full `limit` (that was the old fixed-window 2x bug). It allows only a small bounded
+    ///         overage as prevCount decays. (This documents the APPROXIMATE behavior — see the
+    ///         recordCallForVelocity comment: weighted limiter, not a strict per-rolling-window cap.)
+    function test_velocity_clusteredAtWindowEnd_isDampened() public {
+        SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
+            expiry: uint48(block.timestamp + 1 hours),
+            contractScope: address(0), selectorScope: bytes4(0), revoked: false,
+            velocityLimit: 10, velocityWindow: 100,
+            callTargets: new address[](0), selectorAllowlist: new bytes4[](0)
+        });
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, cfg);
+        bytes32 skh = bytes32(uint256(uint160(sessionKey)));
+
+        uint256 t0 = block.timestamp;
+        // Fill window N late: 10 calls at t0+99.
+        vm.warp(t0 + 99);
+        for (uint256 i = 0; i < 10; i++) { vm.prank(account); validator.recordCallForVelocity(account, skh, 0x01); }
+        // 11th within window N → reverts (callCount == limit).
+        vm.prank(account);
+        vm.expectRevert(SessionKeyValidator.VelocityLimitExceeded.selector);
+        validator.recordCallForVelocity(account, skh, 0x01);
+
+        // Cross into window N+1 (elapsed=1): weighted estimate stays high (~9), so the budget is NOT
+        // reset to a fresh 10. Count how many calls slip through before the gate rejects.
+        vm.warp(t0 + 101);
+        uint256 allowed;
+        for (uint256 i = 0; i < 10; i++) {
+            vm.prank(account);
+            try validator.recordCallForVelocity(account, skh, 0x01) { allowed++; } catch { break; }
+        }
+        assertLt(allowed, 10, "weighted limiter must NOT grant a fresh full limit right after the boundary (no 2x burst)");
+    }
+
     function test_recordCallForVelocity_exceedsLimit_reverts() public {
         SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
             expiry: uint48(block.timestamp + 1 hours),

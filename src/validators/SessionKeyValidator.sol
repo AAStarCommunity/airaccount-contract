@@ -372,9 +372,14 @@ contract SessionKeyValidator is IAAStarAlgorithm {
 
         if (s.velocityLimit == 0) return; // unlimited
 
-        // Sliding-window counter (issue #57). Roll the stored window forward to `now`, then
-        // gate on the weighted estimate so the rolling rate can never exceed velocityLimit —
-        // unlike the old fixed window, which allowed up to 2*limit-1 calls across a boundary.
+        // Weighted-window rate limiter (issue #57 / KI-4 — the "weighted counter" option). Roll the
+        // stored window to `now`, then gate on the weighted estimate `cc + pc*(window-elapsed)/window`.
+        // NOTE: this is an APPROXIMATE rolling-rate limiter (Cloudflare-style weighted bucket), NOT a
+        // strict per-rolling-window cap. It eliminates the old fixed window's 2*limit-1 boundary burst
+        // and bounds the sustained rate to ~velocityLimit/window; a small transient overage is possible
+        // for adversarial intra-window clustering. That residual is accepted (velocity is a soft
+        // abuse/DoS limiter — the hard spending caps are enforced exactly by the guard). A strict ring
+        // buffer (per-call timestamps) was rejected for its per-call storage/gas cost.
         (uint256 ws, uint256 cc, uint256 pc, uint256 elapsed) =
             _rollWindow(state.windowStart, state.callCount, state.prevCount, s.velocityWindow, block.timestamp);
         if (_slidingEstimate(cc, pc, s.velocityWindow, elapsed) >= s.velocityLimit) revert VelocityLimitExceeded();
