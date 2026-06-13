@@ -72,6 +72,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x293e07f2` | `setAgentWallet(uint256,address,address,bytes)` | IAirAccountAgent |
 | `0x2a88a496` | `todaySpent()` | AAStarGlobalGuard |
 | `0x2b690ea6` | `createAgentAccount(address,bytes32,address,bytes,bytes,uint48,uint256)` | AAStarAirAccountFactoryV7 |
+| `0x2c364ef6` | `moduleManagementNonce()` | AAStarAirAccountV7 |
 | `0x2d1ef5ae` | `setAgentWallet(uint256,address,uint256,bytes)` | IERC8004IdentityRegistry |
 | `0x2dd81133` | `validateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],bytes)` | AAStarBLSAggregator |
 | `0x2e4d25c4` | `registerAgent(address,bytes)` | AgentRegistry |
