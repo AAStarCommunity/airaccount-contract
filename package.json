@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "gen:abi-docs": "node scripts/gen-abi-docs.mjs",
+    "gen:abi-docs:check": "node scripts/gen-abi-docs.mjs --check"
+  },
   "dependencies": {
     "@noble/curves": "^1.8.1",
     "dotenv": "^17.3.1",
