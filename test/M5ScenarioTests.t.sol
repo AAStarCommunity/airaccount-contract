@@ -837,14 +837,11 @@ contract M5ScenarioTests is Test {
         // during execute (tier enforcement happens in _enforceGuard, not in validateUserOp).
         op.callData = abi.encodeWithSelector(alice.execute.selector, address(0xdead), uint256(0.5 ether), bytes(""));
 
-        // validateUserOp succeeds (sig is valid)
+        // v0.17.2-beta.4: the signature is valid, but a 0.5 ETH transfer (above tier1Limit, needs
+        // tier 2) with COMBINED_T1 (tier 1) is now BLOCKED at validation (fail-fast) — validateUserOp
+        // returns 1 rather than deferring to an execution-phase InsufficientTier(2,1) revert.
         vm.prank(address(entryPoint));
         uint256 result = alice.validateUserOp(op, hash, 0);
-        assertEq(result, 0, "COMBINED_T1 signature itself is valid");
-
-        // But executing a 0.5 ETH transfer (above tier1Limit) with algId=0x06 (tier1) is blocked
-        vm.prank(address(entryPoint));
-        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountBase.InsufficientTier.selector, uint8(2), uint8(1)));
-        alice.execute(address(0xdead), 0.5 ether, "");
+        assertEq(result, 1, "large transfer with tier-1 sig blocked in validation");
     }
 }

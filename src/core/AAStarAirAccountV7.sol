@@ -216,8 +216,18 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         // validation and execution simulations → algId=0 → AlgorithmNotApproved(0). This gate runs in
         // BOTH estimation and real handleOps. SIG_VALIDATION_FAILED (1) is the only failure sentinel.
         if (validationData != 1 && address(guard) != address(0)) {
-            if (!approvedAlgorithms[_consumeValidatedAlgId()]) {
+            uint8 a = _consumeValidatedAlgId();
+            if (!approvedAlgorithms[a]) {
                 return 1; // SIG_VALIDATION_FAILED — algorithm not whitelisted for this account
+            }
+            // Per-op ETH tier gate (fail-fast). Reject here rather than letting execution revert with
+            // InsufficientTier — otherwise a bundler includes the op and the account's EntryPoint
+            // deposit pays gas for an op that always reverts. Keeps estimation == execution.
+            if (tier1Limit > 0 || tier2Limit > 0) {
+                uint8 resolved = (a == ALG_WEIGHTED) ? _resolveWeightedAlgId(_consumeValidatedWeight()) : a;
+                if (!_validationTierOk(resolved, userOp.callData)) {
+                    return 1; // SIG_VALIDATION_FAILED — signature tier below the value's required tier
+                }
             }
         }
 
@@ -249,6 +259,39 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         if (!ok) {
             assembly { revert(add(ret, 0x20), mload(ret)) }
         }
+    }
+
+    /// @dev v0.17.2-beta.4: per-op ETH tier check for the validateUserOp gate. Decodes the ETH
+    ///      value(s) from the userOp callData (unwrapping the executeUserOp selector if present, then
+    ///      execute/executeBatch) and verifies the provided signature tier covers requiredTier(value).
+    ///      Returns true (no rejection) for callData that does not move ETH through execute/executeBatch
+    ///      (those paths carry no value-tier obligation here). The cumulative/daily tier is still
+    ///      enforced authoritatively in execution; this is the fail-fast per-op gate.
+    function _validationTierOk(uint8 resolvedAlgId, bytes calldata callData) internal view returns (bool) {
+        bytes calldata cd = callData;
+        // Unwrap the ERC-4337 v0.7 executeUserOp wrapper if present.
+        if (cd.length >= 4 && bytes4(cd[:4]) == this.executeUserOp.selector) {
+            if (cd.length < 8) return true;
+            cd = cd[4:];
+        }
+        if (cd.length < 4) return true;
+        bytes4 sel = bytes4(cd[:4]);
+        uint8 provided = _algTier(resolvedAlgId);
+
+        if (sel == this.execute.selector) {
+            // execute(address dest, uint256 value, bytes func): value at [4+32 : 4+64]
+            if (cd.length < 68) return true;
+            uint256 value = uint256(bytes32(cd[36:68]));
+            return provided >= requiredTier(value);
+        }
+        if (sel == this.executeBatch.selector) {
+            ( , uint256[] memory values, ) = abi.decode(cd[4:], (address[], uint256[], bytes[]));
+            for (uint256 i = 0; i < values.length; i++) {
+                if (provided < requiredTier(values[i])) return false;
+            }
+            return true;
+        }
+        return true; // non-execute selectors carry no per-op ETH-value tier obligation here
     }
 
     // ─── ERC-7579 Module Management (M7.2) ────────────────────────────

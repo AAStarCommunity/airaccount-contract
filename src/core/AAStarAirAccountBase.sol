@@ -1242,16 +1242,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         }
     }
 
-    /// @notice Peek at the current UserOp's algId without consuming it.
-    ///         Called by TierGuardHook.preCheck() during execute() so the hook enforces tier
-    ///         limits using the same algId as the guard. Returns 0 (ALG_NONE) if none stored.
+    /// @notice Peek at the current UserOp's algId without consuming it (transient, content-keyed).
     function getCurrentAlgId() external view returns (uint256 algId) {
         uint256 slot = _queueSlot(ALG_ID_SLOT_BASE);
         assembly { algId := tload(slot) }
     }
 
     /// @notice Peek at the current UserOp's session key without consuming it.
-    ///         Called by TierGuardHook.preCheck() for session scope enforcement (M8.P2).
     ///         Top byte: 0x01 = ECDSA session (lower 20 bytes = address), 0x02 = P256 session.
     function getCurrentSessionKey() external view returns (bytes32 taggedId) {
         uint256 slot = _queueSlot(SESSION_KEY_SLOT_BASE);

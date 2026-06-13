@@ -131,6 +131,38 @@ contract Beta4AlgIdBundlerFixTest is Test {
         assertEq(vd, 1, "non-whitelisted algorithm must be rejected in validation");
     }
 
+    // ─── validateUserOp per-op tier gate (fail-fast, Codex MEDIUM fix) ──
+
+    function test_validateUserOp_rejectsUnderTierValue() public {
+        // tier1 = 1 ETH; an ECDSA (tier 1) op moving 2 ETH requires tier 2 → must reject in validation
+        // (not just at execution) so the bundler never includes a doomed op.
+        _deploy(_algs(ALG_ECDSA), 10 ether);
+        vm.prank(ownerAddr);
+        account.setTierLimits(1 ether, 5 ether);
+
+        PackedUserOperation memory op = _emptyUserOp();
+        op.callData = _wrapExecute(dest, 2 ether); // above tier1 → needs tier 2
+        bytes32 h = keccak256("op-undertier");
+        op.signature = _signEcdsa(h);
+
+        vm.prank(entryPoint);
+        assertEq(account.validateUserOp(op, h, 0), 1, "under-tier op must fail validation fast");
+    }
+
+    function test_validateUserOp_acceptsWithinTierValue() public {
+        _deploy(_algs(ALG_ECDSA), 10 ether);
+        vm.prank(ownerAddr);
+        account.setTierLimits(1 ether, 5 ether);
+
+        PackedUserOperation memory op = _emptyUserOp();
+        op.callData = _wrapExecute(dest, 0.5 ether); // within tier 1
+        bytes32 h = keccak256("op-intier");
+        op.signature = _signEcdsa(h);
+
+        vm.prank(entryPoint);
+        assertEq(account.validateUserOp(op, h, 0), 0, "within-tier ECDSA op must validate");
+    }
+
     // ─── executeUserOp survives bundler split-simulation ────────────────
 
     /// @notice THE core regression test. The bundler simulates validateUserOp and execution in
