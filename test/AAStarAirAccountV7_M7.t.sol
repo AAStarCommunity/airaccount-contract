@@ -1071,22 +1071,29 @@ contract AAStarAirAccountV7_M7Test is Test {
 
     // ─── #84: contract version / epoch bound into the signed hash ──────────────
 
-    /// @notice #84 — an install signature built against a DIFFERENT GUARDIAN_SIG_VERSION must fail,
-    ///         proving signatures cannot cross contract versions (e.g. a future v8 at the same
-    ///         CREATE2 address). Hash uses version+1 instead of the live constant (4).
-    function test_installModule_wrongVersion_reverts() public {
-        uint8 wrongVersion = GUARDIAN_SIG_VERSION + 1;
+    /// @notice #84 — proves GUARDIAN_SIG_VERSION is LOAD-BEARING in the install hash (not ignored).
+    ///         Paired control: the SAME install op differs ONLY in the version field. The wrong-version
+    ///         sig must revert; the correct-version sig (same nonce, same args) must then succeed —
+    ///         so the only thing that gated the first was the version, proving it's folded into the digest.
+    ///         (A bare wrong-version-reverts test would pass even if the contract ignored version, since
+    ///         any digest change → different recovered address → NotGuardian.)
+    function test_installModule_versionIsLoadBearing() public {
+        // Negative: same op, only GUARDIAN_SIG_VERSION+1 differs.
         bytes32 raw = keccak256(abi.encode(
-            wrongVersion, block.chainid, address(account), "INSTALL_MODULE",
+            uint8(GUARDIAN_SIG_VERSION + 1), block.chainid, address(account), "INSTALL_MODULE",
             abi.encode(uint256(1), address(mockModule), keccak256(bytes("")), account.moduleManagementNonce())
         ));
-        bytes32 ethHash = raw.toEthSignedMessageHash();
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(g0Wallet.privateKey, ethHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(g0Wallet.privateKey, raw.toEthSignedMessageHash());
         bytes memory wrongVerSig = abi.encodePacked(r, s, v);
-
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
         account.installModule(1, address(mockModule), wrongVerSig);
+
+        // Positive control: identical op with the CORRECT version (same nonce — the revert didn't bump it).
+        bytes memory goodSig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        vm.prank(ownerWallet.addr);
+        account.installModule(1, address(mockModule), goodSig);
+        assertTrue(account.isModuleInstalled(1, address(mockModule), ""), "correct-version install must succeed");
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
