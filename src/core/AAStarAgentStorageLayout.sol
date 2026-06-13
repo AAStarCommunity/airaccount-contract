@@ -60,8 +60,13 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     /// @notice Optional validator router for external algorithms (BLS, PQ, etc.)
     IAAStarValidator public validator;                                                    // slot 2
 
-    /// @notice Optional BLS aggregator for batch verification
-    address public blsAggregator;                                                         // slot 3
+    /// @dev RESERVED (slot 3). Previously `address public blsAggregator` — a per-account batch
+    ///      aggregator. Removed in issue #45 Part B: the batch aggregator is now a SINGLE
+    ///      protocol-level value on AAStarBLSAlgorithm (`blsAlgorithm.aggregator()`), set only by the
+    ///      protocol Safe. There is intentionally NO per-account aggregator and NO account-side
+    ///      setter. The slot is retained (not deleted) to preserve the historical numbering of
+    ///      slots 4..25 below — never reuse or reorder it.
+    address private __reservedSlot3_blsAggregator;                                        // slot 3 (reserved)
 
     /// @notice Global guard for spending limits (set at construction, cannot be removed)
     AAStarGlobalGuard public guard;                                                       // slot 4
@@ -121,9 +126,4 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     ///      signature collected for one install can never be replayed after an uninstall+reinstall.
     ///      Appended at slot 25 — never reorder.
     uint256 internal _moduleManagementNonce;                                              // slot 25
-
-    /// @dev Monotonic nonce for guardian-signed `setAggregatorWithGuardians` (issue #45). Prevents
-    ///      replay of a guardian signature set across multiple aggregator changes.
-    ///      Appended at slot 26 — never reorder.
-    uint256 internal _aggregatorNonce;                                                    // slot 26
 }

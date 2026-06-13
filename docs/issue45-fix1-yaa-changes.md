@@ -73,18 +73,23 @@ with different ones. SDK / deploy implications for the batch path:
 - `AAStarBLSAggregator` constructor is now `(blsAlgorithm, entryPoint)` — deploy scripts must pass
   the canonical EntryPoint (used to derive each op's `userOpHash`).
 - The aggregator's G2ADD precompile address was corrected `0x0e → 0x0d` (final EIP-2537).
-- Selecting the aggregator on an account is **guardian-gated**: `setAggregatorWithGuardians(agg,
-  deadline, guardianSigs[])` needs owner + RECOVERY_THRESHOLD guardian sigs over
-  `keccak(GUARDIAN_SIG_VERSION, chainid, account, "SET_AGGREGATOR", abi.encode(nonce, agg,
-  deadline))`. A lone compromised owner can no longer swap `blsAggregator`. `address(0)` (disable)
-  is allowed under the same gate.
 
-> RECOMMENDED HARDENING (pending product confirmation; documented in the contract): add a SECOND
-> protocol-level gate — a Gnosis-Safe-governed `AggregatorRegistry` allowlist wired immutably into
-> the account by the factory — so even owner + colluding guardians could only select a Safe-vetted
-> aggregator. NOT implemented in this PR: guardian-gating already closes the single-compromised-owner
-> swap #45 flagged; the registry is flagged for the user to confirm scope (it touches the V7/Base
-> constructor + factory since all clones share one registry via the implementation immutable).
+### Aggregator selection — single protocol-level value, Safe-owned (FINAL Part B)
+
+The aggregator is a **single protocol-level value** on `AAStarBLSAlgorithm`
+(`address public aggregator` + `setAggregator(address) onlyOwner`), **not** a per-account field.
+
+- The end-user account owner has **no aggregator setter at all**. The account only READS
+  `blsAlgorithm.aggregator()` during BLS validation: non-zero ⇒ defer to that batch aggregator;
+  zero ⇒ inline single-op binding.
+- `AAStarBLSAlgorithm.owner` uses **two-step ownership** (`transferOwnership` records a pending owner;
+  `acceptOwnership` completes it — Ownable2Step). After deploy the EOA registers the node keys, then
+  hands ownership to the protocol **Gnosis Safe**; thereafter only the Safe can set/disable the one
+  canonical aggregator. The two-step handover prevents fat-fingering ownership to a wrong address.
+- The per-account `blsAggregator` field + getter and the account-side setter were **removed** — the
+  account ABI loses `blsAggregator()`. SDKs read the aggregator from `AAStarBLSAlgorithm.aggregator()`.
+- Default at deploy is `aggregator == address(0)` (batch disabled, single-op everywhere); the Safe
+  explicitly enables batch by setting it to the deployed `AAStarBLSAggregator`.
 
 ## Out of scope here (flagged for follow-up)
 

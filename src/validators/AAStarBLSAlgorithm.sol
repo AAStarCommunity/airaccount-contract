@@ -29,8 +29,20 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     ///      `cacheAggregatedKey()` is retained as a deprecated no-op-revert for SDK
     ///      callers that haven't migrated yet — they get a clear `CacheDeprecated` revert.
 
-    /// @dev Contract owner for admin functions
+    /// @dev Contract owner for admin functions. Intended to be transferred (two-step) to the
+    ///      protocol Gnosis Safe multisig after the deployer EOA has registered the node keys.
     address public owner;
+
+    /// @dev Pending owner for the two-step ownership transfer (Ownable2Step pattern). The EOA→Safe
+    ///      handover requires the new owner to explicitly `acceptOwnership()`, so a fat-fingered
+    ///      wrong address can never end up owning the registry.
+    address public pendingOwner;
+
+    /// @dev issue #45 Part B: the single, protocol-level batch BLS aggregator. ONE canonical
+    ///      aggregator for the whole protocol — set only by `owner` (the Safe). Accounts read this
+    ///      value during BLS validation (`blsAlgorithm.aggregator()`); end users have NO way to
+    ///      change it. Zero ⇒ batch aggregation disabled, accounts use inline single-op BLS.
+    address public aggregator;
 
     // ─── Constants ────────────────────────────────────────────────────
 
@@ -83,10 +95,15 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     event PublicKeyUpdated(bytes32 indexed nodeId, bytes oldKey, bytes newKey);
     event PublicKeyRevoked(bytes32 indexed nodeId);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    /// @dev Two-step ownership: emitted when `transferOwnership` records a pending owner.
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    /// @dev issue #45 Part B: emitted when the protocol-level aggregator value changes.
+    event AggregatorSet(address indexed aggregator);
 
     // ─── Errors ───────────────────────────────────────────────────────
 
     error OnlyOwner();
+    error NotPendingOwner();
     error InvalidNodeId();
     error InvalidKeyLength();
     error NodeAlreadyRegistered();
@@ -694,10 +711,31 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
         }
     }
 
+    /// @notice issue #45 Part B: set the single protocol-level batch BLS aggregator.
+    ///         Only `owner` (intended to be the protocol Gnosis Safe) may call this. There is no
+    ///         per-account aggregator and no end-user setter — this one value governs the batch
+    ///         path for every account that reads `blsAlgorithm.aggregator()`. Pass `address(0)` to
+    ///         disable batch aggregation protocol-wide (accounts fall back to inline single-op BLS).
+    function setAggregator(address agg) external onlyOwner {
+        aggregator = agg;
+        emit AggregatorSet(agg);
+    }
+
+    /// @notice Begin a two-step ownership transfer (Ownable2Step). Records `newOwner` as pending;
+    ///         the transfer only completes when `newOwner` calls `acceptOwnership()`. Use this for
+    ///         the deployer-EOA → protocol-Safe handover so a wrong address cannot take ownership.
+    ///         Pass `address(0)` to cancel a pending transfer.
     function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0) || newOwner == owner) revert InvalidNodeId();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    /// @notice Complete a two-step ownership transfer. Only the pending owner may accept.
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
         address prev = owner;
-        owner = newOwner;
-        emit OwnershipTransferred(prev, newOwner);
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(prev, owner);
     }
 }

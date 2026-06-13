@@ -191,18 +191,67 @@ contract AAStarBLSAlgorithmTest is Test {
         assertEq(ids.length, 0);
     }
 
-    // ─── Ownership ────────────────────────────────────────────────────
+    // ─── Ownership (two-step, Ownable2Step) ───────────────────────────
 
-    function test_transferOwnership() public {
+    function test_transferOwnership_twoStep() public {
         address newOwner = address(0xBEEF);
+        // Step 1: current owner records pending owner — ownership does NOT change yet.
         bls.transferOwnership(newOwner);
+        assertEq(bls.owner(), address(this), "owner must not change until accepted");
+        assertEq(bls.pendingOwner(), newOwner);
+
+        // Step 2: only the pending owner can accept.
+        vm.prank(newOwner);
+        bls.acceptOwnership();
         assertEq(bls.owner(), newOwner);
+        assertEq(bls.pendingOwner(), address(0));
+    }
+
+    function test_acceptOwnership_onlyPendingOwner() public {
+        bls.transferOwnership(address(0xBEEF));
+        vm.prank(address(0xdead));
+        vm.expectRevert(AAStarBLSAlgorithm.NotPendingOwner.selector);
+        bls.acceptOwnership();
     }
 
     function test_transferOwnership_onlyOwner() public {
         vm.prank(address(0xdead));
         vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
         bls.transferOwnership(address(0xBEEF));
+    }
+
+    // ─── Protocol aggregator (issue #45 Part B) ───────────────────────
+
+    function test_setAggregator_onlyOwner_succeeds() public {
+        assertEq(bls.aggregator(), address(0), "default: no aggregator");
+        bls.setAggregator(address(0xA66));
+        assertEq(bls.aggregator(), address(0xA66));
+        // can be cleared (disable batch protocol-wide)
+        bls.setAggregator(address(0));
+        assertEq(bls.aggregator(), address(0));
+    }
+
+    function test_setAggregator_nonOwner_reverts() public {
+        vm.prank(address(0xdead));
+        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
+        bls.setAggregator(address(0xA66));
+    }
+
+    function test_setAggregator_onlyNewSafeOwnerAfterHandover() public {
+        // After EOA→Safe handover, only the Safe (new owner) can set the aggregator.
+        address safe = address(0x5AFE);
+        bls.transferOwnership(safe);
+        vm.prank(safe);
+        bls.acceptOwnership();
+
+        // Old owner (this) can no longer set it.
+        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
+        bls.setAggregator(address(0xA66));
+
+        // The Safe can.
+        vm.prank(safe);
+        bls.setAggregator(address(0xA66));
+        assertEq(bls.aggregator(), address(0xA66));
     }
 
     // ─── Gas Estimate ─────────────────────────────────────────────────

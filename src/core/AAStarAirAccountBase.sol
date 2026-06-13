@@ -12,6 +12,12 @@ import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
 import {AirAccountExtension} from "./AirAccountExtension.sol";
 import {AlgTierLib} from "../utils/AlgTierLib.sol";
 
+/// @dev Minimal view of AAStarBLSAlgorithm's protocol-level aggregator (issue #45 Part B).
+///      The account reads this single value during BLS validation to decide the batch path.
+interface IBLSAggregatorSource {
+    function aggregator() external view returns (address);
+}
+
 /**
  * @title AAStarAirAccountBase
  * @notice Non-upgradable ERC-4337 smart wallet base with algId-based signature routing,
@@ -219,7 +225,6 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     // ─── Events ───────────────────────────────────────────────────────
 
     event ValidatorSet(address indexed validator);
-    event AggregatorSet(address indexed aggregator);
     event GuardInitialized(address indexed guard, uint256 dailyLimit);
     event AlgorithmApproved(uint8 indexed algId);
     event ParserRegistrySet(address indexed registry);
@@ -362,52 +367,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         emit ValidatorSet(_validator);
     }
 
-    /// @notice Set the batch BLS aggregator — requires owner AND RECOVERY_THRESHOLD guardian
-    ///         signatures (issue #45). The aggregator is a powerful component: an ALG_BLS op routes
-    ///         its BLS verification through `aggregator.validateSignatures()`, so a malicious no-op
-    ///         aggregator would nullify the DVT factor. Gating the setter on guardian consensus means
-    ///         a single compromised owner key cannot swap it. The aggregator itself is still required
-    ///         to be #45-safe (AAStarBLSAggregator recomputes each op's message point from its
-    ///         userOpHash). Pass `address(0)` to disable batch verification (back to single-op).
-    ///
-    /// @dev RECOMMENDED HARDENING (follow-up, pending product confirmation): add a SECOND gate — a
-    ///      protocol-level `AggregatorRegistry` allowlist governed by a Gnosis Safe multisig (the
-    ///      AAStar "protocol-config is Safe-managed" model), wired into the account immutably by the
-    ///      factory. setAggregator would then also require `registry.isApproved(_aggregator)`, so that
-    ///      even owner + colluding guardians could only ever select a Safe-vetted, #45-binding
-    ///      aggregator. Implementing that touches the V7/Base constructor + factory (all clones share
-    ///      one registry via the implementation immutable) and is left as a documented next step;
-    ///      guardian-gating alone already prevents the single-compromised-owner swap that #45 flagged.
-    /// @param _aggregator  New aggregator address (0 to disable).
-    /// @param deadline     Signature expiry — guardians must sign within this window.
-    /// @param guardianSigs ECDSA signatures from RECOVERY_THRESHOLD distinct guardians over the op hash.
-    function setAggregatorWithGuardians(
-        address _aggregator,
-        uint256 deadline,
-        bytes[] calldata guardianSigs
-    ) external onlyOwner {
-        if (block.timestamp > deadline) revert TierLimitSigExpired();
-        if (guardianSigs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
-
-        bytes32 changeHash = _guardianOpHash(
-            "SET_AGGREGATOR",
-            abi.encode(_aggregatorNonce, _aggregator, deadline)
-        );
-
-        uint256 approvalBitmap = 0;
-        for (uint256 i = 0; i < guardianSigs.length; i++) {
-            address recovered = changeHash.recover(guardianSigs[i]);
-            uint8 gIdx = _guardianIndex(recovered);
-            uint256 bit = uint256(1) << gIdx;
-            if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
-            approvalBitmap |= bit;
-        }
-        if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
-
-        _aggregatorNonce++;
-        blsAggregator = _aggregator;
-        emit AggregatorSet(_aggregator);
-    }
+    // issue #45 Part B: there is intentionally NO account-side aggregator setter. The batch BLS
+    // aggregator is a SINGLE protocol-level value on AAStarBLSAlgorithm (`blsAlgorithm.aggregator()`),
+    // set only by the protocol Gnosis Safe (the BLS algorithm owner). The account READS it during BLS
+    // validation; the end-user owner can never change which aggregator is used.
 
     /// @notice Set the calldata parser registry for DeFi protocol support.
     ///         Can be updated by owner (unlike guard which is immutable).
@@ -810,6 +773,17 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         }
     }
 
+    /// @dev issue #45 Part B: read the single protocol-level batch aggregator from the BLS algorithm
+    ///      singleton. Returns address(0) if the algorithm doesn't expose `aggregator()` (defensive
+    ///      try/catch — a misconfigured non-conforming algorithm just falls back to inline single-op).
+    function _protocolAggregator(address blsAlg) private view returns (address) {
+        try IBLSAggregatorSource(blsAlg).aggregator() returns (address agg) {
+            return agg;
+        } catch {
+            return address(0);
+        }
+    }
+
     /// @dev Verify a standard BLS payload laid out as
     ///      [nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)].
     ///      issue #45 Fix 1 (Option B): the previous `[messagePoint(256)][messagePointSig(65)]`
@@ -845,12 +819,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
      *
      * NOTE (issue #45): both the single-op path (below) and the batch aggregator path are bound to
      * userOpHash. Single-op: `_callBLSValidator` recomputes the message point from userOpHash inside
-     * AAStarBLSAlgorithm. Batch: when `blsAggregator` is set, verification is deferred to the
-     * EntryPoint's `aggregator.validateSignatures()`, and AAStarBLSAggregator likewise recomputes
-     * EACH op's message point from its own userOpHash (via blsAlgorithm.hashToG2) — so the embedded
-     * messagePoint can no longer be replayed. The aggregator can only be changed with guardian
-     * consensus (setAggregatorWithGuardians), so a single compromised owner cannot point it at a
-     * malicious no-op verifier.
+     * AAStarBLSAlgorithm. Batch: when the PROTOCOL aggregator (`blsAlgorithm.aggregator()`, a single
+     * value set only by the protocol Safe — NOT per-account, NOT owner-settable) is non-zero,
+     * verification is deferred to the EntryPoint's `aggregator.validateSignatures()`, and
+     * AAStarBLSAggregator likewise recomputes EACH op's message point from its own userOpHash (via
+     * blsAlgorithm.hashToG2) — so the embedded messagePoint can no longer be replayed.
      */
     function _validateTripleSignature(
         bytes32 userOpHash,
@@ -877,12 +850,19 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         address recovered = hash.recover(aaSignature);
         if (recovered != owner) return 1;
 
-        // If a (guardian-gated, #45-safe) aggregator is configured, defer BLS verification to the
-        // EntryPoint's batch validateSignatures(). AAStarBLSAggregator recomputes each op's message
-        // point from its userOpHash on-chain, so the batch path is bound to the op just like the
-        // single-op path below. blsAggregator can only be set via guardian consensus.
-        if (blsAggregator != address(0)) {
-            return uint256(uint160(blsAggregator));
+        // If the PROTOCOL-level aggregator is configured (single value on AAStarBLSAlgorithm, set
+        // only by the protocol Safe), defer BLS verification to the EntryPoint's batch
+        // validateSignatures(). AAStarBLSAggregator recomputes each op's message point from its
+        // userOpHash on-chain, so the batch path is bound to the op just like the single-op path
+        // below. ERC-7562: this reads AAStarBLSAlgorithm storage in the validation phase — the SAME
+        // external-contract read category as _callBLSValidator below (the existing BLS validation),
+        // so it adds no new access surface (requires the BLS algorithm singleton to be staked).
+        address blsAlg = validator.getAlgorithm(ALG_BLS);
+        if (blsAlg != address(0)) {
+            address protocolAggregator = _protocolAggregator(blsAlg);
+            if (protocolAggregator != address(0)) {
+                return uint256(uint160(protocolAggregator));
+            }
         }
 
         // SECURITY 2: BLS aggregate verification via validator router (standalone single-op mode).

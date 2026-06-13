@@ -221,9 +221,9 @@ contract AAStarAirAccountV7M3Test is Test {
     }
 
     // ─── Aggregator Configuration ────────────────────────────────────
-    // issue #45: setAggregator is now guardian-gated (setAggregatorWithGuardians). It requires
-    // owner + RECOVERY_THRESHOLD guardian signatures, so it needs guardians configured — covered
-    // in the dedicated test/AggregatorAuth.t.sol (this M3 account has no guardians).
+    // issue #45 Part B: there is NO account-side aggregator setter. The batch aggregator is a single
+    // protocol-level value on AAStarBLSAlgorithm (set only by the protocol Safe). See
+    // test/AAStarBLSAlgorithm.t.sol (setter/ownership) and test/ProtocolAggregator.t.sol (account read).
 
     // ─── Guard Initialization (constructor) ────────────────────────────
 
