@@ -232,7 +232,13 @@ const tests: TestCase[] = [
 (async () => {
   // The precompile-malleability proof runs unconditionally (works on Sepolia today).
   await runTests(`${PHASE}-precompile`, precompileTests);
-  // The account-bound tests need the v0.18 deploy.
-  if (!A) { printPendingBanner(PHASE); process.exit(0); }
+
+  // runTests signals failure by setting process.exitCode = 1 (it does NOT throw). If the
+  // precompile proof (WSG.P1/P2) failed, surface that immediately — a non-zero exit must
+  // NOT be masked by the clean skip-exit on the v0.18-not-deployed path below.
+  if (process.exitCode) process.exit(process.exitCode);
+
+  // The account-bound tests (WSG.1–4) need the v0.18 deploy.
+  if (!A) { printPendingBanner(PHASE); process.exit(process.exitCode || 0); }
   await runTests(PHASE, tests);
 })();

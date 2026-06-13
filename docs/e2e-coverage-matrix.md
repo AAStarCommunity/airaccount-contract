@@ -65,9 +65,11 @@ All signers are funded (Jason 9.4 ETH, Anni 1.14 ETH, Bob 0.20 ETH), so they are
 
 ## Part 2 — v0.18 features (WS-A/B/C/G) — scaffolded, PENDING DEPLOY
 
-New scripts. Each calls `requireV018()` and **SKIPs (exit 0)** with a PENDING banner until the v0.18
-addresses are added to `.env.sepolia`. Encodings were verified against the merged v0.18 ABIs in `out/`,
-and (for WS-G) the P256 signature construction was verified against the **live Sepolia secp256r1 precompile**.
+New scripts. Phases **13–15** call `requireV018()` and **SKIP (exit 0)** with a PENDING banner until the
+v0.18 addresses are added to `.env.sepolia`. **Phase 16 is deliberately different**: it runs the
+precompile-malleability proof `WSG.P1`/`WSG.P2` **unconditionally** (these need no v0.18 deploy), then
+skips only the account-bound `WSG.1–4`; if `WSG.P1`/`WSG.P2` fail, the script exits non-zero rather than
+masking it with a clean skip-exit. Encodings were verified against the merged v0.18 ABIs in `out/`.
 
 | WS | Issue(s) | Feature | New script | What it asserts | Run readiness |
 |----|----------|---------|------------|------------------|---------------|
@@ -105,10 +107,12 @@ Pre-deploy verification already performed (no deploy required):
 - v0.18 ABIs present in `out/`: `moduleManagementNonce`, `sessionKeyCount`, `setP256Key`, `validateUserOp`,
   `ForceExitModule.{proposeForceExit,approveForceExit,executeForceExit,getPendingExit}` — all **OK**.
 - Sepolia secp256r1 precompile (`0x100`) is **active** (RIP-7212 vector → valid).
-- **WS-G precompile-malleability proof is encoded as in-script assertions `WSG.P1`/`WSG.P2`** and was
-  **executed against Sepolia: 2/2 PASS** — low-S (s ≤ N/2) and high-S (s > N/2) **both verify at the
-  precompile**, so the high-S rejection in phases WSG.4 is attributable solely to the contract's low-S
-  guard (#78), not the precompile. (This is a real on-chain assertion now, not external/manual verification.)
+- **WS-G precompile-malleability proof is encoded as in-script assertions `WSG.P1`/`WSG.P2`**, verified via
+  **read-only `eth_call` staticcalls to Sepolia precompile `0x100`** (these are NOT state-changing, so there
+  is no tx hash) — both low-S (s ≤ N/2) and high-S (s > N/2) **verify at the precompile**, so the high-S
+  rejection in `WSG.4` is attributable solely to the contract's low-S guard (#78), not the precompile.
+  Reproducible now by running `pnpm tsx scripts/e2e-v0172/16-ws-g-p256-low-s.ts` (the `…-precompile` phase
+  reports `2 passed, 0 failed`).
 
 ---
 
