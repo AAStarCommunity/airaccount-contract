@@ -45,6 +45,15 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     ///      for weakening the timelock — owner+2 strictly exceeds the owner+1 default install threshold.
     uint8 internal constant MODULE_INSTALL_BYPASS_SIGS = 2;
 
+    /// @dev KI-6 (#58): upper bound on the configurable module-install timelock. Caps griefing /
+    ///      fat-finger lockouts and keeps proposedAt + timelock well within uint40.
+    uint256 internal constant MAX_MODULE_INSTALL_TIMELOCK = 30 days;
+
+    /// @dev KI-6 (#58): grace window after `executeAfter` during which a matured proposal stays
+    ///      executable. Past `executeAfter + grace` it expires and must be re-proposed (mirrors the
+    ///      30-day expiry on weight-change proposals), so a stale proposal can't linger forever.
+    uint256 internal constant MODULE_INSTALL_PROPOSAL_GRACE = 30 days;
+
     // ─── Errors (same signatures/selectors as AAStarAirAccountBase) ──────
     error NotOwner();
     error Reentrancy();
@@ -70,9 +79,12 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     error ModuleInstallCallbackFailed(uint256 moduleTypeId, address module);
     // ── KI-6 (#58) module-install timelock ──
     error ModuleInstallTimelockDisabled();
+    error ModuleInstallTimelockTooLong();
     error ModuleInstallProposalExists();
     error NoModuleInstallProposal();
     error ModuleInstallTimelockNotExpired();
+    error ModuleInstallProposalExpired();
+    error ModuleInstallAuthChanged();
     error ModuleInstallDataMismatch();
 
     // ─── Events (same signatures/topic0 as AAStarAirAccountBase) ─────────
@@ -167,19 +179,31 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
 
     // ─── Module Install Timelock (KI-6 / issue #58) ──────────────────────
 
+    /// @dev Snapshot of the auth config a module-install proposal is bound to. Any change to the owner
+    ///      (social recovery) or the guardian set (add/remove/replace) shifts this hash, invalidating an
+    ///      in-flight proposal so it cannot be silently executed under a different signer set.
+    function _moduleAuthHash() private view returns (bytes32) {
+        return keccak256(abi.encode(owner, _guardian0, _guardian1, _guardian2, _guardianCount));
+    }
+
     /// @notice Read the active module-install timelock (seconds). 0 = disabled (immediate installs).
     function moduleInstallTimelock() external view returns (uint256) {
         return _moduleInstallTimelock;
     }
 
     /// @notice Read the pending module-install proposal. proposedAt == 0 means none pending.
+    /// @return module        Module contract pending install.
+    /// @return moduleTypeId  1=validator, 2=executor, 4=hook.
+    /// @return proposedAt    Timestamp the proposal was created.
+    /// @return executeAfter  Fixed timestamp from which the proposal may be executed (immutable once set).
+    /// @return initDataHash  keccak256 of the committed module init data.
     function pendingModuleInstall()
         external
         view
-        returns (address module, uint8 moduleTypeId, uint40 proposedAt, bytes32 initDataHash)
+        returns (address module, uint8 moduleTypeId, uint40 proposedAt, uint40 executeAfter, bytes32 initDataHash)
     {
         ModuleInstallProposal memory p = _pendingModuleInstall;
-        return (p.module, p.moduleTypeId, p.proposedAt, p.initDataHash);
+        return (p.module, p.moduleTypeId, p.proposedAt, p.executeAfter, p.initDataHash);
     }
 
     /// @notice Configure the optional module-install timelock (issue #58 / KI-6).
@@ -189,7 +213,8 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     ///      the protection off and then install instantly. On accounts with fewer than 2 guardians the
     ///      weakening bar degrades to all available guardians (mirrors uninstallModule's min(count,2)),
     ///      so the timelock can never become permanently un-removable.
-    /// @param newTimelock  New timelock in seconds (0 disables).
+    /// @param newTimelock  New timelock in seconds (0 disables). Capped at MAX_MODULE_INSTALL_TIMELOCK
+    ///        (30 days); larger values revert ModuleInstallTimelockTooLong.
     /// @param guardianSigs Concatenated 65-byte guardian sigs over
     ///        _guardianOpHash("SET_MODULE_TIMELOCK", abi.encode(newTimelock, moduleManagementNonce)).
     ///        Ignored (may be empty) when strengthening.
@@ -197,6 +222,7 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         external
         onlyOwnerOrEntryPoint
     {
+        if (newTimelock > MAX_MODULE_INSTALL_TIMELOCK) revert ModuleInstallTimelockTooLong();
         uint256 current = _moduleInstallTimelock;
         if (newTimelock < current) {
             uint8 sigsRequired =
@@ -227,8 +253,15 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         address module,
         bytes calldata initData
     ) external onlyOwnerOrEntryPoint {
-        if (_moduleInstallTimelock == 0) revert ModuleInstallTimelockDisabled();
-        if (_pendingModuleInstall.proposedAt != 0) revert ModuleInstallProposalExists();
+        uint256 timelock = _moduleInstallTimelock;
+        if (timelock == 0) revert ModuleInstallTimelockDisabled();
+        // A still-live proposal blocks a new one; an EXPIRED proposal (past its grace) may be overwritten
+        // so a lapsed proposal can simply be re-proposed without a separate cancel.
+        ModuleInstallProposal memory existing = _pendingModuleInstall;
+        if (existing.proposedAt != 0
+            && block.timestamp <= uint256(existing.executeAfter) + MODULE_INSTALL_PROPOSAL_GRACE) {
+            revert ModuleInstallProposalExists();
+        }
         if (module == address(0) || module.code.length == 0) revert ModuleInvalid();
         if (moduleTypeId != MODULE_TYPE_VALIDATOR
             && moduleTypeId != MODULE_TYPE_EXECUTOR
@@ -256,17 +289,23 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
             moduleInitData = initData;
         }
 
+        // executeAfter is FIXED here (timelock bounded to 30 days, so block.timestamp + timelock is well
+        // within uint40 for millennia). A later setModuleInstallTimelock cannot move this proposal's window.
+        uint40 executeAfter = uint40(block.timestamp + timelock);
+
         _pendingModuleInstall = ModuleInstallProposal({
             module: module,
             moduleTypeId: uint8(moduleTypeId),
             proposedAt: uint40(block.timestamp),
-            initDataHash: keccak256(moduleInitData)
+            executeAfter: executeAfter,
+            initDataHash: keccak256(moduleInitData),
+            authHash: _moduleAuthHash()
         });
 
         // #75: consume the guardian signature so this proposal cannot be replayed.
         unchecked { _moduleManagementNonce++; }
 
-        emit ModuleInstallProposed(moduleTypeId, module, block.timestamp + _moduleInstallTimelock);
+        emit ModuleInstallProposed(moduleTypeId, module, executeAfter);
     }
 
     /// @notice Execute a matured module-install proposal (issue #58 / KI-6).
@@ -277,9 +316,16 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     function executeModuleInstall(bytes calldata moduleInitData) external nonReentrant {
         ModuleInstallProposal memory p = _pendingModuleInstall;
         if (p.proposedAt == 0) revert NoModuleInstallProposal();
-        if (block.timestamp < uint256(p.proposedAt) + _moduleInstallTimelock) {
-            revert ModuleInstallTimelockNotExpired();
+        // Compare against the FIXED executeAfter captured at propose time (not a re-derived deadline).
+        if (block.timestamp < uint256(p.executeAfter)) revert ModuleInstallTimelockNotExpired();
+        // A proposal that has sat past its grace window expires and must be re-proposed.
+        if (block.timestamp > uint256(p.executeAfter) + MODULE_INSTALL_PROPOSAL_GRACE) {
+            revert ModuleInstallProposalExpired();
         }
+        // The proposal is bound to the auth config (owner + guardians) as it was at propose time. If the
+        // owner was replaced via social recovery, or any guardian was added/removed/changed during the
+        // window, the snapshot no longer matches — reject so a new signer set must re-authorize.
+        if (_moduleAuthHash() != p.authHash) revert ModuleInstallAuthChanged();
         if (keccak256(moduleInitData) != p.initDataHash) revert ModuleInstallDataMismatch();
 
         uint256 moduleTypeId = p.moduleTypeId;

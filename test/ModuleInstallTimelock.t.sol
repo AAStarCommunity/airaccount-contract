@@ -46,7 +46,7 @@ interface IModuleTimelock {
     function pendingModuleInstall()
         external
         view
-        returns (address module, uint8 moduleTypeId, uint40 proposedAt, bytes32 initDataHash);
+        returns (address module, uint8 moduleTypeId, uint40 proposedAt, uint40 executeAfter, bytes32 initDataHash);
     function setModuleInstallTimelock(uint256 newTimelock, bytes calldata guardianSigs) external;
     function proposeModuleInstall(uint256 moduleTypeId, address module, bytes calldata initData) external;
     function executeModuleInstall(bytes calldata moduleInitData) external;
@@ -146,6 +146,29 @@ contract ModuleInstallTimelockTest is Test {
         ext.setModuleInstallTimelock(t, "");
     }
 
+    // REMOVE_GUARDIAN sig (mirror AAStarAirAccountBase domain).
+    function _removalSig(Vm.Wallet memory w, address guardianToRemove, uint256 nonce)
+        internal view returns (bytes memory)
+    {
+        bytes32 raw = keccak256(abi.encode(
+            GUARDIAN_SIG_VERSION, block.chainid, address(account), "REMOVE_GUARDIAN",
+            abi.encode(nonce, guardianToRemove)
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, raw.toEthSignedMessageHash());
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// @dev Run a full social-recovery cycle that replaces the owner with `newOwner`.
+    ///      RECOVERY_TIMELOCK is 2 days; this advances time accordingly.
+    function _runOwnerRecovery(address newOwner) internal {
+        vm.prank(g0Wallet.addr);
+        account.proposeRecovery(newOwner);       // auto-approve #1
+        vm.prank(g1Wallet.addr);
+        account.approveRecovery();               // approval #2 → meets 2-of-3
+        vm.warp(block.timestamp + 2 days + 1);   // past RECOVERY_TIMELOCK
+        account.executeRecovery();               // owner := newOwner
+    }
+
     // ───────────────────────────────────────────────────────────────────────────
     // 1. timelock = 0 → immediate install still works (backward compat)
     // ───────────────────────────────────────────────────────────────────────────
@@ -182,8 +205,9 @@ contract ModuleInstallTimelockTest is Test {
         vm.prank(ownerWallet.addr);
         ext.proposeModuleInstall(VALIDATOR, address(mod), initData);
 
-        ( , , uint40 proposedAt, bytes32 hash) = ext.pendingModuleInstall();
+        ( , , uint40 proposedAt, uint40 execAfter, bytes32 hash) = ext.pendingModuleInstall();
         assertEq(uint256(proposedAt), block.timestamp);
+        assertEq(uint256(execAfter), block.timestamp + TIMELOCK);
         assertEq(hash, keccak256(moduleInitData));
         assertFalse(account.isModuleInstalled(VALIDATOR, address(mod), ""));
 
@@ -196,7 +220,7 @@ contract ModuleInstallTimelockTest is Test {
         assertEq(mod.installCount(), 1);
         assertEq(mod.lastInitData(), moduleInitData);
         // proposal cleared
-        ( , , uint40 after_, ) = ext.pendingModuleInstall();
+        ( , , uint40 after_, , ) = ext.pendingModuleInstall();
         assertEq(uint256(after_), 0);
     }
 
@@ -247,7 +271,7 @@ contract ModuleInstallTimelockTest is Test {
         ext.executeModuleInstall("");
         assertFalse(account.isModuleInstalled(VALIDATOR, address(bad), ""));
         // proposal still present (whole call reverted)
-        ( , , uint40 proposedAt, ) = ext.pendingModuleInstall();
+        ( , , uint40 proposedAt, , ) = ext.pendingModuleInstall();
         assertGt(uint256(proposedAt), 0);
     }
 
@@ -316,7 +340,7 @@ contract ModuleInstallTimelockTest is Test {
         vm.prank(g2Wallet.addr);
         ext.cancelModuleInstall();
 
-        ( , , uint40 proposedAt, ) = ext.pendingModuleInstall();
+        ( , , uint40 proposedAt, , ) = ext.pendingModuleInstall();
         assertEq(uint256(proposedAt), 0);
 
         vm.warp(block.timestamp + TIMELOCK + 1);
@@ -332,7 +356,7 @@ contract ModuleInstallTimelockTest is Test {
 
         vm.prank(ownerWallet.addr);
         ext.cancelModuleInstall();
-        ( , , uint40 proposedAt, ) = ext.pendingModuleInstall();
+        ( , , uint40 proposedAt, , ) = ext.pendingModuleInstall();
         assertEq(uint256(proposedAt), 0);
     }
 
@@ -486,6 +510,124 @@ contract ModuleInstallTimelockTest is Test {
         bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), "");
         vm.prank(ownerWallet.addr);
         account.installModule(VALIDATOR, address(mod), sig);
+        assertTrue(account.isModuleInstalled(VALIDATOR, address(mod), ""));
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // 8. [Medium fix] stale proposal rejected after auth-config change during window
+    // ───────────────────────────────────────────────────────────────────────────
+
+    function test_stale_rejectedAfterOwnerRecovery() public {
+        _enableTimelock(TIMELOCK); // 2 days
+        bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), "");
+        vm.prank(ownerWallet.addr);
+        ext.proposeModuleInstall(VALIDATOR, address(mod), sig); // executeAfter = t0 + 2d
+
+        // Replace the owner via social recovery during the window (recovery also takes 2 days, so by the
+        // time it completes the module proposal is mature but its auth snapshot is now stale).
+        Vm.Wallet memory newOwner = vm.createWallet("newOwner");
+        _runOwnerRecovery(newOwner.addr);
+        assertEq(account.owner(), newOwner.addr);
+
+        // Past executeAfter and within grace, but the owner changed → AuthChanged.
+        vm.expectRevert(); // ModuleInstallAuthChanged
+        ext.executeModuleInstall("");
+        assertFalse(account.isModuleInstalled(VALIDATOR, address(mod), ""));
+    }
+
+    function test_stale_rejectedAfterSigningGuardianRemoved() public {
+        _enableTimelock(1 hours);
+        bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), "");
+        vm.prank(ownerWallet.addr);
+        ext.proposeModuleInstall(VALIDATOR, address(mod), sig); // executeAfter = t0 + 1h
+
+        // mature the proposal (within grace)
+        vm.warp(block.timestamp + 1 hours + 1);
+
+        // Remove the guardian that signed the proposal (index 0 = g0). removeGuardian needs 2 distinct
+        // guardian sigs over the REMOVE_GUARDIAN domain at removalNonce 0.
+        bytes[] memory rsigs = new bytes[](2);
+        rsigs[0] = _removalSig(g1Wallet, g0Wallet.addr, 0);
+        rsigs[1] = _removalSig(g2Wallet, g0Wallet.addr, 0);
+        vm.prank(ownerWallet.addr);
+        account.removeGuardian(0, rsigs);
+        assertEq(account.guardianCount(), 2);
+
+        // The guardian set changed → AuthChanged, even though the proposal is otherwise executable.
+        vm.expectRevert(); // ModuleInstallAuthChanged
+        ext.executeModuleInstall("");
+        assertFalse(account.isModuleInstalled(VALIDATOR, address(mod), ""));
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // 9. [Low fix] raising the timelock after propose does NOT move executeAfter
+    // ───────────────────────────────────────────────────────────────────────────
+
+    function test_raisingTimelockAfterPropose_doesNotMoveExecuteAfter() public {
+        _enableTimelock(1 days);
+        bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), "");
+        uint256 t0 = block.timestamp;
+        vm.prank(ownerWallet.addr);
+        ext.proposeModuleInstall(VALIDATOR, address(mod), sig);
+        ( , , , uint40 execAfter0, ) = ext.pendingModuleInstall();
+        assertEq(uint256(execAfter0), t0 + 1 days);
+
+        // Strengthen the timelock to 30 days AFTER proposing (owner-only).
+        vm.prank(ownerWallet.addr);
+        ext.setModuleInstallTimelock(30 days, "");
+        // executeAfter is unchanged — bound at propose time.
+        ( , , , uint40 execAfter1, ) = ext.pendingModuleInstall();
+        assertEq(uint256(execAfter1), t0 + 1 days);
+
+        // Executable at the ORIGINAL deadline, not the raised one.
+        vm.warp(t0 + 1 days);
+        ext.executeModuleInstall("");
+        assertTrue(account.isModuleInstalled(VALIDATOR, address(mod), ""));
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // 10. [Low fix] setModuleInstallTimelock cap at 30 days
+    // ───────────────────────────────────────────────────────────────────────────
+
+    function test_setTimelock_aboveMax_reverts() public {
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(); // ModuleInstallTimelockTooLong
+        ext.setModuleInstallTimelock(30 days + 1, "");
+    }
+
+    function test_setTimelock_atMax_passes() public {
+        vm.prank(ownerWallet.addr);
+        ext.setModuleInstallTimelock(30 days, "");
+        assertEq(ext.moduleInstallTimelock(), 30 days);
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // 11. [Q3] proposal expiry: past grace → execute reverts and it can be re-proposed
+    // ───────────────────────────────────────────────────────────────────────────
+
+    function test_proposal_pastExpiry_reverts_andCanRepropose() public {
+        _enableTimelock(TIMELOCK); // 2 days
+        bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), "");
+        vm.prank(ownerWallet.addr);
+        ext.proposeModuleInstall(VALIDATOR, address(mod), sig); // executeAfter = t0 + 2d, grace +30d
+
+        // Warp past executeAfter + 30-day grace → expired.
+        vm.warp(block.timestamp + TIMELOCK + 30 days + 1);
+        vm.expectRevert(); // ModuleInstallProposalExpired
+        ext.executeModuleInstall("");
+
+        // The expired proposal can be overwritten by a fresh propose (new nonce → new sig).
+        uint256 t1 = block.timestamp;
+        bytes memory sig2 = _installSig(g0Wallet, VALIDATOR, address(mod), "");
+        vm.prank(ownerWallet.addr);
+        ext.proposeModuleInstall(VALIDATOR, address(mod), sig2);
+        ( , , uint40 proposedAt, uint40 execAfter, ) = ext.pendingModuleInstall();
+        assertEq(uint256(proposedAt), t1);
+        assertEq(uint256(execAfter), uint256(proposedAt) + TIMELOCK);
+
+        // and the re-proposed one executes normally after its own window
+        vm.warp(uint256(execAfter) + 1);
+        ext.executeModuleInstall("");
         assertTrue(account.isModuleInstalled(VALIDATOR, address(mod), ""));
     }
 }

@@ -412,6 +412,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x2f681d07` | `RescueAlreadyPending()` | AirAccountDelegate |
 | `0x30cd7471` | `NotOwner()` | AAStarAirAccountBase |
 | `0x311d795a` | `InvalidAgentSignature()` | AgentRegistry |
+| `0x33afc34b` | `ModuleInstallProposalExpired()` | AirAccountExtension |
 | `0x36bf0fb2` | `MinGuardianRequired()` | AAStarAirAccountBase |
 | `0x390772fc` | `NotAgentOwner()` | AgentRegistry |
 | `0x39d51cb2` | `RecoveryNotApproved()` | AAStarAirAccountBase |
@@ -524,6 +525,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xe2d401be` | `NoNodesProvided()` | AAStarBLSAlgorithm |
 | `0xe6c4247b` | `InvalidAddress()` | AirAccountDelegate |
 | `0xe780655f` | `NotAirAccount()` | SessionKeyValidator |
+| `0xe8e195da` | `ModuleInstallAuthChanged()` | AirAccountExtension |
 | `0xe9d4784c` | `AlgorithmNotRegistered()` | AAStarValidator |
 | `0xea7ae9e4` | `DeadlineTooFarInFuture()` | AAStarAirAccountFactoryV7 |
 | `0xea87e89a` | `IncompatibleAccount()` | ForceExitModule |
@@ -542,6 +544,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xf8fc18ad` | `DailyLimitRequired()` | AAStarAirAccountFactoryV7 |
 | `0xf92ee8a9` | `InvalidInitialization()` | AAStarAgentStorageLayout |
 | `0xfa98b70d` | `InvalidDefaultTokenConfig(address)` | AAStarAirAccountFactoryV7 |
+| `0xfb3e466e` | `ModuleInstallTimelockTooLong()` | AirAccountExtension |
 | `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` | AAStarAirAccountBase |
 | `0xfcfdb9b5` | `NotAccountOwner()` | SessionKeyValidator |
 | `0xfe828c5a` | `GuardiansMustBeDistinct()` | AAStarAirAccountFactoryV7 |

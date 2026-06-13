@@ -65,7 +65,7 @@ interface IAirAccountAgent {
     function pendingModuleInstall()
         external
         view
-        returns (address module, uint8 moduleTypeId, uint40 proposedAt, bytes32 initDataHash);
+        returns (address module, uint8 moduleTypeId, uint40 proposedAt, uint40 executeAfter, bytes32 initDataHash);
     function setModuleInstallTimelock(uint256 newTimelock, bytes calldata guardianSigs) external;
     function proposeModuleInstall(uint256 moduleTypeId, address module, bytes calldata initData) external;
     function executeModuleInstall(bytes calldata moduleInitData) external;

@@ -2447,7 +2447,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AirAccountExtension
 
 - **Source:** `src/core/AirAccountExtension.sol`
-- **Functions:** 30 · **Events:** 15 · **Errors:** 32
+- **Functions:** 30 · **Events:** 15 · **Errors:** 35
 - **Title:** AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 - Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase         to keep the account under EIP-170's 24,576-byte runtime limit:           - ERC-8004 agent identity / reputation / wallet binding           - weighted-signature config governance (setWeightConfig + change proposal flow)         Deployed once (singleton) per implementation; the account reaches it via fallback +         delegatecall, so all logic runs in the ACCOUNT's storage/context: msg.sender,         address(this), owner, guardians, events and reverts are exactly as if inline.
 
@@ -2670,10 +2670,11 @@ Authoritative, auto-generated reference for every external/public function, even
 
 | returns | type | description |
 |---|---|---|
-| `module` | `address` |  |
-| `moduleTypeId` | `uint8` |  |
-| `proposedAt` | `uint40` |  |
-| `initDataHash` | `bytes32` |  |
+| `module` | `address` | Module contract pending install. |
+| `moduleTypeId` | `uint8` | 1=validator, 2=executor, 4=hook. |
+| `proposedAt` | `uint40` | Timestamp the proposal was created. |
+| `executeAfter` | `uint40` | Fixed timestamp from which the proposal may be executed (immutable once set). |
+| `initDataHash` | `bytes32` | keccak256 of the committed module init data. |
 
 #### `pendingWeightChange()`
 
@@ -2754,7 +2755,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 | param | type | description |
 |---|---|---|
-| `newTimelock` | `uint256` | New timelock in seconds (0 disables). |
+| `newTimelock` | `uint256` | New timelock in seconds (0 disables). Capped at MAX_MODULE_INSTALL_TIMELOCK        (30 days); larger values revert ModuleInstallTimelockTooLong. |
 | `guardianSigs` | `bytes` | Concatenated 65-byte guardian sigs over        _guardianOpHash("SET_MODULE_TIMELOCK", abi.encode(newTimelock, moduleManagementNonce)).        Ignored (may be empty) when strengthening. |
 
 #### `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8) config)`
@@ -2869,11 +2870,14 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xf92ee8a9` | `InvalidInitialization()` |
 | `0x2125deae` | `InvalidModuleType()` |
 | `0x24c377e2` | `ModuleAlreadyInstalled()` |
+| `0xe8e195da` | `ModuleInstallAuthChanged()` |
 | `0xf45e530b` | `ModuleInstallCallbackFailed(uint256,address)` |
 | `0x253ee849` | `ModuleInstallDataMismatch()` |
 | `0xbb849f5a` | `ModuleInstallProposalExists()` |
+| `0x33afc34b` | `ModuleInstallProposalExpired()` |
 | `0x1bce553b` | `ModuleInstallTimelockDisabled()` |
 | `0xce1d6b48` | `ModuleInstallTimelockNotExpired()` |
+| `0xfb3e466e` | `ModuleInstallTimelockTooLong()` |
 | `0x74be437f` | `ModuleInvalid()` |
 | `0x69cc141f` | `NoModuleInstallProposal()` |
 | `0xef6d0f02` | `NotGuardian()` |
@@ -3452,6 +3456,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `module` | `address` |  |
 | `moduleTypeId` | `uint8` |  |
 | `proposedAt` | `uint40` |  |
+| `executeAfter` | `uint40` |  |
 | `initDataHash` | `bytes32` |  |
 
 #### `proposeModuleInstall(uint256 moduleTypeId, address module, bytes initData)`
