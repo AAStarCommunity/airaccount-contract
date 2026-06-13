@@ -59,4 +59,15 @@ interface IAirAccountAgent {
     function approveWeightChange() external;
     function executeWeightChange() external;
     function cancelWeightChange() external;
+
+    // ── Optional module-install timelock (KI-6 / issue #58) ──
+    function moduleInstallTimelock() external view returns (uint256);
+    function pendingModuleInstall()
+        external
+        view
+        returns (address module, uint8 moduleTypeId, uint40 proposedAt, uint40 executeAfter, bytes32 initDataHash);
+    function setModuleInstallTimelock(uint256 newTimelock, bytes calldata guardianSigs) external;
+    function proposeModuleInstall(uint256 moduleTypeId, address module, bytes calldata initData) external;
+    function executeModuleInstall(bytes calldata moduleInitData) external;
+    function cancelModuleInstall() external;
 }
