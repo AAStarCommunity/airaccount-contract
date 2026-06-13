@@ -39,7 +39,7 @@ contract ForceExitModule is IERC7579Module {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this module deployment. Used by SDKs for programmatic version detection.
-    string public constant MODULE_VERSION = "0.17.2";
+    string public constant MODULE_VERSION = "0.18.0";
 
     // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -94,7 +94,16 @@ contract ForceExitModule is IERC7579Module {
     ///      set. Closes the "stale guardian" staleness scenario. See docs/forceexit-design-notes.md §5.
     error SignerNoLongerGuardian();
     /// @dev Account does not expose the guardians(uint256) getter required by this module.
+    ///      Also raised by `_readGuardians` when a guardian staticcall fails or returns
+    ///      malformed data at any point after install (issue #77): fail loudly instead of
+    ///      silently treating the account as having zero/garbage guardians.
     error IncompatibleAccount();
+    /// @dev v0.18 issue #70 (MEDIUM, TOCTOU): a guardian recorded an approval and was then
+    ///      rotated out of the account's CURRENT guardian set before execute. At execute time
+    ///      the live approver count (recorded approvers ∩ current guardians) dropped below
+    ///      APPROVAL_THRESHOLD. The approve-time `SignerNoLongerGuardian` check cannot help here
+    ///      because the bit was already set before the rotation.
+    error ApproverNoLongerGuardian();
 
     // ─── Events ────────────────────────────────────────────────────────────
 
@@ -232,6 +241,33 @@ contract ForceExitModule is IERC7579Module {
         uint256 approvals = _countBits(proposal.approvalBitmap);
         if (approvals < APPROVAL_THRESHOLD) revert NotEnoughApprovals();
 
+        // v0.18 issue #70 (MEDIUM, TOCTOU): re-verify that the recorded approvers are STILL
+        // current guardians of the account at execute time. A guardian could have approved
+        // (bit set) and then been rotated out (removeGuardian + addGuardian) before anyone
+        // calls execute — the approve-time `SignerNoLongerGuardian` check no longer applies
+        // because the bit is already set and the snapshot still holds the old address.
+        //
+        // Re-read the account's live guardians and count only approvers whose snapshot address
+        // is still in the current set (recorded approvers ∩ current guardians). Revert if the
+        // live approver count falls below threshold. Cost: 3 staticcalls (via _readGuardians)
+        // plus a 3×3 address comparison — acceptable for an emergency-path function.
+        address[3] memory currentGuardians = _readGuardians(account);
+        uint256 liveApprovals = 0;
+        for (uint256 i = 0; i < 3; i++) {
+            if (proposal.approvalBitmap & (uint256(1) << i) == 0) continue;
+            address snapshotGuardian = proposal.guardians[i];
+            // An approval bit is only ever set for a real (non-zero) guardian, but guard
+            // defensively so an unset (address(0)) current slot can never count as a match.
+            if (snapshotGuardian == address(0)) continue;
+            for (uint256 j = 0; j < 3; j++) {
+                if (currentGuardians[j] == snapshotGuardian) {
+                    liveApprovals++;
+                    break;
+                }
+            }
+        }
+        if (liveApprovals < APPROVAL_THRESHOLD) revert ApproverNoLongerGuardian();
+
         address target = proposal.target;
         uint256 value  = proposal.value;
         bytes memory exitData = proposal.data;
@@ -329,15 +365,22 @@ contract ForceExitModule is IERC7579Module {
     // ─── Internal Helpers ──────────────────────────────────────────────────
 
     /// @dev Read guardian addresses from an AirAccount via individual guardians(i) getters.
-    ///      Falls back to address(0) for each slot if the account does not expose the getter.
+    /// @dev REQUIRES the account to expose `guardians(uint256)`. v0.18 issue #77 (LOW): a
+    ///      failing staticcall (account does not implement the getter / reverts) or a malformed
+    ///      return (fewer than 32 bytes) previously fell through to address(0), silently
+    ///      degrading the guardian set instead of surfacing the incompatibility. This caused
+    ///      confusing downstream reverts (e.g. `InvalidGuardianSig` on approve) and could, in
+    ///      principle, weaken the live-approver re-check at execute. Fail loudly with
+    ///      `IncompatibleAccount` so non-standard accounts are rejected explicitly.
+    ///      A slot legitimately holding address(0) (unset guardian) is still accepted, because
+    ///      the staticcall succeeds and returns a well-formed 32-byte word.
     function _readGuardians(address account) internal view returns (address[3] memory guardians) {
         for (uint256 i = 0; i < 3; i++) {
             (bool ok, bytes memory ret) = account.staticcall(
                 abi.encodeWithSignature("guardians(uint256)", i)
             );
-            if (ok && ret.length >= 32) {
-                guardians[i] = abi.decode(ret, (address));
-            }
+            if (!ok || ret.length < 32) revert IncompatibleAccount();
+            guardians[i] = abi.decode(ret, (address));
         }
     }
 
