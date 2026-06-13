@@ -109,6 +109,25 @@
     },
     {
       "type": "function",
+      "name": "approvedAlgorithms",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "blsAggregator",
       "inputs": [],
       "outputs": [
@@ -214,6 +233,71 @@
       "type": "function",
       "name": "executeRecovery",
       "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "executeUserOp",
+      "inputs": [
+        {
+          "name": "userOp",
+          "type": "tuple",
+          "internalType": "struct PackedUserOperation",
+          "components": [
+            {
+              "name": "sender",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "initCode",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "callData",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "accountGasLimits",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "preVerificationGas",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "gasFees",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "paymasterAndData",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "signature",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        },
+        {
+          "name": "userOpHash",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
       "outputs": [],
       "stateMutability": "nonpayable"
     },
@@ -1344,6 +1428,19 @@
     },
     {
       "type": "event",
+      "name": "AlgorithmApproved",
+      "inputs": [
+        {
+          "name": "algId",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "ERC8004WalletBound",
       "inputs": [
         {
@@ -2219,6 +2316,11 @@
     {
       "type": "error",
       "name": "UnauthorizedRegistry",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "UnsupportedInnerSelector",
       "inputs": []
     },
     {
