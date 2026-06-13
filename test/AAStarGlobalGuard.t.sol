@@ -24,6 +24,19 @@ contract AAStarGlobalGuardTest is Test {
         assertEq(guard.dailyLimit(), DAILY_LIMIT);
     }
 
+    /// @dev Issue #74: constructor must revert with custom error TokenConfigLengthMismatch
+    ///      (not a require-string) when token/config arrays have different lengths.
+    function test_constructor_tokenConfigLengthMismatch_reverts() public {
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(0xAA);
+        tokens[1] = address(0xBB);
+        AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1);
+        configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
+
+        vm.expectRevert(AAStarGlobalGuard.TokenConfigLengthMismatch.selector);
+        new AAStarGlobalGuard(account, DAILY_LIMIT, DAILY_LIMIT / 10, tokens, configs);
+    }
+
     // v0.17.2-beta.4: the algorithm whitelist + approveAlgorithm moved off the guard onto the
     // account. Those behaviors are covered by test/Beta4AlgIdBundlerFix.t.sol
     // (test_whitelist_populatedOnAccountFromConfig, test_guardApproveAlgorithm_writesAccountNotGuard,

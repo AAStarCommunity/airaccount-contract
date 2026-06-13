@@ -7,6 +7,14 @@ import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 
+/// @dev Issue #78: Mock P256 precompile that always returns valid=1.
+///      Used to isolate the low-S check from precompile availability.
+contract MockP256AlwaysValid {
+    fallback(bytes calldata) external returns (bytes memory) {
+        return abi.encode(uint256(1));
+    }
+}
+
 /// @title AAStarAirAccountV7 M3 Tests - P256, Tiered Routing, Aggregator, Guard
 contract AAStarAirAccountV7M3Test is Test {
     AAStarAirAccountV7 public account;
@@ -93,6 +101,60 @@ contract AAStarAirAccountV7M3Test is Test {
         vm.prank(entryPoint);
         uint256 result = account.validateUserOp(userOp, userOpHash, 0);
         assertEq(result, 1); // Falls through to validator router (no validator set) → 1
+    }
+
+    /// @notice Issue #78: EIP-7212 precompile does NOT enforce low-S. A high-S P256 signature
+    ///         must be rejected by _validateP256 even if the precompile reports valid=1.
+    ///         High-S: s > floor((n-1)/2) where n = secp256r1 group order.
+    function test_validateP256_highS_rejected() public {
+        // Deploy a mock precompile that ALWAYS returns valid=1 (simulates precompile accepting high-S)
+        vm.etch(address(0x100), address(new MockP256AlwaysValid()).code);
+
+        // Set a non-zero P256 key so the zero-key guard passes
+        vm.prank(ownerAddr);
+        account.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
+
+        // Construct a high-S signature: s = SECP256R1_N_OVER_2 + 1
+        // SECP256R1_N_OVER_2 = 0x7FFFFFFF800000007FFFFFFFFFFFFFFFDE737D56D38BCF4279DCE5617E3192A8
+        uint256 highS = 0x7FFFFFFF800000007FFFFFFFFFFFFFFFDE737D56D38BCF4279DCE5617E3192A8 + 1;
+        bytes memory sig = abi.encodePacked(
+            uint8(0x03),           // ALG_P256
+            bytes32(uint256(1)),   // r (arbitrary)
+            bytes32(highS)         // s > N/2 → high-S → MUST be rejected
+        );
+
+        PackedUserOperation memory userOp = _buildUserOp(sig);
+        bytes32 userOpHash = keccak256("test");
+
+        vm.prank(entryPoint);
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "High-S P256 signature must be rejected (EIP-7212 does not enforce low-S)");
+    }
+
+    /// @notice Complement to the above: a low-S P256 signature (s exactly at boundary) passes
+    ///         the low-S check and reaches the precompile. With a mock that returns valid=1,
+    ///         validateUserOp should return 0 (success).
+    function test_validateP256_lowSBoundary_accepted() public {
+        // Deploy a mock precompile that ALWAYS returns valid=1
+        vm.etch(address(0x100), address(new MockP256AlwaysValid()).code);
+
+        vm.prank(ownerAddr);
+        account.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
+
+        // Exactly at the boundary: s = SECP256R1_N_OVER_2 (canonical low-S)
+        uint256 boundaryS = 0x7FFFFFFF800000007FFFFFFFFFFFFFFFDE737D56D38BCF4279DCE5617E3192A8;
+        bytes memory sig = abi.encodePacked(
+            uint8(0x03),
+            bytes32(uint256(1)),   // r
+            bytes32(boundaryS)     // s == N/2 → low-S boundary → must pass the check
+        );
+
+        PackedUserOperation memory userOp = _buildUserOp(sig);
+        bytes32 userOpHash = keccak256("test");
+
+        vm.prank(entryPoint);
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 0, "Low-S boundary P256 signature should pass low-S check (precompile mocked valid)");
     }
 
     // ─── Tiered Routing ──────────────────────────────────────────────
