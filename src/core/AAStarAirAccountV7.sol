@@ -120,16 +120,31 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
     /// @notice ERC-1271: on-chain signature validation used by ERC-7579 tooling and DeFi protocols.
     ///         Validates that the ECDSA signature was produced by this account's owner.
-    /// @dev IMPORTANT — hash behaviour: this function does NOT apply any EIP-191 prefix.
-    ///      The `hash` parameter must be the exact bytes32 the owner signed.
-    ///      - EIP-712 / DeFi flows (Permit2, OpenSea, etc.): pass the typed-data struct hash directly.
-    ///        The owner signs this hash without a personal_sign prefix, so no prefix is applied here.
-    ///      - personal_sign / MetaMask eth_sign flows: the wallet adds the EIP-191 prefix before signing,
-    ///        so the caller must pass keccak256("\x19Ethereum Signed Message:\n32" || rawHash) as `hash`.
-    ///      This matches the behaviour of Gnosis Safe and most production ERC-1271 implementations.
-    ///      Note: internally, UserOp validation (_validateECDSA) does apply toEthSignedMessageHash()
-    ///      because EOA wallets sign userOpHash with personal_sign — these are two separate paths.
-    /// @return magicValue 0x1626ba7e if valid, 0xffffffff otherwise
+    ///
+    /// @dev NO EIP-191 prefix is applied — `hash` must be the EXACT bytes32 that was signed.
+    ///
+    ///      Integration guide for callers:
+    ///
+    ///      • EIP-712 / DeFi flows (Permit2, OpenSea, CoW, most DeFi protocols):
+    ///        Pass the final EIP-712 digest, i.e. `keccak256("\x19\x01" || domainSeparator || hashStruct)`
+    ///        (what `TypedDataEncoder.hash(...)` / ethers `_signTypedData` produce). The owner signs this
+    ///        digest directly (no personal_sign prefix). Pass that same bytes32 here — no wrapping needed.
+    ///
+    ///      • personal_sign / MetaMask `eth_sign` flows:
+    ///        The wallet prepends the EIP-191 prefix "\x19Ethereum Signed Message:\n32" before
+    ///        signing. The caller must therefore pass the PREFIXED hash, i.e.:
+    ///          keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", rawHash))
+    ///        This is what `MessageHashUtils.toEthSignedMessageHash(rawHash)` produces.
+    ///
+    ///      This behaviour matches Gnosis Safe and the canonical ERC-1271 production pattern.
+    ///
+    ///      NOTE: _validateECDSA (the UserOp validation path) DOES apply toEthSignedMessageHash()
+    ///      because EOA signers use personal_sign for userOpHash. These are intentionally separate
+    ///      paths — ERC-1271 serves DeFi protocols, UserOp validation serves the ERC-4337 bundler.
+    ///
+    /// @param hash The exact bytes32 that was signed (no prefix added by this contract).
+    /// @param sig  65-byte ECDSA signature (r || s || v) produced by the account owner.
+    /// @return     0x1626ba7e if the signature is valid, 0xffffffff otherwise.
     function isValidSignature(bytes32 hash, bytes calldata sig) external view returns (bytes4) {
         // Standard ERC-1271: recover directly from hash, no additional prefix.
         // tryRecover returns address(0) on a malformed signature instead of reverting, so a bad

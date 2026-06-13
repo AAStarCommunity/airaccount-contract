@@ -407,6 +407,21 @@ contract AAStarAirAccountFactoryV7Test is Test {
         new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
     }
 
+    // ─── Issue #74: constructor custom errors (replace require(string)) ──────
+
+    /// @dev Mismatched defaultTokens / defaultConfigs arrays must revert with
+    ///      TokenConfigLengthMismatch (not a require-string) in the factory constructor.
+    function test_constructor_tokenConfigLengthMismatch_reverts() public {
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(0xAA);
+        tokens[1] = address(0xBB);
+        AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1); // length mismatch
+        configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
+
+        vm.expectRevert(AAStarAirAccountFactoryV7.TokenConfigLengthMismatch.selector);
+        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+    }
+
     // ─── ERC-7828 Chain-Specific Address (M7.4) ──────────────────────────────
 
     function test_getChainQualifiedAddress_deterministicHash() public {

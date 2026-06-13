@@ -51,6 +51,14 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     /// @dev EIP-7212 P256 verification precompile
     address internal constant P256_VERIFIER = address(0x100);
 
+    /// @dev secp256r1 (P-256) curve order divided by 2 — low-S canonicality bound.
+    ///      EIP-7212 / RIP-7696 do NOT mandate low-S: the precompile accepts both (r, s)
+    ///      and (r, n-s) as valid, so malleable high-S signatures would pass without this guard.
+    ///      Derivation: floor((n-1)/2) where
+    ///        n = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+    uint256 internal constant SECP256R1_N_OVER_2 =
+        0x7FFFFFFF800000007FFFFFFFFFFFFFFFDE737D56D38BCF4279DCE5617E3192A8;
+
     /// @dev Recovery timelock
     uint256 internal constant RECOVERY_TIMELOCK = 2 days;
 
@@ -645,7 +653,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         return (recovered != address(0) && recovered == owner) ? 0 : 1;
     }
 
-    /// @dev P256 (secp256r1) passkey validation via EIP-7212 precompile
+    /// @dev P256 (secp256r1) passkey validation via EIP-7212 precompile.
+    ///      Enforces low-S canonicality (EIP-7212 does NOT enforce it — see SECP256R1_N_OVER_2).
     /// @param sigData Format: [r(32)][s(32)] = 64 bytes
     function _validateP256(
         bytes32 userOpHash,
@@ -656,6 +665,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
         bytes32 r = bytes32(sigData[0:32]);
         bytes32 s = bytes32(sigData[32:64]);
+
+        // Reject high-S P256 signatures (malleable form). EIP-7212 / RIP-7696 accept both
+        // (r, s) and (r, n-s), so we enforce canonical low-S explicitly, matching the
+        // EIP-2 check applied in _validateECDSA for secp256k1.
+        if (uint256(s) > SECP256R1_N_OVER_2) return 1;
 
         bytes memory callData = abi.encode(userOpHash, r, s, p256KeyX, p256KeyY);
 
