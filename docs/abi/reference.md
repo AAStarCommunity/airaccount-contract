@@ -2879,7 +2879,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## ForceExitModule
 
 - **Source:** `src/core/ForceExitModule.sol`
-- **Functions:** 17 · **Events:** 4 · **Errors:** 14
+- **Functions:** 17 · **Events:** 4 · **Errors:** 15
 - **Title:** ForceExitModule
 - ERC-7579 Executor module enabling L2→L1 forced withdrawal with 2-of-3 guardian protection.
 
@@ -3112,6 +3112,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|
 | `0x101f817a` | `AlreadyApproved()` |
 | `0x79429186` | `AlreadyProposed()` |
+| `0x23a1daa9` | `ApproverNoLongerGuardian()` |
 | `0xf645eedf` | `ECDSAInvalidSignature()` |
 | `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
 | `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
