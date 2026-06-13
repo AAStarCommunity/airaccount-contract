@@ -5102,7 +5102,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## SessionKeyValidator
 
 - **Source:** `src/validators/SessionKeyValidator.sol`
-- **Functions:** 20 · **Events:** 4 · **Errors:** 20
+- **Functions:** 21 · **Events:** 4 · **Errors:** 21
 - **Title:** SessionKeyValidator — Unified Session Key (algId 0x08) for AAStar AirAccount
 - Implements scoped, time-limited delegated signing keys for ERC-4337 accounts.         Supports two session-key kinds:           - ECDSA session (DApp / KMS-held key):  [0x08][account(20)][key(20)][ECDSA(65)] = 106 B             (router strips algId byte; this validator receives the trailing 105 B)           - P256 session (user's Passkey):        [0x08][account(20)][keyX(32)][keyY(32)][r(32)][s(32)] = 149 B             (validator receives the trailing 148 B)
 
@@ -5127,6 +5127,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x02962ba7` | `recordCallForVelocity(address,bytes32,uint8)` | nonpayable | — | Increment velocity counter; reverts if limit exceeded. |
 | `0xfb677819` | `revokeP256Session(address,bytes32,bytes32)` | nonpayable | — |  |
 | `0x7fcd5787` | `revokeSession(address,address)` | nonpayable | — |  |
+| `0x34dd87cb` | `sessionKeyCount(address)` | view | — | Number of session-key slots currently consumed per account (issue #83).         Counts ECDSA and P256 sessions together; enforced against         MAX_SESSION_KEYS_PER_ACCOUNT on grant, released on revoke. |
 | `0xbfa52147` | `sessionStates_p256(address,bytes32)` | view | — |  |
 | `0x7dcaa59a` | `sessionStates(address,address)` | view | — | Velocity counters (execute-phase state). |
 | `0x65a8613c` | `validate(bytes32,bytes)` | view | — |  |
@@ -5358,6 +5359,20 @@ Authoritative, auto-generated reference for every external/public function, even
 | `account` | `address` |  |
 | `sessionKey` | `address` |  |
 
+#### `sessionKeyCount(address arg0)`
+
+`0x34dd87cb` · view · access: —
+
+> Number of session-key slots currently consumed per account (issue #83).         Counts ECDSA and P256 sessions together; enforced against         MAX_SESSION_KEYS_PER_ACCOUNT on grant, released on revoke.
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
 #### `sessionStates_p256(address arg0, bytes32 arg1)`
 
 `0xbfa52147` · view · access: —
@@ -5371,6 +5386,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `callCount` | `uint256` |  |
 | `windowStart` | `uint256` |  |
+| `prevCount` | `uint256` |  |
 
 #### `sessionStates(address arg0, address arg1)`
 
@@ -5387,6 +5403,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `callCount` | `uint256` |  |
 | `windowStart` | `uint256` |  |
+| `prevCount` | `uint256` |  |
 
 #### `validate(bytes32 userOpHash, bytes signature)`
 
@@ -5435,4 +5452,5 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x1fd05a4a` | `SessionExpired()` |
 | `0x96c95f81` | `SessionNotFound()` |
 | `0x2ae0f83a` | `SessionRevoked_()` |
+| `0xbc9e4ddb` | `TooManySessionKeys()` |
 | `0x5a30e744` | `VelocityLimitExceeded()` |

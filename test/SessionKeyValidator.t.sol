@@ -424,6 +424,23 @@ contract SessionKeyValidatorTest is Test {
         validator.revokeP256Session(account, P256_X, P256_Y);
     }
 
+    /// @notice #78 (Codex WS-G CRITICAL) — P256 session sigs must reject high-S (malleability).
+    ///         The EIP-7212 precompile is mocked to ALWAYS return valid, so the ONLY thing that can
+    ///         reject is the low-S gate. high-S (N/2+1) → rejected; low-S (== N/2) → reaches the
+    ///         (always-valid) verifier → success. Proves the gate is load-bearing.
+    function test_p256Session_highS_rejected_lowS_passes() public {
+        _grantP256Session(uint48(block.timestamp + 1 hours));
+        vm.etch(address(0x100), address(new MockP256AlwaysValid()).code);
+        bytes32 uoh = keccak256("p256-sess-malleability");
+        uint256 nOver2 = 0x7FFFFFFF800000007FFFFFFFFFFFFFFFDE737D56D38BCF4279DCE5617E3192A8;
+
+        bytes memory highS = abi.encodePacked(bytes20(account), P256_X, P256_Y, bytes32(uint256(1)), bytes32(nOver2 + 1));
+        assertEq(validator.validate(uoh, highS), 1, "high-S P256 session sig must be rejected by the low-S gate");
+
+        bytes memory lowS = abi.encodePacked(bytes20(account), P256_X, P256_Y, bytes32(uint256(1)), bytes32(nOver2));
+        assertEq(validator.validate(uoh, lowS), 0, "low-S P256 session sig must pass the gate and reach the verifier");
+    }
+
     function test_buildP256GrantHash_nonZero() public view {
         uint48 expiry = uint48(block.timestamp + 1 hours);
         bytes32 h = validator.buildP256GrantHash(account, P256_X, P256_Y, _sessionLegacy(expiry, address(0), bytes4(0)));
@@ -542,6 +559,42 @@ contract SessionKeyValidatorTest is Test {
         validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
     }
 
+    /// @notice #57 adversarial (Codex WS-C LOW) — calls clustered at the END of window N. The weighted
+    ///         limiter must DAMPEN the boundary burst: crossing into N+1 must NOT reset the budget to a
+    ///         fresh full `limit` (that was the old fixed-window 2x bug). It allows only a small bounded
+    ///         overage as prevCount decays. (This documents the APPROXIMATE behavior — see the
+    ///         recordCallForVelocity comment: weighted limiter, not a strict per-rolling-window cap.)
+    function test_velocity_clusteredAtWindowEnd_isDampened() public {
+        SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
+            expiry: uint48(block.timestamp + 1 hours),
+            contractScope: address(0), selectorScope: bytes4(0), revoked: false,
+            velocityLimit: 10, velocityWindow: 100,
+            callTargets: new address[](0), selectorAllowlist: new bytes4[](0)
+        });
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, cfg);
+        bytes32 skh = bytes32(uint256(uint160(sessionKey)));
+
+        uint256 t0 = block.timestamp;
+        // Fill window N late: 10 calls at t0+99.
+        vm.warp(t0 + 99);
+        for (uint256 i = 0; i < 10; i++) { vm.prank(account); validator.recordCallForVelocity(account, skh, 0x01); }
+        // 11th within window N → reverts (callCount == limit).
+        vm.prank(account);
+        vm.expectRevert(SessionKeyValidator.VelocityLimitExceeded.selector);
+        validator.recordCallForVelocity(account, skh, 0x01);
+
+        // Cross into window N+1 (elapsed=1): weighted estimate stays high (~9), so the budget is NOT
+        // reset to a fresh 10. Count how many calls slip through before the gate rejects.
+        vm.warp(t0 + 101);
+        uint256 allowed;
+        for (uint256 i = 0; i < 10; i++) {
+            vm.prank(account);
+            try validator.recordCallForVelocity(account, skh, 0x01) { allowed++; } catch { break; }
+        }
+        assertLt(allowed, 10, "weighted limiter must NOT grant a fresh full limit right after the boundary (no 2x burst)");
+    }
+
     function test_recordCallForVelocity_exceedsLimit_reverts() public {
         SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
             expiry: uint48(block.timestamp + 1 hours),
@@ -600,6 +653,189 @@ contract SessionKeyValidatorTest is Test {
         validator.recordCallForVelocity(account, sessionKeyHash, 0x01);
     }
 
+    // ─── #83: per-account session-key cap ─────────────────────────────
+
+    /// @dev Mirror of SessionKeyValidator.MAX_SESSION_KEYS_PER_ACCOUNT (internal constant).
+    uint256 internal constant MAX_KEYS = 50;
+
+    function _cfg1h() internal view returns (SessionKeyValidator.Session memory) {
+        return _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0));
+    }
+
+    function test_sessionKeyCap_exceeded_reverts() public {
+        // Fill the account to the cap with distinct ECDSA session keys.
+        for (uint256 i = 1; i <= MAX_KEYS; i++) {
+            vm.prank(owner);
+            validator.grantSessionDirect(account, address(uint160(i)), _cfg1h());
+        }
+        assertEq(validator.sessionKeyCount(account), MAX_KEYS);
+
+        // The (cap+1)-th distinct key must revert.
+        vm.prank(owner);
+        vm.expectRevert(SessionKeyValidator.TooManySessionKeys.selector);
+        validator.grantSessionDirect(account, address(uint160(MAX_KEYS + 1)), _cfg1h());
+    }
+
+    function test_sessionKeyCap_revokeFreesSlot() public {
+        for (uint256 i = 1; i <= MAX_KEYS; i++) {
+            vm.prank(owner);
+            validator.grantSessionDirect(account, address(uint160(i)), _cfg1h());
+        }
+        assertEq(validator.sessionKeyCount(account), MAX_KEYS);
+
+        // At cap → next grant reverts.
+        vm.prank(owner);
+        vm.expectRevert(SessionKeyValidator.TooManySessionKeys.selector);
+        validator.grantSessionDirect(account, address(uint160(MAX_KEYS + 1)), _cfg1h());
+
+        // Revoke one → count drops, a slot frees up.
+        vm.prank(owner);
+        validator.revokeSession(account, address(uint160(1)));
+        assertEq(validator.sessionKeyCount(account), MAX_KEYS - 1);
+
+        // Now the new key can be granted.
+        vm.prank(owner);
+        validator.grantSessionDirect(account, address(uint160(MAX_KEYS + 1)), _cfg1h());
+        assertEq(validator.sessionKeyCount(account), MAX_KEYS);
+    }
+
+    function test_sessionKeyCount_tracksGrantAndRevoke() public {
+        assertEq(validator.sessionKeyCount(account), 0);
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _cfg1h());
+        assertEq(validator.sessionKeyCount(account), 1);
+        vm.prank(owner);
+        validator.revokeSession(account, sessionKey);
+        assertEq(validator.sessionKeyCount(account), 0);
+        // Double-revoke is idempotent — must not underflow / decrement again.
+        vm.prank(owner);
+        validator.revokeSession(account, sessionKey);
+        assertEq(validator.sessionKeyCount(account), 0);
+    }
+
+    function test_sessionKeyCap_sharedAcrossEcdsaAndP256() public {
+        // ECDSA + P256 sessions share one per-account counter.
+        for (uint256 i = 1; i <= MAX_KEYS - 1; i++) {
+            vm.prank(owner);
+            validator.grantSessionDirect(account, address(uint160(i)), _cfg1h());
+        }
+        assertEq(validator.sessionKeyCount(account), MAX_KEYS - 1);
+
+        // One P256 session takes the last slot.
+        vm.prank(owner);
+        validator.grantP256SessionDirect(account, P256_X, P256_Y, _cfg1h());
+        assertEq(validator.sessionKeyCount(account), MAX_KEYS);
+
+        // A further P256 key must revert at the shared cap.
+        vm.prank(owner);
+        vm.expectRevert(SessionKeyValidator.TooManySessionKeys.selector);
+        validator.grantP256SessionDirect(account, bytes32(uint256(0xabc1)), bytes32(uint256(0xabc2)), _cfg1h());
+    }
+
+    function test_regrantExpiredUnrevoked_doesNotDoubleCount() public {
+        // setUp warps to 1e6. Use absolute literals: via_ir folds repeated block.timestamp reads
+        // within a test function to the entry value, so deriving timestamps from it after a warp
+        // is unreliable. T0 == 1_000_000.
+        assertEq(block.timestamp, 1_000_000);
+
+        // Short-lived session, never revoked, allowed to expire.
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(1_000_100), address(0), bytes4(0)));
+        assertEq(validator.sessionKeyCount(account), 1);
+
+        // Let it expire, then re-grant the SAME key. The expired-unrevoked slot already holds a
+        // count, so the re-grant must reuse it (no double-count) — protects legitimate rotation.
+        vm.warp(1_000_200);
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(1_000_300), address(0), bytes4(0)));
+        assertEq(validator.sessionKeyCount(account), 1);
+    }
+
+    // ─── #57 / KI-4: velocity sliding window (no 2x boundary burst) ────
+
+    function test_velocity_noBurstAcrossWindowBoundary() public {
+        // Warp far from epoch so the first call cleanly anchors a fresh window.
+        vm.warp(1_000_000);
+        SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
+            expiry: uint48(block.timestamp + 2 hours),
+            contractScope: address(0),
+            selectorScope: bytes4(0),
+            revoked: false,
+            velocityLimit: 10,
+            velocityWindow: 100,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, cfg);
+        bytes32 h = bytes32(uint256(uint160(sessionKey)));
+
+        // Window N anchors at the first recorded call. setUp warps to 1e6, so T0 == 1_000_000.
+        // Use absolute timestamps to keep the windowing math unambiguous.
+        uint256 T0 = 1_000_000;
+        assertEq(block.timestamp, T0);
+        for (uint256 i = 0; i < 10; i++) {
+            vm.prank(account);
+            validator.recordCallForVelocity(account, h, 0x01);
+        }
+        // 11th in the same window is rejected.
+        vm.prank(account);
+        vm.expectRevert(SessionKeyValidator.VelocityLimitExceeded.selector);
+        validator.recordCallForVelocity(account, h, 0x01);
+
+        // Cross exactly into window N+1. A FIXED window would reset and allow 10 MORE calls
+        // (2x burst). The sliding window weights the full prior count → estimate == 10 → reject.
+        vm.warp(T0 + 100);
+        vm.prank(account);
+        vm.expectRevert(SessionKeyValidator.VelocityLimitExceeded.selector);
+        validator.recordCallForVelocity(account, h, 0x01);
+
+        // Halfway into N+1 (elapsed 50/100): prev window weighted at 50% → contributes 5.
+        // So only 5 fresh calls fit before the rolling estimate hits the limit of 10.
+        vm.warp(T0 + 150);
+        for (uint256 i = 0; i < 5; i++) {
+            vm.prank(account);
+            validator.recordCallForVelocity(account, h, 0x01);
+        }
+        vm.prank(account);
+        vm.expectRevert(SessionKeyValidator.VelocityLimitExceeded.selector);
+        validator.recordCallForVelocity(account, h, 0x01);
+
+        // After two full windows of silence the rate fully recovers.
+        vm.warp(T0 + 400);
+        vm.prank(account);
+        validator.recordCallForVelocity(account, h, 0x01); // succeeds
+    }
+
+    function test_velocity_validateEarlyRejectMirrorsRecord() public {
+        // The view-side early reject must agree with the execute-side counter.
+        vm.warp(1_000_000);
+        SessionKeyValidator.Session memory cfg = SessionKeyValidator.Session({
+            expiry: uint48(block.timestamp + 2 hours),
+            contractScope: address(0),
+            selectorScope: bytes4(0),
+            revoked: false,
+            velocityLimit: 2,
+            velocityWindow: 100,
+            callTargets: new address[](0),
+            selectorAllowlist: new bytes4[](0)
+        });
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, cfg);
+        bytes32 h = bytes32(uint256(uint160(sessionKey)));
+
+        bytes memory sig = _buildValidateSig(account, sessionKey, sessionKeyPriv, USER_OP_HASH);
+        assertEq(validator.validate(USER_OP_HASH, sig), 0); // within limit
+
+        vm.prank(account);
+        validator.recordCallForVelocity(account, h, 0x01);
+        vm.prank(account);
+        validator.recordCallForVelocity(account, h, 0x01);
+
+        // Limit now reached for the current window → validate must early-reject (returns 1).
+        assertEq(validator.validate(USER_OP_HASH, sig), 1);
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────
 
     function _grantSession(address _account, address _sk, uint48 _expiry) internal {
@@ -649,5 +885,13 @@ contract MockAccount {
 
     function owner() external view returns (address) {
         return _owner;
+    }
+}
+
+/// @dev Mock EIP-7212 P256 precompile that always returns valid (1) — used to prove the low-S gate
+///      is load-bearing (only the gate, not the precompile, can reject in that test).
+contract MockP256AlwaysValid {
+    fallback() external {
+        assembly { mstore(0, 1) return(0, 32) }
     }
 }
