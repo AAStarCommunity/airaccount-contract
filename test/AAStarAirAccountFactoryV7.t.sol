@@ -90,9 +90,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
         AAStarGlobalGuard g = acc.guard();
         assertEq(g.account(), account);
         assertEq(g.dailyLimit(), TEST_DAILY_LIMIT);
-        assertTrue(g.approvedAlgorithms(0x02)); // ECDSA
-        assertTrue(g.approvedAlgorithms(0x01)); // BLS
-        assertTrue(g.approvedAlgorithms(0x03)); // P256
+        assertTrue(acc.approvedAlgorithms(0x02)); // ECDSA
+        assertTrue(acc.approvedAlgorithms(0x01)); // BLS
+        assertTrue(acc.approvedAlgorithms(0x03)); // P256
     }
 
     function test_createAccountWithDefaults_deterministic() public {

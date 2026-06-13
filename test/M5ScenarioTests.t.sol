@@ -153,7 +153,7 @@ contract M5ScenarioTests is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         AAStarAirAccountV7 _ret = new AAStarAirAccountV7();
-        address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
+        address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
         _ret.initialize(address(entryPoint), owner, config, g);
         return _ret;
 
@@ -186,7 +186,7 @@ contract M5ScenarioTests is Test {
             initialTokenConfigs: cfgs
         });
         AAStarAirAccountV7 _ret = new AAStarAirAccountV7();
-        address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
+        address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
         _ret.initialize(address(entryPoint), owner, config, g);
         return _ret;
 
@@ -325,11 +325,12 @@ contract M5ScenarioTests is Test {
         address aliceAcct = address(alice);
 
         // Guard approved T3 for large transfers - but daily cap still applies
-        vm.startPrank(aliceAcct);
-        guard.approveAlgorithm(ALG_T3);
+        vm.prank(aliceWallet.addr);
+        alice.guardApproveAlgorithm(ALG_T3);
 
         // Day 1: Drain up to daily limit (5000 USDC)
-        guard.checkTokenTransaction(address(usdc), 5000 * USDC_DEC, ALG_T3);
+        vm.startPrank(aliceAcct);
+        guard.recordTokenSpend(address(usdc), 5000 * USDC_DEC, ALG_T3);
         vm.stopPrank();
 
         // Day 1: Any further amount blocked
@@ -340,12 +341,12 @@ contract M5ScenarioTests is Test {
                 address(usdc), 1 * USDC_DEC, 0
             )
         );
-        guard.checkTokenTransaction(address(usdc), 1 * USDC_DEC, ALG_T3);
+        guard.recordTokenSpend(address(usdc), 1 * USDC_DEC, ALG_T3);
 
         // Day 2 (next day): cap resets
         vm.warp(block.timestamp + 1 days);
         vm.prank(aliceAcct);
-        bool ok = guard.checkTokenTransaction(address(usdc), 5000 * USDC_DEC, ALG_T3);
+        bool ok = guard.recordTokenSpend(address(usdc), 5000 * USDC_DEC, ALG_T3);
         assertTrue(ok, "New day should reset daily cap");
     }
 
@@ -706,7 +707,7 @@ contract M5ScenarioTests is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         AAStarAirAccountV7 _ret = new AAStarAirAccountV7();
-        address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
+        address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
         _ret.initialize(address(entryPoint), owner, config, g);
         return _ret;
 

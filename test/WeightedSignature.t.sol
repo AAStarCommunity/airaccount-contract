@@ -43,12 +43,12 @@ contract MockP256FailW {
 
 /// @title WeightedSignatureTest — Unit tests for M6.1 (algId 0x07) + M6.2 (guardian weight governance)
 contract WeightedSignatureTest is Test {
-    function _initWithGuard(AAStarAirAccountV7 acct, address ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
+    function _initWithGuard(AAStarAirAccountV7 acct, address _ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
         address g = address(0);
         if (cfg.dailyLimit > 0) {
-            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
+            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
         }
-        acct.initialize(ep, _owner, cfg, g);
+        acct.initialize(_ep, _owner, cfg, g);
     }
     using MessageHashUtils for bytes32;
     using ECDSA for bytes32;

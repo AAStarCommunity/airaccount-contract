@@ -40,7 +40,7 @@ contract AAStarAirAccountV7M3Test is Test {
     function _initWithGuard(AAStarAirAccountV7 acct, address ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
         address g = address(0);
         if (cfg.dailyLimit > 0) {
-            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
+            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
         }
         acct.initialize(ep, _owner, cfg, g);
     }
@@ -195,8 +195,8 @@ contract AAStarAirAccountV7M3Test is Test {
         AAStarGlobalGuard g = guardedAccount.guard();
         assertEq(g.account(), address(guardedAccount));
         assertEq(g.dailyLimit(), 1 ether);
-        assertTrue(g.approvedAlgorithms(0x02));
-        assertTrue(g.approvedAlgorithms(0x01));
+        assertTrue(guardedAccount.approvedAlgorithms(0x02));
+        assertTrue(guardedAccount.approvedAlgorithms(0x01));
     }
 
     function test_noGuardWhenEmptyConfig() public view {
@@ -222,7 +222,7 @@ contract AAStarAirAccountV7M3Test is Test {
 
         vm.prank(ownerAddr);
         ga.guardApproveAlgorithm(0x03); // P256
-        assertTrue(ga.guard().approvedAlgorithms(0x03));
+        assertTrue(ga.approvedAlgorithms(0x03));
 
         vm.prank(address(0xDEAD));
         vm.expectRevert(abi.encodeWithSignature("NotOwner()"));

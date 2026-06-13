@@ -623,7 +623,7 @@ contract AAStarAirAccountV7_M7Test is Test {
         algs[0] = 0x02; // ECDSA approved
         AAStarAirAccountV7 gacct = new AAStarAirAccountV7();
         AAStarGlobalGuard guard = new AAStarGlobalGuard(
-            address(gacct), 2 ether, algs, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
+            address(gacct), 2 ether, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
         );
         gacct.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
@@ -1265,7 +1265,6 @@ contract AAStarAirAccountV7_M7Test is Test {
         grd = new AAStarGlobalGuard(
             predictedAddr,
             1 ether,       // dailyLimit
-            algs,
             0,             // minDailyLimit
             new address[](0),
             new AAStarGlobalGuard.TokenConfig[](0)

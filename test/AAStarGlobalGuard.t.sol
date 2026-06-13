@@ -14,9 +14,7 @@ contract AAStarGlobalGuardTest is Test {
     uint8 constant ALG_P256 = 0x03;
 
     function setUp() public {
-        uint8[] memory algIds = new uint8[](1);
-        algIds[0] = ALG_ECDSA;
-        guard = new AAStarGlobalGuard(account, DAILY_LIMIT, algIds, DAILY_LIMIT / 10, new address[](0), new AAStarGlobalGuard.TokenConfig[](0));
+        guard = new AAStarGlobalGuard(account, DAILY_LIMIT, DAILY_LIMIT / 10, new address[](0), new AAStarGlobalGuard.TokenConfig[](0));
     }
 
     // ─── 1. Constructor ────────────────────────────────────────────────
@@ -26,39 +24,12 @@ contract AAStarGlobalGuardTest is Test {
         assertEq(guard.dailyLimit(), DAILY_LIMIT);
     }
 
-    function test_constructor_setsApprovedAlgorithms() public view {
-        assertTrue(guard.approvedAlgorithms(ALG_ECDSA));
-        assertFalse(guard.approvedAlgorithms(ALG_BLS));
-    }
+    // v0.17.2-beta.4: the algorithm whitelist + approveAlgorithm moved off the guard onto the
+    // account. Those behaviors are covered by test/Beta4AlgIdBundlerFix.t.sol
+    // (test_whitelist_populatedOnAccountFromConfig, test_guardApproveAlgorithm_writesAccountNotGuard,
+    // test_validateUserOp_rejectsNonWhitelistedAlg). The guard is now pure accounting.
 
-    function test_constructor_multipleAlgorithms() public {
-        uint8[] memory algIds = new uint8[](3);
-        algIds[0] = ALG_ECDSA;
-        algIds[1] = ALG_BLS;
-        algIds[2] = ALG_P256;
-        AAStarGlobalGuard g = new AAStarGlobalGuard(account, DAILY_LIMIT, algIds, DAILY_LIMIT / 10, new address[](0), new AAStarGlobalGuard.TokenConfig[](0));
-        assertTrue(g.approvedAlgorithms(ALG_ECDSA));
-        assertTrue(g.approvedAlgorithms(ALG_BLS));
-        assertTrue(g.approvedAlgorithms(ALG_P256));
-    }
-
-    // ─── 2. approveAlgorithm (add-only) ──────────────────────────────
-
-    function test_approveAlgorithm_accountCanApprove() public {
-        vm.prank(account);
-        vm.expectEmit(true, false, false, false);
-        emit AAStarGlobalGuard.AlgorithmApproved(ALG_BLS);
-        guard.approveAlgorithm(ALG_BLS);
-        assertTrue(guard.approvedAlgorithms(ALG_BLS));
-    }
-
-    function test_approveAlgorithm_nonAccountReverts() public {
-        vm.prank(nonAccount);
-        vm.expectRevert(AAStarGlobalGuard.OnlyAccount.selector);
-        guard.approveAlgorithm(ALG_BLS);
-    }
-
-    // ─── 3. decreaseDailyLimit (monotonic) ───────────────────────────
+    // ─── decreaseDailyLimit (monotonic) ───────────────────────────
 
     function test_decreaseDailyLimit_accountCanDecrease() public {
         vm.prank(account);
@@ -95,34 +66,30 @@ contract AAStarGlobalGuardTest is Test {
     function test_checkTransaction_nonAccountReverts() public {
         vm.prank(nonAccount);
         vm.expectRevert(AAStarGlobalGuard.OnlyAccount.selector);
-        guard.checkTransaction(0.1 ether, ALG_ECDSA);
+        guard.recordSpend(0.1 ether);
     }
 
     // ─── 5. checkTransaction: algorithm whitelist ────────────────────
 
     function test_checkTransaction_approvedAlgPasses() public {
         vm.prank(account);
-        bool ok = guard.checkTransaction(0.1 ether, ALG_ECDSA);
+        bool ok = guard.recordSpend(0.1 ether);
         assertTrue(ok);
     }
 
-    function test_checkTransaction_unapprovedAlgReverts() public {
-        vm.prank(account);
-        vm.expectRevert(abi.encodeWithSelector(AAStarGlobalGuard.AlgorithmNotApproved.selector, ALG_BLS));
-        guard.checkTransaction(0.1 ether, ALG_BLS);
-    }
+    // (whitelist-revert removed: enforced in validateUserOp now — see Beta4AlgIdBundlerFix.t.sol)
 
-    // ─── 6. checkTransaction: within daily limit ────────────────────
+    // ─── checkTransaction: within daily limit ────────────────────
 
     function test_checkTransaction_withinLimitPasses() public {
         vm.prank(account);
-        bool ok = guard.checkTransaction(0.5 ether, ALG_ECDSA);
+        bool ok = guard.recordSpend(0.5 ether);
         assertTrue(ok);
     }
 
     function test_checkTransaction_exactLimitPasses() public {
         vm.prank(account);
-        bool ok = guard.checkTransaction(DAILY_LIMIT, ALG_ECDSA);
+        bool ok = guard.recordSpend(DAILY_LIMIT);
         assertTrue(ok);
     }
 
@@ -133,16 +100,16 @@ contract AAStarGlobalGuardTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(AAStarGlobalGuard.DailyLimitExceeded.selector, 1.1 ether, DAILY_LIMIT)
         );
-        guard.checkTransaction(1.1 ether, ALG_ECDSA);
+        guard.recordSpend(1.1 ether);
     }
 
     // ─── 8. Multiple transactions accumulate daily spending ─────────
 
     function test_checkTransaction_accumulatesSpending() public {
         vm.startPrank(account);
-        guard.checkTransaction(0.3 ether, ALG_ECDSA);
-        guard.checkTransaction(0.3 ether, ALG_ECDSA);
-        guard.checkTransaction(0.3 ether, ALG_ECDSA);
+        guard.recordSpend(0.3 ether);
+        guard.recordSpend(0.3 ether);
+        guard.recordSpend(0.3 ether);
         vm.stopPrank();
 
         // 0.9 ether spent, only 0.1 ether remaining
@@ -150,7 +117,7 @@ contract AAStarGlobalGuardTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(AAStarGlobalGuard.DailyLimitExceeded.selector, 0.2 ether, 0.1 ether)
         );
-        guard.checkTransaction(0.2 ether, ALG_ECDSA);
+        guard.recordSpend(0.2 ether);
     }
 
     function test_checkTransaction_emitsSpendRecorded() public {
@@ -158,7 +125,7 @@ contract AAStarGlobalGuardTest is Test {
         vm.prank(account);
         vm.expectEmit(true, false, false, true);
         emit AAStarGlobalGuard.SpendRecorded(today, 0.5 ether, 0.5 ether);
-        guard.checkTransaction(0.5 ether, ALG_ECDSA);
+        guard.recordSpend(0.5 ether);
     }
 
     // ─── 9. remainingDailyAllowance ─────────────────────────────────
@@ -169,13 +136,13 @@ contract AAStarGlobalGuardTest is Test {
 
     function test_remainingDailyAllowance_decreasesAfterSpend() public {
         vm.prank(account);
-        guard.checkTransaction(0.4 ether, ALG_ECDSA);
+        guard.recordSpend(0.4 ether);
         assertEq(guard.remainingDailyAllowance(), 0.6 ether);
     }
 
     function test_remainingDailyAllowance_zeroAfterFullSpend() public {
         vm.prank(account);
-        guard.checkTransaction(DAILY_LIMIT, ALG_ECDSA);
+        guard.recordSpend(DAILY_LIMIT);
         assertEq(guard.remainingDailyAllowance(), 0);
     }
 
@@ -183,7 +150,7 @@ contract AAStarGlobalGuardTest is Test {
 
     function test_dailyLimitResetsNextDay() public {
         vm.prank(account);
-        guard.checkTransaction(DAILY_LIMIT, ALG_ECDSA);
+        guard.recordSpend(DAILY_LIMIT);
         assertEq(guard.remainingDailyAllowance(), 0);
 
         vm.warp(block.timestamp + 1 days);
@@ -191,7 +158,7 @@ contract AAStarGlobalGuardTest is Test {
         assertEq(guard.remainingDailyAllowance(), DAILY_LIMIT);
 
         vm.prank(account);
-        bool ok = guard.checkTransaction(0.5 ether, ALG_ECDSA);
+        bool ok = guard.recordSpend(0.5 ether);
         assertTrue(ok);
         assertEq(guard.remainingDailyAllowance(), 0.5 ether);
     }
@@ -200,28 +167,26 @@ contract AAStarGlobalGuardTest is Test {
 
     function test_checkTransaction_zeroValueAlwaysPasses() public {
         vm.prank(account);
-        guard.checkTransaction(DAILY_LIMIT, ALG_ECDSA);
+        guard.recordSpend(DAILY_LIMIT);
 
         vm.prank(account);
-        bool ok = guard.checkTransaction(0, ALG_ECDSA);
+        bool ok = guard.recordSpend(0);
         assertTrue(ok);
     }
 
     function test_checkTransaction_zeroValueDoesNotAccumulate() public {
         vm.prank(account);
-        guard.checkTransaction(0, ALG_ECDSA);
+        guard.recordSpend(0);
         assertEq(guard.remainingDailyAllowance(), DAILY_LIMIT);
     }
 
     // ─── 12. Zero dailyLimit means unlimited ────────────────────────
 
     function test_unlimitedWhenDailyLimitIsZero() public {
-        uint8[] memory algIds = new uint8[](1);
-        algIds[0] = ALG_ECDSA;
-        AAStarGlobalGuard unlimitedGuard = new AAStarGlobalGuard(account, 0, algIds, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0));
+        AAStarGlobalGuard unlimitedGuard = new AAStarGlobalGuard(account, 0, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0));
 
         vm.prank(account);
-        bool ok = unlimitedGuard.checkTransaction(1000 ether, ALG_ECDSA);
+        bool ok = unlimitedGuard.recordSpend(1000 ether);
         assertTrue(ok);
 
         assertEq(unlimitedGuard.remainingDailyAllowance(), type(uint256).max);

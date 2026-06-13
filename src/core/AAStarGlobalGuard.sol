@@ -35,8 +35,10 @@ contract AAStarGlobalGuard {
     /// @notice Tracks ETH spending per day (day number → amount spent)
     mapping(uint256 => uint256) public dailySpent;
 
-    /// @notice Algorithm whitelist: only approved algIds can be used for transactions
-    mapping(uint8 => bool) public approvedAlgorithms;
+    // NOTE (v0.17.2-beta.4): the algorithm whitelist was REMOVED from the guard and moved to the
+    // account (AAStarAgentStorageLayout.approvedAlgorithms, slot 24) so it can be enforced during
+    // validateUserOp under ERC-7562 (account-own storage). The guard is now pure accounting; it
+    // never decides algorithm approval. The account is the single source of truth.
 
     // ─── ERC20 Token State ───────────────────────────────────────
 
@@ -49,7 +51,6 @@ contract AAStarGlobalGuard {
     // ─── Events ─────────────────────────────────────────────────
 
     event DailyLimitDecreased(uint256 oldLimit, uint256 newLimit);
-    event AlgorithmApproved(uint8 indexed algId);
     event SpendRecorded(uint256 indexed day, uint256 amount, uint256 totalSpent);
     event TokenConfigAdded(address indexed token, uint256 tier1Limit, uint256 tier2Limit, uint256 dailyLimit);
     event TokenDailyLimitDecreased(address indexed token, uint256 oldLimit, uint256 newLimit);
@@ -61,7 +62,6 @@ contract AAStarGlobalGuard {
     error CanOnlyDecreaseLimit(uint256 current, uint256 requested);
     error BelowMinDailyLimit(uint256 requested, uint256 minimum);
     error DailyLimitExceeded(uint256 requested, uint256 remaining);
-    error AlgorithmNotApproved(uint8 algId);
     error TokenAlreadyConfigured(address token);
     error TokenCanOnlyDecreaseLimit(address token, uint256 current, uint256 requested);
     error TokenDailyLimitExceeded(address token, uint256 requested, uint256 remaining);
@@ -96,14 +96,14 @@ contract AAStarGlobalGuard {
 
     /// @param _account          The AA account contract address (immutable binding)
     /// @param _dailyLimit       ETH daily spending limit in wei (0 = unlimited)
-    /// @param _algIds           Initial approved algorithm IDs
     /// @param _minDailyLimit    Floor for ETH daily limit (0 = no floor)
     /// @param _initialTokens    ERC20 token addresses with initial configs (may be empty)
     /// @param _initialConfigs   Per-token tier/daily configs, 1:1 with _initialTokens
+    /// @dev v0.17.2-beta.4: the algorithm whitelist no longer lives here — the account owns it
+    ///      (AAStarAgentStorageLayout.approvedAlgorithms) and enforces it in validateUserOp.
     constructor(
         address _account,
         uint256 _dailyLimit,
-        uint8[] memory _algIds,
         uint256 _minDailyLimit,
         address[] memory _initialTokens,
         TokenConfig[] memory _initialConfigs
@@ -112,10 +112,6 @@ contract AAStarGlobalGuard {
         account = _account;
         dailyLimit = _dailyLimit;
         minDailyLimit = _minDailyLimit;
-        for (uint256 i = 0; i < _algIds.length; i++) {
-            approvedAlgorithms[_algIds[i]] = true;
-            emit AlgorithmApproved(_algIds[i]);
-        }
         for (uint256 i = 0; i < _initialTokens.length; i++) {
             address tok = _initialTokens[i];
             TokenConfig memory cfg = _initialConfigs[i];
@@ -127,12 +123,11 @@ contract AAStarGlobalGuard {
 
     // ─── ETH Guard Checks ───────────────────────────────────────
 
-    /// @notice Check if an ETH transaction is allowed.
-    ///         Enforces algorithm whitelist and ETH daily limit.
-    ///         Tier enforcement is handled by the account (reads todaySpent for cumulative check).
-    function checkTransaction(uint256 value, uint8 algId) external onlyAccount returns (bool) {
-        if (!approvedAlgorithms[algId]) revert AlgorithmNotApproved(algId);
-
+    /// @notice Record an ETH spend and enforce the ETH daily limit. Pure accounting.
+    /// @dev v0.17.2-beta.4: renamed from checkTransaction; the algorithm-whitelist check moved to
+    ///      the account (enforced in validateUserOp). Tier enforcement is handled by the account
+    ///      (reads todaySpent for the cumulative check). This function only meters the daily limit.
+    function recordSpend(uint256 value) external onlyAccount returns (bool) {
         if (dailyLimit > 0 && value > 0) {
             uint256 today = block.timestamp / 1 days;
             uint256 spent = dailySpent[today];
@@ -177,10 +172,10 @@ contract AAStarGlobalGuard {
     ///         This is standard ERC-4337 behavior, not specific to this implementation.
     /// @param token    ERC20 token contract address (= calldata dest)
     /// @param amount   Token amount from parsed calldata (transfer/approve amount)
-    /// @param algId    Algorithm used for this UserOp
-    function checkTokenTransaction(address token, uint256 amount, uint8 algId) external onlyAccount returns (bool) {
-        if (!approvedAlgorithms[algId]) revert AlgorithmNotApproved(algId);
-
+    /// @param algId    Resolved algorithm tier input for cumulative token-tier math (NOT a whitelist
+    ///                 check — the account already enforced the algorithm whitelist in validateUserOp).
+    /// @dev v0.17.2-beta.4: renamed from checkTokenTransaction; whitelist revert removed.
+    function recordTokenSpend(address token, uint256 amount, uint8 algId) external onlyAccount returns (bool) {
         TokenConfig memory cfg = tokenConfigs[token];
         // Unconfigured token: no limits applied, pass through
         if (cfg.tier1Limit == 0 && cfg.tier2Limit == 0 && cfg.dailyLimit == 0) {
@@ -263,12 +258,6 @@ contract AAStarGlobalGuard {
         uint256 old = dailyLimit;
         dailyLimit = _newLimit;
         emit DailyLimitDecreased(old, _newLimit);
-    }
-
-    /// @notice Add a new approved algorithm. Can NEVER revoke.
-    function approveAlgorithm(uint8 algId) external onlyAccount {
-        approvedAlgorithms[algId] = true;
-        emit AlgorithmApproved(algId);
     }
 
     // ─── Internal ───────────────────────────────────────────────

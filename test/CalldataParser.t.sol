@@ -14,7 +14,7 @@ contract CalldataParserTest is Test {
     function _initWithGuard(AAStarAirAccountV7 acct, address ep, address _owner, AAStarAirAccountBase.InitConfig memory cfg) internal {
         address g = address(0);
         if (cfg.dailyLimit > 0) {
-            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
+            g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
         }
         acct.initialize(ep, _owner, cfg, g);
     }

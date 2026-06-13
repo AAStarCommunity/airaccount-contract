@@ -46,7 +46,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @param _owner Initial account owner (ECDSA signer)
     /// @param _config Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed)
     function initialize(address _entryPoint, address _owner, InitConfig calldata _config) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, address(0));
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, address(0), _config.approvedAlgIds);
     }
 
     /// @notice Initialize this account with a pre-deployed guard.
@@ -58,7 +58,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @param _config Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr)
     /// @param _guardAddr Pre-deployed AAStarGlobalGuard address bound to this account's address
     function initialize(address _entryPoint, address _owner, InitConfig calldata _config, address _guardAddr) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
     }
 
     /// @notice Initialize an autonomous-agent account.
@@ -75,7 +75,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         InitConfig calldata _config,
         address _guardAddr
     ) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr);
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
     }
 
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────
@@ -206,8 +206,48 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         } else {
             validationData = _validateSignature(userOpHash, userOp.signature);
         }
+
+        // v0.17.2-beta.4: AUTHORITATIVE algorithm-whitelist gate.
+        // The whitelist now lives in the account's OWN storage (single source of truth), so it can
+        // be read here during validation — ERC-7562 permits reading the account's own storage, but
+        // NOT the separate unstaked guard's. Enforcing it here (rather than in the guard at execution)
+        // is what makes guard-enabled accounts work through a bundler: the previous design read the
+        // algId from cross-eth_call transient storage, which the bundler clears between its separate
+        // validation and execution simulations → algId=0 → AlgorithmNotApproved(0). This gate runs in
+        // BOTH estimation and real handleOps. SIG_VALIDATION_FAILED (1) is the only failure sentinel.
+        if (validationData != 1 && address(guard) != address(0)) {
+            if (!approvedAlgorithms[_consumeValidatedAlgId()]) {
+                return 1; // SIG_VALIDATION_FAILED — algorithm not whitelisted for this account
+            }
+        }
+
         if (missingAccountFunds > 0) {
             _payPrefund(missingAccountFunds);
+        }
+    }
+
+    /// @notice ERC-4337 v0.7 IAccountExecute entrypoint (v0.17.2-beta.4).
+    /// @dev When `userOp.callData` begins with this selector, the EntryPoint calls THIS function with
+    ///      the FULL userOp (incl. signature) instead of calling `callData` directly. That lets the
+    ///      execution phase re-derive the validated algId DIRECTLY from `userOp.signature` — in the
+    ///      same call frame, deterministically, in both bundler estimation and real handleOps — with
+    ///      no dependency on cross-eth_call transient storage. We populate the same-frame algId queue
+    ///      from the signature, then self-`delegatecall` the inner execute()/executeBatch() calldata
+    ///      (delegatecall preserves msg.sender == EntryPoint, so execute() consumes the algId we just
+    ///      stored and runs its existing tier/guard logic with the correct algId).
+    function executeUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash
+    ) external onlyEntryPoint {
+        bytes calldata inner = userOp.callData[4:]; // strip the executeUserOp selector
+        // Key the algId queue by the INNER calldata so the self-delegatecall (whose msg.data == inner,
+        // matching execute()'s _setCallDataKey(keccak256(msg.data))) reads exactly what we store here.
+        _setCallDataKey(keccak256(inner));
+        _populateExecAlg(userOpHash, userOp.signature);
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool ok, bytes memory ret) = address(this).delegatecall(inner);
+        if (!ok) {
+            assembly { revert(add(ret, 0x20), mload(ret)) }
         }
     }
 
@@ -369,7 +409,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
         // Full guard enforcement at Tier 1: cumulative ETH tier + daily limit + algorithm
         // whitelist + ERC20/token limits. skipEthCheck=false (executor path holds correct msg.sender).
-        _enforceGuard(value, ALG_ECDSA, ALG_ECDSA, bytes32(0), target, data, false);
+        _enforceGuard(value, ALG_ECDSA, bytes32(0), target, data, false);
 
         returnData = new bytes[](1);
         (bool success, bytes memory result) = target.call{value: value}(data);

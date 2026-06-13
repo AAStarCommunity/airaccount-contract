@@ -107,4 +107,12 @@ abstract contract AAStarAgentStorageLayout is Initializable {
 
     /// @notice Pending weight-change proposal (M6.2). proposedAt == 0 means none pending.
     WeightChangeProposal public pendingWeightChange;                                      // slot 23
+
+    /// @notice Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4).
+    /// @dev Moved here from AAStarGlobalGuard so the account can enforce the whitelist during
+    ///      validateUserOp (ERC-7562 permits reading the account's OWN storage in validation,
+    ///      but NOT the separate unstaked guard's storage). The guard no longer owns a whitelist,
+    ///      eliminating the dual-source desync the mirror approach would have created.
+    ///      Only approveAlgorithm() mutates it (monotonic add). Appended at slot 24 — never reorder.
+    mapping(uint8 => bool) public approvedAlgorithms;                                     // slot 24
 }
