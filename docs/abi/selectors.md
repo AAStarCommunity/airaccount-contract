@@ -81,6 +81,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x3213ba5b` | `addTokenConfig(address,(uint256,uint256,uint256))` | AAStarGlobalGuard |
 | `0x333daf92` | `validateSignature(bytes32,bytes)` | IAAStarValidator |
 | `0x333daf92` | `validateSignature(bytes32,bytes)` | AAStarValidator |
+| `0x34dd87cb` | `sessionKeyCount(address)` | SessionKeyValidator |
 | `0x34e33bf6` | `removeGuardian(uint8,bytes[])` | AAStarAirAccountBase |
 | `0x34e33bf6` | `removeGuardian(uint8,bytes[])` | AAStarAirAccountV7 |
 | `0x353f0860` | `mintAgentIdentity(address,string)` | AirAccountExtension |
@@ -479,6 +480,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xb06ebf3d` | `FailedDeployment()` | AAStarAirAccountFactoryV7 |
 | `0xb891ab5c` | `AggregatedSignatureInvalid()` | AAStarBLSAggregator |
 | `0xbc5e8e59` | `ReputationRegistryFailed()` | AAStarAirAccountBase |
+| `0xbc9e4ddb` | `TooManySessionKeys()` | SessionKeyValidator |
 | `0xc097dd74` | `NodeSetMismatch()` | AAStarBLSAggregator |
 | `0xc2e5347d` | `EmptyBatch()` | AAStarBLSAggregator |
 | `0xc30fc6f5` | `WeightChangePending()` | AAStarAirAccountBase |
