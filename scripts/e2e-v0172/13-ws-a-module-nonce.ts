@@ -37,6 +37,7 @@ import {
 import {
   publicClient, wAnnie, annie, jason, bob,
   loadAbi, runTests, type TestCase,
+  expectRawCallRevert,
 } from "./common.js";
 import {
   requireV018, guardianOpHashRaw, installOpData, uninstallOpData,
@@ -166,24 +167,34 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "WSA.7 REPLAY stale sig0 (signed @nonce0) — must REVERT (#75)",
+    name: "WSA.7 REPLAY stale sig0 (signed @nonce0) — must REVERT NotGuardian() (#75)",
     run: async () => {
-      // The live nonce is 2; sig0 was signed against nonce 0. The contract recomputes
-      // the guardian op hash with the CURRENT nonce, so the stale sig recovers a non-guardian
-      // address and the install is rejected. We assert the on-chain call reverts.
-      try {
-        await publicClient.call({
+      // Precondition: the module must actually be uninstalled, so this is a genuine
+      // re-install attempt (not a no-op blocked by ModuleAlreadyInstalled). Confirm first.
+      const stillInstalled = await publicClient.readContract({
+        address: account, abi: v7Abi, functionName: "isModuleInstalled",
+        args: [MODULE_TYPE_EXECUTOR, A.forceExitModule, "0x"],
+      });
+      if (stillInstalled !== false) {
+        throw new Error("expected ForceExitModule uninstalled before replay test, but it is still installed");
+      }
+
+      // The live nonce is 2; sig0 was signed against nonce 0. installModule recomputes the
+      // guardian op hash with the CURRENT nonce, so the stale sig recovers a NON-guardian
+      // address and `_guardianIndex` reverts the EXACT error NotGuardian()
+      // (AAStarAirAccountBase.sol:167). Any other revert reason is a test failure.
+      await expectRawCallRevert(
+        {
           to: account,
           data: encodeFunctionData({
             abi: v7Abi, functionName: "installModule",
             args: [MODULE_TYPE_EXECUTOR, A.forceExitModule, staleInstallSig0],
           }),
-          account: annie.address,
-        });
-      } catch {
-        return { notes: "stale-nonce install signature rejected on-chain ✓ (replay defeated)" };
-      }
-      throw new Error("expected replay of stale sig0 to revert, but eth_call succeeded");
+          from: annie.address, // owner — passes onlyOwnerOrEntryPoint so we reach the sig check
+        },
+        "NotGuardian()",
+      );
+      return { notes: "stale-nonce install rejected with exact NotGuardian() ✓ (replay defeated)" };
     },
   },
   {

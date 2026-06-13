@@ -71,10 +71,14 @@ and (for WS-G) the P256 signature construction was verified against the **live S
 
 | WS | Issue(s) | Feature | New script | What it asserts | Run readiness |
 |----|----------|---------|------------|------------------|---------------|
-| A | #75, #84 | Module-management **nonce replay protection** | `13-ws-a-module-nonce.ts` | `moduleManagementNonce()` increments on install **and** uninstall; a guardian install sig captured at nonce 0 **reverts** when replayed after uninstall; a fresh-nonce sig succeeds | after v0.18 deploy |
-| B | #70, #77 | ForceExit **TOCTOU re-verify** | `14-ws-b-forceexit-toctou.ts` | after 2 approvals, removing an approver guardian makes `executeForceExit` **revert `ApproverNoLongerGuardian`** (live approvers ∩ current guardians < threshold) | after v0.18 deploy |
-| C | #83, #57 | Session-key **cap** + **sliding velocity** | `15-ws-c-sessionkey-cap-velocity.ts` | `sessionKeyCount` increments on grant / decrements on revoke; 51st grant **reverts `TooManySessionKeys`** (cap=50, gated `RUN_FULL_CAP_TEST=1`). Velocity/expiry-trigger documented as bundler-path TODO | after v0.18 deploy |
-| G | #78 | P256 **low-S** canonicality guard | `16-ws-g-p256-low-s.ts` | via `eth_call validateUserOp` (impersonating EntryPoint): canonical **low-S** P256 sig → `0` (valid); malleable **high-S** `(r, n-s)` → `1` (rejected). Precompile active on Sepolia, so both directions observable | after v0.18 deploy |
+| A | #75, #84 | Module-management **nonce replay protection** | `13-ws-a-module-nonce.ts` | `moduleManagementNonce()` increments on install **and** uninstall; after uninstall (confirmed via `isModuleInstalled==false`) a replayed nonce-0 install sig **reverts the exact `NotGuardian()` selector**; a fresh-nonce sig succeeds | after v0.18 deploy |
+| B | #70, #77 | ForceExit **TOCTOU re-verify** | `14-ws-b-forceexit-toctou.ts` | module installed with a **valid L2 type** (so a passing guardian check would NOT hit `UnsupportedL2Type`); after 2 approvals, removing an approver guardian makes `executeForceExit` **revert the exact `ApproverNoLongerGuardian()` selector** | after v0.18 deploy |
+| C | #83, #57 | Session-key **cap** + **sliding velocity** | `15-ws-c-sessionkey-cap-velocity.ts` | `sessionKeyCount` increments on grant / decrements on revoke (always run); cap enforcement (51st grant → **exact `TooManySessionKeys()` selector**) only runs under `RUN_FULL_CAP_TEST=1`, **recorded SKIP otherwise (never a trivial PASS)**. Velocity/expiry-trigger documented as bundler-path TODO | after v0.18 deploy |
+| G | #78 | P256 **low-S** canonicality guard | `16-ws-g-p256-low-s.ts` | **WSG.P1/P2 run NOW on Sepolia**: prove the raw `0x100` precompile accepts BOTH `(r,s)` and `(r, n-s)` → so the high-S rejection is attributable solely to the contract guard. Then (post-deploy) `eth_call validateUserOp`: low-S → `0`, malleable high-S → `1` | P1/P2 **runnable now**; WSG.1–4 after v0.18 deploy |
+
+**Assertion discipline**: every negative case in phases 13–16 asserts the **exact revert selector** via the
+shared `expectRawCallRevert(..., "Selector()")` helper (or an exact `validationData` value for WS-G) — no test
+counts an arbitrary revert/exception as PASS.
 
 ### Enabling the v0.18 E2E after deploy
 
@@ -101,8 +105,10 @@ Pre-deploy verification already performed (no deploy required):
 - v0.18 ABIs present in `out/`: `moduleManagementNonce`, `sessionKeyCount`, `setP256Key`, `validateUserOp`,
   `ForceExitModule.{proposeForceExit,approveForceExit,executeForceExit,getPendingExit}` — all **OK**.
 - Sepolia secp256r1 precompile (`0x100`) is **active** (RIP-7212 vector → valid).
-- WS-G sig builder verified: low-S (s ≤ N/2) and high-S (s > N/2) **both verify at the precompile**, so the
-  high-S rejection in phase 16 is attributable solely to the contract's low-S guard — exactly what #78 adds.
+- **WS-G precompile-malleability proof is encoded as in-script assertions `WSG.P1`/`WSG.P2`** and was
+  **executed against Sepolia: 2/2 PASS** — low-S (s ≤ N/2) and high-S (s > N/2) **both verify at the
+  precompile**, so the high-S rejection in phases WSG.4 is attributable solely to the contract's low-S
+  guard (#78), not the precompile. (This is a real on-chain assertion now, not external/manual verification.)
 
 ---
 

@@ -46,7 +46,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   publicClient, wAnnie, annie, jason, bob,
   loadAbi, runTests, type TestCase,
-  errSelector,
+  expectRawCallRevert, recordResult,
 } from "./common.js";
 import { requireV018, MAX_SESSION_KEYS_PER_ACCOUNT } from "./common-v018.js";
 
@@ -153,43 +153,49 @@ const tests: TestCase[] = [
       return { txHash: hash, gas: gasUsed, notes: "revoke freed a slot → count = 2 ✓" };
     },
   },
-  {
-    name: `WSC.5 CAP: 51st grant reverts TooManySessionKeys (cap=${MAX_SESSION_KEYS_PER_ACCOUNT})`,
-    run: async () => {
-      if (!RUN_FULL_CAP) {
-        return {
-          notes:
-            `cap constant = ${MAX_SESSION_KEYS_PER_ACCOUNT}; accounting verified in WSC.3/4. ` +
-            `Full 50-grant enforcement loop gated behind RUN_FULL_CAP_TEST=1 (50+ txs).`,
-        };
-      }
-      // Fill to the cap (we already hold 2 live slots), then assert the over-cap grant reverts.
-      let granted = await readCount();
-      while (granted < BigInt(MAX_SESSION_KEYS_PER_ACCOUNT)) {
-        await waitTx(await grant(privateKeyToAccount(generatePrivateKey()).address));
-        granted++;
-      }
-      // The cap is now reached; the next grant must revert TooManySessionKeys.
-      const overCapKey = privateKeyToAccount(generatePrivateKey()).address;
-      const expected = errSelector("TooManySessionKeys()");
-      try {
-        await publicClient.call({
-          to: A.sessionKeyValidator,
-          data: encodeFunctionData({
-            abi: skvAbi, functionName: "grantSessionDirect", args: [account, overCapKey, openCfg()],
-          }),
-          account: annie.address,
-        });
-      } catch (e: any) {
-        const data: string = e?.cause?.data ?? e?.data ?? "";
-        if (typeof data === "string" && data.slice(0, 10).toLowerCase() === expected.toLowerCase()) {
-          return { notes: `cap reached at ${MAX_SESSION_KEYS_PER_ACCOUNT}; over-cap grant reverted TooManySessionKeys ✓` };
-        }
-        return { notes: `over-cap grant reverted (selector ${data.slice(0, 10) || "n/a"}); expected ${expected}` };
-      }
-      throw new Error("expected over-cap grant to revert TooManySessionKeys, but it succeeded");
-    },
-  },
 ];
 
-(async () => { await runTests(PHASE, tests); })();
+// WSC.5 — CAP ENFORCEMENT (heavy: 50+ txs). Only runs (and only records a result) when
+// RUN_FULL_CAP_TEST=1. Otherwise it is recorded as SKIP — NEVER as a trivial PASS, since
+// without the loop nothing about the 50/51 boundary was actually exercised.
+const capEnforcementTest: TestCase = {
+  name: `WSC.5 CAP: 51st grant reverts TooManySessionKeys() (cap=${MAX_SESSION_KEYS_PER_ACCOUNT})`,
+  run: async () => {
+    // Fill to the cap (we already hold 2 live slots from WSC.3/4), then assert the over-cap grant.
+    let granted = await readCount();
+    while (granted < BigInt(MAX_SESSION_KEYS_PER_ACCOUNT)) {
+      await waitTx(await grant(privateKeyToAccount(generatePrivateKey()).address));
+      granted++;
+    }
+    const after = await readCount();
+    if (after !== BigInt(MAX_SESSION_KEYS_PER_ACCOUNT)) {
+      throw new Error(`expected count == cap ${MAX_SESSION_KEYS_PER_ACCOUNT} before over-cap grant, got ${after}`);
+    }
+    // The cap is now reached; the 51st grant MUST revert with the EXACT TooManySessionKeys()
+    // selector. expectRawCallRevert throws on any mismatch or on success.
+    const overCapKey = privateKeyToAccount(generatePrivateKey()).address;
+    await expectRawCallRevert(
+      {
+        to: A.sessionKeyValidator,
+        data: encodeFunctionData({
+          abi: skvAbi, functionName: "grantSessionDirect", args: [account, overCapKey, openCfg()],
+        }),
+        from: annie.address,
+      },
+      "TooManySessionKeys()",
+    );
+    return { notes: `cap reached at ${MAX_SESSION_KEYS_PER_ACCOUNT}; 51st grant reverted exact TooManySessionKeys() ✓` };
+  },
+};
+
+(async () => {
+  await runTests(PHASE, RUN_FULL_CAP ? [...tests, capEnforcementTest] : tests);
+  if (!RUN_FULL_CAP) {
+    const note =
+      `cap constant = ${MAX_SESSION_KEYS_PER_ACCOUNT}; accounting verified in WSC.3/4. ` +
+      `Full 50-grant enforcement (51st → TooManySessionKeys()) NOT run — set RUN_FULL_CAP_TEST=1 (50+ txs).`;
+    console.log(`\n  ${capEnforcementTest.name}  SKIP`);
+    console.log(`    ${note}`);
+    recordResult({ phase: PHASE, test: capEnforcementTest.name, status: "SKIP", notes: note });
+  }
+})();

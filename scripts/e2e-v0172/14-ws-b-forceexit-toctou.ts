@@ -43,6 +43,7 @@ import {
 import {
   publicClient, wAnnie, annie, jason, bob,
   loadAbi, runTests, type TestCase,
+  expectRawCallRevert,
 } from "./common.js";
 import {
   requireV018, guardianOpHashRaw, installOpData,
@@ -56,9 +57,15 @@ const v7Abi      = loadAbi("AAStarAirAccountV7");
 const femAbi     = loadAbi("ForceExitModule");
 
 const MODULE_TYPE_EXECUTOR = 2n;
+const L2_TYPE_OPTIMISM = 1; // ForceExitModule.L2_TYPE_OPTIMISM — valid so the bridge path is well-defined
 const SALT        = BigInt(Math.floor(Date.now() / 1000)) + 140_000n;
 const DAILY_LIMIT = 10_000_000_000_000_000n;
-const EMPTY_INIT_HASH = keccak256(new Uint8Array(0));
+// onInstall(bytes) decodes the module init data as abi.encode(uint8 l2Type). Installing with a
+// VALID L2 type means that, IF the TOCTOU guardian check ever passed, executeForceExit would
+// reach the bridge dispatch rather than reverting UnsupportedL2Type() — so the ONLY expected
+// failure in WSB.7 is the guardian re-check (ApproverNoLongerGuardian), asserted by exact selector.
+const MODULE_INIT_DATA = encodeAbiParameters(parseAbiParameters("uint8"), [L2_TYPE_OPTIMISM]);
+const MODULE_INIT_HASH = keccak256(MODULE_INIT_DATA);
 const REMOVAL_NONCE = BigInt(process.env.V018_GUARDIAN_REMOVAL_NONCE ?? "0");
 
 // Trivial force-exit target: the proposal's value/data is irrelevant because the
@@ -122,16 +129,18 @@ const tests: TestCase[] = [
       })) as bigint;
       const raw = guardianOpHashRaw(
         account, "INSTALL_MODULE",
-        installOpData(MODULE_TYPE_EXECUTOR, A.forceExitModule, EMPTY_INIT_HASH, nonce),
+        installOpData(MODULE_TYPE_EXECUTOR, A.forceExitModule, MODULE_INIT_HASH, nonce),
       );
       const sig = await jason.signMessage({ message: { raw } });
+      // initData = guardian sig (65 bytes) ‖ moduleInitData (abi.encode(uint8 l2Type=Optimism))
+      const initData = (sig + MODULE_INIT_DATA.slice(2)) as `0x${string}`;
       const hash = await wAnnie.writeContract({
         address: account, abi: v7Abi, functionName: "installModule",
-        args: [MODULE_TYPE_EXECUTOR, A.forceExitModule, sig],
+        args: [MODULE_TYPE_EXECUTOR, A.forceExitModule, initData],
         chain: null, account: annie,
       });
       const { gasUsed } = await waitTx(hash);
-      return { txHash: hash, gas: gasUsed, notes: "ForceExitModule installed" };
+      return { txHash: hash, gas: gasUsed, notes: "ForceExitModule installed with L2_TYPE_OPTIMISM init data" };
     },
   },
   {
@@ -202,19 +211,22 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "WSB.7 executeForceExit — must REVERT ApproverNoLongerGuardian (#70)",
+    name: "WSB.7 executeForceExit — must REVERT ApproverNoLongerGuardian() (#70)",
     run: async () => {
       // jason was an approver but is no longer a guardian; live approvers = {bob} = 1 < 2.
-      try {
-        await publicClient.call({
+      // The TOCTOU re-check (ForceExitModule.sol:269) reverts the EXACT error
+      // ApproverNoLongerGuardian() BEFORE the bridge dispatch. Because the module was
+      // installed with a valid L2 type, a passing guardian check would NOT spuriously
+      // revert UnsupportedL2Type() — so any other selector here is a genuine test failure.
+      await expectRawCallRevert(
+        {
           to: A.forceExitModule,
           data: encodeFunctionData({ abi: femAbi, functionName: "executeForceExit", args: [account] }),
-          account: annie.address,
-        });
-      } catch {
-        return { notes: "executeForceExit reverted (stale approver no longer counts) ✓ TOCTOU closed" };
-      }
-      throw new Error("expected executeForceExit to revert ApproverNoLongerGuardian, but it succeeded");
+          from: annie.address,
+        },
+        "ApproverNoLongerGuardian()",
+      );
+      return { notes: "executeForceExit reverted with exact ApproverNoLongerGuardian() ✓ TOCTOU closed" };
     },
   },
 ];

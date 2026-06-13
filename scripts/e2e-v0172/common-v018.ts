@@ -63,13 +63,8 @@ export function v018Addr(): V018Addr | null {
   };
 }
 
-/**
- * If v0.18 is not deployed, print a PENDING banner and exit 0 (SKIP).
- * Returns the resolved addresses otherwise.
- */
-export function requireV018(phase: string): V018Addr {
-  const a = v018Addr();
-  if (a) return a;
+/** Print the "pending v0.18 deploy" banner (no exit). */
+export function printPendingBanner(phase: string): void {
   console.log(`\n${"=".repeat(72)}`);
   console.log(`  Phase ${phase} — PENDING v0.18 DEPLOY (SKIPPED)`);
   console.log(`${"=".repeat(72)}`);
@@ -85,6 +80,16 @@ export function requireV018(phase: string): V018Addr {
     `    AIRACCOUNT_V018_VALIDATOR_ROUTER\n\n` +
     `  TODO: run this script after the v0.18 deploy.\n`,
   );
+}
+
+/**
+ * If v0.18 is not deployed, print a PENDING banner and exit 0 (SKIP).
+ * Returns the resolved addresses otherwise.
+ */
+export function requireV018(phase: string): V018Addr {
+  const a = v018Addr();
+  if (a) return a;
+  printPendingBanner(phase);
   process.exit(0);
 }
 
