@@ -424,6 +424,23 @@ contract SessionKeyValidatorTest is Test {
         validator.revokeP256Session(account, P256_X, P256_Y);
     }
 
+    /// @notice #78 (Codex WS-G CRITICAL) — P256 session sigs must reject high-S (malleability).
+    ///         The EIP-7212 precompile is mocked to ALWAYS return valid, so the ONLY thing that can
+    ///         reject is the low-S gate. high-S (N/2+1) → rejected; low-S (== N/2) → reaches the
+    ///         (always-valid) verifier → success. Proves the gate is load-bearing.
+    function test_p256Session_highS_rejected_lowS_passes() public {
+        _grantP256Session(uint48(block.timestamp + 1 hours));
+        vm.etch(address(0x100), address(new MockP256AlwaysValid()).code);
+        bytes32 uoh = keccak256("p256-sess-malleability");
+        uint256 nOver2 = 0x7FFFFFFF800000007FFFFFFFFFFFFFFFDE737D56D38BCF4279DCE5617E3192A8;
+
+        bytes memory highS = abi.encodePacked(bytes20(account), P256_X, P256_Y, bytes32(uint256(1)), bytes32(nOver2 + 1));
+        assertEq(validator.validate(uoh, highS), 1, "high-S P256 session sig must be rejected by the low-S gate");
+
+        bytes memory lowS = abi.encodePacked(bytes20(account), P256_X, P256_Y, bytes32(uint256(1)), bytes32(nOver2));
+        assertEq(validator.validate(uoh, lowS), 0, "low-S P256 session sig must pass the gate and reach the verifier");
+    }
+
     function test_buildP256GrantHash_nonZero() public view {
         uint48 expiry = uint48(block.timestamp + 1 hours);
         bytes32 h = validator.buildP256GrantHash(account, P256_X, P256_Y, _sessionLegacy(expiry, address(0), bytes4(0)));
@@ -832,5 +849,13 @@ contract MockAccount {
 
     function owner() external view returns (address) {
         return _owner;
+    }
+}
+
+/// @dev Mock EIP-7212 P256 precompile that always returns valid (1) — used to prove the low-S gate
+///      is load-bearing (only the gate, not the precompile, can reject in that test).
+contract MockP256AlwaysValid {
+    fallback() external {
+        assembly { mstore(0, 1) return(0, 32) }
     }
 }

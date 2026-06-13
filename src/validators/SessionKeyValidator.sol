@@ -39,6 +39,13 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     /// @dev EIP-7212 P256 verification precompile
     address internal constant P256_VERIFIER = address(0x100);
 
+    /// @dev floor((n-1)/2) for the secp256r1 order n — the low-S bound. EIP-7212/RIP-7696 do NOT
+    ///      enforce canonical (low-S) signatures, so both (r,s) and (r,n-s) pass the precompile.
+    ///      We reject high-S here to prevent session-signature malleability (issue #78). Mirrors
+    ///      AAStarAirAccountBase.SECP256R1_N_OVER_2 (independently verified identical value).
+    uint256 internal constant SECP256R1_N_OVER_2 =
+        0x7FFFFFFF800000007FFFFFFFFFFFFFFFDE737D56D38BCF4279DCE5617E3192A8;
+
     /// @dev Maximum session duration: 7 days. revokeSession can always cancel early.
     uint48 internal constant MAX_SESSION_DURATION = 7 days;
 
@@ -172,6 +179,8 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         bytes32 keyY    = bytes32(sig[52:84]);
         bytes32 r       = bytes32(sig[84:116]);
         bytes32 s_val   = bytes32(sig[116:148]);
+        // Reject high-S (malleability): EIP-7212 doesn't enforce canonical signatures (issue #78).
+        if (uint256(s_val) > SECP256R1_N_OVER_2) return 1;
         bytes32 keyHash = _p256StorageKey(keccak256(abi.encodePacked(keyX, keyY)));
 
         Session storage s = _sessions_p256[account][keyHash];
