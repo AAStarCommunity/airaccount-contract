@@ -322,10 +322,11 @@ contract CumulativeSignatureTest is Test {
     }
 
     /// @dev Build cumulative tier 2 signature: P256(64) + BLS payload
-    /// Format: [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][messagePoint(256)][messagePointSig(65)]
+    /// Format (issue #45 Fix 1): [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)]
+    /// messagePoint + messagePointSig removed — point is recomputed on-chain from userOpHash.
     function _buildCumulativeT2Sig(
-        bytes32 userOpHash,
-        Vm.Wallet memory mpSigner
+        bytes32, /*userOpHash*/
+        Vm.Wallet memory /*mpSigner*/
     ) internal pure returns (bytes memory) {
         // P256 r,s (fake — the precompile is mocked)
         bytes32 p256R = bytes32(uint256(0xAA));
@@ -335,29 +336,21 @@ contract CumulativeSignatureTest is Test {
         uint256 nodeIdsLength = 1;
         bytes32 fakeNodeId = keccak256("testnode");
         bytes memory blsSig = new bytes(256);
-        bytes memory messagePoint = new bytes(256);
-        messagePoint[0] = 0x42;
-
-        // MessagePoint signature — binds messagePoint to userOpHash to prevent cross-op replay (F55)
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint));
-        (uint8 v, bytes32 r, bytes32 s) = _signHash(mpSigner, mpHash);
 
         return abi.encodePacked(
             p256R,                          // 32
             p256S,                          // 32
             bytes32(nodeIdsLength),         // 32
             fakeNodeId,                     // 32
-            blsSig,                         // 256
-            messagePoint,                   // 256
-            abi.encodePacked(r, s, v)       // 65
+            blsSig                          // 256
         );
     }
 
     /// @dev Build cumulative tier 3 signature: P256(64) + BLS payload + guardianECDSA(65)
-    /// Format: [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][messagePoint(256)][messagePointSig(65)][guardianECDSA(65)]
+    /// Format (issue #45 Fix 1): [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][guardianECDSA(65)]
     function _buildCumulativeT3Sig(
         bytes32 userOpHash,
-        Vm.Wallet memory mpSigner,
+        Vm.Wallet memory, /*mpSigner*/
         Vm.Wallet memory guardianSigner
     ) internal pure returns (bytes memory) {
         // P256 r,s (fake — the precompile is mocked)
@@ -368,12 +361,6 @@ contract CumulativeSignatureTest is Test {
         uint256 nodeIdsLength = 1;
         bytes32 fakeNodeId = keccak256("testnode");
         bytes memory blsSig = new bytes(256);
-        bytes memory messagePoint = new bytes(256);
-        messagePoint[0] = 0x42;
-
-        // MessagePoint signature — binds messagePoint to userOpHash to prevent cross-op replay (F55)
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint));
-        (uint8 v1, bytes32 r1, bytes32 s1) = _signHash(mpSigner, mpHash);
 
         // Guardian ECDSA co-sign (ECDSA over userOpHash)
         (uint8 v2, bytes32 r2, bytes32 s2) = _signHash(guardianSigner, userOpHash);
@@ -384,16 +371,14 @@ contract CumulativeSignatureTest is Test {
             bytes32(nodeIdsLength),             // 32
             fakeNodeId,                         // 32
             blsSig,                             // 256
-            messagePoint,                       // 256
-            abi.encodePacked(r1, s1, v1),       // 65 (messagePoint sig)
             abi.encodePacked(r2, s2, v2)        // 65 (guardian ECDSA)
         );
     }
 
     /// @dev Build cumulative tier 3 signature with a custom hash for guardian signing (for testing invalid guardian)
     function _buildCumulativeT3Sig_withGuardianHash(
-        bytes32 userOpHash,
-        Vm.Wallet memory mpSigner,
+        bytes32, /*userOpHash*/
+        Vm.Wallet memory, /*mpSigner*/
         Vm.Wallet memory guardianSigner,
         bytes32 guardianSignHash
     ) internal pure returns (bytes memory) {
@@ -403,12 +388,6 @@ contract CumulativeSignatureTest is Test {
         uint256 nodeIdsLength = 1;
         bytes32 fakeNodeId = keccak256("testnode");
         bytes memory blsSig = new bytes(256);
-        bytes memory messagePoint = new bytes(256);
-        messagePoint[0] = 0x42;
-
-        // Note: uses userOpHash binding (F55) — even for the "wrong guardian hash" test, messagePoint sig is correct
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint));
-        (uint8 v1, bytes32 r1, bytes32 s1) = _signHash(mpSigner, mpHash);
 
         // Guardian signs the WRONG hash instead of userOpHash
         (uint8 v2, bytes32 r2, bytes32 s2) = _signHash(guardianSigner, guardianSignHash);
@@ -416,8 +395,7 @@ contract CumulativeSignatureTest is Test {
         return abi.encodePacked(
             p256R, p256S,
             bytes32(nodeIdsLength), fakeNodeId,
-            blsSig, messagePoint,
-            abi.encodePacked(r1, s1, v1),
+            blsSig,
             abi.encodePacked(r2, s2, v2)
         );
     }

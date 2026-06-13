@@ -210,26 +210,11 @@ contract AAStarAirAccountV7_M2Test is Test {
         assertEq(result, 1, "Wrong AA signer should fail");
     }
 
-    // ─── Triple signature with wrong messagePoint signer → fail ──────
-
-    function test_tripleSignature_wrongMPSigner() public {
-        vm.prank(ownerWallet.addr);
-        account.setValidator(address(router));
-
-        router.registerAlgorithm(0x01, address(mockAlg));
-
-        PackedUserOperation memory userOp = _buildUserOp(address(account));
-        bytes32 userOpHash = keccak256(abi.encode(userOp));
-
-        Vm.Wallet memory wrongWallet = vm.createWallet("wrong3");
-        bytes memory tripSig = _buildTripleSig(userOpHash, ownerWallet, wrongWallet);
-
-        userOp.signature = abi.encodePacked(uint8(0x01), tripSig);
-
-        vm.prank(entryPointAddr);
-        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
-        assertEq(result, 1, "Wrong MP signer should fail");
-    }
+    // NOTE (issue #45 Fix 1): the former `test_tripleSignature_wrongMPSigner` and
+    // `test_tripleSignature_oldMpBinding_fails` tested the owner messagePointSignature binding,
+    // which has been REMOVED — the message point is now recomputed on-chain from userOpHash, so
+    // there is no caller-supplied point to bind. Replay protection is verified end-to-end in
+    // test/BLSReplayBinding.t.sol (a real aggregate for hash A is rejected for hash B).
 
     // ─── Triple signature with valid ECDSA + mock BLS → pass ─────────
 
@@ -249,29 +234,6 @@ contract AAStarAirAccountV7_M2Test is Test {
         vm.prank(entryPointAddr);
         uint256 result = account.validateUserOp(userOp, userOpHash, 0);
         assertEq(result, 0, "Valid triple sig with mock BLS should pass");
-    }
-
-    // ─── messagePoint binding: old format (no userOpHash) is rejected ─
-
-    function test_tripleSignature_oldMpBinding_fails() public {
-        // M5.2 security: mpHash must be keccak256(userOpHash || messagePoint).
-        // An attacker using the old format keccak256(messagePoint) — without userOpHash — must be rejected.
-        vm.prank(ownerWallet.addr);
-        account.setValidator(address(router));
-
-        router.registerAlgorithm(0x01, address(mockAlg));
-
-        PackedUserOperation memory userOp = _buildUserOp(address(account));
-        bytes32 userOpHash = keccak256(abi.encode(userOp));
-
-        // Build signature with OLD-style mpHash (keccak256(messagePoint) only, no userOpHash binding)
-        bytes memory tripSig = _buildTripleSigOldMpHash(userOpHash, ownerWallet, ownerWallet);
-
-        userOp.signature = abi.encodePacked(uint8(0x01), tripSig);
-
-        vm.prank(entryPointAddr);
-        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
-        assertEq(result, 1, "Old-style mpHash (without userOpHash binding) must be rejected");
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -294,70 +256,35 @@ contract AAStarAirAccountV7_M2Test is Test {
         return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
     }
 
-    /// @dev Build a triple signature with given wallets for AA sig and MP sig.
-    ///      Uses 1 fake nodeId, fake BLS sig and messagePoint (256 bytes each).
+    /// @dev Build a triple signature (issue #45 Fix 1 format).
+    ///      Layout: [nodeIdsLength(32)][nodeId(32)][blsSig(256)][aaSignature(65)].
+    ///      messagePoint + messagePointSig removed — the point is recomputed on-chain from userOpHash.
+    ///      `mpSigner` retained for call-site compatibility but unused.
     function _buildTripleSig(
         bytes32 userOpHash,
         Vm.Wallet memory aaSigner,
-        Vm.Wallet memory mpSigner
+        Vm.Wallet memory /*mpSigner*/
     ) internal pure returns (bytes memory) {
         // 1 nodeId
         uint256 nodeIdsLength = 1;
         bytes32 fakeNodeId = keccak256("testnode");
 
-        // Fake BLS signature (256 bytes) and message point (256 bytes)
+        // Fake BLS signature (256 bytes) — mock BLS algorithm ignores it.
         bytes memory blsSig = new bytes(256);
-        bytes memory messagePoint = new bytes(256);
-        messagePoint[0] = 0x42; // Non-zero so keccak256 is distinct
 
-        // AA signature (ECDSA over userOpHash)
+        // AA signature (owner ECDSA over userOpHash)
         (uint8 v1, bytes32 r1, bytes32 s1) = _signHash(aaSigner, userOpHash);
 
-        // MessagePoint signature (ECDSA over keccak256(userOpHash || messagePoint))
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint));
-        (uint8 v2, bytes32 r2, bytes32 s2) = _signHash(mpSigner, mpHash);
-
         return abi.encodePacked(
-            bytes32(nodeIdsLength),  // 32
-            fakeNodeId,              // 32
-            blsSig,                  // 256
-            messagePoint,            // 256
-            abi.encodePacked(r1, s1, v1), // 65
-            abi.encodePacked(r2, s2, v2)  // 65
+            bytes32(nodeIdsLength),       // 32
+            fakeNodeId,                   // 32
+            blsSig,                       // 256
+            abi.encodePacked(r1, s1, v1)  // 65 (aaSignature)
         );
     }
 
     function _signHash(Vm.Wallet memory w, bytes32 hash) internal pure returns (uint8 v, bytes32 r, bytes32 s) {
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
         (v, r, s) = vm.sign(w.privateKey, ethHash);
-    }
-
-    /// @dev Like _buildTripleSig but uses OLD binding: keccak256(messagePoint) without userOpHash.
-    ///      This was the pre-M5.2 format; any sig built this way must now be rejected.
-    function _buildTripleSigOldMpHash(
-        bytes32 userOpHash,
-        Vm.Wallet memory aaSigner,
-        Vm.Wallet memory mpSigner
-    ) internal pure returns (bytes memory) {
-        uint256 nodeIdsLength = 1;
-        bytes32 fakeNodeId = keccak256("testnode");
-        bytes memory blsSig = new bytes(256);
-        bytes memory messagePoint = new bytes(256);
-        messagePoint[0] = 0x42;
-
-        (uint8 v1, bytes32 r1, bytes32 s1) = _signHash(aaSigner, userOpHash);
-
-        // OLD format: sign only keccak256(messagePoint), NOT keccak256(userOpHash || messagePoint)
-        bytes32 oldMpHash = keccak256(messagePoint);
-        (uint8 v2, bytes32 r2, bytes32 s2) = _signHash(mpSigner, oldMpHash);
-
-        return abi.encodePacked(
-            bytes32(nodeIdsLength),
-            fakeNodeId,
-            blsSig,
-            messagePoint,
-            abi.encodePacked(r1, s1, v1),
-            abi.encodePacked(r2, s2, v2)
-        );
     }
 }

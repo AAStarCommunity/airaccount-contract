@@ -252,6 +252,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xa314d1c5` | `guardApproveAlgorithm(uint8)` | AAStarAirAccountV7 |
 | `0xa526d83b` | `addGuardian(address)` | AAStarAirAccountBase |
 | `0xa526d83b` | `addGuardian(address)` | AAStarAirAccountV7 |
+| `0xa54126dd` | `hashToG2(bytes32)` | AAStarBLSAlgorithm |
 | `0xa61c521f` | `getP256Session(address,bytes32)` | SessionKeyValidator |
 | `0xa71763a8` | `uninstallModule(uint256,address,bytes)` | AAStarAirAccountV7 |
 | `0xa8c59169` | `revokePublicKey(bytes32)` | AAStarBLSAlgorithm |

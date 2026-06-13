@@ -4628,7 +4628,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarBLSAlgorithm
 
 - **Source:** `src/validators/AAStarBLSAlgorithm.sol`
-- **Functions:** 19 · **Events:** 4 · **Errors:** 13
+- **Functions:** 20 · **Events:** 4 · **Errors:** 13
 - **Title:** AAStarBLSAlgorithm - BLS12-381 aggregate signature verification with node management
 - Extracted from YetAnotherAA AAStarValidator with assembly optimizations.         ABI-compatible with the NestJS backend (registerPublicKey, isRegistered, etc.)
 
@@ -4644,6 +4644,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8990fd25` | `getGasEstimate(uint256)` | pure | — | Public gas estimate (NestJS-compatible) |
 | `0x29173a92` | `getRegisteredNodeCount()` | view | — |  |
 | `0x4ce0737e` | `getRegisteredNodes(uint256,uint256)` | view | — |  |
+| `0xa54126dd` | `hashToG2(bytes32)` | view | — | Map a 32-byte message (the userOpHash) to a BLS12-381 G2 point, byte-identical to         `bls12_381.G2.hashToCurve(getBytes(message), { DST })` in noble-curves (the DVT). |
 | `0x27258b22` | `isRegistered(bytes32)` | view | — |  |
 | `0x8da5cb5b` | `owner()` | view | — |  |
 | `0x1e85f051` | `registeredKeys(bytes32)` | view | — |  |
@@ -4758,6 +4759,22 @@ Authoritative, auto-generated reference for every external/public function, even
 | `nodeIds` | `bytes32[]` |  |
 | `publicKeys` | `bytes[]` |  |
 
+#### `hashToG2(bytes32 message)`
+
+`0xa54126dd` · view · access: —
+
+> Map a 32-byte message (the userOpHash) to a BLS12-381 G2 point, byte-identical to         `bls12_381.G2.hashToCurve(getBytes(message), { DST })` in noble-curves (the DVT).
+
+*@dev* Exposed as an external view for golden-vector testing / off-chain cross-checking.      No security impact: it is a pure function of `message` (no storage, no msg.sender).
+
+| param | type | description |
+|---|---|---|
+| `message` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes` |  |
+
 #### `isRegistered(bytes32 arg0)`
 
 `0x27258b22` · view · access: —
@@ -4836,15 +4853,15 @@ Authoritative, auto-generated reference for every external/public function, even
 | `nodeId` | `bytes32` |  |
 | `newPublicKey` | `bytes` |  |
 
-#### `validate(bytes32 arg0, bytes signature)`
+#### `validate(bytes32 hash, bytes signature)`
 
 `0x65a8613c` · view · access: —
 
-*@dev* Expects signature format: [nodeIds...][blsSignature(256)][messagePoint(256)]      The nodeIds count is derived from (sig.length - 512) / 32
+*@dev* issue #45 Fix 1 (Option B): signature format is now `[nodeIds...][blsSignature(256)]`.      The trailing caller-supplied `messagePoint(256)` has been REMOVED. The message point      is recomputed on-chain from `hash` (= the ERC-4337 userOpHash) via RFC 9380      hash_to_curve and the pairing is verified against THAT. This binds the BLS aggregate      to this exact operation: a valid (messagePoint, aggSig) produced for userOpHash_A can      no longer be replayed against userOpHash_B (the old code ignored `hash` and verified      against whatever point the caller supplied).      The nodeIds count is derived from (sig.length - 256) / 32.
 
 | param | type | description |
 |---|---|---|
-| `arg0` | `bytes32` |  |
+| `hash` | `bytes32` |  |
 | `signature` | `bytes` | The algorithm-specific signature data (algId prefix already stripped) |
 
 | returns | type | description |

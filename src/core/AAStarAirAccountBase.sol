@@ -769,37 +769,42 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     }
 
     /// @dev Verify a standard BLS payload laid out as
-    ///      [nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][messagePoint(256)][messagePointSig(65)].
-    ///      Checks: strict length, owner-signed (userOpHash‖messagePoint) binding, and the aggregate
-    ///      BLS signature via the validator router. Shared by cumulative T2/T3 and the weighted BLS
-    ///      branch (identical logic — kept in one place to stay under EIP-170). Returns true on success.
+    ///      [nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)].
+    ///      issue #45 Fix 1 (Option B): the previous `[messagePoint(256)][messagePointSig(65)]`
+    ///      trailer has been REMOVED. The message point is recomputed on-chain from `userOpHash`
+    ///      inside the BLS algorithm (RFC 9380 hash_to_curve), so a caller-supplied point can no
+    ///      longer be replayed, and the owner `messagePointSig` that used to bind it is redundant.
+    ///      Shared by cumulative T2/T3 and the weighted BLS branch (kept in one place to stay
+    ///      under EIP-170). Returns true on success.
     function _blsPayloadValid(bytes32 userOpHash, bytes calldata blsPayload) internal view returns (bool) {
         if (blsPayload.length < 32) return false;
         uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
         if (nodeIdsLength == 0 || nodeIdsLength > 100) return false;
         uint256 baseOffset = 32 + nodeIdsLength * 32;
-        if (blsPayload.length != baseOffset + 256 + 256 + 65) return false;
-        bytes calldata messagePoint = blsPayload[baseOffset + 256:baseOffset + 512];
-        bytes calldata messagePointSig = blsPayload[baseOffset + 512:baseOffset + 577];
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
-        if (mpHash.recover(messagePointSig) != owner) return false;
-        // BLS verify data omits the nodeIdsLength prefix: [nodeIds][blsSig][messagePoint]
-        return _callBLSValidator(userOpHash, blsPayload[32:baseOffset + 512]) == 0;
+        if (blsPayload.length != baseOffset + 256) return false;
+        // BLS verify data omits the nodeIdsLength prefix: [nodeIds][blsSig]
+        return _callBLSValidator(userOpHash, blsPayload[32:baseOffset + 256]) == 0;
     }
 
     /**
-     * @dev Validate triple signature: ECDSA×2 binding + BLS aggregate verification.
+     * @dev Validate triple signature: owner ECDSA binding + BLS aggregate verification.
      *
-     * Signature format (after algId byte stripped):
-     *   [nodeIdsLength(32)][nodeIds(N×32)][blsSignature(256)][messagePoint(256)][aaSignature(65)][messagePointSignature(65)]
+     * Signature format (after algId byte stripped) — issue #45 Fix 1 (Option B):
+     *   [nodeIdsLength(32)][nodeIds(N×32)][blsSignature(256)][aaSignature(65)]
+     *
+     * The previous `[messagePoint(256)]` and trailing `[messagePointSignature(65)]` have been
+     * REMOVED. The BLS algorithm recomputes the message point on-chain from userOpHash (RFC 9380
+     * hash_to_curve) and verifies the pairing against THAT, so the owner messagePointSignature
+     * that used to bind a caller-supplied point is no longer needed.
      *
      * Security layers:
-     *   1. aaSignature validates userOpHash (binds to specific UserOp)
-     *   2. messagePointSignature validates messagePoint (prevents manipulation)
-     *   3. BLS aggregate validates messagePoint against registered nodes
+     *   1. aaSignature validates userOpHash (owner authorizes this specific UserOp)
+     *   2. BLS aggregate is verified against hash_to_curve(userOpHash) on-chain (binds to this op)
      *
-     * When blsAggregator is set, returns aggregator address instead of doing BLS
-     * verification (deferred to batch verification by EntryPoint).
+     * NOTE (issue #45): the blsAggregator batch path is INCOMPATIBLE with Option B — a single
+     * batch pairing cannot bind N distinct userOpHashes to one aggregated message point. It is
+     * left here for ABI continuity but `blsAggregator` MUST remain unset (address(0)) for this
+     * algorithm; the batch aggregator needs a separate redesign before it can be re-enabled.
      */
     function _validateTripleSignature(
         bytes32 userOpHash,
@@ -813,35 +818,28 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
 
         uint256 nodeIdsDataLength = nodeIdsLength * 32;
-        uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 256 + 65 + 65;
+        uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 65;
         if (sigData.length != expectedLength) return 1;
 
         uint256 baseOffset = 32 + nodeIdsDataLength;
 
-        // Extract ECDSA signatures
-        bytes calldata aaSignature = sigData[baseOffset + 512:baseOffset + 577];
-        bytes calldata messagePointSignature = sigData[baseOffset + 577:baseOffset + 642];
-        bytes calldata messagePoint = sigData[baseOffset + 256:baseOffset + 512];
+        // Extract owner ECDSA signature (immediately after the 256-byte BLS aggregate)
+        bytes calldata aaSignature = sigData[baseOffset + 256:baseOffset + 321];
 
-        // SECURITY 1: AA signature must validate userOpHash
+        // SECURITY 1: AA signature must validate userOpHash (owner authorization)
         bytes32 hash = userOpHash.toEthSignedMessageHash();
         address recovered = hash.recover(aaSignature);
         if (recovered != owner) return 1;
 
-        // SECURITY 2: MessagePoint signature must validate messagePoint bound to userOpHash
-        // Binding prevents replay of a valid (messagePoint, mpSig) pair across different UserOps
-        bytes32 mpHash = keccak256(abi.encodePacked(userOpHash, messagePoint)).toEthSignedMessageHash();
-        address mpRecovered = mpHash.recover(messagePointSignature);
-        if (mpRecovered != owner) return 1;
-
-        // If aggregator is set, return aggregator address for batch verification
-        // EntryPoint will call aggregator.validateSignatures() for the batch
+        // If aggregator is set, return aggregator address for batch verification.
+        // (Disabled under issue #45 Fix 1 — see NOTE above; keep blsAggregator == address(0).)
         if (blsAggregator != address(0)) {
             return uint256(uint160(blsAggregator));
         }
 
-        // SECURITY 3: BLS aggregate verification via validator router (standalone mode)
-        bytes calldata blsPayload = sigData[32:baseOffset + 512];
+        // SECURITY 2: BLS aggregate verification via validator router (standalone mode).
+        // Payload omits the nodeIdsLength prefix: [nodeIds][blsSig]; point recomputed on-chain.
+        bytes calldata blsPayload = sigData[32:baseOffset + 256];
         return _callBLSValidator(userOpHash, blsPayload);
     }
 
@@ -853,7 +851,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
      *
      * sourceBitmap bits: 0=P256, 1=ECDSA, 2=BLS, 3=guardian[0], 4=guardian[1], 5=guardian[2], 6-7=reserved(0)
      *
-     * BLS block format: [nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][messagePoint(256)][messagePointSig(65)]
+     * BLS block format (issue #45 Fix 1): [nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)]
      *
      * On success: stores accumulated weight in WEIGHT_SLOT_BASE queue and returns 0.
      * Returns 1 if any component signature is invalid, or if weight < tier1Threshold.
@@ -894,7 +892,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             if (sigData.length < cursor + 32) return 1;
             uint256 nodeIdsLength = uint256(bytes32(sigData[cursor:cursor + 32]));
             if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
-            uint256 blsBlockLen = 32 + nodeIdsLength * 32 + 256 + 256 + 65;
+            uint256 blsBlockLen = 32 + nodeIdsLength * 32 + 256; // issue #45: messagePoint + mpSig removed
             if (sigData.length < cursor + blsBlockLen) return 1;
             if (!_blsPayloadValid(userOpHash, sigData[cursor:cursor + blsBlockLen])) return 1;
             accumulated += wc.blsWeight;
@@ -933,13 +931,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     /**
      * @dev Validate cumulative tier 2 signature: P256 passkey + BLS aggregate.
      *
-     * Signature format (after algId byte stripped):
-     *   [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSignature(256)][messagePoint(256)][messagePointSignature(65)]
+     * Signature format (after algId byte stripped) — issue #45 Fix 1:
+     *   [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSignature(256)]
      *
      * Security layers:
-     *   1. P256 passkey validates userOpHash (device-bound authentication)
-     *   2. BLS aggregate validates messagePoint against registered nodes
-     *   3. messagePointSignature binds messagePoint to owner (prevents manipulation)
+     *   1. P256 passkey validates userOpHash (device-bound owner authentication)
+     *   2. BLS aggregate is verified against hash_to_curve(userOpHash), recomputed on-chain
      */
     function _validateCumulativeTier2(
         bytes32 userOpHash,
@@ -958,12 +955,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     /**
      * @dev Validate cumulative tier 3 signature: P256 passkey + BLS aggregate + Guardian ECDSA.
      *
-     * Signature format (after algId byte stripped):
-     *   [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSignature(256)][messagePoint(256)][messagePointSignature(65)][guardianECDSA(65)]
+     * Signature format (after algId byte stripped) — issue #45 Fix 1:
+     *   [P256 r(32)][P256 s(32)][nodeIdsLength(32)][nodeIds(N×32)][blsSignature(256)][guardianECDSA(65)]
      *
      * Security layers:
-     *   1. P256 passkey validates userOpHash (device-bound authentication)
-     *   2. BLS aggregate validates messagePoint against registered nodes
+     *   1. P256 passkey validates userOpHash (device-bound owner authentication)
+     *   2. BLS aggregate is verified against hash_to_curve(userOpHash), recomputed on-chain
      *   3. Guardian ECDSA co-sign: last 65 bytes must recover to one of guardians[0..2]
      */
     function _validateCumulativeTier3(
