@@ -6,6 +6,8 @@ import {IAirAccountAgent} from "../interfaces/IAirAccountAgent.sol";
 import {IERC8004IdentityRegistry} from "../interfaces/IERC8004IdentityRegistry.sol";
 import {IERC8004ReputationRegistry} from "../interfaces/IERC8004ReputationRegistry.sol";
 import {ERC8004Addresses} from "../config/ERC8004Addresses.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /// @title AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 /// @notice Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase
@@ -20,10 +22,28 @@ import {ERC8004Addresses} from "../config/ERC8004Addresses.sol";
 ///      SAME signatures as AAStarAirAccountBase, so selectors / topic0 (and therefore on-chain
 ///      behavior and test expectations) are identical to the previous inline implementation.
 contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
+    using ECDSA for bytes32;
+    using MessageHashUtils for bytes32;
+
     // ─── Constants (mirror AAStarAirAccountBase) ─────────────────────────
     uint256 internal constant WEIGHT_CHANGE_TIMELOCK  = 2 days;
     uint256 internal constant WEIGHT_CHANGE_THRESHOLD = 2;
     uint256 internal constant WEIGHT_CHANGE_EXPIRY    = 30 days;
+
+    // Guardian-signed domain version (mirror AAStarAirAccountBase, issue #84).
+    uint8 internal constant GUARDIAN_SIG_VERSION = 4;
+
+    // ERC-7579 module type IDs (mirror AAStarAirAccountV7): 1=validator, 2=executor, 4=hook.
+    uint256 internal constant MODULE_TYPE_VALIDATOR = 1;
+    uint256 internal constant MODULE_TYPE_EXECUTOR  = 2;
+    uint256 internal constant MODULE_TYPE_HOOK      = 4;
+
+    // ERC-7579 onInstall(bytes) lifecycle selector (mirror AAStarAirAccountV7).
+    bytes4 private constant SEL_ON_INSTALL = 0x6d61fe70;
+
+    /// @dev KI-6 (#58): distinct guardian sigs (alongside owner) for the immediate-install bypass and
+    ///      for weakening the timelock — owner+2 strictly exceeds the owner+1 default install threshold.
+    uint8 internal constant MODULE_INSTALL_BYPASS_SIGS = 2;
 
     // ─── Errors (same signatures/selectors as AAStarAirAccountBase) ──────
     error NotOwner();
@@ -41,6 +61,19 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     error WeightChangeAlreadyApproved();
     error WeightChangeNotApproved();
     error WeightChangeTimelockNotExpired();
+    // ── Module management (same selectors as AAStarAirAccountBase) ──
+    error NotOwnerOrEntryPoint();
+    error ModuleInvalid();
+    error InvalidModuleType();
+    error ModuleAlreadyInstalled();
+    error InstallModuleUnauthorized();
+    error ModuleInstallCallbackFailed(uint256 moduleTypeId, address module);
+    // ── KI-6 (#58) module-install timelock ──
+    error ModuleInstallTimelockDisabled();
+    error ModuleInstallProposalExists();
+    error NoModuleInstallProposal();
+    error ModuleInstallTimelockNotExpired();
+    error ModuleInstallDataMismatch();
 
     // ─── Events (same signatures/topic0 as AAStarAirAccountBase) ─────────
     event AgentWalletSet(uint256 indexed agentId, address indexed agentWallet, address agentRegistry);
@@ -52,11 +85,24 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     event WeightChangeApproved(address indexed approvedBy, uint256 approvalCount);
     event WeightChangeExecuted(WeightConfig oldConfig, WeightConfig newConfig);
     event WeightChangeCancelled();
+    // ModuleInstalled mirrors AAStarAirAccountBase so tooling sees a consistent topic0 whether a
+    // module was installed immediately or via the timelock flow.
+    event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
+    // KI-6 (#58) module-install timelock lifecycle.
+    event ModuleInstallProposed(uint256 indexed moduleTypeId, address indexed module, uint256 executeAfter);
+    event ModuleInstallExecuted(uint256 indexed moduleTypeId, address indexed module);
+    event ModuleInstallCancelled(uint256 indexed moduleTypeId, address indexed module, address cancelledBy);
+    event ModuleInstallTimelockChanged(uint256 oldTimelock, uint256 newTimelock);
 
     // ─── Modifiers ───────────────────────────────────────────────────────
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
+        _;
+    }
+
+    modifier onlyOwnerOrEntryPoint() {
+        if (msg.sender != owner && msg.sender != entryPoint) revert NotOwnerOrEntryPoint();
         _;
     }
 
@@ -96,6 +142,190 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
             count += x & 1;
             x >>= 1;
         }
+    }
+
+    /// @dev Build the eth-signed digest a guardian must sign (mirror AAStarAirAccountBase._guardianOpHash).
+    function _guardianOpHash(string memory opLabel, bytes memory opData) private view returns (bytes32) {
+        return keccak256(abi.encode(
+            GUARDIAN_SIG_VERSION, block.chainid, address(this), opLabel, opData
+        )).toEthSignedMessageHash();
+    }
+
+    /// @dev Verify `count` sequential 65-byte ECDSA sigs from distinct guardians
+    ///      (mirror AAStarAirAccountV7._checkGuardianSigs).
+    function _checkGuardianSigs(bytes32 hash, bytes calldata sigs, uint8 count) private view {
+        uint256 bitmap;
+        for (uint8 i; i < count; ++i) {
+            uint256 end = uint256(i + 1) * 65;
+            if (sigs.length < end) revert InstallModuleUnauthorized();
+            address recovered = hash.recover(sigs[end - 65 : end]);
+            uint256 bit = uint256(1) << _guardianIndex(recovered);
+            if (bitmap & bit != 0) revert InstallModuleUnauthorized();
+            bitmap |= bit;
+        }
+    }
+
+    // ─── Module Install Timelock (KI-6 / issue #58) ──────────────────────
+
+    /// @notice Read the active module-install timelock (seconds). 0 = disabled (immediate installs).
+    function moduleInstallTimelock() external view returns (uint256) {
+        return _moduleInstallTimelock;
+    }
+
+    /// @notice Read the pending module-install proposal. proposedAt == 0 means none pending.
+    function pendingModuleInstall()
+        external
+        view
+        returns (address module, uint8 moduleTypeId, uint40 proposedAt, bytes32 initDataHash)
+    {
+        ModuleInstallProposal memory p = _pendingModuleInstall;
+        return (p.module, p.moduleTypeId, p.proposedAt, p.initDataHash);
+    }
+
+    /// @notice Configure the optional module-install timelock (issue #58 / KI-6).
+    /// @dev Strengthening (increasing, or first-time set) is a direct owner action. Weakening
+    ///      (reducing or disabling → 0) requires the SAME elevated owner+2-guardian consensus as the
+    ///      immediate-install bypass, so a compromised owner+1-guardian pair cannot silently switch
+    ///      the protection off and then install instantly. On accounts with fewer than 2 guardians the
+    ///      weakening bar degrades to all available guardians (mirrors uninstallModule's min(count,2)),
+    ///      so the timelock can never become permanently un-removable.
+    /// @param newTimelock  New timelock in seconds (0 disables).
+    /// @param guardianSigs Concatenated 65-byte guardian sigs over
+    ///        _guardianOpHash("SET_MODULE_TIMELOCK", abi.encode(newTimelock, moduleManagementNonce)).
+    ///        Ignored (may be empty) when strengthening.
+    function setModuleInstallTimelock(uint256 newTimelock, bytes calldata guardianSigs)
+        external
+        onlyOwnerOrEntryPoint
+    {
+        uint256 current = _moduleInstallTimelock;
+        if (newTimelock < current) {
+            uint8 sigsRequired =
+                _guardianCount < MODULE_INSTALL_BYPASS_SIGS ? _guardianCount : MODULE_INSTALL_BYPASS_SIGS;
+            _checkGuardianSigs(
+                _guardianOpHash("SET_MODULE_TIMELOCK", abi.encode(newTimelock, _moduleManagementNonce)),
+                guardianSigs,
+                sigsRequired
+            );
+            // Consume the guardian signatures so they cannot be replayed (shared monotonic nonce, #75).
+            unchecked { _moduleManagementNonce++; }
+        }
+        _moduleInstallTimelock = newTimelock;
+        emit ModuleInstallTimelockChanged(current, newTimelock);
+    }
+
+    /// @notice Propose a module install for the timelocked two-step flow (issue #58 / KI-6).
+    /// @dev Only valid when the timelock is enabled. Requires the SAME authorization as a normal
+    ///      install at the configured threshold (owner + N guardian sigs); the guardian signature is
+    ///      consumed via the module-management nonce so it cannot be replayed. After the timelock
+    ///      elapses anyone may call executeModuleInstall; meanwhile owner or any guardian may cancel.
+    /// @param moduleTypeId 1=validator, 2=executor, 4=hook.
+    /// @param module       Module contract address (must be deployed).
+    /// @param initData     Layout: guardian sig(s) prepended (per configured threshold), then module init data.
+    ///        Sig hash: _guardianOpHash("INSTALL_MODULE", abi.encode(moduleTypeId, module, keccak256(moduleInitData), moduleManagementNonce)).
+    function proposeModuleInstall(
+        uint256 moduleTypeId,
+        address module,
+        bytes calldata initData
+    ) external onlyOwnerOrEntryPoint {
+        if (_moduleInstallTimelock == 0) revert ModuleInstallTimelockDisabled();
+        if (_pendingModuleInstall.proposedAt != 0) revert ModuleInstallProposalExists();
+        if (module == address(0) || module.code.length == 0) revert ModuleInvalid();
+        if (moduleTypeId != MODULE_TYPE_VALIDATOR
+            && moduleTypeId != MODULE_TYPE_EXECUTOR
+            && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
+        if (_installedModules[moduleTypeId][module]) revert ModuleAlreadyInstalled();
+        if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook != address(0)) revert ModuleAlreadyInstalled();
+
+        uint8 threshold = _installModuleThreshold == 0 ? 70 : _installModuleThreshold;
+        uint8 sigsRequired = threshold >= 100 ? 2 : (threshold >= 70 ? 1 : 0);
+
+        bytes calldata moduleInitData;
+        if (sigsRequired > 0) {
+            uint256 sigEnd = uint256(sigsRequired) * 65;
+            if (initData.length < sigEnd) revert InstallModuleUnauthorized();
+            moduleInitData = initData[sigEnd:];
+            _checkGuardianSigs(
+                _guardianOpHash(
+                    "INSTALL_MODULE",
+                    abi.encode(moduleTypeId, module, keccak256(moduleInitData), _moduleManagementNonce)
+                ),
+                initData,
+                sigsRequired
+            );
+        } else {
+            moduleInitData = initData;
+        }
+
+        _pendingModuleInstall = ModuleInstallProposal({
+            module: module,
+            moduleTypeId: uint8(moduleTypeId),
+            proposedAt: uint40(block.timestamp),
+            initDataHash: keccak256(moduleInitData)
+        });
+
+        // #75: consume the guardian signature so this proposal cannot be replayed.
+        unchecked { _moduleManagementNonce++; }
+
+        emit ModuleInstallProposed(moduleTypeId, module, block.timestamp + _moduleInstallTimelock);
+    }
+
+    /// @notice Execute a matured module-install proposal (issue #58 / KI-6).
+    /// @dev Permissionless (like executeRecovery) — authorization was captured at propose time and the
+    ///      timelock window has elapsed. The caller must reproduce the exact module init data that was
+    ///      proposed (its keccak256 must match the stored hash) so onInstall receives the authorized config.
+    /// @param moduleInitData The module init data committed at propose time.
+    function executeModuleInstall(bytes calldata moduleInitData) external nonReentrant {
+        ModuleInstallProposal memory p = _pendingModuleInstall;
+        if (p.proposedAt == 0) revert NoModuleInstallProposal();
+        if (block.timestamp < uint256(p.proposedAt) + _moduleInstallTimelock) {
+            revert ModuleInstallTimelockNotExpired();
+        }
+        if (keccak256(moduleInitData) != p.initDataHash) revert ModuleInstallDataMismatch();
+
+        uint256 moduleTypeId = p.moduleTypeId;
+        address module = p.module;
+
+        // The module could have selfdestructed during the window — re-validate it is still deployed.
+        if (module == address(0) || module.code.length == 0) revert ModuleInvalid();
+        if (_installedModules[moduleTypeId][module]) revert ModuleAlreadyInstalled();
+        if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook != address(0)) revert ModuleAlreadyInstalled();
+
+        bool alreadyLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
+                        || _installedModules[MODULE_TYPE_EXECUTOR][module]
+                        || _installedModules[MODULE_TYPE_HOOK][module];
+
+        _installedModules[moduleTypeId][module] = true;
+        if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
+
+        // Effects before interaction: clear the proposal so a re-entrant onInstall cannot replay it.
+        delete _pendingModuleInstall;
+
+        if (!alreadyLive) {
+            // Hard-revert if onInstall fails (mirror installModule MEDIUM-1) — a revert rolls back the
+            // install marks AND the proposal deletion atomically, leaving no stuck state.
+            (bool ok,) = module.call(abi.encodeWithSelector(SEL_ON_INSTALL, moduleInitData));
+            if (!ok) revert ModuleInstallCallbackFailed(moduleTypeId, module);
+        }
+
+        emit ModuleInstalled(moduleTypeId, module);
+        emit ModuleInstallExecuted(moduleTypeId, module);
+    }
+
+    /// @notice Cancel the pending module-install proposal during the timelock window (issue #58 / KI-6).
+    /// @dev Owner OR any single guardian may veto. The timelock exists precisely to let ANY other
+    ///      stakeholder stop an install pushed through by a compromised owner+1-guardian pair, so a
+    ///      single honest party must be able to cancel. This deliberately mirrors cancelWeightChange
+    ///      (owner-or-any-guardian) rather than the 2-of-3 cancelRecovery: recovery's higher cancel bar
+    ///      stops a lone compromised guardian from blocking legitimate recovery, but here easy
+    ///      cancellation IS the defense, so the looser rule is the safer one.
+    function cancelModuleInstall() external {
+        ModuleInstallProposal memory p = _pendingModuleInstall;
+        if (p.proposedAt == 0) revert NoModuleInstallProposal();
+        if (msg.sender != owner) {
+            _guardianIndex(msg.sender); // reverts NotGuardian if msg.sender is neither owner nor guardian
+        }
+        delete _pendingModuleInstall;
+        emit ModuleInstallCancelled(p.moduleTypeId, p.module, msg.sender);
     }
 
     // ─── ERC-8004 Agent Identity Binding (M7.16) ─────────────────────────

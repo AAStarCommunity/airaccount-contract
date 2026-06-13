@@ -2382,8 +2382,28 @@
     },
     {
       "type": "function",
+      "name": "cancelModuleInstall",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "cancelWeightChange",
       "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "executeModuleInstall",
+      "inputs": [
+        {
+          "name": "moduleInitData",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
       "outputs": [],
       "stateMutability": "nonpayable"
     },
@@ -2416,6 +2436,70 @@
           "internalType": "uint256"
         }
       ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "moduleInstallTimelock",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "pendingModuleInstall",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "module",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "moduleTypeId",
+          "type": "uint8",
+          "internalType": "uint8"
+        },
+        {
+          "name": "proposedAt",
+          "type": "uint40",
+          "internalType": "uint40"
+        },
+        {
+          "name": "initDataHash",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "proposeModuleInstall",
+      "inputs": [
+        {
+          "name": "moduleTypeId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "module",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "initData",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
       "stateMutability": "nonpayable"
     },
     {
@@ -2553,6 +2637,24 @@
         },
         {
           "name": "agentWalletSig",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setModuleInstallTimelock",
+      "inputs": [
+        {
+          "name": "newTimelock",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "guardianSigs",
           "type": "bytes",
           "internalType": "bytes"
         }
