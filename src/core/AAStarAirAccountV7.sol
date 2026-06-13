@@ -220,9 +220,13 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
             if (!approvedAlgorithms[a]) {
                 return 1; // SIG_VALIDATION_FAILED — algorithm not whitelisted for this account
             }
-            // Per-op ETH tier gate (fail-fast). Reject here rather than letting execution revert with
-            // InsufficientTier — otherwise a bundler includes the op and the account's EntryPoint
-            // deposit pays gas for an op that always reverts. Keeps estimation == execution.
+            // Per-op ETH tier gate (fail-fast). Reject an obviously under-tier op here rather than
+            // letting execution revert with InsufficientTier. NOTE (Codex MEDIUM, accepted): this is
+            // a PER-OP check only. The CUMULATIVE daily-spend tier (todaySpent + value) cannot be
+            // checked in validation because todaySpent lives in the unstaked guard contract and
+            // ERC-7562 forbids reading it during validation. Cumulative tier stays authoritative in
+            // execution (_enforceGuard) and is surfaced to clients at gas-estimation time (the
+            // executeUserOp simulation reverts on any cumulative violation before submission).
             if (tier1Limit > 0 || tier2Limit > 0) {
                 uint8 resolved = (a == ALG_WEIGHTED) ? _resolveWeightedAlgId(_consumeValidatedWeight()) : a;
                 if (!_validationTierOk(resolved, userOp.callData)) {
@@ -245,11 +249,23 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     ///      from the signature, then self-`delegatecall` the inner execute()/executeBatch() calldata
     ///      (delegatecall preserves msg.sender == EntryPoint, so execute() consumes the algId we just
     ///      stored and runs its existing tier/guard logic with the correct algId).
+    /// @dev Reverts when executeUserOp's inner calldata is not execute()/executeBatch().
+    error UnsupportedInnerSelector();
+
     function executeUserOp(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash
     ) external onlyEntryPoint {
         bytes calldata inner = userOp.callData[4:]; // strip the executeUserOp selector
+        // SECURITY (Codex CRITICAL): only execute()/executeBatch() may be dispatched. A nested
+        // executeUserOp (or any other selector) is rejected — otherwise the nested op's signature is
+        // NEVER validated, so _populateExecAlg would trust a forged algId prefix and bypass the
+        // tier/whitelist gate, executing a high-value/high-tier call off a tier-1 outer signature.
+        if (inner.length < 4) revert UnsupportedInnerSelector();
+        bytes4 innerSel = bytes4(inner[:4]);
+        if (innerSel != this.execute.selector && innerSel != this.executeBatch.selector) {
+            revert UnsupportedInnerSelector();
+        }
         // Key the algId queue by the INNER calldata so the self-delegatecall (whose msg.data == inner,
         // matching execute()'s _setCallDataKey(keccak256(msg.data))) reads exactly what we store here.
         _setCallDataKey(keccak256(inner));
@@ -284,14 +300,12 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
             uint256 value = uint256(bytes32(cd[36:68]));
             return provided >= requiredTier(value);
         }
-        if (sel == this.executeBatch.selector) {
-            ( , uint256[] memory values, ) = abi.decode(cd[4:], (address[], uint256[], bytes[]));
-            for (uint256 i = 0; i < values.length; i++) {
-                if (provided < requiredTier(values[i])) return false;
-            }
-            return true;
-        }
-        return true; // non-execute selectors carry no per-op ETH-value tier obligation here
+        // executeBatch and all other selectors: tier is enforced authoritatively per-call in
+        // execution (_enforceGuard, with cumulative daily spend) and surfaced at gas estimation via
+        // the executeUserOp simulation. We deliberately do NOT decode batch values here — a per-op
+        // batch check in validation would be inconsistent with the execution-side CUMULATIVE check
+        // (Codex MEDIUM) and would cost significant bytecode. Single execute() is the fast-fail case.
+        return true;
     }
 
     // ─── ERC-7579 Module Management (M7.2) ────────────────────────────

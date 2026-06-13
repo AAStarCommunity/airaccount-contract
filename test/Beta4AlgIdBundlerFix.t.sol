@@ -131,6 +131,35 @@ contract Beta4AlgIdBundlerFixTest is Test {
         assertEq(vd, 1, "non-whitelisted algorithm must be rejected in validation");
     }
 
+    // ─── executeUserOp selector allowlist (Codex CRITICAL fix) ──────────
+
+    function test_executeUserOp_rejectsNestedWrapper() public {
+        // A nested executeUserOp would let the inner (never-validated) signature forge a high algId.
+        _deploy(_algs(ALG_ECDSA), 5 ether);
+        bytes memory inner = bytes.concat(AAStarAirAccountV7.executeUserOp.selector, hex"deadbeef");
+        PackedUserOperation memory op = _emptyUserOp();
+        op.callData = bytes.concat(AAStarAirAccountV7.executeUserOp.selector, inner);
+        bytes32 h = keccak256("nested");
+        op.signature = _signEcdsa(h);
+
+        vm.prank(entryPoint);
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedInnerSelector()"));
+        account.executeUserOp(op, h);
+    }
+
+    function test_executeUserOp_rejectsArbitrarySelector() public {
+        _deploy(_algs(ALG_ECDSA), 5 ether);
+        bytes memory inner = bytes.concat(bytes4(0x12345678), hex"00");
+        PackedUserOperation memory op = _emptyUserOp();
+        op.callData = bytes.concat(AAStarAirAccountV7.executeUserOp.selector, inner);
+        bytes32 h = keccak256("arb");
+        op.signature = _signEcdsa(h);
+
+        vm.prank(entryPoint);
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedInnerSelector()"));
+        account.executeUserOp(op, h);
+    }
+
     // ─── validateUserOp per-op tier gate (fail-fast, Codex MEDIUM fix) ──
 
     function test_validateUserOp_rejectsUnderTierValue() public {
