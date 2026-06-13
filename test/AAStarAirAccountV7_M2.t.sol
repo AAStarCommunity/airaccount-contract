@@ -88,6 +88,23 @@ contract AAStarAirAccountV7_M2Test is Test {
         account.setValidator(address(router));
     }
 
+    /// @dev issue #45 (Codex CRITICAL): validator is SET-ONCE. After the first set, even the owner
+    ///      cannot swap it to a (malicious) router — which would otherwise let a compromised owner
+    ///      redirect getAlgorithm(ALG_BLS) to a fake BLS algorithm and nullify the BLS/DVT factor.
+    function test_setValidator_setOnce_secondCallReverts() public {
+        vm.prank(ownerWallet.addr);
+        account.setValidator(address(router));
+        assertEq(address(account.validator()), address(router));
+
+        AAStarValidator malicious = new AAStarValidator();
+        vm.prank(ownerWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.ValidatorAlreadySet.selector);
+        account.setValidator(address(malicious));
+
+        // The original validator is unchanged — the swap is impossible.
+        assertEq(address(account.validator()), address(router));
+    }
+
     // ─── ECDSA Backwards Compatibility (65-byte sig, no algId) ────────
 
     function test_ecdsaBackwardsCompat() public {

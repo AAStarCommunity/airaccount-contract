@@ -304,7 +304,17 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
 
     // ─── BLS Verification (NestJS-compatible ABI) ─────────────────────
 
-    /// @notice Verify aggregate BLS signature (view, no events)
+    /// @notice ⚠️ SECURITY (issue #45, Codex LOW): `validateAggregateSignature` /
+    ///         `verifyAggregateSignature` are GENERIC aggregate-verification utilities that check a
+    ///         signature against a CALLER-SUPPLIED `messagePoint`. They are NOT bound to any
+    ///         userOpHash and MUST NOT be used to authorize an ERC-4337 UserOperation — doing so
+    ///         reintroduces the #45 replay (a valid (messagePoint, aggSig) pair is reusable across
+    ///         operations). For operation authorization use the account path / `validate(userOpHash,
+    ///         …)`, which recomputes the message point on-chain from the userOpHash. These remain
+    ///         only for off-chain NestJS-backend ABI compatibility (generic, non-op-bound checks).
+
+    /// @notice Verify aggregate BLS signature against a caller-supplied point (view, no events).
+    ///         ⚠️ NOT op-bound — see the security note above. Do not use for UserOp authorization.
     function validateAggregateSignature(
         bytes32[] calldata nodeIds,
         bytes calldata signature,

@@ -200,6 +200,9 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     error ModuleInvalid();
     error InstallModuleUnauthorized();
     error HookReverted();
+    /// @dev issue #45 (Codex CRITICAL): the validator router is set-once; it resolves the BLS/DVT
+    ///      algorithm + protocol aggregator, so a swap would let a compromised owner bypass the factor.
+    error ValidatorAlreadySet();
 
     // M6.1 / M6.2
     error WeightConfigNotInitialized();
@@ -362,7 +365,17 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
     // ─── Configuration (owner only) ─────────────────────────────────
 
+    /// @notice Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves
+    ///         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if
+    ///         the owner could SWAP it, a compromised owner would point at a malicious router whose
+    ///         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker
+    ///         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.
+    ///         The router is a protocol singleton (only-add registry + 7-day timelock for new
+    ///         algorithms), so an account never needs to change it after the initial wiring. Once set
+    ///         to a non-zero router it can never be changed — the DVT factor's algorithm source is
+    ///         thereafter immutable from the (possibly compromised) owner's perspective.
     function setValidator(address _validator) external onlyOwner {
+        if (address(validator) != address(0)) revert ValidatorAlreadySet();
         validator = IAAStarValidator(_validator);
         emit ValidatorSet(_validator);
     }
@@ -763,13 +776,26 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      Extracts duplicated try/catch from _validateTripleSignature, _validateCumulativeTier2/3,
     ///      and _validateWeightedSignature to reduce bytecode size.
     function _callBLSValidator(bytes32 hash, bytes calldata blsData) private view returns (uint256) {
-        if (address(validator) == address(0)) return 1;
-        address blsAlg = validator.getAlgorithm(ALG_BLS);
+        address blsAlg = _resolveBLSAlgorithm();
         if (blsAlg == address(0)) return 1;
         try IAAStarAlgorithm(blsAlg).validate(hash, blsData) returns (uint256 r) {
             return r;
         } catch {
             return 1;
+        }
+    }
+
+    /// @dev issue #45 (Codex MEDIUM): fail-safe resolution of the BLS algorithm from the validator
+    ///      router. `getAlgorithm` is wrapped in try/catch so a reverting/misbehaving router can
+    ///      NEVER make `validateUserOp` revert in the validation phase — it cleanly yields address(0),
+    ///      which callers treat as "no BLS algorithm" (signature fails / falls back to inline), a
+    ///      clean SIG_VALIDATION_FAILED rather than a validation-phase revert.
+    function _resolveBLSAlgorithm() private view returns (address) {
+        if (address(validator) == address(0)) return address(0);
+        try validator.getAlgorithm(ALG_BLS) returns (address a) {
+            return a;
+        } catch {
+            return address(0);
         }
     }
 
@@ -857,7 +883,9 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // below. ERC-7562: this reads AAStarBLSAlgorithm storage in the validation phase — the SAME
         // external-contract read category as _callBLSValidator below (the existing BLS validation),
         // so it adds no new access surface (requires the BLS algorithm singleton to be staked).
-        address blsAlg = validator.getAlgorithm(ALG_BLS);
+        // The validator pointer is SET-ONCE (see setValidator), so a compromised owner cannot
+        // redirect this to a malicious router; getAlgorithm is resolved fail-safe (try/catch).
+        address blsAlg = _resolveBLSAlgorithm();
         if (blsAlg != address(0)) {
             address protocolAggregator = _protocolAggregator(blsAlg);
             if (protocolAggregator != address(0)) {

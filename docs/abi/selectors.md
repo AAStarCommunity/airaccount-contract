@@ -387,6 +387,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x1fd05a4a` | `SessionExpired()` | SessionKeyValidator |
 | `0x2004e7c1` | `GuardianAlreadyCancelVoted()` | AirAccountDelegate |
 | `0x2125deae` | `InvalidModuleType()` | AAStarAirAccountBase |
+| `0x2157e2e7` | `ValidatorAlreadySet()` | AAStarAirAccountBase |
 | `0x23a1daa9` | `ApproverNoLongerGuardian()` | ForceExitModule |
 | `0x24bcdbea` | `NotEnoughApprovals()` | ForceExitModule |
 | `0x24c377e2` | `ModuleAlreadyInstalled()` | AAStarAirAccountBase |

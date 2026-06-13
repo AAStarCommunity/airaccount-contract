@@ -342,7 +342,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountBase
 
 - **Source:** `src/core/AAStarAirAccountBase.sol`
-- **Functions:** 37 · **Events:** 26 · **Errors:** 53
+- **Functions:** 37 · **Events:** 26 · **Errors:** 54
 - **Title:** AAStarAirAccountBase
 - Non-upgradable ERC-4337 smart wallet base with algId-based signature routing,         tiered verification, P256 passkey, social recovery, and global guard.
 
@@ -381,7 +381,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | nonpayable | onlyOwner |  |
 | `0x148d13d1` | `setParserRegistry(address)` | nonpayable | onlyOwner | Set the calldata parser registry for DeFi protocol support.         Can be updated by owner (unlike guard which is immutable).         Set to address(0) to disable parser support. |
 | `0x7b471153` | `setTierLimits(uint256,uint256)` | nonpayable | onlyOwner | Set tier thresholds — INITIAL SETUP ONLY.         Callable exactly once, ever. After the first configuration (here or via         modifyTierLimitsWithGuardians), this function is permanently locked.         Any subsequent modification (increase, decrease, or disable) must go through         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current         limit values closes the bypass where a guardian reset to (0,0) would otherwise         re-open owner-only configuration. |
-| `0x1327d3d8` | `setValidator(address)` | nonpayable | onlyOwner |  |
+| `0x1327d3d8` | `setValidator(address)` | nonpayable | onlyOwner | Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if         the owner could SWAP it, a compromised owner would point at a malicious router whose         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.         The router is a protocol singleton (only-add registry + 7-day timelock for new         algorithms), so an account never needs to change it after the initial wiring. Once set         to a non-zero router it can never be changed — the DVT factor's algorithm source is         thereafter immutable from the (possibly compromised) owner's perspective. |
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
 | `0xdbaf0cc3` | `tier2Limit()` | view | — | Tier2 max (dual factor); above this requires multi-sig (BLS triple) |
 | `0x3a5381b5` | `validator()` | view | — | Optional validator router for external algorithms (BLS, PQ, etc.) |
@@ -715,6 +715,8 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0x1327d3d8` · nonpayable · access: onlyOwner
 
+> Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if         the owner could SWAP it, a compromised owner would point at a malicious router whose         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.         The router is a protocol singleton (only-add registry + 7-day timelock for new         algorithms), so an account never needs to change it after the initial wiring. Once set         to a non-zero router it can never be changed — the DVT factor's algorithm source is         thereafter immutable from the (possibly compromised) owner's perspective.
+
 | param | type | description |
 |---|---|---|
 | `_validator` | `address` |  |
@@ -859,6 +861,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x3f041335` | `SessionScopeViolation()` |
 | `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |
+| `0x2157e2e7` | `ValidatorAlreadySet()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
 | `0xf6b2ebb8` | `WeightChangeAlreadyApproved()` |
 | `0xf0854cb8` | `WeightChangeNotApproved()` |
@@ -1166,7 +1169,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 53 · **Events:** 26 · **Errors:** 54
+- **Functions:** 53 · **Events:** 26 · **Errors:** 55
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1217,7 +1220,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | nonpayable | — |  |
 | `0x148d13d1` | `setParserRegistry(address)` | nonpayable | — | Set the calldata parser registry for DeFi protocol support.         Can be updated by owner (unlike guard which is immutable).         Set to address(0) to disable parser support. |
 | `0x7b471153` | `setTierLimits(uint256,uint256)` | nonpayable | — | Set tier thresholds — INITIAL SETUP ONLY.         Callable exactly once, ever. After the first configuration (here or via         modifyTierLimitsWithGuardians), this function is permanently locked.         Any subsequent modification (increase, decrease, or disable) must go through         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current         limit values closes the bypass where a guardian reset to (0,0) would otherwise         re-open owner-only configuration. |
-| `0x1327d3d8` | `setValidator(address)` | nonpayable | — |  |
+| `0x1327d3d8` | `setValidator(address)` | nonpayable | — | Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if         the owner could SWAP it, a compromised owner would point at a malicious router whose         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.         The router is a protocol singleton (only-add registry + 7-day timelock for new         algorithms), so an account never needs to change it after the initial wiring. Once set         to a non-zero router it can never be changed — the DVT factor's algorithm source is         thereafter immutable from the (possibly compromised) owner's perspective. |
 | `0x01ffc9a7` | `supportsInterface(bytes4)` | pure | — | ERC-165: interface detection.         Signals support for ERC-1271 (isValidSignature), ERC-4337, and ERC-721 receiver. |
 | `0xf2dc691d` | `supportsModule(uint256)` | pure | — | ERC-7579: declare which module types this account supports.         Declares validator(1), executor(2), and hook(4). Fallback(3) is not supported. |
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
@@ -1713,6 +1716,8 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0x1327d3d8` · nonpayable · access: —
 
+> Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if         the owner could SWAP it, a compromised owner would point at a malicious router whose         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.         The router is a protocol singleton (only-add registry + 7-day timelock for new         algorithms), so an account never needs to change it after the initial wiring. Once set         to a non-zero router it can never be changed — the DVT factor's algorithm source is         thereafter immutable from the (possibly compromised) owner's perspective.
+
 | param | type | description |
 |---|---|---|
 | `_validator` | `address` |  |
@@ -1918,6 +1923,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |
 | `0x63ce4efa` | `UnsupportedInnerSelector()` |
+| `0x2157e2e7` | `ValidatorAlreadySet()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
 | `0xf6b2ebb8` | `WeightChangeAlreadyApproved()` |
 | `0xf0854cb8` | `WeightChangeNotApproved()` |
@@ -4627,7 +4633,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xf2fde38b` | `transferOwnership(address)` | nonpayable | onlyOwner | Begin a two-step ownership transfer (Ownable2Step). Records `newOwner` as pending;         the transfer only completes when `newOwner` calls `acceptOwnership()`. Use this for         the deployer-EOA → protocol-Safe handover so a wrong address cannot take ownership.         Pass `address(0)` to cancel a pending transfer. |
 | `0x133108f7` | `updatePublicKey(bytes32,bytes)` | nonpayable | onlyOwner |  |
 | `0x65a8613c` | `validate(bytes32,bytes)` | view | — |  |
-| `0x399ef999` | `validateAggregateSignature(bytes32[],bytes,bytes)` | view | — | Verify aggregate BLS signature (view, no events) |
+| `0x399ef999` | `validateAggregateSignature(bytes32[],bytes,bytes)` | view | — | Verify aggregate BLS signature against a caller-supplied point (view, no events).         ⚠️ NOT op-bound — see the security note above. Do not use for UserOp authorization. |
 | `0xcdcbd867` | `verifyAggregateSignature(bytes32[],bytes,bytes)` | nonpayable | — | Verify aggregate BLS signature (state-changing for event compat) |
 
 ### Functions
@@ -4879,7 +4885,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0x399ef999` · view · access: —
 
-> Verify aggregate BLS signature (view, no events)
+> Verify aggregate BLS signature against a caller-supplied point (view, no events).         ⚠️ NOT op-bound — see the security note above. Do not use for UserOp authorization.
 
 | param | type | description |
 |---|---|---|
