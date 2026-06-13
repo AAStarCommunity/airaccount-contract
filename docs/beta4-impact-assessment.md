@@ -98,6 +98,30 @@ The **ETH tier** check (signature tier vs ETH value) was **already in the accoun
 
 ---
 
+## 8a. Per-area test coverage + capability verdict
+
+Every behavior touched by beta.4, mapped to its test(s) and a verdict: **UNCHANGED** (same capability, relocated/renamed), **CHANGED-GOOD** (intended improvement), or **CHANGED-BAD** (regression — none found). Full suite: **731 pass / 0 fail**.
+
+| # | Changed area | Test(s) | Capability verdict |
+|---|---|---|---|
+| 1 | Whitelist owned by account (slot 24), populated from config | `test_whitelist_populatedOnAccountFromConfig`; factory tests `acc.approvedAlgorithms(...)` | **UNCHANGED** — whitelist still enforced, relocated to account. Single source of truth = **GOOD**. |
+| 2 | `guardApproveAlgorithm` writes account, owner-gated | `test_guardApproveAlgorithm_writesAccountNotGuard`, `test_guardApproveAlgorithm_onlyOwner` | **UNCHANGED** — same monotonic-add semantics + access control. |
+| 3 | `validateUserOp` whitelist gate | `test_validateUserOp_acceptsWhitelistedAlg`, `test_validateUserOp_rejectsNonWhitelistedAlg` | **CHANGED-GOOD** — non-whitelisted algId now rejected in validation (was execution); enables bundler. |
+| 4 | `validateUserOp` per-op ETH tier gate | `test_validateUserOp_rejectsUnderTierValue`, `test_validateUserOp_acceptsWithinTierValue`; updated `WeightedSignature`/`M5Scenario` tier tests | **CHANGED-GOOD** — under-tier op fails fast in validation instead of wasting deposit at execution. |
+| 5 | `executeUserOp` bundler-split execution | `test_executeUserOp_splitSimulation_executes` | **CHANGED-GOOD (the fix)** — guard account executes through the separate execution eth_call; no `AlgorithmNotApproved(0)`. |
+| 6 | `executeUserOp` algId re-derivation (tier) | `test_executeUserOp_tieredAccount_resolvesAlgId`, `test_executeUserOp_rederivesNonEcdsaTierFromPrefix` | **CHANGED-GOOD** — correct tier resolved from signature in-frame (ECDSA + tier-3 prefix); not cleared-transient 0. |
+| 7 | `executeUserOp` selector allowlist | `test_executeUserOp_rejectsNestedWrapper`, `test_executeUserOp_rejectsArbitrarySelector` | **CHANGED-GOOD** — closes the nested/arbitrary-selector tier bypass (Codex CRITICAL). |
+| 8 | `executeUserOp` + `executeBatch` | `test_executeUserOp_executeBatch_runsAllCalls` | **UNCHANGED** — batch executes all calls through the wrapper. |
+| 9 | Guard ETH daily limit via new path | `test_executeUserOp_dailyLimitStillEnforced`; `AAStarGlobalGuard.t.sol` recordSpend tests | **UNCHANGED** — daily limit still enforced (now via `recordSpend`). |
+| 10 | Guard token tier + daily | `AAStarGlobalGuardM5.t.sol` `recordTokenSpend` tests | **UNCHANGED** — token tier + daily still enforced (algId kept for tier math). |
+| 11 | Cumulative ETH tier (batch/multi-tx) | `WeightedSignature`/`M5Scenario`/`M7` cumulative tests | **UNCHANGED** — still authoritative in execution (`_enforceGuard`). |
+| 12 | EIP-7702 `AirAccountDelegate` | `AirAccountDelegate.t.sol` (migrated) | **UNCHANGED** + now bundler-compatible (constant ECDSA algId). |
+| 13 | Direct owner `execute()` path | existing execute tests + `test_directExecuteViaEntryPoint_tiered_revertsFromClearedAlgId` | **UNCHANGED** — owner-direct uses ALG_ECDSA, full guard. |
+| 14 | Untouched subsystems: BLS/P256/cumulative/combined/session/weighted sig validation, social recovery, ERC-7579 modules, agent/ERC-8004, ForceExit, weighted governance | their existing suites (all green) | **UNCHANGED** — full regression suite (731) passes. |
+| 15 | EIP-170 account size | `Eip170Size.t.sol` | within limit (23,419 / 24,576; 1,157 free). |
+
+**Overall conclusion:** no capability was lost or weakened (**no CHANGED-BAD**). The whitelist/daily/tier/token/cumulative guarantees are all preserved (relocated or renamed, with tests confirming each). The *new* behaviors are all improvements: bundler compatibility (the goal), fail-fast validation rejection, a single source of truth for the whitelist, and a closed tier-bypass. The only costs are documented and accepted (weighted double-verify gas; cumulative tier stays execution-side per ERC-7562).
+
 ## 9. Residual / accepted
 
 - Weighted-via-bundler double-verifies the weighted signature (gas). Accepted (rare; bytecode reuse).

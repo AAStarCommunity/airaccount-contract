@@ -160,6 +160,61 @@ contract Beta4AlgIdBundlerFixTest is Test {
         account.executeUserOp(op, h);
     }
 
+    // ─── executeUserOp coverage: batch, daily-limit, non-ECDSA tier re-derivation ──
+
+    function test_executeUserOp_executeBatch_runsAllCalls() public {
+        _deploy(_algs(ALG_ECDSA), 10 ether);
+        address d1 = address(0xD1); address d2 = address(0xD2);
+        address[] memory dests = new address[](2); dests[0] = d1; dests[1] = d2;
+        uint256[] memory vals = new uint256[](2); vals[0] = 1 ether; vals[1] = 2 ether;
+        bytes[] memory funcs = new bytes[](2); funcs[0] = ""; funcs[1] = "";
+        bytes memory inner = abi.encodeWithSelector(account.executeBatch.selector, dests, vals, funcs);
+        PackedUserOperation memory op = _emptyUserOp();
+        op.callData = bytes.concat(AAStarAirAccountV7.executeUserOp.selector, inner);
+        bytes32 h = keccak256("batch");
+        op.signature = _signEcdsa(h);
+
+        vm.prank(entryPoint);
+        account.executeUserOp(op, h);
+        assertEq(d1.balance, 1 ether, "batch call 1 ran");
+        assertEq(d2.balance, 2 ether, "batch call 2 ran");
+    }
+
+    function test_executeUserOp_dailyLimitStillEnforced() public {
+        // guard accounting (recordSpend) must still revert on daily-limit breach through executeUserOp.
+        _deploy(_algs(ALG_ECDSA), 1 ether); // dailyLimit = 1 ETH, no tiering
+        PackedUserOperation memory op = _emptyUserOp();
+        op.callData = _wrapExecute(dest, 2 ether); // exceeds daily limit
+        bytes32 h = keccak256("overlimit");
+        op.signature = _signEcdsa(h);
+
+        vm.prank(entryPoint);
+        vm.expectRevert(); // DailyLimitExceeded bubbled from guard.recordSpend via the delegatecall
+        account.executeUserOp(op, h);
+    }
+
+    function test_executeUserOp_rederivesNonEcdsaTierFromPrefix() public {
+        // Proves executeUserOp re-derives the correct (higher) tier from the signature prefix:
+        // a tier-3 (0x05) prefix lets a value that requires tier 3 execute. If algId were the cleared
+        // transient 0 (tier 0), the execution tier check would revert InsufficientTier.
+        _deploy(_algs(0x05), 5 ether); // whitelist CUMULATIVE_T3
+        vm.prank(ownerAddr);
+        account.setTierLimits(0.1 ether, 1 ether); // 2 ETH → requires tier 3
+
+        bytes memory inner = abi.encodeWithSelector(account.execute.selector, dest, uint256(2 ether), bytes(""));
+        PackedUserOperation memory op = _emptyUserOp();
+        op.callData = bytes.concat(AAStarAirAccountV7.executeUserOp.selector, inner);
+        bytes32 h = keccak256("t3");
+        // 0x05 prefix → _populateExecAlg stores ALG_CUMULATIVE_T3 (tier 3); not crypto-verified in
+        // executeUserOp (validateUserOp verifies in the real flow). Length 65 = prefix + 64.
+        op.signature = abi.encodePacked(uint8(0x05), new bytes(64));
+
+        uint256 before = dest.balance;
+        vm.prank(entryPoint);
+        account.executeUserOp(op, h);
+        assertEq(dest.balance - before, 2 ether, "tier-3 algId re-derived from prefix clears tier-3 value");
+    }
+
     // ─── validateUserOp per-op tier gate (fail-fast, Codex MEDIUM fix) ──
 
     function test_validateUserOp_rejectsUnderTierValue() public {
