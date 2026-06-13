@@ -121,4 +121,9 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     ///      signature collected for one install can never be replayed after an uninstall+reinstall.
     ///      Appended at slot 25 — never reorder.
     uint256 internal _moduleManagementNonce;                                              // slot 25
+
+    /// @dev Monotonic nonce for guardian-signed `setAggregatorWithGuardians` (issue #45). Prevents
+    ///      replay of a guardian signature set across multiple aggregator changes.
+    ///      Appended at slot 26 — never reorder.
+    uint256 internal _aggregatorNonce;                                                    // slot 26
 }

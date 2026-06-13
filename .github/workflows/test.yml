@@ -82,6 +82,6 @@ jobs:
         with:
           version: nightly
 
-      - name: Run #45 binding tests under Prague (golden-vector + replay)
-        run: forge test --evm-version prague --match-contract "HashToG2GoldenTest|BLSReplayBindingTest" -vv
+      - name: Run #45 binding tests under Prague (golden-vector + single-op replay + batch aggregator)
+        run: forge test --evm-version prague --match-contract "HashToG2GoldenTest|BLSReplayBindingTest|AAStarBLSAggregatorTest" -vv
         working-directory: .

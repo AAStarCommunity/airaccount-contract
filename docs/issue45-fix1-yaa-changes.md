@@ -61,13 +61,33 @@ No change is required to how the DVT nodes sign (they already sign
 - Old-format signatures (with the trailing `messagePoint`/`mpSig`) are rejected by the new code on
   a strict length check, so there is no silent acceptance during a mixed rollout.
 
+## Batch aggregator path (`AAStarBLSAggregator`) — now #45-safe (KEPT, not disabled)
+
+For each op in the batch the aggregator recomputes the message point on-chain from that op's own
+`userOpHash` (`blsAlgorithm.hashToG2(entryPoint.getUserOpHash(op_i))`) and aggregates THOSE — never
+the embedded point. A valid aggregate for one set of `userOpHash`es cannot be replayed under a batch
+with different ones. SDK / deploy implications for the batch path:
+
+- Per-op signature uses the SAME new triple-sig format as single-op
+  (`[0x01][len(32)][nodeIds][blsSig(256)][aaSig(65)]`) — **also drop the embedded `messagePoint`**.
+- `AAStarBLSAggregator` constructor is now `(blsAlgorithm, entryPoint)` — deploy scripts must pass
+  the canonical EntryPoint (used to derive each op's `userOpHash`).
+- The aggregator's G2ADD precompile address was corrected `0x0e → 0x0d` (final EIP-2537).
+- Selecting the aggregator on an account is **guardian-gated**: `setAggregatorWithGuardians(agg,
+  deadline, guardianSigs[])` needs owner + RECOVERY_THRESHOLD guardian sigs over
+  `keccak(GUARDIAN_SIG_VERSION, chainid, account, "SET_AGGREGATOR", abi.encode(nonce, agg,
+  deadline))`. A lone compromised owner can no longer swap `blsAggregator`. `address(0)` (disable)
+  is allowed under the same gate.
+
+> RECOMMENDED HARDENING (pending product confirmation; documented in the contract): add a SECOND
+> protocol-level gate — a Gnosis-Safe-governed `AggregatorRegistry` allowlist wired immutably into
+> the account by the factory — so even owner + colluding guardians could only select a Safe-vetted
+> aggregator. NOT implemented in this PR: guardian-gating already closes the single-compromised-owner
+> swap #45 flagged; the registry is flagged for the user to confirm scope (it touches the V7/Base
+> constructor + factory since all clones share one registry via the implementation immutable).
+
 ## Out of scope here (flagged for follow-up)
 
-- **`AAStarBLSAggregator`** (batch IAggregator path) is architecturally incompatible with Option B:
-  a single batch pairing cannot bind N distinct `userOpHash`es to one aggregated message point.
-  It was left unchanged and **must not be enabled** (`blsAggregator` must stay `address(0)`) until
-  it is redesigned (per-op pairing) or removed. It also still uses the old caller-supplied
-  `messagePoint` and the wrong G2ADD precompile address `0x0e` (see below).
 - **Fix 2 (DVT node authorization / policy)** — nodes still sign any `userOpHash` handed to them
   with no owner-factor verification. Fix 1 stops *replay of old approvals*; it does not stop a
   *freshly forged* unauthorized approval. The BLS/DVT tier is only a sound security factor once

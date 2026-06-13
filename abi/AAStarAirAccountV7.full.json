@@ -994,12 +994,22 @@
     },
     {
       "type": "function",
-      "name": "setAggregator",
+      "name": "setAggregatorWithGuardians",
       "inputs": [
         {
           "name": "_aggregator",
           "type": "address",
           "internalType": "address"
+        },
+        {
+          "name": "deadline",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "guardianSigs",
+          "type": "bytes[]",
+          "internalType": "bytes[]"
         }
       ],
       "outputs": [],
@@ -2022,11 +2032,6 @@
     {
       "type": "error",
       "name": "AgentSessionBatchNotSupported",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "AggregatorDisabled",
       "inputs": []
     },
     {

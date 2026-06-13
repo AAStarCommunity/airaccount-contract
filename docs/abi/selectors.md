@@ -238,6 +238,8 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x94ddedee` | `parseTokenTransfer(bytes)` | ICalldataParser |
 | `0x94ddedee` | `parseTokenTransfer(bytes)` | RailgunParser |
 | `0x94ddedee` | `parseTokenTransfer(bytes)` | UniswapV3Parser |
+| `0x94effd16` | `setAggregatorWithGuardians(address,uint256,bytes[])` | AAStarAirAccountBase |
+| `0x94effd16` | `setAggregatorWithGuardians(address,uint256,bytes[])` | AAStarAirAccountV7 |
 | `0x9517e29f` | `installModule(uint256,address,bytes)` | AAStarAirAccountV7 |
 | `0x97003203` | `validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)` | IERC7579Validator |
 | `0x980e65ca` | `buildP256GrantHash(address,bytes32,bytes32,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))` | SessionKeyValidator |
@@ -262,6 +264,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xae574a43` | `aggregateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[])` | AAStarBLSAggregator |
 | `0xaffa4167` | `L2_TYPE_OPTIMISM()` | ForceExitModule |
 | `0xb06e5ab4` | `aggregateKeys(bytes32[])` | AAStarBLSAlgorithm |
+| `0xb0d691fe` | `entryPoint()` | AAStarBLSAggregator |
 | `0xb0d691fe` | `entryPoint()` | AAStarAgentStorageLayout |
 | `0xb0d691fe` | `entryPoint()` | AAStarAirAccountBase |
 | `0xb0d691fe` | `entryPoint()` | AAStarAirAccountFactoryV7 |
@@ -352,8 +355,6 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xf64fd67c` | `guardDecreaseTokenDailyLimit(address,uint256)` | AAStarAirAccountV7 |
 | `0xf8618150` | `tokenTodaySpent(address)` | AAStarGlobalGuard |
 | `0xf8acde7b` | `blsAlgorithm()` | AAStarBLSAggregator |
-| `0xf9120af6` | `setAggregator(address)` | AAStarAirAccountBase |
-| `0xf9120af6` | `setAggregator(address)` | AAStarAirAccountV7 |
 | `0xf9c391f6` | `queryAgentReputation(address,uint256,address[],string,string)` | AirAccountExtension |
 | `0xf9c391f6` | `queryAgentReputation(address,uint256,address[],string,string)` | IAirAccountAgent |
 | `0xfb677819` | `revokeP256Session(address,bytes32,bytes32)` | SessionKeyValidator |
@@ -479,7 +480,6 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xab143c06` | `Reentrancy()` | AAStarAirAccountBase |
 | `0xac241e11` | `EmptySignature()` | AAStarValidator |
 | `0xac2edbf6` | `WeightChangeTimelockNotExpired()` | AAStarAirAccountBase |
-| `0xac373e68` | `AggregatorDisabled()` | AAStarAirAccountBase |
 | `0xadbf5bb3` | `DefaultTokenAddressZero(address)` | AAStarAirAccountFactoryV7 |
 | `0xb06ebf3d` | `FailedDeployment()` | AAStarAirAccountFactoryV7 |
 | `0xb891ab5c` | `AggregatedSignatureInvalid()` | AAStarBLSAggregator |

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {IAggregator} from "@account-abstraction/interfaces/IAggregator.sol";
+import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 import {AAStarBLSAlgorithm} from "../validators/AAStarBLSAlgorithm.sol";
 
@@ -12,13 +13,22 @@ import {AAStarBLSAlgorithm} from "../validators/AAStarBLSAlgorithm.sol";
 ///      e(G, sum(sig_i)) = product(e(aggPK_i, msgPt_i))
 ///      For same-node-set batches (common case):
 ///      e(G, aggSig) * e(-aggPK, aggMsgPt) = 1   (only 2 pairs!)
+///
+///      issue #45 Fix 1 (batch path): each op's message point is RECOMPUTED on-chain from its own
+///      userOpHash (blsAlgorithm.hashToG2(entryPoint.getUserOpHash(op_i))) and THOSE are aggregated
+///      into aggMsgPt — NOT the caller-supplied messagePoint embedded in the op signature. This
+///      binds every op's BLS contribution to its exact userOpHash, closing the batch replay hole
+///      (a valid aggregate for {hashA,hashB} can no longer be presented for a different batch).
+///      Same node-set across the batch is still required (NodeSetMismatch).
 contract AAStarBLSAggregator is IAggregator {
     // ─── Constants ──────────────────────────────────────────────────
 
     uint256 private constant G2_POINT_LENGTH = 256;
 
-    /// @dev EIP-2537 precompile addresses
-    address private constant G2ADD_PRECOMPILE = address(0x0e);
+    /// @dev EIP-2537 precompile addresses (final Pectra/Prague addressing). G2ADD is 0x0d
+    ///      (0x0e is G2MSM — the prior 0x0e here was a latent bug that reverts on real points;
+    ///      fixed under issue #45 now that the batch path is exercised on-chain).
+    address private constant G2ADD_PRECOMPILE = address(0x0d);
     address private constant PAIRING_PRECOMPILE = address(0x0f);
 
     /// @dev G1 generator point in EIP-2537 format (128 bytes)
@@ -33,8 +43,11 @@ contract AAStarBLSAggregator is IAggregator {
 
     // ─── Storage ────────────────────────────────────────────────────
 
-    /// @notice Reference to the BLS algorithm contract for key lookups
+    /// @notice Reference to the BLS algorithm contract for key lookups + on-chain hash_to_curve.
     AAStarBLSAlgorithm public immutable blsAlgorithm;
+
+    /// @notice The ERC-4337 EntryPoint, used to derive each op's userOpHash for the #45 binding.
+    IEntryPoint public immutable entryPoint;
 
     // ─── Errors ─────────────────────────────────────────────────────
 
@@ -46,8 +59,16 @@ contract AAStarBLSAggregator is IAggregator {
 
     // ─── Constructor ────────────────────────────────────────────────
 
-    constructor(address _blsAlgorithm) {
+    constructor(address _blsAlgorithm, address _entryPoint) {
         blsAlgorithm = AAStarBLSAlgorithm(_blsAlgorithm);
+        entryPoint = IEntryPoint(_entryPoint);
+    }
+
+    /// @dev issue #45: recompute op_i's BLS message point on-chain from its userOpHash,
+    ///      identical to the single-op path (AAStarBLSAlgorithm.validate). NOT the embedded point.
+    function _messagePointForOp(PackedUserOperation calldata op) internal view returns (bytes memory) {
+        bytes32 userOpHash = entryPoint.getUserOpHash(op);
+        return blsAlgorithm.hashToG2(userOpHash);
     }
 
     // ─── IAggregator Implementation ─────────────────────────────────
@@ -59,16 +80,16 @@ contract AAStarBLSAggregator is IAggregator {
     function validateUserOpSignature(
         PackedUserOperation calldata userOp
     ) external pure override returns (bytes memory sigForUserOp) {
-        // Just validate that the signature format is correct
+        // Validate the triple-sig format (issue #45: messagePoint + messagePointSig removed).
         bytes calldata sig = userOp.signature;
         if (sig.length < 1) revert InvalidSignatureFormat();
         if (uint8(sig[0]) != 0x01) revert InvalidSignatureFormat();
 
-        // Parse triple sig format
+        // New format: [nodeIdsLength(32)][nodeIds(N×32)][blsSig(256)][aaSignature(65)]
         bytes calldata sigData = sig[1:];
         if (sigData.length < 32) revert InvalidSignatureFormat();
         uint256 nodeIdsLength = uint256(bytes32(sigData[0:32]));
-        uint256 expectedLength = 32 + nodeIdsLength * 32 + 256 + 256 + 65 + 65;
+        uint256 expectedLength = 32 + nodeIdsLength * 32 + 256 + 65;
         if (sigData.length != expectedLength) revert InvalidSignatureFormat();
 
         // Return empty — signature is used as-is in handleAggregatedOps
@@ -76,21 +97,23 @@ contract AAStarBLSAggregator is IAggregator {
     }
 
     /// @inheritdoc IAggregator
-    /// @dev Aggregates BLS signatures and message points from all UserOps.
-    ///      Returns: aggBlsSig(256) | aggMsgPoint(256) | nodeIdsLength(32) | nodeIds(N×32)
+    /// @dev Aggregates BLS signatures from all UserOps; the aggregate MESSAGE POINT is recomputed
+    ///      from each op's userOpHash (issue #45), NOT taken from the op signature.
+    ///      Returns: aggBlsSig(256) | aggMsgPoint(256) | nodeIdsLength(32) | nodeIds(N×32).
+    ///      (validateSignatures ignores the returned blob and recomputes independently; the
+    ///      aggMsgPoint is included for parity/diagnostics only.)
     function aggregateSignatures(
         PackedUserOperation[] calldata userOps
     ) external view override returns (bytes memory aggregatedSignature) {
         if (userOps.length == 0) revert EmptyBatch();
 
-        // Extract BLS sig and messagePoint from first UserOp
-        (bytes32[] memory nodeIds0, bytes memory aggSig, bytes memory aggMsgPt) =
-            _extractBLSData(userOps[0].signature);
+        // Extract BLS sig from the first op; recompute its message point from userOpHash.
+        (bytes32[] memory nodeIds0, bytes memory aggSig) = _extractBLSData(userOps[0].signature);
+        bytes memory aggMsgPt = _messagePointForOp(userOps[0]);
 
         // Aggregate remaining UserOps
         for (uint256 i = 1; i < userOps.length; i++) {
-            (bytes32[] memory nodeIdsI, bytes memory blsSig, bytes memory msgPt) =
-                _extractBLSData(userOps[i].signature);
+            (bytes32[] memory nodeIdsI, bytes memory blsSig) = _extractBLSData(userOps[i].signature);
 
             // Verify same node set (for optimized 2-pair pairing)
             if (nodeIdsI.length != nodeIds0.length) revert NodeSetMismatch();
@@ -98,10 +121,9 @@ contract AAStarBLSAggregator is IAggregator {
                 if (nodeIdsI[j] != nodeIds0[j]) revert NodeSetMismatch();
             }
 
-            // G2Add: aggregate BLS signatures
+            // G2Add: aggregate BLS signatures + recomputed (userOpHash-bound) message points.
             aggSig = _g2Add(aggSig, blsSig);
-            // G2Add: aggregate message points
-            aggMsgPt = _g2Add(aggMsgPt, msgPt);
+            aggMsgPt = _g2Add(aggMsgPt, _messagePointForOp(userOps[i]));
         }
 
         // Pack: aggBlsSig(256) | aggMsgPoint(256) | nodeIdsLength(32) | nodeIds(N×32)
@@ -126,23 +148,27 @@ contract AAStarBLSAggregator is IAggregator {
         if (userOps.length == 0) revert EmptyBatch();
 
         // Recompute the aggregate from the actual UserOps in the batch.
-        (bytes32[] memory nodeIds, bytes memory aggSig, bytes memory aggMsgPt) =
-            _extractBLSData(userOps[0].signature);
+        // issue #45: the BLS signature is taken from each op, but the MESSAGE POINT is recomputed
+        // from that op's userOpHash (hashToG2) — NOT the embedded point. So a valid aggregate for
+        // one set of userOpHashes cannot be replayed under a batch with different userOpHashes.
+        (bytes32[] memory nodeIds, bytes memory aggSig) = _extractBLSData(userOps[0].signature);
+        bytes memory aggMsgPt = _messagePointForOp(userOps[0]);
 
         // v0.17.2-beta.1 round 6 follow-up (Codex): PER-USEROP infinity reject.
         //
         // Round 5 HIGH-2 fix only checked infinity on the FINAL recomputed aggregate. Round 6
         // verification caught the residual: a malicious bundler can submit `userOps[i]` whose
-        // embedded BLS sig/msgPt is infinity — G2Add(valid, infinity) = valid (identity element),
+        // embedded BLS sig is infinity — G2Add(valid, infinity) = valid (identity element),
         // so the final aggregate stays non-infinity and passes the post-aggregate check, BUT
         // that UserOp's BLS factor is effectively never verified. Each per-UserOp component
-        // must therefore be rejected at infinity before G2Add.
+        // must therefore be rejected at infinity before G2Add. (The recomputed message point is
+        // never infinity — hash_to_curve does not return it — but assert it for symmetry.)
         if (_isG2Infinity(aggSig)) revert AggregatedSignatureInvalid();
         if (_isG2Infinity(aggMsgPt)) revert AggregatedSignatureInvalid();
 
         for (uint256 i = 1; i < userOps.length; i++) {
-            (bytes32[] memory nodeIdsI, bytes memory blsSig, bytes memory msgPt) =
-                _extractBLSData(userOps[i].signature);
+            (bytes32[] memory nodeIdsI, bytes memory blsSig) = _extractBLSData(userOps[i].signature);
+            bytes memory msgPt = _messagePointForOp(userOps[i]);
 
             // All UserOps in a batch must share the same node set (already enforced by
             // aggregateSignatures; re-enforced here so validateSignatures is independent).
@@ -186,16 +212,22 @@ contract AAStarBLSAggregator is IAggregator {
 
     // ─── Internal: BLS Data Extraction ──────────────────────────────
 
-    /// @dev Extract BLS-relevant data from a UserOp's triple signature
+    /// @dev Extract nodeIds + BLS signature from a UserOp's triple signature.
+    ///      issue #45: the messagePoint is NO LONGER read here — it is recomputed from the op's
+    ///      userOpHash in _messagePointForOp. New format: [0x01][len(32)][nodeIds][blsSig(256)][aaSig(65)].
     function _extractBLSData(
         bytes calldata signature
-    ) internal pure returns (bytes32[] memory nodeIds, bytes memory blsSig, bytes memory msgPt) {
+    ) internal pure returns (bytes32[] memory nodeIds, bytes memory blsSig) {
+        if (signature.length < 1 || uint8(signature[0]) != 0x01) revert InvalidSignatureFormat();
         // Skip algId byte (0x01)
         bytes calldata sigData = signature[1:];
 
+        if (sigData.length < 32) revert InvalidSignatureFormat();
         uint256 nodeIdsLength = uint256(bytes32(sigData[0:32]));
         uint256 nodeIdsDataLength = nodeIdsLength * 32;
         uint256 baseOffset = 32 + nodeIdsDataLength;
+        // Strict length: [len][nodeIds][blsSig(256)][aaSig(65)].
+        if (sigData.length != baseOffset + 256 + 65) revert InvalidSignatureFormat();
 
         // Extract nodeIds
         nodeIds = new bytes32[](nodeIdsLength);
@@ -208,13 +240,6 @@ contract AAStarBLSAggregator is IAggregator {
         bytes calldata blsSigSlice = sigData[baseOffset:baseOffset + 256];
         assembly {
             calldatacopy(add(blsSig, 0x20), blsSigSlice.offset, 256)
-        }
-
-        // Extract message point (256 bytes)
-        msgPt = new bytes(256);
-        bytes calldata msgPtSlice = sigData[baseOffset + 256:baseOffset + 512];
-        assembly {
-            calldatacopy(add(msgPt, 0x20), msgPtSlice.offset, 256)
         }
     }
 
@@ -240,8 +265,8 @@ contract AAStarBLSAggregator is IAggregator {
                 mstore(add(dst, mul(i, 0x20)), mload(add(src, mul(i, 0x20))))
             }
 
-            // staticcall G2Add precompile (0x0e)
-            let success := staticcall(gas(), 0x0e, input, 512, add(result, 0x20), 256)
+            // staticcall G2Add precompile (0x0d — final EIP-2537 addressing; 0x0e is G2MSM)
+            let success := staticcall(gas(), 0x0d, input, 512, add(result, 0x20), 256)
             if iszero(success) { revert(0, 0) }
         }
     }
