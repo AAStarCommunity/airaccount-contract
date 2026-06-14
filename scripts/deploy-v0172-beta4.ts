@@ -124,11 +124,15 @@ async function main() {
   if (bal < 30_000_000_000_000_000n) { console.error("ERROR: balance below 0.03 ETH"); process.exit(1); }
   console.log("");
 
-  // ── 1. Factory (auto-deploys Impl + Extension) ──────────────────────────────
-  console.log("[1/3] Deploy Factory + Impl + Extension (beta.4)...");
-  const factoryAddr = await deployOnce("Factory", "AAStarAirAccountFactoryV7", [ENTRYPOINT, COMMUNITY, [], []], 10_000_000n);
+  // ── 1. Implementation (+ its Extension) then Factory ────────────────────────
+  //    WS-E #82 EIP-3860 fix: the factory no longer auto-deploys the impl inline (that embedded
+  //    ~14 KB of creation code into the factory initcode, brushing the 49,152-byte cap). Deploy
+  //    the impl FIRST, then inject its address as the factory's first constructor arg. The impl
+  //    ctor still deploys the singleton AirAccountExtension.
+  console.log("[1/3] Deploy Impl + Extension, then Factory (beta.4)...");
+  const implAddr = await deployOnce("Implementation", "AAStarAirAccountV7", [], 10_000_000n);
+  const factoryAddr = await deployOnce("Factory", "AAStarAirAccountFactoryV7", [implAddr, ENTRYPOINT, COMMUNITY, [], []], 6_000_000n);
   const fAbi = loadArtifact("AAStarAirAccountFactoryV7").abi;
-  const implAddr = await pub(RPC_URLS[0]).readContract({ address: factoryAddr, abi: fAbi, functionName: "implementation" }) as Address;
   const extensionAddr = await pub(RPC_URLS[0]).readContract({
     address: implAddr,
     abi: [{ name: "agentExtension", type: "function", inputs: [], outputs: [{ type: "address" }], stateMutability: "view" }],

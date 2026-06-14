@@ -340,31 +340,50 @@ async function main() {
     const factoryBytecode = artifact.bytecode.object as `0x${string}`;
     const factoryAbi = artifact.abi;
 
+    // WS-E #82 EIP-3860 fix: the factory no longer deploys the impl inline. Deploy the
+    // AAStarAirAccountV7 implementation FIRST and inject its address as the factory's first arg.
+    const implArtifactPath = resolve(
+      __dirname,
+      "../out/AAStarAirAccountV7.sol/AAStarAirAccountV7.json"
+    );
+    if (!existsSync(implArtifactPath)) {
+      console.error("  ERROR: AAStarAirAccountV7 artifact not found. Run 'forge build' first.");
+      process.exit(1);
+    }
+    const implArtifact = JSON.parse(readFileSync(implArtifactPath, "utf-8"));
+    console.log("  Deploying AAStarAirAccountV7 implementation...");
+    const implHash = await walletClient.sendTransaction({
+      data: implArtifact.bytecode.object as `0x${string}`,
+    });
+    const implReceipt = await publicClient.waitForTransactionReceipt({ hash: implHash });
+    const implAddr = implReceipt.contractAddress!;
+    console.log(`  Implementation deployed at: ${implAddr}`);
+
     console.log("  Deploying AAStarAirAccountFactoryV7...");
 
-    // Encode constructor args: (entryPoint, communityGuardian, defaultTokens[], defaultConfigs[])
-    // Using zero address as communityGuardian and empty arrays for this basic ECDSA test
+    // Constructor: (implementation, entryPoint, communityGuardian, defaultTokens[], defaultConfigs[]).
+    // v0.17.2 removed the defaultValidatorModule/defaultHookModule params; TokenConfig tier fields
+    // are uint128 (#82). Empty token arrays for this basic ECDSA test.
     const constructorArgs = encodeAbiParameters(
       [
-        { type: "address" },
-        { type: "address" },
+        { type: "address" }, // _implementation
+        { type: "address" }, // _entryPoint
+        { type: "address" }, // _communityGuardian
         { type: "address[]" },
         { type: "tuple[]", components: [
-          { name: "tier1Limit", type: "uint256" },
-          { name: "tier2Limit", type: "uint256" },
+          { name: "tier1Limit", type: "uint128" },
+          { name: "tier2Limit", type: "uint128" },
           { name: "dailyLimit", type: "uint256" },
         ]},
-        { type: "address" }, // defaultValidatorModule
-        { type: "address" }, // defaultHookModule
       ],
-      [ENTRYPOINT, "0x0000000000000000000000000000000000000000", [], [], "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000"]
+      [implAddr, ENTRYPOINT, "0x0000000000000000000000000000000000000000", [], []]
     );
     const deployBytecode = concat([factoryBytecode, constructorArgs]) as `0x${string}`;
-    
+
     const hash = await walletClient.sendTransaction({
       data: deployBytecode,
     });
-    
+
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     factoryAddr = receipt.contractAddress!;
     

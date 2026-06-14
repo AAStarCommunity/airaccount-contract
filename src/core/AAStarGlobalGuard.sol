@@ -13,10 +13,17 @@ contract AAStarGlobalGuard {
     // ─── Token Config Struct ─────────────────────────────────────
 
     /// @notice Per-token spending tier configuration (in token's native units)
+    /// @dev #82 storage packing: tier1Limit + tier2Limit are uint128 so they share ONE
+    ///      32-byte slot (16 + 16 bytes), shrinking the struct from 3 slots to 2 (the
+    ///      uint256 dailyLimit keeps its own slot). uint128 (~3.4e38) is astronomically
+    ///      safe for 18-decimal token units. Any wider source value is rejected by the
+    ///      explicit bound check in `_validateTokenConfig` (TierLimitTooLarge) so a config
+    ///      write can never silently truncate. dailyLimit stays uint256 because it is the
+    ///      cumulative cap and #82 only mandated packing the tier fields.
     struct TokenConfig {
-        uint256 tier1Limit; // max cumulative amount for Tier 1 (ECDSA only)
-        uint256 tier2Limit; // max cumulative amount for Tier 2 (P256+BLS)
-        uint256 dailyLimit; // total daily cap (0 = unlimited)
+        uint128 tier1Limit; // max cumulative amount for Tier 1 (ECDSA only) — slot N, offset 0
+        uint128 tier2Limit; // max cumulative amount for Tier 2 (P256+BLS)   — slot N, offset 16
+        uint256 dailyLimit; // total daily cap (0 = unlimited)               — slot N+1
     }
 
     // ─── Immutable State ─────────────────────────────────────────
@@ -71,6 +78,9 @@ contract AAStarGlobalGuard {
     ///      the daily limit silently caps users below their configured tier max.
     error InvalidTokenConfig(address token, uint256 tier1, uint256 tier2, uint256 daily);
     error TokenConfigLengthMismatch();
+    /// @dev #82: a tier limit exceeds the uint128 packed-field capacity. Prevents a silent
+    ///      truncation if a wider (uint256) source ever feeds the packed tier fields.
+    error TierLimitTooLarge();
 
     // ─── Modifier ───────────────────────────────────────────────
 
@@ -85,6 +95,9 @@ contract AAStarGlobalGuard {
     ///        tier2 <= daily   — daily cap must cover the full tier2 range
     ///        tier1 <= daily   — daily cap must cover at least tier1 range
     function _validateTokenConfig(address token, uint256 t1, uint256 t2, uint256 daily) internal pure {
+        // #82: explicit bound check — the packed struct stores tier limits as uint128, so a
+        // wider value would silently truncate on write. Reject it loudly instead.
+        if (t1 > type(uint128).max || t2 > type(uint128).max) revert TierLimitTooLarge();
         bool bad = (t1 > 0 && t2 > 0 && t1 > t2)
             || (t2 > 0 && daily > 0 && daily < t2)
             || (t1 > 0 && t2 == 0 && daily > 0 && daily < t1)

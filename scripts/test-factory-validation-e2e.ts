@@ -67,9 +67,12 @@ const FACTORY_BYTECODE = artifact.bytecode.object as Hex;
 
 // ─── ABI types for constructor args ──────────────────────────────────────────
 
-// constructor(address _entryPoint, address _communityGuardian, address[] defaultTokens, TokenConfig[] defaultConfigs)
-// TokenConfig struct: { tier1Limit, tier2Limit, dailyLimit } — 3 fields only
+// WS-E #82: constructor now takes the implementation as its FIRST arg (was deployed inline).
+// constructor(address _implementation, address _entryPoint, address _communityGuardian,
+//             address[] defaultTokens, TokenConfig[] defaultConfigs)
+// TokenConfig struct: { uint128 tier1Limit, uint128 tier2Limit, uint256 dailyLimit } — #82 packing.
 const CONSTRUCTOR_INPUTS = [
+  { type: "address", name: "_implementation" },
   { type: "address", name: "_entryPoint" },
   { type: "address", name: "_communityGuardian" },
   { type: "address[]", name: "defaultTokens" },
@@ -77,12 +80,17 @@ const CONSTRUCTOR_INPUTS = [
     type: "tuple[]",
     name: "defaultConfigs",
     components: [
-      { type: "uint256", name: "tier1Limit" },
-      { type: "uint256", name: "tier2Limit" },
+      { type: "uint128", name: "tier1Limit" },
+      { type: "uint128", name: "tier2Limit" },
       { type: "uint256", name: "dailyLimit" },
     ],
   },
 ] as const;
+
+// Any non-zero address satisfies the factory's ImplementationRequired() guard; these tests only
+// exercise the constructor's token-config validation reverts, which run AFTER that check, so a
+// placeholder is sufficient for the eth_estimateGas simulation (no real impl is deployed).
+const DUMMY_IMPL = "0x000000000000000000000000000000000000dEaD" as Address;
 
 // ─── Helper: build encoded deploy data (bytecode + constructor args) ──────────
 
@@ -91,6 +99,7 @@ function encodeDeployData(
   configs: { tier1Limit: bigint; tier2Limit: bigint; dailyLimit: bigint }[]
 ): Hex {
   const args = encodeAbiParameters(CONSTRUCTOR_INPUTS, [
+    DUMMY_IMPL,
     ENTRYPOINT,
     COMMUNITY_GUARDIAN,
     tokens,

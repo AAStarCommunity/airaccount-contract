@@ -127,7 +127,9 @@ contract M5ScenarioTests is Test {
         entryPoint = new MockEP();
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        factory = new AAStarAirAccountFactoryV7(address(entryPoint), communityGuardian, noTokens, noConfigs);
+        // #82 EIP-3860 fix: deploy implementation first, inject into factory.
+        address _impl = address(new AAStarAirAccountV7());
+        factory = new AAStarAirAccountFactoryV7(_impl, address(entryPoint), communityGuardian, noTokens, noConfigs);
         mockAlg = new MockAlg();
         p256Valid = new MockP256Valid();
         p256Invalid = new MockP256Invalid();
@@ -175,7 +177,9 @@ contract M5ScenarioTests is Test {
         address[] memory tokens = new address[](1);
         tokens[0] = token;
         AAStarGlobalGuard.TokenConfig[] memory cfgs = new AAStarGlobalGuard.TokenConfig[](1);
-        cfgs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: t1, tier2Limit: t2, dailyLimit: daily });
+        // #82: tier fields are packed uint128; helper params are uint256, so cast explicitly.
+        //      Test inputs are small token amounts, far inside uint128.
+        cfgs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: uint128(t1), tier2Limit: uint128(t2), dailyLimit: daily });
 
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],

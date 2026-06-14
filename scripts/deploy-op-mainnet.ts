@@ -190,19 +190,34 @@ async function main() {
     console.log("  No token presets loaded.");
   }
 
-  // ─── Load artifact ────────────────────────────────────────────────
+  // ─── Load artifacts ───────────────────────────────────────────────
   console.log("\nLoading artifacts from out/ ...");
+  const implArtifact = loadArtifact("AAStarAirAccountV7");
   const factoryArtifact = loadArtifact("AAStarAirAccountFactoryV7");
-  console.log("  AAStarAirAccountFactoryV7 artifact loaded.\n");
+  console.log("  AAStarAirAccountV7 + AAStarAirAccountFactoryV7 artifacts loaded.\n");
 
-  // ─── Deploy Factory ───────────────────────────────────────────────
+  // ─── Deploy implementation first (WS-E #82 EIP-3860 fix) ──────────
+  // The factory no longer deploys the impl inline; deploy it here and inject its address.
+  console.log("Deploying AAStarAirAccountV7 implementation to OP Mainnet...");
+  const implTxHash = await walletClient.sendTransaction({
+    data: encodeDeployData({ abi: implArtifact.abi, bytecode: implArtifact.bytecode, args: [] }),
+  });
+  console.log(`  TX submitted: ${implTxHash}`);
+  const implReceipt = await publicClient.waitForTransactionReceipt({ hash: implTxHash });
+  const implAddress = implReceipt.contractAddress!;
+  console.log(`  ✓ Implementation deployed: ${implAddress}\n`);
+
+  // ─── Deploy Factory (impl injected as constructor arg 1) ──────────
   console.log("Deploying AAStarAirAccountFactoryV7 to OP Mainnet...");
-  console.log("  (Factory constructor also deploys shared AAStarAirAccountV7 implementation)\n");
+  // Constructor: (implementation, entryPoint, communityGuardian, defaultTokens[], defaultConfigs[]).
+  // TokenConfig tier fields are uint128 (#82); viem encodes them per the artifact ABI — preset
+  // limits are well within uint128.
 
   const factoryDeployData = encodeDeployData({
     abi: factoryArtifact.abi,
     bytecode: factoryArtifact.bytecode,
     args: [
+      implAddress,
       ENTRYPOINT,
       COMMUNITY_GUARDIAN,
       tokenAddresses,
@@ -225,14 +240,17 @@ async function main() {
   console.log(`  Gas used: ${factoryReceipt.gasUsed}`);
   console.log(`  Explorer: https://optimistic.etherscan.io/address/${factoryAddress}\n`);
 
-  // ─── Read implementation address ─────────────────────────────────
-  const implAddress = await publicClient.readContract({
+  // ─── Verify factory stored the injected implementation ────────────
+  const storedImpl = await publicClient.readContract({
     address: factoryAddress,
     abi: factoryArtifact.abi,
     functionName: "implementation",
   }) as Address;
-  console.log(`  Implementation (shared): ${implAddress}`);
-  console.log(`  Explorer: https://optimistic.etherscan.io/address/${implAddress}\n`);
+  console.log(`  Implementation (shared): ${storedImpl}`);
+  console.log(`  Explorer: https://optimistic.etherscan.io/address/${storedImpl}\n`);
+  if (storedImpl.toLowerCase() !== implAddress.toLowerCase()) {
+    throw new Error(`Factory implementation() ${storedImpl} != deployed impl ${implAddress}`);
+  }
 
   // ─── Verify EIP-7212 precompile ───────────────────────────────────
   console.log("Checking EIP-7212 P256 precompile availability...");

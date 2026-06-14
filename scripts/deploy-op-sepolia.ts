@@ -125,25 +125,25 @@ async function main() {
     }
   }
 
-  // ── Step 1: Deploy factory (factory deploys impl internally) ─────────────
+  // ── Step 1: Deploy implementation, then factory (impl injected) ──────────
 
-  console.log("[1/2] Deploy AAStarAirAccountFactoryV7 (incl. impl)");
-  // Constructor: (entryPoint, communityGuardian, defaultTokens[], defaultConfigs[], validatorModule, hookModule)
-  // Use empty token arrays and address(0) modules for minimal OP Sepolia deployment.
+  // WS-E #82 EIP-3860 fix: the factory no longer deploys the impl inline. Deploy the
+  // implementation FIRST, then inject its address as the factory's first constructor arg.
+  console.log("[1/2] Deploy AAStarAirAccountV7 impl + AAStarAirAccountFactoryV7");
+  const implAddr = await deployContract(walletClient, publicClient, "AAStarAirAccountV7", [], "AAStarAirAccountV7 (impl)");
+  console.log(`  Implementation: ${implAddr}`);
+
+  // Constructor: (implementation, entryPoint, communityGuardian, defaultTokens[], defaultConfigs[])
+  // v0.17.2 removed the defaultValidatorModule/defaultHookModule params (CompositeValidator +
+  // TierGuardHook deleted). Use empty token arrays for a minimal OP Sepolia deployment.
   const factoryArgs = [
+    implAddr,
     ENTRYPOINT,
     COMMUNITY_GUARDIAN,
     [],   // defaultTokens: empty for testnet
     [],   // defaultConfigs: empty for testnet
-    "0x0000000000000000000000000000000000000000" as Address, // defaultValidatorModule
-    "0x0000000000000000000000000000000000000000" as Address, // defaultHookModule
   ];
   const factoryAddr = await deployContract(walletClient, publicClient, "AAStarAirAccountFactoryV7", factoryArgs, "AirAccountFactoryV7");
-
-  // Read implementation address via raw call (selector 0x5c60da1b = implementation())
-  const implResult = await publicClient.call({ to: factoryAddr, data: "0x5c60da1b" as Hex });
-  const implAddr = ("0x" + (implResult.data ?? "0x").slice(-40)) as Address;
-  console.log(`  Implementation (auto-deployed by factory): ${implAddr}`);
 
   // ── Step 2: Deploy ForceExitModule ────────────────────────────────────────
 

@@ -78,10 +78,18 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     /// @dev Sliding-window velocity counter state (issue #57). `callCount` is the number of
     ///      calls in the current window anchored at `windowStart`; `prevCount` is the previous
     ///      window's final count, weighted into the rolling estimate to kill the boundary burst.
+    /// @dev #80 storage packing: the three fields fit in ONE 32-byte slot (was 3 slots = 96
+    ///      bytes). `windowStart` is a unix timestamp → uint48 covers year ~8.9 million.
+    ///      `callCount`/`prevCount` are per-window counters bounded by velocityLimit (a uint16,
+    ///      max 65535) plus at most one increment past the limit before the revert, so uint32
+    ///      (max ~4.29e9) cannot overflow under any realistic or adversarial use. Total width:
+    ///      48 + 32 + 32 = 112 bits, comfortably inside one slot. The sliding-window MATH is
+    ///      unchanged — _rollWindow / _slidingEstimate still operate in uint256 (the narrow
+    ///      fields widen on read), so the WS-C velocity semantics are bit-for-bit preserved.
     struct SessionState {
-        uint256 callCount;
-        uint256 windowStart;
-        uint256 prevCount;
+        uint48 windowStart; // unix timestamp anchoring the current window — offset 0
+        uint32 callCount;   // calls in the current window                 — offset 6
+        uint32 prevCount;   // previous window's final count                — offset 10
     }
 
     // ─── Storage ──────────────────────────────────────────────────────
@@ -383,9 +391,14 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         (uint256 ws, uint256 cc, uint256 pc, uint256 elapsed) =
             _rollWindow(state.windowStart, state.callCount, state.prevCount, s.velocityWindow, block.timestamp);
         if (_slidingEstimate(cc, pc, s.velocityWindow, elapsed) >= s.velocityLimit) revert VelocityLimitExceeded();
-        state.windowStart = ws;
-        state.callCount   = cc + 1;
-        state.prevCount   = pc;
+        // #80: narrow back into the packed fields. ws is a block timestamp (uint48-safe); cc+1
+        // and pc are bounded by velocityLimit (uint16) + 1, far below uint32.max. The explicit
+        // casts are mandatory because Solidity will not implicitly narrow uint256 → uint48/uint32.
+        // velocityLimit being a uint16 guarantees the gate above trips long before any overflow,
+        // but we keep the SafeCast-style assertions out of the hot path: the bound is structural.
+        state.windowStart = uint48(ws);
+        state.callCount   = uint32(cc + 1);
+        state.prevCount   = uint32(pc);
     }
 
     // ─── View accessors ──────────────────────────────────────────────
