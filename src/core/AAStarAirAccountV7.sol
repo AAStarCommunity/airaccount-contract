@@ -515,7 +515,8 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
         // Full guard enforcement at Tier 1: cumulative ETH tier + daily limit + algorithm
         // whitelist + ERC20/token limits. skipEthCheck=false (executor path holds correct msg.sender).
-        _enforceGuard(value, ALG_ECDSA, bytes32(0), target, data, false);
+        // #81: read the guard storage slot once and pass the cached address into _enforceGuard.
+        _enforceGuard(value, ALG_ECDSA, bytes32(0), target, data, false, address(guard));
 
         returnData = new bytes[](1);
         (bool success, bytes memory result) = target.call{value: value}(data);

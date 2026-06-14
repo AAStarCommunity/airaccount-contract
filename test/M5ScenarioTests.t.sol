@@ -175,7 +175,9 @@ contract M5ScenarioTests is Test {
         address[] memory tokens = new address[](1);
         tokens[0] = token;
         AAStarGlobalGuard.TokenConfig[] memory cfgs = new AAStarGlobalGuard.TokenConfig[](1);
-        cfgs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: t1, tier2Limit: t2, dailyLimit: daily });
+        // #82: tier fields are packed uint128; helper params are uint256, so cast explicitly.
+        //      Test inputs are small token amounts, far inside uint128.
+        cfgs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: uint128(t1), tier2Limit: uint128(t2), dailyLimit: daily });
 
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],

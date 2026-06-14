@@ -28,7 +28,9 @@ contract AAStarGlobalGuardM5Test is Test {
     bytes4 constant TSFR_FROM = 0x23b872dd;
 
     // Token decimals
-    uint256 constant USDC_DEC = 1e6;
+    // #82: uint128 so `N * USDC_DEC` matches the packed uint128 TokenConfig tier fields.
+    //      Other uses (recordTokenSpend amount, assertEq) widen to uint256 implicitly.
+    uint128 constant USDC_DEC = 1e6;
     uint256 constant ETH_DEC  = 1 ether;
 
     // ─── Test Setup ───────────────────────────────────────────────────

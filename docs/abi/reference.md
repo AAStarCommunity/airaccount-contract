@@ -363,7 +363,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x20c5a3e1` | `executeRecovery()` | nonpayable | — | Execute recovery after timelock and threshold are met. |
 | `0xc399ec88` | `getDeposit()` | view | — |  |
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
-| `0x46ffaf74` | `guardAddTokenConfig(address,(uint256,uint256,uint256))` | nonpayable | onlyOwner | Add a new ERC20 token config to the guard (monotonic: add-only, never remove) |
+| `0xc19c7050` | `guardAddTokenConfig(address,(uint128,uint128,uint256))` | nonpayable | onlyOwner | Add a new ERC20 token config to the guard (monotonic: add-only, never remove) |
 | `0xa314d1c5` | `guardApproveAlgorithm(uint8)` | nonpayable | onlyOwner | Approve a new algorithm (add-only, never revoke). |
 | `0x3847c084` | `guardDecreaseDailyLimit(uint256)` | nonpayable | onlyOwner | Decrease the guard's ETH daily limit (tighten-only, never increase) |
 | `0xf64fd67c` | `guardDecreaseTokenDailyLimit(address,uint256)` | nonpayable | onlyOwner | Decrease a token's daily limit in the guard (tighten-only, never increase) |
@@ -513,16 +513,16 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `guardAddTokenConfig(address token, (uint256,uint256,uint256) config)`
+#### `guardAddTokenConfig(address token, (uint128,uint128,uint256) config)`
 
-`0x46ffaf74` · nonpayable · access: onlyOwner
+`0xc19c7050` · nonpayable · access: onlyOwner
 
 > Add a new ERC20 token config to the guard (monotonic: add-only, never remove)
 
 | param | type | description |
 |---|---|---|
 | `token` | `address` |  |
-| `config` | `(uint256,uint256,uint256)` |  |
+| `config` | `(uint128,uint128,uint256)` |  |
 
 #### `guardApproveAlgorithm(uint8 algId)`
 
@@ -902,15 +902,15 @@ Authoritative, auto-generated reference for every external/public function, even
 | selector | function | mutability | access | notice |
 |---|---|---|---|---|
 | `0x0d1cfcae` | `agentRegistry()` | view | — |  |
-| `0x364d7480` | `createAccount(address,uint256,(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]))` | nonpayable | — | Deploy a new account with full configuration. |
+| `0xa1d7a1d9` | `createAccount(address,uint256,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | — | Deploy a new account with full configuration. |
 | `0xdd8d1e3a` | `createAccountWithDefaults(address,uint256,address,bytes,address,bytes,uint256)` | nonpayable | — | Deploy account with default community guardian as third guardian. |
 | `0x2b690ea6` | `createAgentAccount(address,bytes32,address,bytes,bytes,uint48,uint256)` | nonpayable | — | Create a dedicated AirAccount for an autonomous AI agent.         The human caller (msg.sender) becomes the account OWNER (not a guardian).         Guardians are [guardian2, communityGuardian] (2-of-2); only guardian2 must sign. |
 | `0x0753414f` | `defaultCommunityGuardian()` | view | — |  |
 | `0xb0d691fe` | `entryPoint()` | view | — |  |
 | `0xbd382b40` | `FACTORY_VERSION()` | view | — | Semantic version of this factory deployment. Used by SDKs for programmatic version detection. |
 | `0x17d8ec7f` | `factoryAdmin()` | view | — |  |
-| `0x5daffec5` | `getAddress(address,uint256,(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]))` | view | — | Predict the counterfactual address for a full-config account. |
-| `0xd1d97536` | `getAddressWithChainId(address,uint256,(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]))` | view | — | Predict account address AND its chain-qualified identifier in one call. |
+| `0xd2b3ecc4` | `getAddress(address,uint256,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict the counterfactual address for a full-config account. |
+| `0x221f92cd` | `getAddressWithChainId(address,uint256,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict account address AND its chain-qualified identifier in one call. |
 | `0x17253640` | `getAddressWithDefaults(address,uint256,address,address,uint256)` | view | — | Predict address for a default-config account. |
 | `0x303f69a1` | `getAgentAddress(address,address,bytes32)` | view | — | Predict the address of a future agent account. |
 | `0x990bb980` | `getChainQualifiedAddress(address)` | view | — | ERC-7828: Returns a chain-qualified address identifier.         Enables cross-chain address disambiguation for accounts deployed at the same address         on multiple L2s via CREATE2 with the same salt. |
@@ -927,9 +927,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `createAccount(address owner, uint256 salt, (address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]) config)`
+#### `createAccount(address owner, uint256 salt, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
 
-`0x364d7480` · nonpayable · access: —
+`0xa1d7a1d9` · nonpayable · access: —
 
 > Deploy a new account with full configuration.
 
@@ -937,7 +937,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` | Account owner (ECDSA signer) |
 | `salt` | `uint256` | CREATE2 salt for deterministic address |
-| `config` | `(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[])` | Full initialization config (guardians, guard, algorithms) |
+| `config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Full initialization config (guardians, guard, algorithms) |
 
 | returns | type | description |
 |---|---|---|
@@ -1019,9 +1019,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `getAddress(address owner, uint256 salt, (address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]) config)`
+#### `getAddress(address owner, uint256 salt, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
 
-`0x5daffec5` · view · access: —
+`0xd2b3ecc4` · view · access: —
 
 > Predict the counterfactual address for a full-config account.
 
@@ -1031,15 +1031,15 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
-| `config` | `(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[])` |  |
+| `config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
 
 | returns | type | description |
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `getAddressWithChainId(address owner, uint256 salt, (address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]) config)`
+#### `getAddressWithChainId(address owner, uint256 salt, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
 
-`0xd1d97536` · view · access: —
+`0x221f92cd` · view · access: —
 
 > Predict account address AND its chain-qualified identifier in one call.
 
@@ -1049,7 +1049,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
-| `config` | `(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[])` |  |
+| `config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
 
 | returns | type | description |
 |---|---|---|
@@ -1194,15 +1194,15 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8dd7712f` | `executeUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)` | nonpayable | onlyEntryPoint |  |
 | `0xc399ec88` | `getDeposit()` | view | — |  |
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
-| `0x46ffaf74` | `guardAddTokenConfig(address,(uint256,uint256,uint256))` | nonpayable | — | Add a new ERC20 token config to the guard (monotonic: add-only, never remove) |
+| `0xc19c7050` | `guardAddTokenConfig(address,(uint128,uint128,uint256))` | nonpayable | — | Add a new ERC20 token config to the guard (monotonic: add-only, never remove) |
 | `0xa314d1c5` | `guardApproveAlgorithm(uint8)` | nonpayable | — | Approve a new algorithm (add-only, never revoke). |
 | `0x3847c084` | `guardDecreaseDailyLimit(uint256)` | nonpayable | — | Decrease the guard's ETH daily limit (tighten-only, never increase) |
 | `0xf64fd67c` | `guardDecreaseTokenDailyLimit(address,uint256)` | nonpayable | — | Decrease a token's daily limit in the guard (tighten-only, never increase) |
 | `0x54387ad7` | `guardianCount()` | view | — | Returns number of active guardians. |
 | `0xf560c734` | `guardians(uint256)` | view | — | Returns guardian address at index (0-2). Returns address(0) for empty slots. |
-| `0x707699cf` | `initialize(address,address,(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]),address)` | nonpayable | initializer | Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit. |
-| `0xea8684bf` | `initialize(address,address,(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]))` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization. |
-| `0x811c2dcf` | `initializeAgentAccount(address,address,(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]),address)` | nonpayable | initializer | Initialize an autonomous-agent account. |
+| `0xb8b72f02` | `initialize(address,address,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit. |
+| `0xd8844741` | `initialize(address,address,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization. |
+| `0x37e831ed` | `initializeAgentAccount(address,address,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize an autonomous-agent account. |
 | `0x9517e29f` | `installModule(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | ERC-7579: Install a module. |
 | `0x112d3a7d` | `isModuleInstalled(uint256,address,bytes)` | view | — | ERC-7579: check whether a module is installed.         Checks the unified module registry for supported types (1,2,4).         Note: the built-in ECDSA validator is registered at initialize time. |
 | `0x1626ba7e` | `isValidSignature(bytes32,bytes)` | view | — | ERC-1271: on-chain signature validation used by ERC-7579 tooling and DeFi protocols.         Validates that the ECDSA signature was produced by this account's owner. |
@@ -1402,16 +1402,16 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `guardAddTokenConfig(address token, (uint256,uint256,uint256) config)`
+#### `guardAddTokenConfig(address token, (uint128,uint128,uint256) config)`
 
-`0x46ffaf74` · nonpayable · access: —
+`0xc19c7050` · nonpayable · access: —
 
 > Add a new ERC20 token config to the guard (monotonic: add-only, never remove)
 
 | param | type | description |
 |---|---|---|
 | `token` | `address` |  |
-| `config` | `(uint256,uint256,uint256)` |  |
+| `config` | `(uint128,uint128,uint256)` |  |
 
 #### `guardApproveAlgorithm(uint8 algId)`
 
@@ -1470,9 +1470,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `initialize(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]) _config, address _guardAddr)`
+#### `initialize(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
 
-`0x707699cf` · nonpayable · access: initializer
+`0xb8b72f02` · nonpayable · access: initializer
 
 > Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit.
 
@@ -1480,12 +1480,12 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_entryPoint` | `address` | ERC-4337 EntryPoint address |
 | `_owner` | `address` | Initial account owner (ECDSA signer) |
-| `_config` | `(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[])` | Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr) |
+| `_config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr) |
 | `_guardAddr` | `address` | Pre-deployed AAStarGlobalGuard address bound to this account's address |
 
-#### `initialize(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]) _config)`
+#### `initialize(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config)`
 
-`0xea8684bf` · nonpayable · access: initializer
+`0xd8844741` · nonpayable · access: initializer
 
 > Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization.
 
@@ -1493,11 +1493,11 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_entryPoint` | `address` | ERC-4337 EntryPoint address |
 | `_owner` | `address` | Initial account owner (ECDSA signer) |
-| `_config` | `(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[])` | Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed) |
+| `_config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed) |
 
-#### `initializeAgentAccount(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[]) _config, address _guardAddr)`
+#### `initializeAgentAccount(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
 
-`0x811c2dcf` · nonpayable · access: initializer
+`0x37e831ed` · nonpayable · access: initializer
 
 > Initialize an autonomous-agent account.
 
@@ -1507,7 +1507,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_entryPoint` | `address` |  |
 | `_owner` | `address` |  |
-| `_config` | `(address[3],uint256,uint8[],uint256,address[],(uint256,uint256,uint256)[])` |  |
+| `_config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
 | `_guardAddr` | `address` |  |
 
 #### `installModule(uint256 moduleTypeId, address module, bytes initData)`
@@ -1934,7 +1934,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarGlobalGuard
 
 - **Source:** `src/core/AAStarGlobalGuard.sol`
-- **Functions:** 14 · **Events:** 5 · **Errors:** 10
+- **Functions:** 14 · **Events:** 5 · **Errors:** 11
 - **Title:** AAStarGlobalGuard — Immutable spending guard bound to an AA account
 - Deployed BY the account contract at construction. Cannot be removed or transferred.
 
@@ -1943,7 +1943,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | selector | function | mutability | access | notice |
 |---|---|---|---|---|
 | `0x5dab2420` | `account()` | view | — | The AA account that owns this guard (set at construction, never changes) |
-| `0x3213ba5b` | `addTokenConfig(address,(uint256,uint256,uint256))` | nonpayable | — | Add a new ERC20 token config. Monotonic: can only ADD, never remove.         Reverts if token is already configured. |
+| `0x332a0da9` | `addTokenConfig(address,(uint128,uint128,uint256))` | nonpayable | — | Add a new ERC20 token config. Monotonic: can only ADD, never remove.         Reverts if token is already configured. |
 | `0x67eeba0c` | `dailyLimit()` | view | — | Daily ETH spending limit in wei (0 = unlimited) |
 | `0x387b9436` | `dailySpent(uint256)` | view | — | Tracks ETH spending per day (day number → amount spent) |
 | `0x66683b61` | `decreaseDailyLimit(uint256)` | nonpayable | — | Decrease ETH daily limit. Can NEVER increase. Cannot go below minDailyLimit. |
@@ -1969,16 +1969,16 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `addTokenConfig(address token, (uint256,uint256,uint256) config)`
+#### `addTokenConfig(address token, (uint128,uint128,uint256) config)`
 
-`0x3213ba5b` · nonpayable · access: —
+`0x332a0da9` · nonpayable · access: —
 
 > Add a new ERC20 token config. Monotonic: can only ADD, never remove.         Reverts if token is already configured.
 
 | param | type | description |
 |---|---|---|
 | `token` | `address` |  |
-| `config` | `(uint256,uint256,uint256)` |  |
+| `config` | `(uint128,uint128,uint256)` |  |
 
 #### `dailyLimit()`
 
@@ -2101,8 +2101,8 @@ Authoritative, auto-generated reference for every external/public function, even
 
 | returns | type | description |
 |---|---|---|
-| `tier1Limit` | `uint256` |  |
-| `tier2Limit` | `uint256` |  |
+| `tier1Limit` | `uint128` |  |
+| `tier2Limit` | `uint128` |  |
 | `dailyLimit` | `uint256` |  |
 
 #### `tokenDailySpent(address arg0, uint256 arg1)`
@@ -2154,6 +2154,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x4e622dca` | `InsufficientTokenTier(uint8,uint8)` |
 | `0x1e11b17d` | `InvalidTokenConfig(address,uint256,uint256,uint256)` |
 | `0xf3f6425d` | `OnlyAccount()` |
+| `0x886d7fb9` | `TierLimitTooLarge()` |
 | `0x54d67cef` | `TokenAlreadyConfigured(address)` |
 | `0x267f818e` | `TokenCanOnlyDecreaseLimit(address,uint256,uint256)` |
 | `0xcc9741af` | `TokenConfigLengthMismatch()` |
@@ -5573,9 +5574,9 @@ Authoritative, auto-generated reference for every external/public function, even
 
 | returns | type | description |
 |---|---|---|
-| `callCount` | `uint256` |  |
-| `windowStart` | `uint256` |  |
-| `prevCount` | `uint256` |  |
+| `windowStart` | `uint48` |  |
+| `callCount` | `uint32` |  |
+| `prevCount` | `uint32` |  |
 
 #### `sessionStates(address arg0, address arg1)`
 
@@ -5590,9 +5591,9 @@ Authoritative, auto-generated reference for every external/public function, even
 
 | returns | type | description |
 |---|---|---|
-| `callCount` | `uint256` |  |
-| `windowStart` | `uint256` |  |
-| `prevCount` | `uint256` |  |
+| `windowStart` | `uint48` |  |
+| `callCount` | `uint32` |  |
+| `prevCount` | `uint32` |  |
 
 #### `validate(bytes32 userOpHash, bytes signature)`
 

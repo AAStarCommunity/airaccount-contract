@@ -198,13 +198,7 @@ contract AAStarAirAccountFactoryV7 {
         // guard creation code stays in factory runtime, not in account runtime — avoids EIP-170 overflow.
         address guardAddr = address(0);
         if (config.dailyLimit > 0) {
-            guardAddr = address(new AAStarGlobalGuard(
-                account,
-                config.dailyLimit,
-                config.minDailyLimit,
-                config.initialTokens,
-                config.initialTokenConfigs
-            ));
+            guardAddr = _deployGuard(account, config);
         }
         account = Clones.cloneDeterministic(implementation, cloneSalt);
         AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
@@ -273,13 +267,7 @@ contract AAStarAirAccountFactoryV7 {
             guardian1, guardian2, dailyLimit
         );
         // Pre-deploy guard bound to the predicted account address before cloning.
-        address guardAddr = address(new AAStarGlobalGuard(
-            account,
-            config.dailyLimit,
-            config.minDailyLimit,
-            config.initialTokens,
-            config.initialTokenConfigs
-        ));
+        address guardAddr = _deployGuard(account, config);
         account = Clones.cloneDeterministic(implementation, cloneSalt);
         AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
         _markAccountValid(account);        emit AccountCreated(account, owner, salt);
@@ -366,13 +354,7 @@ contract AAStarAirAccountFactoryV7 {
             guardian2, address(0), dailyLimit
         );
         // Pre-deploy guard bound to the predicted account address before cloning.
-        address guardAddr = address(new AAStarGlobalGuard(
-            account,
-            config.dailyLimit,
-            config.minDailyLimit,
-            config.initialTokens,
-            config.initialTokenConfigs
-        ));
+        address guardAddr = _deployGuard(account, config);
         account = Clones.cloneDeterministic(implementation, cloneSalt);
         // v0.17.2: agent accounts are structurally identical to human accounts. Session-key
         // grants happen post-creation via the unified SessionKeyValidator (router algId 0x08).
@@ -456,6 +438,24 @@ contract AAStarAirAccountFactoryV7 {
             config.guardians,
             config.dailyLimit,
             config.approvedAlgIds,
+            config.minDailyLimit,
+            config.initialTokens,
+            config.initialTokenConfigs
+        ));
+    }
+
+    /// @dev #82 size recovery: deduplicate the three identical `new AAStarGlobalGuard(...)` sites
+    ///      into ONE so the guard creation code is embedded once, not three times. The uint128
+    ///      packing of TokenConfig (#82) added masking codegen that, embedded 3×, tipped this
+    ///      factory's initcode over the EIP-3860 limit; collapsing the sites recovers the headroom.
+    ///      Behavior is identical — every caller passed the same five constructor arguments.
+    function _deployGuard(address account, AAStarAirAccountBase.InitConfig memory config)
+        private
+        returns (address)
+    {
+        return address(new AAStarGlobalGuard(
+            account,
+            config.dailyLimit,
             config.minDailyLimit,
             config.initialTokens,
             config.initialTokenConfigs

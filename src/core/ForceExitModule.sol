@@ -423,9 +423,11 @@ contract ForceExitModule is IERC7579Module {
         return type(uint256).max;
     }
 
-    /// @dev Counts set bits using parallel bit-manipulation (Hamming weight).
+    /// @dev Counts set bits using the SWAR/bit-parallel Hamming-weight algorithm (#79).
     ///      Overflow note: returns 0 instead of 256 when all 256 bits are set.
     ///      Unreachable here: approvalBitmap has at most 3 bits set (3-guardian threshold).
+    ///      Equivalence to the reference clear-lowest-bit loop is proven in
+    ///      test/PopcountAssembly.t.sol (same assembly body as AAStarAirAccountBase._popcount).
     function _countBits(uint256 bitmap) internal pure returns (uint256 count) {
         assembly {
             bitmap := sub(bitmap, and(shr(1, bitmap), 0x5555555555555555555555555555555555555555555555555555555555555555))

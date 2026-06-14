@@ -1093,7 +1093,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // TierGuardHook cannot call it because guard.checkTransaction has onlyAccount (msg.sender==account),
         // and the hook is a separate contract. Passing false here ensures daily limits are enforced
         // regardless of whether a hook is active.
-        _enforceGuard(value, algId, taggedSessionKey, dest, func, false);
+        // #81: read the guard address ONCE and pass it into _enforceGuard (single execute = one SLOAD).
+        _enforceGuard(value, algId, taggedSessionKey, dest, func, false, address(guard));
         _call(dest, value, func);
     }
 
@@ -1128,8 +1129,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         }
         // Note: hook dispatch is NOT called for executeBatch — preCheck is single-execute only.
         // The built-in guard still enforces limits per-call via _enforceGuard.
+        // #81: read the guard storage slot ONCE before the loop and pass the cached address into
+        // every _enforceGuard call. Previously each call re-SLOADed the `guard` slot (slot 4) per
+        // batched call; now the loop reads it a single time. Behavior is identical — the same guard
+        // contract is targeted for every call in the batch (guard is immutable post-init).
+        address guardAddr = address(guard);
         for (uint256 i = 0; i < dest.length; i++) {
-            _enforceGuard(value[i], algId, taggedSessionKey, dest[i], func[i], false);
+            _enforceGuard(value[i], algId, taggedSessionKey, dest[i], func[i], false, guardAddr);
             _call(dest[i], value[i], func[i]);
         }
     }
@@ -1194,13 +1200,15 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     /// @param skipEthCheck When true, skip guard.recordSpend (hook already metered it to avoid
     ///        double-counting the daily ETH limit). false for direct owner calls and executeBatch
     ///        when no hook is active.
-    function _enforceGuard(uint256 value, uint8 algId, bytes32 taggedSessionKey, address dest, bytes calldata func, bool skipEthCheck) internal {
-        // Cache guard address: avoids 3 separate SLOADs (COLD ~2100 + 2×WARM ~100 = ~2300 gas total)
-        address guardAddr = address(guard);
-
+    /// @param guardAddr Cached guard address, read ONCE by the caller (execute/executeBatch/
+    ///        executeFromExecutor). #81: passing it in lets executeBatch read the `guard` storage
+    ///        slot a single time for the whole batch instead of re-SLOADing it per call. The value
+    ///        MUST equal address(guard) — callers always pass exactly that, and guard is immutable
+    ///        after init, so behavior is identical to reading it inline.
+    function _enforceGuard(uint256 value, uint8 algId, bytes32 taggedSessionKey, address dest, bytes calldata func, bool skipEthCheck, address guardAddr) internal {
         // ETH tier enforcement: cumulative daily spend prevents batch/multi-TX bypass
         if (tier1Limit > 0 || tier2Limit > 0) {
-            uint256 alreadySpent = guardAddr != address(0) ? guard.todaySpent() : 0;
+            uint256 alreadySpent = guardAddr != address(0) ? AAStarGlobalGuard(guardAddr).todaySpent() : 0;
             uint8 required = requiredTier(alreadySpent + value);
             if (required > 0) {
                 uint8 provided = _algTier(algId);
@@ -1215,7 +1223,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // skipEthCheck is always false from execute(); a hook path may meter separately to avoid
         // double-counting the daily ETH limit.
         if (guardAddr != address(0) && !skipEthCheck) {
-            guard.recordSpend(value);
+            AAStarGlobalGuard(guardAddr).recordSpend(value);
         }
 
         // ERC20/DeFi token tier + daily limit enforcement (M5.1 + M6.6b)
@@ -1226,7 +1234,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // `guardAlgId` so approving 0x07 still covers its resolutions; only the tier check
         // (which is what fails under weighted) gets the resolved algId.
         if (func.length >= 4 && guardAddr != address(0)) {
-            _checkTokenGuard(dest, func, algId);
+            _checkTokenGuard(dest, func, algId, guardAddr);
         }
 
         // SESSION KEY scope + velocity enforcement (v0.17.2 unified path).
@@ -1378,14 +1386,17 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     /// @dev ERC20/DeFi token guard enforcement shared by _enforceGuard and executeFromExecutor.
     ///      Checks DeFi parser registry first, falls back to native ERC20 transfer/approve parsing.
     ///      try/catch on getParser(): a buggy/malicious registry must not block execution (LOW audit 2026-03-20).
-    function _checkTokenGuard(address dest, bytes calldata data, uint8 algId) internal {
+    /// @param guardAddr Cached guard address (#81) — passed from _enforceGuard so this helper does
+    ///        not re-SLOAD the `guard` slot. Always equals address(guard) and is non-zero here
+    ///        (caller only invokes _checkTokenGuard when guardAddr != address(0)).
+    function _checkTokenGuard(address dest, bytes calldata data, uint8 algId, address guardAddr) internal {
         bool tokenHandled;
         if (parserRegistry != address(0)) {
             try ICalldataParserRegistry(parserRegistry).getParser(dest) returns (address parser) {
                 if (parser != address(0)) {
                     try ICalldataParser(parser).parseTokenTransfer(data) returns (address tok, uint256 amt) {
                         if (tok != address(0) && amt > 0) {
-                            guard.recordTokenSpend(tok, amt, algId);
+                            AAStarGlobalGuard(guardAddr).recordTokenSpend(tok, amt, algId);
                             tokenHandled = true;
                         }
                     } catch {}
@@ -1395,7 +1406,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (!tokenHandled && data.length >= 68) {
             bytes4 sel = bytes4(data[:4]);
             if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
-                guard.recordTokenSpend(dest, abi.decode(data[36:68], (uint256)), algId);
+                AAStarGlobalGuard(guardAddr).recordTokenSpend(dest, abi.decode(data[36:68], (uint256)), algId);
             }
         }
     }
@@ -1559,10 +1570,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         revert NotGuardian();
     }
 
-    /// @dev Counts set bits using parallel bit-manipulation (Hamming weight / population count).
+    /// @dev Counts set bits using the SWAR/bit-parallel Hamming-weight algorithm (#79).
     ///      Equivalent to the while-loop version but ~5-8x fewer opcodes for typical 3-guardian bitmaps.
     ///      Note: the final mul+shr step overflows when all 256 bits are set (returns 0 instead of 256).
     ///      Unreachable for all callers: max bitmap width is 3 guardians or a bounded weighted-signer set.
+    ///      Equivalence to the reference clear-lowest-bit loop is proven in test/PopcountAssembly.t.sol
+    ///      (exhaustive low range + single-bit + guardian-domain + fuzz). The all-ones edge is the only
+    ///      documented divergence and is asserted there.
     function _popcount(uint256 x) internal pure returns (uint256 count) {
         assembly {
             x := sub(x, and(shr(1, x), 0x5555555555555555555555555555555555555555555555555555555555555555))
