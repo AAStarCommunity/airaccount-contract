@@ -207,12 +207,12 @@ contract AAStarAirAccountV7_M7Test is Test {
         account.installModule(typeId, module, sig);
     }
 
-    function test_accountId_is_0_17_2() public view {
-        assertEq(account.accountId(), "airaccount.v7@0.17.2");
+    function test_accountId_is_0_18_0() public view {
+        assertEq(account.accountId(), "airaccount.v7@0.18.0");
     }
 
     function test_ACCOUNT_VERSION_constant() public view {
-        assertEq(account.ACCOUNT_VERSION(), "0.17.2");
+        assertEq(account.ACCOUNT_VERSION(), "0.18.0");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────

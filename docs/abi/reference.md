@@ -342,7 +342,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountBase
 
 - **Source:** `src/core/AAStarAirAccountBase.sol`
-- **Functions:** 37 · **Events:** 26 · **Errors:** 54
+- **Functions:** 38 · **Events:** 26 · **Errors:** 54
 - **Title:** AAStarAirAccountBase
 - Non-upgradable ERC-4337 smart wallet base with algId-based signature routing,         tiered verification, P256 passkey, social recovery, and global guard.
 
@@ -369,6 +369,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xf64fd67c` | `guardDecreaseTokenDailyLimit(address,uint256)` | nonpayable | onlyOwner | Decrease a token's daily limit in the guard (tighten-only, never increase) |
 | `0x54387ad7` | `guardianCount()` | view | — | Returns number of active guardians. |
 | `0xf560c734` | `guardians(uint256)` | view | — | Returns guardian address at index (0-2). Returns address(0) for empty slots. |
+| `0x253e659b` | `guardSetStrictMode(bool)` | nonpayable | onlyOwner | #22: toggle the guard's strict mode (block unconfigured tokens). Default OFF. |
 | `0x3fe81b6a` | `modifyTierLimitsWithGuardians(uint256,uint256,uint256,bytes[])` | nonpayable | onlyOwner | Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.         Security principle: the authorization level to change a spending guard must match         the tier level being guarded (spending at T2 requires a guardian; modifying T2 does too). |
 | `0x8da5cb5b` | `owner()` | view | — | Account owner and ECDSA signer (mutable for social recovery) |
 | `0x863ee512` | `p256KeyX()` | view | — | P256 public key x-coordinate |
@@ -580,6 +581,16 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `address` |  |
+
+#### `guardSetStrictMode(bool enabled)`
+
+`0x253e659b` · nonpayable · access: onlyOwner
+
+> #22: toggle the guard's strict mode (block unconfigured tokens). Default OFF.
+
+| param | type | description |
+|---|---|---|
+| `enabled` | `bool` |  |
 
 #### `modifyTierLimitsWithGuardians(uint256 _tier1, uint256 _tier2, uint256 deadline, bytes[] guardianSigs)`
 
@@ -1170,7 +1181,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 53 · **Events:** 26 · **Errors:** 55
+- **Functions:** 54 · **Events:** 26 · **Errors:** 55
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1201,6 +1212,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xf64fd67c` | `guardDecreaseTokenDailyLimit(address,uint256)` | nonpayable | — | Decrease a token's daily limit in the guard (tighten-only, never increase) |
 | `0x54387ad7` | `guardianCount()` | view | — | Returns number of active guardians. |
 | `0xf560c734` | `guardians(uint256)` | view | — | Returns guardian address at index (0-2). Returns address(0) for empty slots. |
+| `0x253e659b` | `guardSetStrictMode(bool)` | nonpayable | — | #22: toggle the guard's strict mode (block unconfigured tokens). Default OFF. |
 | `0xb8b72f02` | `initialize(address,address,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit. |
 | `0xd8844741` | `initialize(address,address,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization. |
 | `0x37e831ed` | `initializeAgentAccount(address,address,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize an autonomous-agent account. |
@@ -1470,6 +1482,16 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `address` |  |
+
+#### `guardSetStrictMode(bool enabled)`
+
+`0x253e659b` · nonpayable · access: —
+
+> #22: toggle the guard's strict mode (block unconfigured tokens). Default OFF.
+
+| param | type | description |
+|---|---|---|
+| `enabled` | `bool` |  |
 
 #### `initialize(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
 
@@ -1935,7 +1957,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarGlobalGuard
 
 - **Source:** `src/core/AAStarGlobalGuard.sol`
-- **Functions:** 14 · **Events:** 5 · **Errors:** 11
+- **Functions:** 16 · **Events:** 6 · **Errors:** 12
 - **Title:** AAStarGlobalGuard — Immutable spending guard bound to an AA account
 - Deployed BY the account contract at construction. Cannot be removed or transferred.
 
@@ -1945,14 +1967,16 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|---|---|
 | `0x5dab2420` | `account()` | view | — | The AA account that owns this guard (set at construction, never changes) |
 | `0x332a0da9` | `addTokenConfig(address,(uint128,uint128,uint256))` | nonpayable | — | Add a new ERC20 token config. Monotonic: can only ADD, never remove.         Reverts if token is already configured. |
+| `0x26ccb471` | `blockUnconfiguredTokens()` | view | — | #22 strict mode (opt-in, default OFF). When true, `recordTokenSpend` reverts on a         token that has NO config instead of passing it through with no limits. Lets an account         opt into a strict allowlist (only pre-configured tokens are spendable) for a higher         security posture, while the default-OFF behavior stays backward-compatible (new         airdrops / tokens added after account creation still pass through). |
 | `0x67eeba0c` | `dailyLimit()` | view | — | Daily ETH spending limit in wei (0 = unlimited) |
 | `0x387b9436` | `dailySpent(uint256)` | view | — | Tracks ETH spending per day (day number → amount spent) |
 | `0x66683b61` | `decreaseDailyLimit(uint256)` | nonpayable | — | Decrease ETH daily limit. Can NEVER increase. Cannot go below minDailyLimit. |
 | `0x1eadabce` | `decreaseTokenDailyLimit(address,uint256)` | nonpayable | — | Decrease a token's daily limit. Can NEVER increase.         Cannot decrease to 0 when tier limits are configured — that would break cumulative tracking. |
 | `0xd0f1216f` | `minDailyLimit()` | view | — | Absolute floor — daily limit can never be decreased below this value. |
 | `0x31159b41` | `recordSpend(uint256)` | nonpayable | — | Record an ETH spend and enforce the ETH daily limit. Pure accounting. |
-| `0x6227c617` | `recordTokenSpend(address,uint256,uint8)` | nonpayable | — | Check if an ERC20 token transaction is allowed.         Enforces algorithm whitelist, token tier limits (cumulative), and token daily limit.         DESIGN: Guard is opt-in per token. Unconfigured tokens pass through with no limits.         Rationale: blocking all unconfigured tokens would prevent users from handling new         airdrops or tokens added after account creation. High-value tokens (USDC, USDT,         WETH, WBTC, aPNTs) are pre-configured at account creation via factory defaults.         A future "strict mode" flag (blockUnconfiguredTokens) is planned for M6.         NOTE: Checks happen at execution, not validation (ERC-4337 constraint: validation         must be stateless; cumulative spend tracking requires state writes → must be exec).         Consequence: a blocked execution still consumes gas from the account's EP deposit.         This is standard ERC-4337 behavior, not specific to this implementation. |
+| `0x6227c617` | `recordTokenSpend(address,uint256,uint8)` | nonpayable | — | Check if an ERC20 token transaction is allowed.         Enforces algorithm whitelist, token tier limits (cumulative), and token daily limit.         DESIGN: Guard is opt-in per token. Unconfigured tokens pass through with no limits.         Rationale: blocking all unconfigured tokens would prevent users from handling new         airdrops or tokens added after account creation. High-value tokens (USDC, USDT,         WETH, WBTC, aPNTs) are pre-configured at account creation via factory defaults.         #22: an opt-in "strict mode" flag (blockUnconfiguredTokens, default OFF) flips this         to an allowlist — when set, an unconfigured token reverts with TokenNotConfigured().         NOTE: Checks happen at execution, not validation (ERC-4337 constraint: validation         must be stateless; cumulative spend tracking requires state writes → must be exec).         Consequence: a blocked execution still consumes gas from the account's EP deposit.         This is standard ERC-4337 behavior, not specific to this implementation. |
 | `0x39dcbd6f` | `remainingDailyAllowance()` | view | — | Query remaining ETH daily allowance |
+| `0x86ef40c0` | `setStrictMode(bool)` | nonpayable | — | #22: enable/disable strict mode (block unconfigured tokens). Default OFF.         Only the bound account may call this (the account exposes an owner-gated wrapper). |
 | `0x2a88a496` | `todaySpent()` | view | — | Query ETH spent today (for account's cumulative tier enforcement) |
 | `0x1b69dc5f` | `tokenConfigs(address)` | view | — | Per-token tier and daily limit configuration |
 | `0xc5ee9862` | `tokenDailySpent(address,uint256)` | view | — | Tracks token spending per day: token → day → amount spent |
@@ -1980,6 +2004,16 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `token` | `address` |  |
 | `config` | `(uint128,uint128,uint256)` |  |
+
+#### `blockUnconfiguredTokens()`
+
+`0x26ccb471` · view · access: —
+
+> #22 strict mode (opt-in, default OFF). When true, `recordTokenSpend` reverts on a         token that has NO config instead of passing it through with no limits. Lets an account         opt into a strict allowlist (only pre-configured tokens are spendable) for a higher         security posture, while the default-OFF behavior stays backward-compatible (new         airdrops / tokens added after account creation still pass through).
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
 
 #### `dailyLimit()`
 
@@ -2056,7 +2090,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0x6227c617` · nonpayable · access: —
 
-> Check if an ERC20 token transaction is allowed.         Enforces algorithm whitelist, token tier limits (cumulative), and token daily limit.         DESIGN: Guard is opt-in per token. Unconfigured tokens pass through with no limits.         Rationale: blocking all unconfigured tokens would prevent users from handling new         airdrops or tokens added after account creation. High-value tokens (USDC, USDT,         WETH, WBTC, aPNTs) are pre-configured at account creation via factory defaults.         A future "strict mode" flag (blockUnconfiguredTokens) is planned for M6.         NOTE: Checks happen at execution, not validation (ERC-4337 constraint: validation         must be stateless; cumulative spend tracking requires state writes → must be exec).         Consequence: a blocked execution still consumes gas from the account's EP deposit.         This is standard ERC-4337 behavior, not specific to this implementation.
+> Check if an ERC20 token transaction is allowed.         Enforces algorithm whitelist, token tier limits (cumulative), and token daily limit.         DESIGN: Guard is opt-in per token. Unconfigured tokens pass through with no limits.         Rationale: blocking all unconfigured tokens would prevent users from handling new         airdrops or tokens added after account creation. High-value tokens (USDC, USDT,         WETH, WBTC, aPNTs) are pre-configured at account creation via factory defaults.         #22: an opt-in "strict mode" flag (blockUnconfiguredTokens, default OFF) flips this         to an allowlist — when set, an unconfigured token reverts with TokenNotConfigured().         NOTE: Checks happen at execution, not validation (ERC-4337 constraint: validation         must be stateless; cumulative spend tracking requires state writes → must be exec).         Consequence: a blocked execution still consumes gas from the account's EP deposit.         This is standard ERC-4337 behavior, not specific to this implementation.
 
 *@dev* v0.17.2-beta.4: renamed from checkTokenTransaction; whitelist revert removed.
 
@@ -2079,6 +2113,16 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `uint256` |  |
+
+#### `setStrictMode(bool enabled)`
+
+`0x86ef40c0` · nonpayable · access: —
+
+> #22: enable/disable strict mode (block unconfigured tokens). Default OFF.         Only the bound account may call this (the account exposes an owner-gated wrapper).
+
+| param | type | description |
+|---|---|---|
+| `enabled` | `bool` |  |
 
 #### `todaySpent()`
 
@@ -2141,6 +2185,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|
 | `0xf5815a4e208c14f86faefba14ac3ebbfd5daa37a4d9ce3ce73ddf3fc5e97aca4` | `DailyLimitDecreased(uint256,uint256)` |
 | `0xf963f384870dfbbabec85a70562ad3436b8bf2724843588d2fe72db42df2607f` | `SpendRecorded(uint256,uint256,uint256)` |
+| `0x790efd28ff80a4aa071e4b37879d170d77321bd15b4c4c1f79085dd5930bf5dc` | `StrictModeSet(bool)` |
 | `0x03a77b8c6329eff10fdac568960f268ba42d9fed2d82b3bca689a6b9875c0bf2` | `TokenConfigAdded(address,uint256,uint256,uint256)` |
 | `0xf57c96b39ac1b62dc14fd2f7771c0b162be2177d35ceeef7ae969e664ffe0b50` | `TokenDailyLimitDecreased(address,uint256,uint256)` |
 | `0x2a70682e83ca15beb889228127ae9150ee912cfc14183168af24b65eb591bc61` | `TokenSpendRecorded(address,uint256,uint256,uint256)` |
@@ -2160,6 +2205,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x267f818e` | `TokenCanOnlyDecreaseLimit(address,uint256,uint256)` |
 | `0xcc9741af` | `TokenConfigLengthMismatch()` |
 | `0x7ef81e65` | `TokenDailyLimitExceeded(address,uint256,uint256)` |
+| `0xec398688` | `TokenNotConfigured()` |
 
 ## AirAccountDelegate
 
@@ -4761,7 +4807,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarBLSAlgorithm
 
 - **Source:** `src/validators/AAStarBLSAlgorithm.sol`
-- **Functions:** 24 · **Events:** 6 · **Errors:** 14
+- **Functions:** 23 · **Events:** 6 · **Errors:** 14
 - **Title:** AAStarBLSAlgorithm - BLS12-381 aggregate signature verification with node management
 - Extracted from YetAnotherAA AAStarValidator with assembly optimizations.         ABI-compatible with the NestJS backend (registerPublicKey, isRegistered, etc.)
 
@@ -4775,7 +4821,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x0fb2df82` | `batchRegisterPublicKeys(bytes32[],bytes[])` | nonpayable | onlyOwner |  |
 | `0xb5abc0a2` | `cacheAggregatedKey(bytes32[])` | pure | — | DEPRECATED in v0.17.2-beta.1 — cache mechanism removed (Codex round 5 HIGH-1).         The previous design cached aggregate keys per `keccak256(nodeIds)` but did not         invalidate them on `updatePublicKey` / `revokePublicKey`, so a compromised key         remained usable through any cached set. Aggregation is now always on-demand. |
 | `0xe0034220` | `computeSetHash(bytes32[])` | pure | — | Compute the cache key for a set of nodeIds (retained for off-chain compatibility). |
-| `0xdb38162a` | `g2Add(bytes,bytes)` | view | — |  |
 | `0x8990fd25` | `getGasEstimate(uint256)` | pure | — | Public gas estimate (NestJS-compatible) |
 | `0x29173a92` | `getRegisteredNodeCount()` | view | — |  |
 | `0x4ce0737e` | `getRegisteredNodes(uint256,uint256)` | view | — |  |
@@ -4858,21 +4903,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `bytes32` |  |
-
-#### `g2Add(bytes p1, bytes p2)`
-
-`0xdb38162a` · view · access: —
-
-*@dev* G2 point addition via EIP-2537 precompile (address 0x0e)
-
-| param | type | description |
-|---|---|---|
-| `p1` | `bytes` |  |
-| `p2` | `bytes` |  |
-
-| returns | type | description |
-|---|---|---|
-| `result` | `bytes` |  |
 
 #### `getGasEstimate(uint256 nodeCount)`
 

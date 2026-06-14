@@ -50,9 +50,9 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
     ///      Verified on the target chain via the working G1ADD/PAIRING used below
     ///      (Sepolia M2 BLS E2E) and an empirical local probe under `--evm-version prague`:
     ///      0x0b=G1ADD, 0x0d=G2ADD, 0x0f=PAIRING_CHECK, 0x10=MAP_FP_TO_G1, 0x11=MAP_FP2_TO_G2.
-    ///      NOTE: the legacy `g2Add()` helper in this contract (and AAStarBLSAggregator)
-    ///      uses 0x0e, which is BLS12_G2MSM in the final addressing — a latent bug, but it
-    ///      is NOT on the verified validate() path. The hash-to-curve path below uses 0x0d.
+    ///      #104 (v0.18.0-beta.2): the dead legacy `g2Add()` helper that used 0x0e
+    ///      (BLS12_G2MSM in the final addressing — a latent bug) has been removed. The only
+    ///      G2 addition on the live hash-to-curve path is `_g2AddPoints`, which uses 0x0d.
     address private constant G1ADD_PRECOMPILE = address(0x0b);
     address private constant PAIRING_PRECOMPILE = address(0x0f);
     address private constant SHA256_PRECOMPILE = address(0x02);
@@ -688,37 +688,6 @@ contract AAStarBLSAlgorithm is IAAStarAlgorithm {
             result = _g1Add(result, registeredKeys[nodeIds[i]]);
         }
         return result;
-    }
-
-    /// @dev G2 point addition via EIP-2537 precompile (address 0x0e)
-    function g2Add(bytes memory p1, bytes memory p2) external view returns (bytes memory result) {
-        return _g2Add(p1, p2);
-    }
-
-    function _g2Add(bytes memory p1, bytes memory p2) internal view returns (bytes memory result) {
-        result = new bytes(G2_POINT_LENGTH);
-        assembly {
-            let input := mload(0x40)
-            mstore(0x40, add(input, 512))
-
-            // Copy p1 (256 bytes)
-            let src := add(p1, 0x20)
-            let dst := input
-            for { let i := 0 } lt(i, 8) { i := add(i, 1) } {
-                mstore(add(dst, mul(i, 0x20)), mload(add(src, mul(i, 0x20))))
-            }
-
-            // Copy p2 (256 bytes)
-            src := add(p2, 0x20)
-            dst := add(input, 256)
-            for { let i := 0 } lt(i, 8) { i := add(i, 1) } {
-                mstore(add(dst, mul(i, 0x20)), mload(add(src, mul(i, 0x20))))
-            }
-
-            // staticcall G2Add precompile (0x0e)
-            let success := staticcall(gas(), 0x0e, input, 512, add(result, 0x20), 256)
-            if iszero(success) { revert(0, 0) }
-        }
     }
 
     /// @notice issue #45 Part B: set the single protocol-level batch BLS aggregator.

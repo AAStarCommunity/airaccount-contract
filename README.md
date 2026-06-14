@@ -74,7 +74,7 @@ Combined `v0.17.2-beta.1` + `v0.17.2-beta.2`:
 | 2 | **Tiered multisig** | Single WebAuthn (<$100) → dual-factor (<$1K) → multi-sig (>$1K). Onchain $-gated |
 | 3 | **Session Key + Agent** | One `SessionKeyValidator` for both classic and agent modes: velocity / callTargets / selectorAllowlist / P256 passkey. Agent never holds owner rights |
 | 4 | **ERC-8004 Agent economy** | Official Identity / Reputation / Validation registries + factory-provenance whitelist |
-| 5 | **Social Recovery (3-2-72h)** | 3 guardians, 2-of-3 threshold, 72h timelock. cancelRecovery is 2-of-3 vote (NOT owner) |
+| 5 | **Social Recovery (3-2-48h)** | 3 guardians, 2-of-3 threshold, 48h timelock. cancelRecovery is 2-of-3 vote (NOT owner) |
 | 6 | **ForceExit emergency drain** | L2→L1 bridge withdrawal (Optimism / Arbitrum). beta.2 stale-guardian hardened |
 | 7 | **EIP-7702 EOA upgrade** | `AirAccountDelegate` makes an existing EOA an AirAccount via one type-4 tx |
 | 8 | **ERC-4337 v0.7 + ERC-7579 modular** | Standard paymaster, modular validator/executor/hook. SuperPaymaster plug-and-play |

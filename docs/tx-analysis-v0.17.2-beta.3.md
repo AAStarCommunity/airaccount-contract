@@ -72,7 +72,7 @@ Codex 通过 `eth_getTransactionReceipt` 验证了跨 Phase 08-12 的 9 笔代�
 
 | 函数 | 典型 gas | AirAccount 功能 |
 |------|---------|----------------|
-| `proposeRecovery(newOwner)` | ~107k | Guardian 提议换 owner：写入 `activeRecovery` 状态，启动 72h timelock |
+| `proposeRecovery(newOwner)` | ~107k | Guardian 提议换 owner：写入 `activeRecovery` 状态，启动 48h timelock |
 | `approveRecovery()` | ~39k | 第 N 个 guardian 审批：`approvalBitmap` 第 N 位置 1，2/3 达到阈值后 timelock 开始倒计时 |
 | `cancelRecovery()` | 52k / 41k | Guardian 投票取消：需 2/3 guardian 投 cancel，**不是 owner 决定**（防私钥泄露后攻击者取消恢复） |
 | `installModule(typeId, module, initData)` | ~97k | ERC-7579 模块安装：owner 发起 + guardian 签名 initData 作授权（防止恶意模块安装） |

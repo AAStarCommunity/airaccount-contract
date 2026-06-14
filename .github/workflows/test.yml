@@ -57,18 +57,16 @@ jobs:
   # ── issue #45 BLS↔userOpHash binding (EIP-2537 / Prague) ───────────────────
   # The main `test` job runs under the repo-default evm_version = cancun, where the
   # EIP-2537 precompiles (G2ADD 0x0d / MAP_FP2_TO_G2 0x11) do NOT exist — so the
-  # on-chain hash_to_curve / pairing tests self-skip there. This job re-runs ONLY the
-  # #45 binding tests under --evm-version prague, where revm provides EIP-2537, so the
-  # golden-vector + replay-binding + batch-aggregator crypto is actually exercised.
+  # on-chain hash_to_curve / pairing tests self-skip there. This job re-runs the FULL
+  # suite under --evm-version prague, where revm provides EIP-2537, so the golden-vector
+  # + replay-binding + batch-aggregator crypto is actually exercised.
   #
-  # Scoped with --match-contract on purpose: there are 2 PRE-EXISTING, #45-UNRELATED
-  # failures under prague that this job intentionally excludes (tracked in issue #104):
-  #   • AAStarBLSAlgorithmTest.test_aggregateKeys_twoNodes — feeds non-curve fake G1
-  #     points; the real G1ADD (0x0b) precompile rejects them.
-  #   • AAStarBLSAlgorithmTest.test_g2Add — legacy g2Add helper at 0x0e (G2MSM, not G2ADD).
-  # Do not widen this job's scope until those are fixed (#104).
+  # #104 (v0.18.0-beta.2): the two pre-existing prague-only failures have been fixed
+  # (dead 0x0e g2Add helper removed; test_aggregateKeys_twoNodes now feeds real on-curve
+  # G1 points), so the job is no longer scoped with --match-contract — the whole suite
+  # must be green under prague.
   bls-binding-prague:
-    name: forge test (EIP-2537 / prague) — #45 binding
+    name: forge test (EIP-2537 / prague) — full suite
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.2.2
@@ -80,6 +78,6 @@ jobs:
         with:
           version: nightly
 
-      - name: Run #45 binding tests under Prague (golden-vector + single-op replay + batch aggregator)
-        run: forge test --evm-version prague --match-contract "HashToG2GoldenTest|BLSReplayBindingTest|AAStarBLSAggregatorTest" -vv
+      - name: Run full suite under Prague (golden-vector + single-op replay + batch aggregator + all units)
+        run: forge test --evm-version prague -vv
         working-directory: .

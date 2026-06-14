@@ -55,6 +55,13 @@ contract AAStarGlobalGuard {
     /// @notice Tracks token spending per day: token → day → amount spent
     mapping(address => mapping(uint256 => uint256)) public tokenDailySpent;
 
+    /// @notice #22 strict mode (opt-in, default OFF). When true, `recordTokenSpend` reverts on a
+    ///         token that has NO config instead of passing it through with no limits. Lets an account
+    ///         opt into a strict allowlist (only pre-configured tokens are spendable) for a higher
+    ///         security posture, while the default-OFF behavior stays backward-compatible (new
+    ///         airdrops / tokens added after account creation still pass through).
+    bool public blockUnconfiguredTokens;
+
     // ─── Events ─────────────────────────────────────────────────
 
     event DailyLimitDecreased(uint256 oldLimit, uint256 newLimit);
@@ -62,6 +69,8 @@ contract AAStarGlobalGuard {
     event TokenConfigAdded(address indexed token, uint256 tier1Limit, uint256 tier2Limit, uint256 dailyLimit);
     event TokenDailyLimitDecreased(address indexed token, uint256 oldLimit, uint256 newLimit);
     event TokenSpendRecorded(address indexed token, uint256 indexed day, uint256 amount, uint256 totalSpent);
+    /// @dev #22: emitted when the strict-mode flag (blockUnconfiguredTokens) is changed.
+    event StrictModeSet(bool enabled);
 
     // ─── Errors ─────────────────────────────────────────────────
 
@@ -81,6 +90,9 @@ contract AAStarGlobalGuard {
     /// @dev #82: a tier limit exceeds the uint128 packed-field capacity. Prevents a silent
     ///      truncation if a wider (uint256) source ever feeds the packed tier fields.
     error TierLimitTooLarge();
+    /// @dev #22 strict mode: thrown when blockUnconfiguredTokens is set and a spend targets a token
+    ///      that has no config. The account/owner must `addTokenConfig` the token first.
+    error TokenNotConfigured();
 
     // ─── Modifier ───────────────────────────────────────────────
 
@@ -177,7 +189,8 @@ contract AAStarGlobalGuard {
     ///         Rationale: blocking all unconfigured tokens would prevent users from handling new
     ///         airdrops or tokens added after account creation. High-value tokens (USDC, USDT,
     ///         WETH, WBTC, aPNTs) are pre-configured at account creation via factory defaults.
-    ///         A future "strict mode" flag (blockUnconfiguredTokens) is planned for M6.
+    ///         #22: an opt-in "strict mode" flag (blockUnconfiguredTokens, default OFF) flips this
+    ///         to an allowlist — when set, an unconfigured token reverts with TokenNotConfigured().
     ///
     ///         NOTE: Checks happen at execution, not validation (ERC-4337 constraint: validation
     ///         must be stateless; cumulative spend tracking requires state writes → must be exec).
@@ -190,8 +203,9 @@ contract AAStarGlobalGuard {
     /// @dev v0.17.2-beta.4: renamed from checkTokenTransaction; whitelist revert removed.
     function recordTokenSpend(address token, uint256 amount, uint8 algId) external onlyAccount returns (bool) {
         TokenConfig memory cfg = tokenConfigs[token];
-        // Unconfigured token: no limits applied, pass through
+        // Unconfigured token. #22: in strict mode reject it; otherwise pass through with no limits.
         if (cfg.tier1Limit == 0 && cfg.tier2Limit == 0 && cfg.dailyLimit == 0) {
+            if (blockUnconfiguredTokens) revert TokenNotConfigured();
             return true;
         }
 
@@ -256,6 +270,13 @@ contract AAStarGlobalGuard {
         uint256 old = cfg.dailyLimit;
         cfg.dailyLimit = newLimit;
         emit TokenDailyLimitDecreased(token, old, newLimit);
+    }
+
+    /// @notice #22: enable/disable strict mode (block unconfigured tokens). Default OFF.
+    ///         Only the bound account may call this (the account exposes an owner-gated wrapper).
+    function setStrictMode(bool enabled) external onlyAccount {
+        blockUnconfiguredTokens = enabled;
+        emit StrictModeSet(enabled);
     }
 
     // ─── Monotonic ETH Configuration ────────────────────────────

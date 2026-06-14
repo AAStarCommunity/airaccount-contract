@@ -104,7 +104,7 @@ cross-multiplication (no division), so set both cap and window deliberately.
 **Canonical:** [`11-guardian-recovery-module.ts`](../../scripts/e2e-v0172/11-guardian-recovery-module.ts) GR.2–GR.8.
 
 `proposeRecovery(newOwner)` (a guardian) → `approveRecovery()` (other guardians, 2/3 threshold,
-72h timelock). **`cancelRecovery()` needs 2/3 guardian votes, not the owner** — owner calling it
+48h timelock). **`cancelRecovery()` needs 2/3 guardian votes, not the owner** — owner calling it
 reverts `NotGuardian` (`0xef6d0f02`). On salt-fixed/test accounts, call `clearStaleRecovery()`
 before re-proposing (stale `activeRecovery` accumulates across runs). Error selectors:
 `0x6e5510ce` `RecoveryAlreadyActive`, `0xaa40cfc6` `RecoveryTimelockNotExpired`.
