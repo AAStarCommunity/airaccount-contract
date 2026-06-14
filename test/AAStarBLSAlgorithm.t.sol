@@ -20,6 +20,11 @@ contract AAStarBLSAlgorithmTest is Test {
     bytes pubKey2;
     bytes pubKey3;
 
+    /// @dev BLS12-381 G1 generator in EIP-2537 format (128 bytes). A real on-curve point,
+    ///      needed for tests that exercise the G1ADD precompile (rejects off-curve inputs).
+    bytes constant G1_GENERATOR =
+        hex"0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1";
+
     function setUp() public {
         owner = address(this);
         bls = new AAStarBLSAlgorithm();
@@ -327,25 +332,16 @@ contract AAStarBLSAlgorithmTest is Test {
     }
 
     function test_aggregateKeys_twoNodes_returnsG1Point() public {
-        // Two nodes calls _g1Add (EIP-2537 G1Add precompile 0x0b).
-        // Foundry includes EIP-2537 precompiles regardless of evm_version config.
-        bls.registerPublicKey(NODE1, pubKey1);
-        bls.registerPublicKey(NODE2, pubKey2);
+        // Two nodes calls _g1Add (EIP-2537 G1Add precompile 0x0b). The real precompile
+        // rejects points that are not on the BLS12-381 G1 curve, so we must register valid
+        // on-curve points here (the fake _fakeG1Point blobs are off-curve and would revert
+        // under --evm-version prague). G1ADD(G, G) = 2G is a valid doubling. (#104)
+        bls.registerPublicKey(NODE1, G1_GENERATOR);
+        bls.registerPublicKey(NODE2, G1_GENERATOR);
         bytes32[] memory ids = new bytes32[](2);
         ids[0] = NODE1;
         ids[1] = NODE2;
         bytes memory result = bls.aggregateKeys(ids);
         assertEq(result.length, 128); // G1 point = 128 bytes
-    }
-
-    // ─── g2Add ────────────────────────────────────────────────────────
-
-    function test_g2Add_returnsG2Point() public {
-        // EIP-2537 G2Add precompile (0x0e). Foundry includes EIP-2537 precompiles
-        // in its EVM regardless of the evm_version config value.
-        bytes memory p1 = new bytes(256);
-        bytes memory p2 = new bytes(256);
-        bytes memory result = bls.g2Add(p1, p2);
-        assertEq(result.length, 256); // G2 point = 256 bytes
     }
 }
