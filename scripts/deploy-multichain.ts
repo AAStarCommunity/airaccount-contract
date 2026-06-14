@@ -10,12 +10,11 @@
  *
  * Uses CREATE2 via 0x4e59b44847b379578588920cA78FbF26c0B4956C for deterministic addresses.
  *
- * Deployed contracts per chain:
- *   1. AirAccountCompositeValidator  (validator module)
- *   2. TierGuardHook                 (hook module)
- *   3. ForceExitModule               (executor module, C10)
- *   4. AAStarAirAccountV7            (account implementation)
- *   5. AAStarAirAccountFactoryV7     (clone factory)
+ * Deployed contracts per chain (v0.17.2: CompositeValidator + TierGuardHook removed —
+ * session keys are handled by the unified SessionKeyValidator at router algId 0x08):
+ *   1. ForceExitModule               (executor module, C10)
+ *   2. AAStarAirAccountV7            (account implementation — injected into the factory)
+ *   3. AAStarAirAccountFactoryV7     (clone factory)
  *
  * Usage:
  *   pnpm tsx scripts/deploy-multichain.ts --testnet
@@ -194,8 +193,6 @@ async function deployViaCreate2(
 interface ChainDeployResult {
   chain: string;
   chainId: number;
-  compositeValidator: Address;
-  tierGuardHook: Address;
   forceExitModule: Address;
   implementation: Address;
   factory: Address;
@@ -213,8 +210,6 @@ async function deployToChain(
     return {
       chain: cfg.name,
       chainId: cfg.chainId,
-      compositeValidator: ZERO_ADDR,
-      tierGuardHook: ZERO_ADDR,
       forceExitModule: ZERO_ADDR,
       implementation: ZERO_ADDR,
       factory: ZERO_ADDR,
@@ -248,8 +243,6 @@ async function deployToChain(
     return {
       chain: cfg.name,
       chainId: cfg.chainId,
-      compositeValidator: ZERO_ADDR,
-      tierGuardHook: ZERO_ADDR,
       forceExitModule: ZERO_ADDR,
       implementation: ZERO_ADDR,
       factory: ZERO_ADDR,
@@ -260,43 +253,14 @@ async function deployToChain(
 
   try {
     // Load artifacts (built by forge build before this script runs)
-    const compositeValidatorArtifact = loadArtifact("AirAccountCompositeValidator");
-    const tierGuardHookArtifact      = loadArtifact("TierGuardHook");
+    // v0.17.2: AirAccountCompositeValidator + TierGuardHook were DELETED (replaced by the unified
+    // SessionKeyValidator at router algId 0x08). WS-E confirms they no longer build, so this
+    // multichain script deploys only the live singletons: ForceExitModule, impl, factory.
     const forceExitModuleArtifact    = loadArtifact("ForceExitModule");
     const accountArtifact            = loadArtifact("AAStarAirAccountV7");
     const factoryArtifact            = loadArtifact("AAStarAirAccountFactoryV7");
 
-    // ── 1. AirAccountCompositeValidator ───────────────────────────────────
-    const compositeValidatorInitCode = encodeDeployData({
-      abi: compositeValidatorArtifact.abi,
-      bytecode: compositeValidatorArtifact.bytecode,
-      args: [],
-    });
-    const cvSalt = makeSalt(signer.address, "composite-validator-v1", cfg.chainId);
-    const { address: compositeValidatorAddr } = await deployViaCreate2(
-      publicClient,
-      walletClient,
-      cvSalt,
-      compositeValidatorInitCode,
-      "AirAccountCompositeValidator"
-    );
-
-    // ── 2. TierGuardHook ──────────────────────────────────────────────────
-    const tierGuardHookInitCode = encodeDeployData({
-      abi: tierGuardHookArtifact.abi,
-      bytecode: tierGuardHookArtifact.bytecode,
-      args: [],
-    });
-    const tghSalt = makeSalt(signer.address, "tier-guard-hook-v1", cfg.chainId);
-    const { address: tierGuardHookAddr } = await deployViaCreate2(
-      publicClient,
-      walletClient,
-      tghSalt,
-      tierGuardHookInitCode,
-      "TierGuardHook"
-    );
-
-    // ── 3. ForceExitModule ────────────────────────────────────────────────
+    // ── 1. ForceExitModule ────────────────────────────────────────────────
     const forceExitModuleInitCode = encodeDeployData({
       abi: forceExitModuleArtifact.abi,
       bytecode: forceExitModuleArtifact.bytecode,
@@ -311,10 +275,10 @@ async function deployToChain(
       "ForceExitModule"
     );
 
-    // ── 4. AAStarAirAccountV7 (implementation) ────────────────────────────
+    // ── 2. AAStarAirAccountV7 (implementation) ────────────────────────────
     // AAStarAirAccountV7 has a no-arg constructor; clones call initialize() post-deploy.
-    // Note: the factory also deploys its own implementation internally via `new AAStarAirAccountV7()`.
-    // This separate CREATE2 deployment provides a stable reference address.
+    // WS-E #82 EIP-3860 fix: the factory NO LONGER deploys the impl inline — this CREATE2
+    // deployment is now the sole impl, injected into the factory's first constructor arg.
     const implInitCode = accountArtifact.bytecode;
     const implSalt = makeSalt(signer.address, "airaccount-v7-impl-v1", cfg.chainId);
     const { address: implAddr } = await deployViaCreate2(
@@ -325,17 +289,19 @@ async function deployToChain(
       "AAStarAirAccountV7 (impl)"
     );
 
-    // ── 5. AAStarAirAccountFactoryV7 ──────────────────────────────────────
+    // ── 3. AAStarAirAccountFactoryV7 ──────────────────────────────────────
+    // Constructor (v0.17.2 + WS-E): (implementation, entryPoint, communityGuardian,
+    // defaultTokens[], defaultTokenConfigs[]). The defaultValidatorModule/defaultHookModule
+    // params were removed in v0.17.2 (CompositeValidator + TierGuardHook deleted).
     const factoryInitCode = encodeDeployData({
       abi: factoryArtifact.abi,
       bytecode: factoryArtifact.bytecode,
       args: [
+        implAddr,    // pre-deployed implementation (injected)
         cfg.entryPoint,
         ZERO_ADDR,   // communityGuardian (configure post-deploy)
         [],          // defaultTokens (none for now)
         [],          // defaultTokenConfigs
-        compositeValidatorAddr,
-        tierGuardHookAddr,
       ],
     });
     const factorySalt = makeSalt(signer.address, "airaccount-factory-v7-v1", cfg.chainId);
@@ -348,8 +314,6 @@ async function deployToChain(
     );
 
     console.log(`\n  ${cfg.name} deployment complete:`);
-    console.log(`    CompositeValidator : ${compositeValidatorAddr}`);
-    console.log(`    TierGuardHook      : ${tierGuardHookAddr}`);
     console.log(`    ForceExitModule    : ${forceExitModuleAddr}`);
     console.log(`    Implementation     : ${implAddr}`);
     console.log(`    Factory            : ${factoryAddr}`);
@@ -357,8 +321,6 @@ async function deployToChain(
     return {
       chain: cfg.name,
       chainId: cfg.chainId,
-      compositeValidator: compositeValidatorAddr,
-      tierGuardHook: tierGuardHookAddr,
       forceExitModule: forceExitModuleAddr,
       implementation: implAddr,
       factory: factoryAddr,
@@ -370,8 +332,6 @@ async function deployToChain(
     return {
       chain: cfg.name,
       chainId: cfg.chainId,
-      compositeValidator: ZERO_ADDR,
-      tierGuardHook: ZERO_ADDR,
       forceExitModule: ZERO_ADDR,
       implementation: ZERO_ADDR,
       factory: ZERO_ADDR,
@@ -396,22 +356,21 @@ function generateMarkdownReport(results: ChainDeployResult[]): string {
     return [
       r.chain,
       String(r.chainId),
-      r.compositeValidator,
-      r.tierGuardHook,
       r.forceExitModule,
+      r.implementation,
       r.factory,
       status,
     ];
   });
 
   const header = [
-    "| Chain | ChainId | CompositeValidator | TierGuardHook | ForceExitModule | Factory | Status |",
-    "|-------|---------|-------------------|---------------|-----------------|---------|--------|",
+    "| Chain | ChainId | ForceExitModule | Implementation | Factory | Status |",
+    "|-------|---------|-----------------|----------------|---------|--------|",
   ];
 
   const tableRows = rows.map(
-    ([chain, id, cv, tgh, fem, factory, status]) =>
-      `| ${chain} | ${id} | \`${cv}\` | \`${tgh}\` | \`${fem}\` | \`${factory}\` | ${status} |`
+    ([chain, id, fem, impl, factory, status]) =>
+      `| ${chain} | ${id} | \`${fem}\` | \`${impl}\` | \`${factory}\` | ${status} |`
   );
 
   return `# AirAccount Multi-Chain Deployment
@@ -428,11 +387,9 @@ ${tableRows.join("\n")}
 
 | Contract | Module Type | Purpose |
 |----------|-------------|---------|
-| AirAccountCompositeValidator | Validator (type 1) | Weighted/cumulative signature validation |
-| TierGuardHook | Hook (type 3) | Tier-based spending limit enforcement |
 | ForceExitModule | Executor (type 2) | L2→L1 forced withdrawal with 2-of-3 guardian protection |
-| AAStarAirAccountV7 | Implementation | Shared implementation for EIP-1167 clones |
-| AAStarAirAccountFactoryV7 | Factory | Deterministic clone factory with default modules |
+| AAStarAirAccountV7 | Implementation | Shared implementation for EIP-1167 clones (injected into factory) |
+| AAStarAirAccountFactoryV7 | Factory | Deterministic clone factory (session keys via router algId 0x08) |
 
 ## Notes
 
