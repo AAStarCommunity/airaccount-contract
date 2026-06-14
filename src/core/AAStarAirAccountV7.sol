@@ -34,7 +34,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this contract deployment. Used by SDKs for programmatic version detection.
-    string public constant ACCOUNT_VERSION = "0.17.2";
+    string public constant ACCOUNT_VERSION = "0.18.0";
 
     /// @dev Implementation constructor. Does NOT disable initializers so that direct `new` in tests works.
     ///      The factory deploys one shared implementation and uses Clones for user accounts.
@@ -99,7 +99,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @notice ERC-7579 account identity string.
     ///         Format: "vendor.name.version" — enables tooling to identify this account type.
     function accountId() external pure returns (string memory) {
-        return "airaccount.v7@0.17.2";
+        return "airaccount.v7@0.18.0";
     }
 
     /// @notice ERC-7579: declare which module types this account supports.
