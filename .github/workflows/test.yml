@@ -53,3 +53,33 @@ jobs:
       - name: Verify ABI docs are up to date (pnpm gen:abi-docs:check)
         run: pnpm gen:abi-docs:check
         working-directory: .
+
+  # ── issue #45 BLS↔userOpHash binding (EIP-2537 / Prague) ───────────────────
+  # The main `test` job runs under the repo-default evm_version = cancun, where the
+  # EIP-2537 precompiles (G2ADD 0x0d / MAP_FP2_TO_G2 0x11) do NOT exist — so the
+  # on-chain hash_to_curve / pairing tests self-skip there. This job re-runs ONLY the
+  # #45 binding tests under --evm-version prague, where revm provides EIP-2537, so the
+  # golden-vector + replay-binding + batch-aggregator crypto is actually exercised.
+  #
+  # Scoped with --match-contract on purpose: there are 2 PRE-EXISTING, #45-UNRELATED
+  # failures under prague that this job intentionally excludes (tracked in issue #104):
+  #   • AAStarBLSAlgorithmTest.test_aggregateKeys_twoNodes — feeds non-curve fake G1
+  #     points; the real G1ADD (0x0b) precompile rejects them.
+  #   • AAStarBLSAlgorithmTest.test_g2Add — legacy g2Add helper at 0x0e (G2MSM, not G2ADD).
+  # Do not widen this job's scope until those are fixed (#104).
+  bls-binding-prague:
+    name: forge test (EIP-2537 / prague) — #45 binding
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Run #45 binding tests under Prague (golden-vector + single-op replay + batch aggregator)
+        run: forge test --evm-version prague --match-contract "HashToG2GoldenTest|BLSReplayBindingTest|AAStarBLSAggregatorTest" -vv
+        working-directory: .
