@@ -229,4 +229,68 @@ contract AAStarGlobalGuardTest is Test {
         );
         guard.decreaseDailyLimit(0.5 ether);
     }
+
+    // ─── 15. #22 strict mode (blockUnconfiguredTokens) ──────────────
+
+    address constant UNCONFIGURED_TOKEN = address(0xDEAD);
+    address constant CONFIGURED_TOKEN = address(0xBEEF);
+
+    function test_strictMode_defaultOff() public view {
+        assertEq(guard.blockUnconfiguredTokens(), false);
+    }
+
+    /// @dev Flag OFF (default): unconfigured token passes through unchanged.
+    function test_strictMode_off_unconfigured_passThrough() public {
+        vm.prank(account);
+        bool ok = guard.recordTokenSpend(UNCONFIGURED_TOKEN, 1e18, ALG_ECDSA);
+        assertTrue(ok);
+    }
+
+    /// @dev Flag ON: unconfigured token reverts with TokenNotConfigured.
+    function test_strictMode_on_unconfigured_reverts() public {
+        vm.prank(account);
+        guard.setStrictMode(true);
+
+        vm.prank(account);
+        vm.expectRevert(AAStarGlobalGuard.TokenNotConfigured.selector);
+        guard.recordTokenSpend(UNCONFIGURED_TOKEN, 1e18, ALG_ECDSA);
+    }
+
+    /// @dev Flag ON: a configured token still works (daily-limit-only config, within limit).
+    function test_strictMode_on_configured_works() public {
+        AAStarGlobalGuard.TokenConfig memory cfg =
+            AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 100e18 });
+        vm.startPrank(account);
+        guard.addTokenConfig(CONFIGURED_TOKEN, cfg);
+        guard.setStrictMode(true);
+        bool ok = guard.recordTokenSpend(CONFIGURED_TOKEN, 10e18, ALG_ECDSA);
+        vm.stopPrank();
+        assertTrue(ok);
+        assertEq(guard.tokenTodaySpent(CONFIGURED_TOKEN), 10e18);
+    }
+
+    /// @dev Strict mode can be toggled back off (pass-through restored).
+    function test_strictMode_toggleOff_restoresPassThrough() public {
+        vm.startPrank(account);
+        guard.setStrictMode(true);
+        guard.setStrictMode(false);
+        bool ok = guard.recordTokenSpend(UNCONFIGURED_TOKEN, 1e18, ALG_ECDSA);
+        vm.stopPrank();
+        assertTrue(ok);
+        assertEq(guard.blockUnconfiguredTokens(), false);
+    }
+
+    function test_setStrictMode_onlyAccount_reverts() public {
+        vm.prank(nonAccount);
+        vm.expectRevert(AAStarGlobalGuard.OnlyAccount.selector);
+        guard.setStrictMode(true);
+    }
+
+    function test_setStrictMode_emitsEvent() public {
+        vm.prank(account);
+        vm.expectEmit(false, false, false, true);
+        emit AAStarGlobalGuard.StrictModeSet(true);
+        guard.setStrictMode(true);
+        assertTrue(guard.blockUnconfiguredTokens());
+    }
 }

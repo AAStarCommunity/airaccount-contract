@@ -501,6 +501,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         guard.decreaseTokenDailyLimit(token, newLimit);
     }
 
+    /// @notice #22: toggle the guard's strict mode (block unconfigured tokens). Default OFF.
+    function guardSetStrictMode(bool enabled) external onlyOwner {
+        guard.setStrictMode(enabled);
+    }
+
     // ─── Guardian Public Getters (maintain interface from packed private storage) ──
 
     /// @notice Returns guardian address at index (0-2). Returns address(0) for empty slots.
