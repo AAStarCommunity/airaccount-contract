@@ -39,7 +39,7 @@ Legend: ✅ covered & runnable · 🟡 partial / documented gap · ⏳ impractic
 
 | #90 gap | Disposition |
 |---------|-------------|
-| **Social recovery full flow** (propose → 72h → `executeRecovery`) | propose/approve/`cancelRecovery`(2/3) ✅ in `11`. `executeRecovery` needs a real **72h** wait ⏳ — impractical on Sepolia; covered by 42 unit tests. `clearStaleRecovery` boundary remains an un-scripted gap (runnable; small follow-up). |
+| **Social recovery full flow** (propose → 48h → `executeRecovery`) | propose/approve/`cancelRecovery`(2/3) ✅ in `11`. `executeRecovery` needs a real **48h** wait ⏳ — impractical on Sepolia; covered by 42 unit tests. `clearStaleRecovery` boundary remains an un-scripted gap (runnable; small follow-up). |
 | **Session-key UserOp** (velocity, expiry, P256 session) | grant/revoke ✅ (`10`); session-signed UserOp scaffold exists (`test-session-key-userop-e2e.ts`). Velocity-trigger + expiry-rejection via bundler is covered going forward by **v0.18 phase 15** (WS-C) — see Part 2. |
 | **EIP-7702 type-4 tx** | delegate behaviour covered (`test-7702-delegate-e2e.ts`); native type-4 signing path 🟡. |
 | **`proposeAlgorithm` + 7d timelock** | `proposeAlgorithm` callable ✅ (`04` AD-ROUTER.1); `executeProposal` needs **7 days** ⏳ — impractical; covered by `AAStarValidatorTest`. |
@@ -121,5 +121,5 @@ Pre-deploy verification already performed (no deploy required):
 - **Ran this WS (real, verified)**: 67/67 read-only beta.4 regression tests (phases 01/02/03/06).
 - **Pending funds / on-demand**: state-changing beta.4 phases (04,05,07–12) — passed in beta.3, re-runnable.
 - **Pending v0.18 deploy (scaffolded + ABI-verified, cannot run yet)**: phases 13–16 (WS-A/B/C/G).
-- **Impractical on Sepolia (timelock)**: social-recovery `executeRecovery` (72h), `proposeAlgorithm` execute (7d) — unit-test covered.
+- **Impractical on Sepolia (timelock)**: social-recovery `executeRecovery` (48h), `proposeAlgorithm` execute (7d) — unit-test covered.
 - **Small open follow-ups (runnable, not yet scripted)**: `clearStaleRecovery` boundary; native EIP-7702 type-4 signing path.

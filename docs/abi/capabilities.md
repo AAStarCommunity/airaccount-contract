@@ -89,7 +89,7 @@ without per-action user signatures, and without being able to escape that scope.
 
 | Function | Contract | What it lets a user do |
 |---|---|---|
-| `proposeRecovery(newOwner)` | Base | A guardian proposes a new owner; starts the 72h timelock, writes `activeRecovery`. |
+| `proposeRecovery(newOwner)` | Base | A guardian proposes a new owner; starts the 48h timelock, writes `activeRecovery`. |
 | `approveRecovery()` | Base | Another guardian approves (sets its bit in `approvalBitmap`); 2/3 reaches threshold. |
 | `cancelRecovery()` | Base | Guardians vote to cancel — needs **2/3 guardians, not the owner** (defends against a leaked owner key cancelling a legit recovery). |
 | `activeRecovery()` | Base/Ext | Read the pending recovery (newOwner, timestamps, bitmap). |

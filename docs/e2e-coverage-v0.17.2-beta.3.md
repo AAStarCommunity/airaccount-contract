@@ -160,7 +160,7 @@ Dedicated coverage for v0.17.2-beta.3 specific features not present in prior bet
 | BLS signature verification | AlgTierLibTest, BLSAlgorithmTest | 2, 3, 6 | ✅ |
 | Session keys (classic) | SessionKeyValidatorTest | 2, 3, 6 | ✅ |
 | Session keys (agent mode) | SessionKeyValidatorTest | 3, 6 | ✅ |
-| Social recovery (3-2-72h) | SocialRecoveryTest | — | Unit only |
+| Social recovery (3-2-48h) | SocialRecoveryTest | — | Unit only |
 | ForceExit module | ForceExitModuleTest | 3, 6, 7 | ✅ |
 | Account lifecycle (create + execute) | AAStarAirAccountTest | 5 | ✅ |
 | ERC-4337 validateUserOp | AAStarAirAccountTest | 5 | ✅ |
@@ -181,7 +181,7 @@ Dedicated coverage for v0.17.2-beta.3 specific features not present in prior bet
 
 | Gap | Reason | Risk |
 |-----|--------|------|
-| Social recovery on-chain flow | Requires 72h timelock — impractical in E2E | Low — 42 unit tests |
+| Social recovery on-chain flow | Requires 48h timelock — impractical in E2E | Low — 42 unit tests |
 | Tiered spending guard bypass | Requires UserOperation submission via bundler | Low — 47 unit tests |
 | Session key E2E happy path | Requires signed UserOp with passkey | Low — 27 unit tests |
 | proposeAlgorithm + 7d wait | 7-day timelock impossible in E2E | Low — AAStarValidatorTest |
