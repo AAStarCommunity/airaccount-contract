@@ -123,10 +123,14 @@ function buildUserOp(sig: Hex) {
 }
 
 // eth_call validateUserOp impersonating the EntryPoint; returns the packed validationData.
+// IMPORTANT: viem's publicClient.call sets the call's msg.sender via the `account` option,
+// NOT `from`. validateUserOp is onlyEntryPoint, so we must pass `account: ADDR.entryPoint`
+// — using `from` leaves msg.sender = address(0) and the call reverts NotEntryPoint() (0xd663742a)
+// before ever reaching the P256 path.
 async function callValidate(userOp: ReturnType<typeof buildUserOp>, userOpHash: Hex): Promise<bigint> {
   const res = await publicClient.call({
     to: account,
-    from: ADDR.entryPoint, // pass onlyEntryPoint gate
+    account: ADDR.entryPoint, // sets msg.sender = EntryPoint → passes onlyEntryPoint
     data: encodeFunctionData({
       abi: v7Abi, functionName: "validateUserOp", args: [userOp, userOpHash, 0n],
     }),
