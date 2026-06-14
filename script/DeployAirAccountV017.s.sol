@@ -4,6 +4,7 @@ pragma solidity ^0.8.33;
 import {Script, console} from "forge-std/Script.sol";
 
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
+import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {ForceExitModule} from "../src/core/ForceExitModule.sol";
 import {AirAccountDelegate} from "../src/core/AirAccountDelegate.sol";
@@ -114,14 +115,18 @@ contract DeployAirAccountV017 is Script {
         d.railgunParser = address(new RailgunParser());
         d.uniswapV3Parser = address(new UniswapV3Parser());
 
-        // 8. Factory (constructor deploys the AAStarAirAccountV7 implementation).
-        //    v0.17.2: no per-account default module install — unified SessionKeyValidator at
-        //    router[0x08] replaces the deleted CompositeValidator + TierGuardHook + ASK trio.
-        //    MUST be deployed BEFORE AgentRegistry because AgentRegistry takes
-        //    factory.implementation() as a constructor argument (H-2 whitelist binding).
+        // 8. Implementation + Factory.
+        //    #82 EIP-3860 fix: the implementation is deployed FIRST and injected into the factory
+        //    (previously the factory constructor deployed it inline, embedding ~14 KB of creation
+        //    code into the factory initcode). v0.17.2: no per-account default module install —
+        //    unified SessionKeyValidator at router[0x08] replaces the deleted CompositeValidator +
+        //    TierGuardHook + ASK trio. MUST be deployed BEFORE AgentRegistry because AgentRegistry
+        //    takes factory.implementation() as a constructor argument (H-2 whitelist binding).
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        address impl = address(new AAStarAirAccountV7());
         AAStarAirAccountFactoryV7 factory = new AAStarAirAccountFactoryV7(
+            impl,
             ENTRYPOINT,
             communityGuardian,
             noTokens,

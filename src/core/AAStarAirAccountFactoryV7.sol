@@ -22,7 +22,16 @@ contract AAStarAirAccountFactoryV7 {
     string public constant FACTORY_VERSION = "0.17.2";
 
     /// @dev Shared implementation contract — all user accounts are clones of this address.
-    ///      Deployed atomically in the factory constructor. Never call initialize() on this address directly.
+    ///      INJECTED as a constructor parameter (deployer must deploy AAStarAirAccountV7 first and
+    ///      pass its address). Never call initialize() on this address directly.
+    /// @dev #82 EIP-3860 fix: previously the factory deployed the implementation INLINE
+    ///      (`new AAStarAirAccountV7()` in the constructor), which embedded the implementation's
+    ///      entire creation bytecode (~14 KB) into the factory's own initcode and brought it within
+    ///      ~18 bytes of the 49,152-byte EIP-3860 cap. Injecting the address removes that embedded
+    ///      creation code, recovering several KB of initcode headroom. CREATE2 account-address
+    ///      determinism is unchanged: the clone (EIP-1167 minimal proxy) bytecode embeds this
+    ///      address, so identical impl bytecode at the same address yields identical account
+    ///      addresses — exactly as before, when the factory deployed the impl itself.
     address public immutable implementation;
 
     /// @dev The EntryPoint address used for all created accounts
@@ -65,6 +74,7 @@ contract AAStarAirAccountFactoryV7 {
     error GuardianDidNotAccept(address guardian);
     error DuplicateGuardian();
     error AgentKeyDidNotAccept();
+    error ImplementationRequired();
     error NotFactoryAdmin();
     error AgentRegistryAlreadySet();
     error AgentRegistryNotContract();
@@ -86,6 +96,8 @@ contract AAStarAirAccountFactoryV7 {
     error Guardian2CannotBeCommunityGuardian();
     error AgentKeyCannotBeCommunityGuardian();
 
+    /// @param _implementation Pre-deployed AAStarAirAccountV7 implementation that all clones point to.
+    ///        Deployer MUST deploy `new AAStarAirAccountV7()` first and pass its address here.
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _communityGuardian Default community Safe multisig guardian address
     /// @param defaultTokens Token addresses to pre-configure for all new accounts (empty = no defaults)
@@ -93,15 +105,19 @@ contract AAStarAirAccountFactoryV7 {
     /// @dev v0.17.2: removed defaultValidatorModule / defaultHookModule / agentSessionKeyValidator
     ///      machinery. The unified SessionKeyValidator (router algId 0x08) replaces ERC-7579
     ///      install-based session keys. CompositeValidator and TierGuardHook are deleted.
+    /// @dev #82 EIP-3860 fix: implementation is now INJECTED (was `new AAStarAirAccountV7()` inline)
+    ///      to keep the factory's initcode well under the 49,152-byte creation-code cap.
     constructor(
+        address _implementation,
         address _entryPoint,
         address _communityGuardian,
         address[] memory defaultTokens,
         AAStarGlobalGuard.TokenConfig[] memory defaultConfigs
     ) {
+        if (_implementation == address(0)) revert ImplementationRequired();
         if (defaultTokens.length != defaultConfigs.length) revert TokenConfigLengthMismatch();
-        // Deploy shared implementation. All user accounts are EIP-1167 clones of this address.
-        implementation = address(new AAStarAirAccountV7());
+        // All user accounts are EIP-1167 clones of this pre-deployed implementation.
+        implementation = _implementation;
         entryPoint = _entryPoint;
         defaultCommunityGuardian = _communityGuardian;
         factoryAdmin = msg.sender; // for set-once setAgentRegistry post-deploy

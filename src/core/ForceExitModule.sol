@@ -238,6 +238,8 @@ contract ForceExitModule is IERC7579Module {
         ExitProposal storage proposal = pendingExit[account];
         if (proposal.proposedAt == 0) revert NoProposal();
 
+        // #79: approvalBitmap holds at most 3 bits (3-guardian threshold), so _countBits's
+        // all-ones (256-bit) overflow edge is unreachable in production.
         uint256 approvals = _countBits(proposal.approvalBitmap);
         if (approvals < APPROVAL_THRESHOLD) revert NotEnoughApprovals();
 

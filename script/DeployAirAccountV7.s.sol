@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {Script, console} from "forge-std/Script.sol";
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
+import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 
@@ -29,7 +30,10 @@ contract DeployAirAccountV7 is Script {
         // Deploy Factory (no default token config in script — use deploy-m5.ts for chain-specific tokens)
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        // #82 EIP-3860 fix: deploy the implementation FIRST, then inject its address.
+        address impl = address(new AAStarAirAccountV7());
         AAStarAirAccountFactoryV7 factory = new AAStarAirAccountFactoryV7(
+            impl,
             ENTRYPOINT_V07,
             COMMUNITY_GUARDIAN,
             noTokens,

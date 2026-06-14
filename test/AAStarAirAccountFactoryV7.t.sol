@@ -11,6 +11,8 @@ import {AgentRegistry} from "../src/registries/AgentRegistry.sol";
 /// @title AAStarAirAccountFactoryV7Test - Unit tests for CREATE2 factory
 contract AAStarAirAccountFactoryV7Test is Test {
     AAStarAirAccountFactoryV7 public factory;
+    /// @dev #82 EIP-3860 fix: shared pre-deployed implementation injected into every factory.
+    address public implFixture;
     address public entryPoint;
     address public ownerA;
     address public ownerB;
@@ -30,7 +32,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
 
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        factory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs);
+        implFixture = address(new AAStarAirAccountV7());
+        factory = new AAStarAirAccountFactoryV7(implFixture, entryPoint, communityGuardian, noTokens, noConfigs);
     }
 
     /// @dev Sign the guardian acceptance message for setUp factory + owner + salt at TEST_DAILY_LIMIT.
@@ -257,7 +260,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         });
 
         AAStarAirAccountFactoryV7 tokenFactory = new AAStarAirAccountFactoryV7(
-            entryPoint, communityGuardian, tokens, configs
+            implFixture, entryPoint, communityGuardian, tokens, configs
         );
 
         bytes memory sig1 = _guardianSigFor(g1Wallet, address(tokenFactory), ownerA, 0);
@@ -328,7 +331,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
             dailyLimit: 5000e6
         });
         vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.InvalidDefaultTokenConfig.selector, mockToken));
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+        new AAStarAirAccountFactoryV7(implFixture, entryPoint, communityGuardian, tokens, configs);
     }
 
     /// @dev Tier limits set but dailyLimit=0 should revert (guard requires dailyLimit > 0
@@ -344,7 +347,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
             dailyLimit: 0    // tier limits set but no daily — invalid
         });
         vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.InvalidDefaultTokenConfig.selector, mockToken));
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+        new AAStarAirAccountFactoryV7(implFixture, entryPoint, communityGuardian, tokens, configs);
     }
 
     // ─── Codex audit: MEDIUM — guardian acceptance domain separation ──
@@ -372,7 +375,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         // Deploy a second factory, sign acceptance for it
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        AAStarAirAccountFactoryV7 otherFactory = new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, noTokens, noConfigs);
+        AAStarAirAccountFactoryV7 otherFactory = new AAStarAirAccountFactoryV7(implFixture, entryPoint, communityGuardian, noTokens, noConfigs);
 
         // Sign for otherFactory address
         bytes memory sigForOtherFactory = _guardianSigFor(g1Wallet, address(otherFactory), ownerA, 0);
@@ -391,7 +394,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         AAStarGlobalGuard.TokenConfig[] memory configs = new AAStarGlobalGuard.TokenConfig[](1);
         configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.DefaultTokenAddressZero.selector, address(0)));
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+        new AAStarAirAccountFactoryV7(implFixture, entryPoint, communityGuardian, tokens, configs);
     }
 
     /// @dev Duplicate token address in default config should revert at factory deploy time.
@@ -404,7 +407,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         configs[1] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
         vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountFactoryV7.DuplicateDefaultToken.selector, mockToken));
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+        new AAStarAirAccountFactoryV7(implFixture, entryPoint, communityGuardian, tokens, configs);
     }
 
     // ─── Issue #74: constructor custom errors (replace require(string)) ──────
@@ -419,7 +422,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
         configs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 0, tier2Limit: 0, dailyLimit: 0 });
 
         vm.expectRevert(AAStarAirAccountFactoryV7.TokenConfigLengthMismatch.selector);
-        new AAStarAirAccountFactoryV7(entryPoint, communityGuardian, tokens, configs);
+        new AAStarAirAccountFactoryV7(implFixture, entryPoint, communityGuardian, tokens, configs);
     }
 
     // ─── ERC-7828 Chain-Specific Address (M7.4) ──────────────────────────────

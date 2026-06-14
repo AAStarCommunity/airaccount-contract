@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {Script, console} from "forge-std/Script.sol";
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
+import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 
 /// @title DeployFactoryM6 — Deploy AirAccount M6 factory to any EVM chain
@@ -52,14 +53,15 @@ contract DeployFactoryM6 is Script {
         //   - When --account <name> is passed → forge uses encrypted keystore (cast wallet)
         vm.startBroadcast();
 
+        // #82 EIP-3860 fix: deploy the implementation FIRST, then inject its address into the factory.
+        address impl = address(new AAStarAirAccountV7());
         AAStarAirAccountFactoryV7 factory = new AAStarAirAccountFactoryV7(
+            impl,
             entryPoint,
             guardian,
             noTokens,
             noConfigs
         );
-
-        address impl = factory.implementation();
 
         vm.stopBroadcast();
 

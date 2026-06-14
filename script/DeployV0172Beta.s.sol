@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.sol";
+import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {ForceExitModule} from "../src/core/ForceExitModule.sol";
 import {AirAccountDelegate} from "../src/core/AirAccountDelegate.sol";
@@ -169,16 +170,20 @@ contract DeployV0172Beta is Script {
         console2.log("Skipped RailgunParser:    DISABLED in beta.1 -- KI-14");
         console2.log("Skipped UniswapV3Parser:  DISABLED in beta.1 -- KI-14");
 
-        // 10. AirAccount factory. Its constructor auto-deploys:
-        //       - AAStarAirAccountV7 (the impl that all account clones point to), whose ctor
-        //         in turn deploys the singleton AirAccountExtension.
+        // 10. AirAccount implementation + factory.
+        //     #82 EIP-3860 fix: the implementation is deployed FIRST and injected into the factory
+        //     (the factory no longer auto-deploys it inline — that embedded ~14 KB of creation code
+        //     into the factory initcode and brushed the 49,152-byte cap). The implementation ctor
+        //     still deploys the singleton AirAccountExtension itself.
         //     v0.17.2: the constructor signature no longer takes defaultValidator/defaultHook
         //     module addresses — the unified SessionKeyValidator at router[0x08] replaces them.
         //     We pass empty default-token arrays for chain portability; per-chain stablecoin
         //     limits, if wanted, require a chain-specific Factory redeploy (out of scope here).
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
+        address impl = address(new AAStarAirAccountV7());
         AAStarAirAccountFactoryV7 factory = new AAStarAirAccountFactoryV7(
+            impl,
             entryPoint,
             communityGuardian,
             noTokens,

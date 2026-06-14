@@ -127,7 +127,9 @@ contract M5ScenarioTests is Test {
         entryPoint = new MockEP();
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        factory = new AAStarAirAccountFactoryV7(address(entryPoint), communityGuardian, noTokens, noConfigs);
+        // #82 EIP-3860 fix: deploy implementation first, inject into factory.
+        address _impl = address(new AAStarAirAccountV7());
+        factory = new AAStarAirAccountFactoryV7(_impl, address(entryPoint), communityGuardian, noTokens, noConfigs);
         mockAlg = new MockAlg();
         p256Valid = new MockP256Valid();
         p256Invalid = new MockP256Invalid();

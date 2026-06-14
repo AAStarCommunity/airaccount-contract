@@ -465,6 +465,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
             approvalBitmap |= bit;
         }
+        // #79: _popcount is only ever called on a guardian bitmap — at most 3 bits set (gIdx < 3),
+        // so the all-ones (256-bit) overflow edge of the SWAR helper can never occur in production.
         if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
 
         _tierLimitNonce++;
@@ -1458,6 +1460,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
             approvalBitmap |= bit;
         }
+        // #79: _popcount is only ever called on a guardian bitmap — at most 3 bits set (gIdx < 3),
+        // so the all-ones (256-bit) overflow edge of the SWAR helper can never occur in production.
         if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
 
         _guardianRemovalNonce++;
@@ -1503,6 +1507,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
         activeRecovery.approvalBitmap |= bit;
 
+        // #79: guardian bitmap — at most 3 bits set, so _popcount's all-ones edge is unreachable here.
         uint256 count = _popcount(activeRecovery.approvalBitmap);
         emit RecoveryApproved(activeRecovery.newOwner, msg.sender, count);
     }
@@ -1514,6 +1519,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (block.timestamp < r.proposedAt + RECOVERY_TIMELOCK) {
             revert RecoveryTimelockNotExpired();
         }
+        // #79: guardian bitmap — at most 3 bits set, so _popcount's all-ones edge is unreachable here.
         if (_popcount(r.approvalBitmap) < RECOVERY_THRESHOLD) {
             revert RecoveryNotApproved();
         }
@@ -1538,6 +1544,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (activeRecovery.cancellationBitmap & bit != 0) revert AlreadyCancelVoted();
 
         activeRecovery.cancellationBitmap |= bit;
+        // #79: guardian bitmap — at most 3 bits set, so _popcount's all-ones edge is unreachable here.
         uint256 count = _popcount(activeRecovery.cancellationBitmap);
 
         emit RecoveryCancelVoted(msg.sender, count);

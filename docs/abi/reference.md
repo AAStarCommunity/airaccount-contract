@@ -893,7 +893,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountFactoryV7
 
 - **Source:** `src/core/AAStarAirAccountFactoryV7.sol`
-- **Functions:** 15 · **Events:** 3 · **Errors:** 25
+- **Functions:** 15 · **Events:** 3 · **Errors:** 26
 - **Title:** AAStarAirAccountFactoryV7 - EIP-1167 clone factory for V7 accounts
 - Deploys minimal proxy clones pointing to a shared implementation, then calls initialize().         This keeps factory bytecode well under EIP-170's 24,576-byte limit.         Account address = Clones.predictDeterministicAddress(implementation, keccak256(owner ++ salt))
 
@@ -1161,6 +1161,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xfe828c5a` | `GuardiansMustBeDistinct()` |
 | `0x4fd6779b` | `GuardiansRequired()` |
 | `0xa3e362f0` | `HumanOwnerCannotBeCommunityGuardian()` |
+| `0x16ec23b0` | `ImplementationRequired()` |
 | `0xcf479181` | `InsufficientBalance(uint256,uint256)` |
 | `0xfa98b70d` | `InvalidDefaultTokenConfig(address)` |
 | `0x9a1a53b4` | `NotFactoryAdmin()` |

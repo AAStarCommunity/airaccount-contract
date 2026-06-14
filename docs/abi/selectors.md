@@ -390,6 +390,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x14d4a4e8` | `OnlySelf()` | AirAccountDelegate |
 | `0x16730a70` | `InsufficientGuardianApprovals()` | AAStarAirAccountBase |
 | `0x16bf332d` | `WeightConfigNotInitialized()` | AAStarAirAccountBase |
+| `0x16ec23b0` | `ImplementationRequired()` | AAStarAirAccountFactoryV7 |
 | `0x171abe36` | `SelectorForbidden(bytes4)` | SessionKeyValidator |
 | `0x1853971c` | `NotPendingOwner()` | AAStarBLSAlgorithm |
 | `0x1a821827` | `BLSPointAtInfinity()` | AAStarBLSAlgorithm |
