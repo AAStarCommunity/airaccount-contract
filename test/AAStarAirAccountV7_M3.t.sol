@@ -221,19 +221,9 @@ contract AAStarAirAccountV7M3Test is Test {
     }
 
     // ─── Aggregator Configuration ────────────────────────────────────
-
-    function test_setAggregator() public {
-        address agg = address(0xAA);
-        vm.prank(ownerAddr);
-        account.setAggregator(agg);
-        assertEq(account.blsAggregator(), agg);
-    }
-
-    function test_setAggregator_onlyOwner() public {
-        vm.prank(address(0xDEAD));
-        vm.expectRevert(abi.encodeWithSignature("NotOwner()"));
-        account.setAggregator(address(0xAA));
-    }
+    // issue #45 Part B: there is NO account-side aggregator setter. The batch aggregator is a single
+    // protocol-level value on AAStarBLSAlgorithm (set only by the protocol Safe). See
+    // test/AAStarBLSAlgorithm.t.sol (setter/ownership) and test/ProtocolAggregator.t.sol (account read).
 
     // ─── Guard Initialization (constructor) ────────────────────────────
 

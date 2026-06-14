@@ -133,7 +133,7 @@ contract DeployV0172Beta is Script {
         console2.log("Deployed AAStarValidator:", _d.validatorRouter);
 
         // 3. BLS aggregator (ERC-4337 IAggregator).
-        _d.blsAggregator = address(new AAStarBLSAggregator(_d.blsAlgorithm));
+        _d.blsAggregator = address(new AAStarBLSAggregator(_d.blsAlgorithm, entryPoint));
         console2.log("Deployed AAStarBLSAggregator:", _d.blsAggregator);
 
         // 4. Unified SessionKeyValidator (algId 0x08) — covers both DApp/M6.4 simple sessions

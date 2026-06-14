@@ -128,19 +128,6 @@
     },
     {
       "type": "function",
-      "name": "blsAggregator",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "cancelRecovery",
       "inputs": [],
       "outputs": [],
@@ -994,19 +981,6 @@
     },
     {
       "type": "function",
-      "name": "setAggregator",
-      "inputs": [
-        {
-          "name": "_aggregator",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "setP256Key",
       "inputs": [
         {
@@ -1395,19 +1369,6 @@
           "name": "agentRegistry",
           "type": "address",
           "indexed": false,
-          "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "AggregatorSet",
-      "inputs": [
-        {
-          "name": "aggregator",
-          "type": "address",
-          "indexed": true,
           "internalType": "address"
         }
       ],
@@ -2308,6 +2269,11 @@
     {
       "type": "error",
       "name": "UnsupportedInnerSelector",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ValidatorAlreadySet",
       "inputs": []
     },
     {

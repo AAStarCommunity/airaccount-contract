@@ -14,6 +14,7 @@ Authoritative, auto-generated reference for every external/public function, even
 - [ERC8004Addresses](#erc8004addresses) — `src/config/ERC8004Addresses.sol`
 - [AAStarAgentStorageLayout](#aastaragentstoragelayout) — `src/core/AAStarAgentStorageLayout.sol`
 - [AAStarAirAccountBase](#aastarairaccountbase) — `src/core/AAStarAirAccountBase.sol`
+- [IBLSAggregatorSource](#iblsaggregatorsource) — `src/core/AAStarAirAccountBase.sol`
 - [AAStarAirAccountFactoryV7](#aastarairaccountfactoryv7) — `src/core/AAStarAirAccountFactoryV7.sol`
 - [AAStarAirAccountV7](#aastarairaccountv7) — `src/core/AAStarAirAccountV7.sol`
 - [AAStarGlobalGuard](#aastarglobalguard) — `src/core/AAStarGlobalGuard.sol`
@@ -46,7 +47,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarBLSAggregator
 
 - **Source:** `src/aggregator/AAStarBLSAggregator.sol`
-- **Functions:** 4 · **Events:** 0 · **Errors:** 5
+- **Functions:** 5 · **Events:** 0 · **Errors:** 5
 - **Title:** AAStarBLSAggregator - IAggregator implementation for batch BLS verification
 - Aggregates BLS signatures across multiple UserOps into a single pairing check.         Gas savings: N UserOps share one pairing (102,900 gas) instead of N pairings.
 
@@ -55,7 +56,8 @@ Authoritative, auto-generated reference for every external/public function, even
 | selector | function | mutability | access | notice |
 |---|---|---|---|---|
 | `0xae574a43` | `aggregateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[])` | view | — | Aggregate multiple signatures into a single value. This method is called off-chain to calculate the signature to pass with handleOps() bundler MAY use optimized custom code to perform this aggregation. |
-| `0xf8acde7b` | `blsAlgorithm()` | view | — | Reference to the BLS algorithm contract for key lookups |
+| `0xf8acde7b` | `blsAlgorithm()` | view | — | Reference to the BLS algorithm contract for key lookups + on-chain hash_to_curve. |
+| `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint, used to derive each op's userOpHash for the #45 binding. |
 | `0x2dd81133` | `validateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],bytes)` | view | — | Validate an aggregated signature. Reverts if the aggregated signature does not match the given list of operations. |
 | `0x062a422b` | `validateUserOpSignature((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes))` | pure | — | Validate the signature of a single userOp. This method should be called by bundler after EntryPointSimulation.simulateValidation() returns the aggregator this account uses. First it validates the signature over the userOp. Then it returns data to be used when creating the handleOps. |
 
@@ -67,7 +69,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 > Aggregate multiple signatures into a single value. This method is called off-chain to calculate the signature to pass with handleOps() bundler MAY use optimized custom code to perform this aggregation.
 
-*@dev* Aggregates BLS signatures and message points from all UserOps.      Returns: aggBlsSig(256) \| aggMsgPoint(256) \| nodeIdsLength(32) \| nodeIds(N×32)
+*@dev* Aggregates BLS signatures from all UserOps; the aggregate MESSAGE POINT is recomputed      from each op's userOpHash (issue #45), NOT taken from the op signature.      Returns: aggBlsSig(256) \| aggMsgPoint(256) \| nodeIdsLength(32) \| nodeIds(N×32).      (validateSignatures ignores the returned blob and recomputes independently; the      aggMsgPoint is included for parity/diagnostics only.)
 
 | param | type | description |
 |---|---|---|
@@ -81,7 +83,17 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0xf8acde7b` · view · access: —
 
-> Reference to the BLS algorithm contract for key lookups
+> Reference to the BLS algorithm contract for key lookups + on-chain hash_to_curve.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `entryPoint()`
+
+`0xb0d691fe` · view · access: —
+
+> The ERC-4337 EntryPoint, used to derive each op's userOpHash for the #45 binding.
 
 | returns | type | description |
 |---|---|---|
@@ -142,7 +154,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAgentStorageLayout
 
 - **Source:** `src/core/AAStarAgentStorageLayout.sol`
-- **Functions:** 14 · **Events:** 1 · **Errors:** 2
+- **Functions:** 13 · **Events:** 1 · **Errors:** 2
 - **Title:** AAStarAgentStorageLayout
 - Shared persistent-storage layout for AAStarAirAccountBase and AirAccountExtension.
 
@@ -152,7 +164,6 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|---|---|
 | `0xb5cb7bb8` | `activeRecovery()` | view | — | Active recovery proposal |
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
-| `0xbe30742f` | `blsAggregator()` | view | — | Optional BLS aggregator for batch verification |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
 | `0x8da5cb5b` | `owner()` | view | — | Account owner and ECDSA signer (mutable for social recovery) |
@@ -193,16 +204,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `bool` |  |
-
-#### `blsAggregator()`
-
-`0xbe30742f` · view · access: —
-
-> Optional BLS aggregator for batch verification
-
-| returns | type | description |
-|---|---|---|
-| `_0` | `address` |  |
 
 #### `entryPoint()`
 
@@ -341,7 +342,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountBase
 
 - **Source:** `src/core/AAStarAirAccountBase.sol`
-- **Functions:** 39 · **Events:** 27 · **Errors:** 53
+- **Functions:** 37 · **Events:** 26 · **Errors:** 54
 - **Title:** AAStarAirAccountBase
 - Non-upgradable ERC-4337 smart wallet base with algId-based signature routing,         tiered verification, P256 passkey, social recovery, and global guard.
 
@@ -355,7 +356,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8fc2128e` | `agentExtension()` | view | — | Singleton AgentExtension holding ERC-8004 agent functions, reached via fallback. |
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
 | `0xfcae8d38` | `approveRecovery()` | nonpayable | — | Approve an active recovery proposal. |
-| `0xbe30742f` | `blsAggregator()` | view | — | Optional BLS aggregator for batch verification |
 | `0x0ba234d6` | `cancelRecovery()` | nonpayable | — | Vote to cancel active recovery. Requires 2-of-3 guardian threshold. |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
 | `0xb61d27f6` | `execute(address,uint256,bytes)` | nonpayable | onlyOwnerOrEntryPoint, nonReentrant | Execute a single call from this account. |
@@ -378,11 +378,10 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x7ee76082` | `proposeRecovery(address)` | nonpayable | — | Propose a recovery: change owner to a new address.         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals. |
 | `0x34e33bf6` | `removeGuardian(uint8,bytes[])` | nonpayable | onlyOwner | Remove a guardian by index.         Requires >= RECOVERY_THRESHOLD distinct guardian signatures to prevent unilateral removal.         Cannot remove when only 2 guardians remain (minimum 2 must be kept). |
 | `0xd0771689` | `requiredTier(uint256)` | view | — |  |
-| `0xf9120af6` | `setAggregator(address)` | nonpayable | onlyOwner |  |
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | nonpayable | onlyOwner |  |
 | `0x148d13d1` | `setParserRegistry(address)` | nonpayable | onlyOwner | Set the calldata parser registry for DeFi protocol support.         Can be updated by owner (unlike guard which is immutable).         Set to address(0) to disable parser support. |
 | `0x7b471153` | `setTierLimits(uint256,uint256)` | nonpayable | onlyOwner | Set tier thresholds — INITIAL SETUP ONLY.         Callable exactly once, ever. After the first configuration (here or via         modifyTierLimitsWithGuardians), this function is permanently locked.         Any subsequent modification (increase, decrease, or disable) must go through         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current         limit values closes the bypass where a guardian reset to (0,0) would otherwise         re-open owner-only configuration. |
-| `0x1327d3d8` | `setValidator(address)` | nonpayable | onlyOwner |  |
+| `0x1327d3d8` | `setValidator(address)` | nonpayable | onlyOwner | Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if         the owner could SWAP it, a compromised owner would point at a malicious router whose         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.         The router is a protocol singleton (only-add registry + 7-day timelock for new         algorithms), so an account never needs to change it after the initial wiring. Once set         to a non-zero router it can never be changed — the DVT factor's algorithm source is         thereafter immutable from the (possibly compromised) owner's perspective. |
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
 | `0xdbaf0cc3` | `tier2Limit()` | view | — | Tier2 max (dual factor); above this requires multi-sig (BLS triple) |
 | `0x3a5381b5` | `validator()` | view | — | Optional validator router for external algorithms (BLS, PQ, etc.) |
@@ -447,16 +446,6 @@ Authoritative, auto-generated reference for every external/public function, even
 `0xfcae8d38` · nonpayable · access: —
 
 > Approve an active recovery proposal.
-
-#### `blsAggregator()`
-
-`0xbe30742f` · view · access: —
-
-> Optional BLS aggregator for batch verification
-
-| returns | type | description |
-|---|---|---|
-| `_0` | `address` |  |
 
 #### `cancelRecovery()`
 
@@ -692,14 +681,6 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `uint8` |  |
 
-#### `setAggregator(address _aggregator)`
-
-`0xf9120af6` · nonpayable · access: onlyOwner
-
-| param | type | description |
-|---|---|---|
-| `_aggregator` | `address` |  |
-
 #### `setP256Key(bytes32 _x, bytes32 _y)`
 
 `0x6fa36465` · nonpayable · access: onlyOwner
@@ -733,6 +714,8 @@ Authoritative, auto-generated reference for every external/public function, even
 #### `setValidator(address _validator)`
 
 `0x1327d3d8` · nonpayable · access: onlyOwner
+
+> Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if         the owner could SWAP it, a compromised owner would point at a malicious router whose         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.         The router is a protocol singleton (only-add registry + 7-day timelock for new         algorithms), so an account never needs to change it after the initial wiring. Once set         to a non-zero router it can never be changed — the DVT factor's algorithm source is         thereafter immutable from the (possibly compromised) owner's perspective.
 
 | param | type | description |
 |---|---|---|
@@ -803,7 +786,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x169142414aeecec3d3dfa03ef8b7d72d56023ead068694f563affe4276792bed` | `AgentIdentityMinted(uint256,address,string)` |
 | `0xee0112c63253e47e4ff7403776240bef35d82b6feba08ea6ecb20f8a4ab75e92` | `AgentReputationSubmitted(uint256,address,int128,string)` |
 | `0xc8982c1ad4646a1ed6bb40061ac7f2a6aaffef7f2e096aa9805cf705fa12933b` | `AgentWalletSet(uint256,address,address)` |
-| `0x94b241e14651a9658c51a45c82167e4f25ac3d3e7f8a2beae9d10b1ba07a94a0` | `AggregatorSet(address)` |
 | `0x70d0659af0992f8fb991c96aa6a5918129fb57f88068bf35fd6f08fc2d4476f0` | `AlgorithmApproved(uint8)` |
 | `0xaadd69bae4c5060e9be224899997360e78e4ee632c9951aa0055eeeb5bfc6662` | `ERC8004WalletBound(uint256,address,address)` |
 | `0xeca9cd482b52ddd909a1a2ffcceae1b6dd76b5491ec997d8d9ac05c6426fa344` | `GuardianAdded(uint8,address)` |
@@ -879,12 +861,34 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x3f041335` | `SessionScopeViolation()` |
 | `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |
+| `0x2157e2e7` | `ValidatorAlreadySet()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
 | `0xf6b2ebb8` | `WeightChangeAlreadyApproved()` |
 | `0xf0854cb8` | `WeightChangeNotApproved()` |
 | `0xc30fc6f5` | `WeightChangePending()` |
 | `0xac2edbf6` | `WeightChangeTimelockNotExpired()` |
 | `0x16bf332d` | `WeightConfigNotInitialized()` |
+
+## IBLSAggregatorSource
+
+- **Source:** `src/core/AAStarAirAccountBase.sol`
+- **Functions:** 1 · **Events:** 0 · **Errors:** 0
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x245a7bfc` | `aggregator()` | view | — |  |
+
+### Functions
+
+#### `aggregator()`
+
+`0x245a7bfc` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
 
 ## AAStarAirAccountFactoryV7
 
@@ -1165,7 +1169,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 55 · **Events:** 27 · **Errors:** 54
+- **Functions:** 53 · **Events:** 26 · **Errors:** 55
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1181,7 +1185,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8fc2128e` | `agentExtension()` | view | — | Singleton AgentExtension holding ERC-8004 agent functions, reached via fallback. |
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
 | `0xfcae8d38` | `approveRecovery()` | nonpayable | — | Approve an active recovery proposal. |
-| `0xbe30742f` | `blsAggregator()` | view | — | Optional BLS aggregator for batch verification |
 | `0x0ba234d6` | `cancelRecovery()` | nonpayable | — | Vote to cancel active recovery. Requires 2-of-3 guardian threshold. |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
 | `0xb61d27f6` | `execute(address,uint256,bytes)` | nonpayable | — | Execute a single call from this account. |
@@ -1214,11 +1217,10 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x7ee76082` | `proposeRecovery(address)` | nonpayable | — | Propose a recovery: change owner to a new address.         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals. |
 | `0x34e33bf6` | `removeGuardian(uint8,bytes[])` | nonpayable | — | Remove a guardian by index.         Requires >= RECOVERY_THRESHOLD distinct guardian signatures to prevent unilateral removal.         Cannot remove when only 2 guardians remain (minimum 2 must be kept). |
 | `0xd0771689` | `requiredTier(uint256)` | view | — |  |
-| `0xf9120af6` | `setAggregator(address)` | nonpayable | — |  |
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | nonpayable | — |  |
 | `0x148d13d1` | `setParserRegistry(address)` | nonpayable | — | Set the calldata parser registry for DeFi protocol support.         Can be updated by owner (unlike guard which is immutable).         Set to address(0) to disable parser support. |
 | `0x7b471153` | `setTierLimits(uint256,uint256)` | nonpayable | — | Set tier thresholds — INITIAL SETUP ONLY.         Callable exactly once, ever. After the first configuration (here or via         modifyTierLimitsWithGuardians), this function is permanently locked.         Any subsequent modification (increase, decrease, or disable) must go through         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current         limit values closes the bypass where a guardian reset to (0,0) would otherwise         re-open owner-only configuration. |
-| `0x1327d3d8` | `setValidator(address)` | nonpayable | — |  |
+| `0x1327d3d8` | `setValidator(address)` | nonpayable | — | Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if         the owner could SWAP it, a compromised owner would point at a malicious router whose         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.         The router is a protocol singleton (only-add registry + 7-day timelock for new         algorithms), so an account never needs to change it after the initial wiring. Once set         to a non-zero router it can never be changed — the DVT factor's algorithm source is         thereafter immutable from the (possibly compromised) owner's perspective. |
 | `0x01ffc9a7` | `supportsInterface(bytes4)` | pure | — | ERC-165: interface detection.         Signals support for ERC-1271 (isValidSignature), ERC-4337, and ERC-721 receiver. |
 | `0xf2dc691d` | `supportsModule(uint256)` | pure | — | ERC-7579: declare which module types this account supports.         Declares validator(1), executor(2), and hook(4). Fallback(3) is not supported. |
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
@@ -1307,16 +1309,6 @@ Authoritative, auto-generated reference for every external/public function, even
 `0xfcae8d38` · nonpayable · access: —
 
 > Approve an active recovery proposal.
-
-#### `blsAggregator()`
-
-`0xbe30742f` · view · access: —
-
-> Optional BLS aggregator for batch verification
-
-| returns | type | description |
-|---|---|---|
-| `_0` | `address` |  |
 
 #### `cancelRecovery()`
 
@@ -1690,14 +1682,6 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `uint8` |  |
 
-#### `setAggregator(address _aggregator)`
-
-`0xf9120af6` · nonpayable · access: —
-
-| param | type | description |
-|---|---|---|
-| `_aggregator` | `address` |  |
-
 #### `setP256Key(bytes32 _x, bytes32 _y)`
 
 `0x6fa36465` · nonpayable · access: —
@@ -1731,6 +1715,8 @@ Authoritative, auto-generated reference for every external/public function, even
 #### `setValidator(address _validator)`
 
 `0x1327d3d8` · nonpayable · access: —
+
+> Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if         the owner could SWAP it, a compromised owner would point at a malicious router whose         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.         The router is a protocol singleton (only-add registry + 7-day timelock for new         algorithms), so an account never needs to change it after the initial wiring. Once set         to a non-zero router it can never be changed — the DVT factor's algorithm source is         thereafter immutable from the (possibly compromised) owner's perspective.
 
 | param | type | description |
 |---|---|---|
@@ -1861,7 +1847,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x169142414aeecec3d3dfa03ef8b7d72d56023ead068694f563affe4276792bed` | `AgentIdentityMinted(uint256,address,string)` |
 | `0xee0112c63253e47e4ff7403776240bef35d82b6feba08ea6ecb20f8a4ab75e92` | `AgentReputationSubmitted(uint256,address,int128,string)` |
 | `0xc8982c1ad4646a1ed6bb40061ac7f2a6aaffef7f2e096aa9805cf705fa12933b` | `AgentWalletSet(uint256,address,address)` |
-| `0x94b241e14651a9658c51a45c82167e4f25ac3d3e7f8a2beae9d10b1ba07a94a0` | `AggregatorSet(address)` |
 | `0x70d0659af0992f8fb991c96aa6a5918129fb57f88068bf35fd6f08fc2d4476f0` | `AlgorithmApproved(uint8)` |
 | `0xaadd69bae4c5060e9be224899997360e78e4ee632c9951aa0055eeeb5bfc6662` | `ERC8004WalletBound(uint256,address,address)` |
 | `0xeca9cd482b52ddd909a1a2ffcceae1b6dd76b5491ec997d8d9ac05c6426fa344` | `GuardianAdded(uint8,address)` |
@@ -1938,6 +1923,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |
 | `0x63ce4efa` | `UnsupportedInnerSelector()` |
+| `0x2157e2e7` | `ValidatorAlreadySet()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
 | `0xf6b2ebb8` | `WeightChangeAlreadyApproved()` |
 | `0xf0854cb8` | `WeightChangeNotApproved()` |
@@ -2447,7 +2433,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AirAccountExtension
 
 - **Source:** `src/core/AirAccountExtension.sol`
-- **Functions:** 30 · **Events:** 15 · **Errors:** 35
+- **Functions:** 29 · **Events:** 15 · **Errors:** 35
 - **Title:** AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 - Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase         to keep the account under EIP-170's 24,576-byte runtime limit:           - ERC-8004 agent identity / reputation / wallet binding           - weighted-signature config governance (setWeightConfig + change proposal flow)         Deployed once (singleton) per implementation; the account reaches it via fallback +         delegatecall, so all logic runs in the ACCOUNT's storage/context: msg.sender,         address(this), owner, guardians, events and reverts are exactly as if inline.
 
@@ -2459,7 +2445,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
 | `0xcc2b82d9` | `approveWeightChange()` | nonpayable | — | Guardian approves the pending weight-change proposal. |
 | `0x67e3afe7` | `bindERC8004AgentWallet(address,uint256,address,uint256,bytes)` | nonpayable | onlyOwner, nonReentrant | Bind an execution wallet to an ERC-8004 agent identity NFT. |
-| `0xbe30742f` | `blsAggregator()` | view | — | Optional BLS aggregator for batch verification |
 | `0xb60295e1` | `cancelModuleInstall()` | nonpayable | — | Cancel the pending module-install proposal during the timelock window (issue #58 / KI-6). |
 | `0x5f9613dd` | `cancelWeightChange()` | nonpayable | — | Cancel a pending weight-change proposal. Owner or any guardian can cancel. |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
@@ -2534,16 +2519,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `agentWallet` | `address` |  |
 | `deadline` | `uint256` |  |
 | `signature` | `bytes` |  |
-
-#### `blsAggregator()`
-
-`0xbe30742f` · view · access: —
-
-> Optional BLS aggregator for batch verification
-
-| returns | type | description |
-|---|---|---|
-| `_0` | `address` |  |
 
 #### `cancelModuleInstall()`
 
@@ -4784,7 +4759,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarBLSAlgorithm
 
 - **Source:** `src/validators/AAStarBLSAlgorithm.sol`
-- **Functions:** 19 · **Events:** 4 · **Errors:** 13
+- **Functions:** 24 · **Events:** 6 · **Errors:** 14
 - **Title:** AAStarBLSAlgorithm - BLS12-381 aggregate signature verification with node management
 - Extracted from YetAnotherAA AAStarValidator with assembly optimizations.         ABI-compatible with the NestJS backend (registerPublicKey, isRegistered, etc.)
 
@@ -4792,7 +4767,9 @@ Authoritative, auto-generated reference for every external/public function, even
 
 | selector | function | mutability | access | notice |
 |---|---|---|---|---|
+| `0x79ba5097` | `acceptOwnership()` | nonpayable | — | Complete a two-step ownership transfer. Only the pending owner may accept. |
 | `0xb06e5ab4` | `aggregateKeys(bytes32[])` | view | — | Public aggregation for external callers (e.g., BLSAggregator).         Always on-demand — cache removed in v0.17.2-beta.1 (see HIGH-1 above). |
+| `0x245a7bfc` | `aggregator()` | view | — |  |
 | `0x0fb2df82` | `batchRegisterPublicKeys(bytes32[],bytes[])` | nonpayable | onlyOwner |  |
 | `0xb5abc0a2` | `cacheAggregatedKey(bytes32[])` | pure | — | DEPRECATED in v0.17.2-beta.1 — cache mechanism removed (Codex round 5 HIGH-1).         The previous design cached aggregate keys per `keccak256(nodeIds)` but did not         invalidate them on `updatePublicKey` / `revokePublicKey`, so a compromised key         remained usable through any cached set. Aggregation is now always on-demand. |
 | `0xe0034220` | `computeSetHash(bytes32[])` | pure | — | Compute the cache key for a set of nodeIds (retained for off-chain compatibility). |
@@ -4800,19 +4777,28 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8990fd25` | `getGasEstimate(uint256)` | pure | — | Public gas estimate (NestJS-compatible) |
 | `0x29173a92` | `getRegisteredNodeCount()` | view | — |  |
 | `0x4ce0737e` | `getRegisteredNodes(uint256,uint256)` | view | — |  |
+| `0xa54126dd` | `hashToG2(bytes32)` | view | — | Map a 32-byte message (the userOpHash) to a BLS12-381 G2 point, byte-identical to         `bls12_381.G2.hashToCurve(getBytes(message), { DST })` in noble-curves (the DVT). |
 | `0x27258b22` | `isRegistered(bytes32)` | view | — |  |
 | `0x8da5cb5b` | `owner()` | view | — |  |
+| `0xe30c3978` | `pendingOwner()` | view | — |  |
 | `0x1e85f051` | `registeredKeys(bytes32)` | view | — |  |
 | `0x61ca89fa` | `registeredNodes(uint256)` | view | — |  |
 | `0x9017ddee` | `registerPublicKey(bytes32,bytes)` | nonpayable | onlyOwner |  |
 | `0xa8c59169` | `revokePublicKey(bytes32)` | nonpayable | onlyOwner |  |
-| `0xf2fde38b` | `transferOwnership(address)` | nonpayable | onlyOwner |  |
+| `0xf9120af6` | `setAggregator(address)` | nonpayable | onlyOwner | issue #45 Part B: set the single protocol-level batch BLS aggregator.         Only `owner` (intended to be the protocol Gnosis Safe) may call this. There is no         per-account aggregator and no end-user setter — this one value governs the batch         path for every account that reads `blsAlgorithm.aggregator()`. Pass `address(0)` to         disable batch aggregation protocol-wide (accounts fall back to inline single-op BLS). |
+| `0xf2fde38b` | `transferOwnership(address)` | nonpayable | onlyOwner | Begin a two-step ownership transfer (Ownable2Step). Records `newOwner` as pending;         the transfer only completes when `newOwner` calls `acceptOwnership()`. Use this for         the deployer-EOA → protocol-Safe handover so a wrong address cannot take ownership.         Pass `address(0)` to cancel a pending transfer. |
 | `0x133108f7` | `updatePublicKey(bytes32,bytes)` | nonpayable | onlyOwner |  |
 | `0x65a8613c` | `validate(bytes32,bytes)` | view | — |  |
-| `0x399ef999` | `validateAggregateSignature(bytes32[],bytes,bytes)` | view | — | Verify aggregate BLS signature (view, no events) |
+| `0x399ef999` | `validateAggregateSignature(bytes32[],bytes,bytes)` | view | — | Verify aggregate BLS signature against a caller-supplied point (view, no events).         ⚠️ NOT op-bound — see the security note above. Do not use for UserOp authorization. |
 | `0xcdcbd867` | `verifyAggregateSignature(bytes32[],bytes,bytes)` | nonpayable | — | Verify aggregate BLS signature (state-changing for event compat) |
 
 ### Functions
+
+#### `acceptOwnership()`
+
+`0x79ba5097` · nonpayable · access: —
+
+> Complete a two-step ownership transfer. Only the pending owner may accept.
 
 #### `aggregateKeys(bytes32[] nodeIds)`
 
@@ -4827,6 +4813,14 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `bytes` |  |
+
+#### `aggregator()`
+
+`0x245a7bfc` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
 
 #### `batchRegisterPublicKeys(bytes32[] nodeIds, bytes[] publicKeys)`
 
@@ -4914,6 +4908,22 @@ Authoritative, auto-generated reference for every external/public function, even
 | `nodeIds` | `bytes32[]` |  |
 | `publicKeys` | `bytes[]` |  |
 
+#### `hashToG2(bytes32 message)`
+
+`0xa54126dd` · view · access: —
+
+> Map a 32-byte message (the userOpHash) to a BLS12-381 G2 point, byte-identical to         `bls12_381.G2.hashToCurve(getBytes(message), { DST })` in noble-curves (the DVT).
+
+*@dev* Exposed as an external view for golden-vector testing / off-chain cross-checking.      No security impact: it is a pure function of `message` (no storage, no msg.sender).
+
+| param | type | description |
+|---|---|---|
+| `message` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes` |  |
+
 #### `isRegistered(bytes32 arg0)`
 
 `0x27258b22` · view · access: —
@@ -4929,6 +4939,14 @@ Authoritative, auto-generated reference for every external/public function, even
 #### `owner()`
 
 `0x8da5cb5b` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `pendingOwner()`
+
+`0xe30c3978` · view · access: —
 
 | returns | type | description |
 |---|---|---|
@@ -4975,9 +4993,21 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `nodeId` | `bytes32` |  |
 
+#### `setAggregator(address agg)`
+
+`0xf9120af6` · nonpayable · access: onlyOwner
+
+> issue #45 Part B: set the single protocol-level batch BLS aggregator.         Only `owner` (intended to be the protocol Gnosis Safe) may call this. There is no         per-account aggregator and no end-user setter — this one value governs the batch         path for every account that reads `blsAlgorithm.aggregator()`. Pass `address(0)` to         disable batch aggregation protocol-wide (accounts fall back to inline single-op BLS).
+
+| param | type | description |
+|---|---|---|
+| `agg` | `address` |  |
+
 #### `transferOwnership(address newOwner)`
 
 `0xf2fde38b` · nonpayable · access: onlyOwner
+
+> Begin a two-step ownership transfer (Ownable2Step). Records `newOwner` as pending;         the transfer only completes when `newOwner` calls `acceptOwnership()`. Use this for         the deployer-EOA → protocol-Safe handover so a wrong address cannot take ownership.         Pass `address(0)` to cancel a pending transfer.
 
 | param | type | description |
 |---|---|---|
@@ -4992,15 +5022,15 @@ Authoritative, auto-generated reference for every external/public function, even
 | `nodeId` | `bytes32` |  |
 | `newPublicKey` | `bytes` |  |
 
-#### `validate(bytes32 arg0, bytes signature)`
+#### `validate(bytes32 hash, bytes signature)`
 
 `0x65a8613c` · view · access: —
 
-*@dev* Expects signature format: [nodeIds...][blsSignature(256)][messagePoint(256)]      The nodeIds count is derived from (sig.length - 512) / 32
+*@dev* issue #45 Fix 1 (Option B): signature format is now `[nodeIds...][blsSignature(256)]`.      The trailing caller-supplied `messagePoint(256)` has been REMOVED. The message point      is recomputed on-chain from `hash` (= the ERC-4337 userOpHash) via RFC 9380      hash_to_curve and the pairing is verified against THAT. This binds the BLS aggregate      to this exact operation: a valid (messagePoint, aggSig) produced for userOpHash_A can      no longer be replayed against userOpHash_B (the old code ignored `hash` and verified      against whatever point the caller supplied).      The nodeIds count is derived from (sig.length - 256) / 32.
 
 | param | type | description |
 |---|---|---|
-| `arg0` | `bytes32` |  |
+| `hash` | `bytes32` |  |
 | `signature` | `bytes` | The algorithm-specific signature data (algId prefix already stripped) |
 
 | returns | type | description |
@@ -5011,7 +5041,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0x399ef999` · view · access: —
 
-> Verify aggregate BLS signature (view, no events)
+> Verify aggregate BLS signature against a caller-supplied point (view, no events).         ⚠️ NOT op-bound — see the security note above. Do not use for UserOp authorization.
 
 | param | type | description |
 |---|---|---|
@@ -5043,7 +5073,9 @@ Authoritative, auto-generated reference for every external/public function, even
 
 | topic0 | event |
 |---|---|
+| `0x94b241e14651a9658c51a45c82167e4f25ac3d3e7f8a2beae9d10b1ba07a94a0` | `AggregatorSet(address)` |
 | `0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0` | `OwnershipTransferred(address,address)` |
+| `0x38d16b8cac22d99fc7c124b9cd0de2d3fa1faef420bfe791d8c362d765e22700` | `OwnershipTransferStarted(address,address)` |
 | `0xb53698ad0068408d16d323c1bb45fdca9ff6bb47219ff6d0832591dbb505aac3` | `PublicKeyRegistered(bytes32,bytes)` |
 | `0xe23e76c154822a25bd6dd330dcf4f1998f97c4c45cd64ecac9e096f56c2511f7` | `PublicKeyRevoked(bytes32)` |
 | `0x004d4b9a68c914bd2b02ce9d82b3a990593cc1b1a335f3b001763c3c2ed52cd2` | `PublicKeyUpdated(bytes32,bytes,bytes)` |
@@ -5063,6 +5095,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x1d61a626` | `NodeAlreadyRegistered()` |
 | `0x014f5568` | `NodeNotRegistered()` |
 | `0xe2d401be` | `NoNodesProvided()` |
+| `0x1853971c` | `NotPendingOwner()` |
 | `0x5fc483c5` | `OnlyOwner()` |
 | `0x4df45e2f` | `PairingFailed()` |
 

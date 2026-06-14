@@ -93,7 +93,7 @@ contract DeployAirAccountV017 is Script {
         d.validatorRouter = address(router);
 
         // 3. BLS aggregator (ERC-4337 IAggregator)
-        d.blsAggregator = address(new AAStarBLSAggregator(d.blsAlgorithm));
+        d.blsAggregator = address(new AAStarBLSAggregator(d.blsAlgorithm, ENTRYPOINT));
 
         // 4. Unified SessionKeyValidator (algId 0x08) — covers BOTH simple DApp/M6.4-style
         //    session keys AND the richer agent-session features (velocity, callTargets[],
