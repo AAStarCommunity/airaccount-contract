@@ -49,6 +49,22 @@ abstract contract AAStarAgentStorageLayout is Initializable {
         uint256 approvalBitmap; // bit i = guardian[i] approved
     }
 
+    /// @dev Pending two-step module-install proposal (issue #58 / KI-6). Packed: module(20) +
+    ///      moduleTypeId(1) + proposedAt(5) + executeAfter(5) = 31 bytes share one slot; initDataHash
+    ///      and authHash occupy the next two slots.
+    struct ModuleInstallProposal {
+        address module;        // module contract to install
+        uint8 moduleTypeId;    // 1=validator, 2=executor, 4=hook
+        uint40 proposedAt;     // timestamp the proposal was created (0 = no active proposal)
+        uint40 executeAfter;   // FIXED execution deadline captured at propose time = proposedAt +
+                               // timelock-at-propose; never recomputed, so a later timelock change
+                               // cannot move (or overflow) an existing proposal's window.
+        bytes32 initDataHash;  // keccak256 of the module init data the execute step must reproduce
+        bytes32 authHash;      // snapshot of keccak256(owner, guardian0..2, guardianCount) at propose
+                               // time; execute reverts if the auth config changed during the window
+                               // (owner replaced via social recovery, or any guardian add/remove).
+    }
+
     // ── State (slots 0..23 — must match the historical account layout exactly) ──
 
     /// @notice The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility)
@@ -126,4 +142,16 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     ///      signature collected for one install can never be replayed after an uninstall+reinstall.
     ///      Appended at slot 25 — never reorder.
     uint256 internal _moduleManagementNonce;                                              // slot 25
+
+    /// @notice Optional per-account module-install timelock in seconds (issue #58 / KI-6).
+    /// @dev 0 = disabled (default): module installs are immediate at the configured threshold,
+    ///      preserving the legacy UX. When > 0, installing at the default owner+1-guardian threshold
+    ///      becomes a two-step propose → (wait `_moduleInstallTimelock`) → execute flow, giving other
+    ///      guardians/owner a window to cancel a single dual-key compromise. An elevated owner+2-guardian
+    ///      authorization may still install immediately (bypass). Appended at slot 26 — never reorder.
+    uint256 internal _moduleInstallTimelock;                                              // slot 26
+
+    /// @dev Pending module-install proposal (issue #58 / KI-6). proposedAt == 0 means none pending.
+    ///      Appended at slots 27-29 (3-slot struct) — never reorder.
+    ModuleInstallProposal internal _pendingModuleInstall;                                 // slots 27-29
 }

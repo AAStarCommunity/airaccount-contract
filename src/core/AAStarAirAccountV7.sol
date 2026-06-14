@@ -86,6 +86,12 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     uint256 internal constant MODULE_TYPE_EXECUTOR  = 2;
     uint256 internal constant MODULE_TYPE_HOOK      = 4;
 
+    /// @dev KI-6 (#58): number of distinct guardian signatures (alongside owner) required for the
+    ///      immediate-install bypass when the optional module-install timelock is enabled. 2 distinct
+    ///      guardians (owner+2) strictly exceeds the default owner+1-guardian install threshold it
+    ///      bypasses — the higher-authorization path costs MORE consensus than the thing it skips.
+    uint8 internal constant MODULE_INSTALL_BYPASS_SIGS = 2;
+
     // ERC-7579 module lifecycle selectors
     bytes4 private constant SEL_ON_INSTALL   = 0x6d61fe70; // onInstall(bytes)
     bytes4 private constant SEL_ON_UNINSTALL = 0x8a91b0e3; // onUninstall(bytes)
@@ -376,6 +382,14 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
 
         uint8 threshold = _installModuleThreshold == 0 ? 70 : _installModuleThreshold;
         uint8 sigsRequired = threshold >= 100 ? 2 : (threshold >= 70 ? 1 : 0);
+
+        // KI-6 (#58): when the optional install timelock is enabled, this immediate-install path
+        // demands the elevated owner+2-guardian bypass authorization. The default owner+1-guardian
+        // path must instead route through proposeModuleInstall → (wait timelock) → executeModuleInstall
+        // (on AirAccountExtension), giving other guardians/owner a window to cancel a dual-key compromise.
+        if (_moduleInstallTimelock != 0 && sigsRequired < MODULE_INSTALL_BYPASS_SIGS) {
+            sigsRequired = MODULE_INSTALL_BYPASS_SIGS;
+        }
 
         if (sigsRequired > 0) {
             uint256 sigEnd = uint256(sigsRequired) * 65;

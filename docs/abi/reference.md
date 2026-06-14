@@ -2433,7 +2433,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AirAccountExtension
 
 - **Source:** `src/core/AirAccountExtension.sol`
-- **Functions:** 23 · **Events:** 10 · **Errors:** 18
+- **Functions:** 29 · **Events:** 15 · **Errors:** 35
 - **Title:** AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 - Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase         to keep the account under EIP-170's 24,576-byte runtime limit:           - ERC-8004 agent identity / reputation / wallet binding           - weighted-signature config governance (setWeightConfig + change proposal flow)         Deployed once (singleton) per implementation; the account reaches it via fallback +         delegatecall, so all logic runs in the ACCOUNT's storage/context: msg.sender,         address(this), owner, guardians, events and reverts are exactly as if inline.
 
@@ -2445,19 +2445,25 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
 | `0xcc2b82d9` | `approveWeightChange()` | nonpayable | — | Guardian approves the pending weight-change proposal. |
 | `0x67e3afe7` | `bindERC8004AgentWallet(address,uint256,address,uint256,bytes)` | nonpayable | onlyOwner, nonReentrant | Bind an execution wallet to an ERC-8004 agent identity NFT. |
+| `0xb60295e1` | `cancelModuleInstall()` | nonpayable | — | Cancel the pending module-install proposal during the timelock window (issue #58 / KI-6). |
 | `0x5f9613dd` | `cancelWeightChange()` | nonpayable | — | Cancel a pending weight-change proposal. Owner or any guardian can cancel. |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
+| `0x4bc15d2b` | `executeModuleInstall(bytes)` | nonpayable | nonReentrant | Execute a matured module-install proposal (issue #58 / KI-6). |
 | `0x35905bb0` | `executeWeightChange()` | nonpayable | — | Execute an approved weight-change after timelock and threshold are met. |
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
 | `0x353f0860` | `mintAgentIdentity(address,string)` | nonpayable | onlyOwner, nonReentrant | Mint an ERC-8004 agent identity NFT to this AirAccount via the official registry. |
+| `0xc8175b3f` | `moduleInstallTimelock()` | view | — | Read the active module-install timelock (seconds). 0 = disabled (immediate installs). |
 | `0x8da5cb5b` | `owner()` | view | — | Account owner and ECDSA signer (mutable for social recovery) |
 | `0x863ee512` | `p256KeyX()` | view | — | P256 public key x-coordinate |
 | `0xc4bb0566` | `p256KeyY()` | view | — | P256 public key y-coordinate |
 | `0x56dc31d0` | `parserRegistry()` | view | — | Optional calldata parser registry for DeFi protocol support (address(0) = disabled) |
+| `0x8dbbce84` | `pendingModuleInstall()` | view | — | Read the pending module-install proposal. proposedAt == 0 means none pending. |
 | `0x7bea8f76` | `pendingWeightChange()` | view | — | Pending weight-change proposal (M6.2). proposedAt == 0 means none pending. |
+| `0x9bbbb8ae` | `proposeModuleInstall(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | Propose a module install for the timelocked two-step flow (issue #58 / KI-6). |
 | `0x6b56c654` | `proposeWeightChange((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | onlyOwner | Propose a weakening weight-config change (guardian-gated, M6.2). |
 | `0xf9c391f6` | `queryAgentReputation(address,uint256,address[],string,string)` | view | — | Query aggregated reputation for an agent across a set of clients. |
 | `0x293e07f2` | `setAgentWallet(uint256,address,address,bytes)` | nonpayable | onlyOwner | Link an agent wallet to this AirAccount by registering it in AgentRegistry. |
+| `0xa5b915b5` | `setModuleInstallTimelock(uint256,bytes)` | nonpayable | onlyOwnerOrEntryPoint | Configure the optional module-install timelock (issue #58 / KI-6). |
 | `0x10d47802` | `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | onlyOwner | Set the weight configuration for algId 0x07. First-time: direct owner call.         Subsequent weakening changes require the guardian proposal flow (M6.2). |
 | `0x6e795333` | `submitAgentReputation(address,uint256,int128,uint8,string,string,string,string,bytes32)` | nonpayable | onlyOwner, nonReentrant | Submit reputation feedback for an agent interaction via the official registry. |
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
@@ -2514,6 +2520,14 @@ Authoritative, auto-generated reference for every external/public function, even
 | `deadline` | `uint256` |  |
 | `signature` | `bytes` |  |
 
+#### `cancelModuleInstall()`
+
+`0xb60295e1` · nonpayable · access: —
+
+> Cancel the pending module-install proposal during the timelock window (issue #58 / KI-6).
+
+*@dev* Owner OR any single guardian may veto. The timelock exists precisely to let ANY other      stakeholder stop an install pushed through by a compromised owner+1-guardian pair, so a      single honest party must be able to cancel. This deliberately mirrors cancelWeightChange      (owner-or-any-guardian) rather than the 2-of-3 cancelRecovery: recovery's higher cancel bar      stops a lone compromised guardian from blocking legitimate recovery, but here easy      cancellation IS the defense, so the looser rule is the safer one.
+
 #### `cancelWeightChange()`
 
 `0x5f9613dd` · nonpayable · access: —
@@ -2529,6 +2543,18 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `address` |  |
+
+#### `executeModuleInstall(bytes moduleInitData)`
+
+`0x4bc15d2b` · nonpayable · access: nonReentrant
+
+> Execute a matured module-install proposal (issue #58 / KI-6).
+
+*@dev* Permissionless (like executeRecovery) — authorization was captured at propose time and the      timelock window has elapsed. The caller must reproduce the exact module init data that was      proposed (its keccak256 must match the stored hash) so onInstall receives the authorized config.
+
+| param | type | description |
+|---|---|---|
+| `moduleInitData` | `bytes` | The module init data committed at propose time. |
 
 #### `executeWeightChange()`
 
@@ -2560,6 +2586,16 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `agentId` | `uint256` |  |
+
+#### `moduleInstallTimelock()`
+
+`0xc8175b3f` · view · access: —
+
+> Read the active module-install timelock (seconds). 0 = disabled (immediate installs).
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
 
 #### `owner()`
 
@@ -2601,6 +2637,20 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
+#### `pendingModuleInstall()`
+
+`0x8dbbce84` · view · access: —
+
+> Read the pending module-install proposal. proposedAt == 0 means none pending.
+
+| returns | type | description |
+|---|---|---|
+| `module` | `address` | Module contract pending install. |
+| `moduleTypeId` | `uint8` | 1=validator, 2=executor, 4=hook. |
+| `proposedAt` | `uint40` | Timestamp the proposal was created. |
+| `executeAfter` | `uint40` | Fixed timestamp from which the proposal may be executed (immutable once set). |
+| `initDataHash` | `bytes32` | keccak256 of the committed module init data. |
+
 #### `pendingWeightChange()`
 
 `0x7bea8f76` · view · access: —
@@ -2612,6 +2662,20 @@ Authoritative, auto-generated reference for every external/public function, even
 | `proposed` | `(uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8)` |  |
 | `proposedAt` | `uint256` |  |
 | `approvalBitmap` | `uint256` |  |
+
+#### `proposeModuleInstall(uint256 moduleTypeId, address module, bytes initData)`
+
+`0x9bbbb8ae` · nonpayable · access: onlyOwnerOrEntryPoint
+
+> Propose a module install for the timelocked two-step flow (issue #58 / KI-6).
+
+*@dev* Only valid when the timelock is enabled. Requires the SAME authorization as a normal      install at the configured threshold (owner + N guardian sigs); the guardian signature is      consumed via the module-management nonce so it cannot be replayed. After the timelock      elapses anyone may call executeModuleInstall; meanwhile owner or any guardian may cancel.
+
+| param | type | description |
+|---|---|---|
+| `moduleTypeId` | `uint256` | 1=validator, 2=executor, 4=hook. |
+| `module` | `address` | Module contract address (must be deployed). |
+| `initData` | `bytes` | Layout: guardian sig(s) prepended (per configured threshold), then module init data.        Sig hash: _guardianOpHash("INSTALL_MODULE", abi.encode(moduleTypeId, module, keccak256(moduleInitData), moduleManagementNonce)). |
 
 #### `proposeWeightChange((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8) proposed)`
 
@@ -2655,6 +2719,19 @@ Authoritative, auto-generated reference for every external/public function, even
 | `agentWallet` | `address` |  |
 | `agentRegistry` | `address` |  |
 | `agentWalletSig` | `bytes` |  |
+
+#### `setModuleInstallTimelock(uint256 newTimelock, bytes guardianSigs)`
+
+`0xa5b915b5` · nonpayable · access: onlyOwnerOrEntryPoint
+
+> Configure the optional module-install timelock (issue #58 / KI-6).
+
+*@dev* Strengthening (increasing, or first-time set) is a direct owner action. Weakening      (reducing or disabling → 0) requires the SAME elevated owner+2-guardian consensus as the      immediate-install bypass, so a compromised owner+1-guardian pair cannot silently switch      the protection off and then install instantly. On accounts with fewer than 2 guardians the      weakening bar degrades to all available guardians (mirrors uninstallModule's min(count,2)),      so the timelock can never become permanently un-removable.
+
+| param | type | description |
+|---|---|---|
+| `newTimelock` | `uint256` | New timelock in seconds (0 disables). Capped at MAX_MODULE_INSTALL_TIMELOCK        (30 days); larger values revert ModuleInstallTimelockTooLong. |
+| `guardianSigs` | `bytes` | Concatenated 65-byte guardian sigs over        _guardianOpHash("SET_MODULE_TIMELOCK", abi.encode(newTimelock, moduleManagementNonce)).        Ignored (may be empty) when strengthening. |
 
 #### `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8) config)`
 
@@ -2742,6 +2819,11 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xc8982c1ad4646a1ed6bb40061ac7f2a6aaffef7f2e096aa9805cf705fa12933b` | `AgentWalletSet(uint256,address,address)` |
 | `0xaadd69bae4c5060e9be224899997360e78e4ee632c9951aa0055eeeb5bfc6662` | `ERC8004WalletBound(uint256,address,address)` |
 | `0xc7f505b2f371ae2175ee4913f4499e1f2633a7b5936321eed1cdaeb6115181d2` | `Initialized(uint64)` |
+| `0xfc129a9cf9c86292bfb325ad90f24fea23449a3870fdaa024bbfbf1afdf3db31` | `ModuleInstallCancelled(uint256,address,address)` |
+| `0xd21d0b289f126c4b473ea641963e766833c2f13866e4ff480abd787c100ef123` | `ModuleInstalled(uint256,address)` |
+| `0xcb23826c065976de3d72ab586bb16e6910ad23028abf0885a015fa54face86b3` | `ModuleInstallExecuted(uint256,address)` |
+| `0x961131cbbaf1bc03ad2365a2fb7e266c712005e704c38832cfb7a3014a3580fb` | `ModuleInstallProposed(uint256,address,uint256)` |
+| `0x27db7bd98a100c6f2a3ebfce33cb9dd05ee5a152452bd211e8535ac2becb861a` | `ModuleInstallTimelockChanged(uint256,uint256)` |
 | `0x15f128f27bdfb175cfbe98c20eeca3038a9ee15470ec88a4fbd5a16a20a73267` | `WeightChangeApproved(address,uint256)` |
 | `0x576deb2334d64aacc3de78fdc843b12c4601431d7d7546f8ef6ff413d18ad8e7` | `WeightChangeCancelled()` |
 | `0xc94d426438944eb97ead040cba3930306dd959e6f9382bf215ad45427c03ecb6` | `WeightChangeExecuted((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8),(uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` |
@@ -2753,13 +2835,30 @@ Authoritative, auto-generated reference for every external/public function, even
 | selector | error |
 |---|---|
 | `0x71a31c27` | `AgentRegistrationFailed()` |
+| `0xf645eedf` | `ECDSAInvalidSignature()` |
+| `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
+| `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
 | `0xe04a2600` | `IdentityRegistrationFailed()` |
 | `0xa59a4151` | `InsecureWeightConfig()` |
+| `0xdb5c22f4` | `InstallModuleUnauthorized()` |
 | `0xa6c1146b` | `InvalidGuardian()` |
 | `0xf92ee8a9` | `InvalidInitialization()` |
+| `0x2125deae` | `InvalidModuleType()` |
+| `0x24c377e2` | `ModuleAlreadyInstalled()` |
+| `0xe8e195da` | `ModuleInstallAuthChanged()` |
+| `0xf45e530b` | `ModuleInstallCallbackFailed(uint256,address)` |
+| `0x253ee849` | `ModuleInstallDataMismatch()` |
+| `0xbb849f5a` | `ModuleInstallProposalExists()` |
+| `0x33afc34b` | `ModuleInstallProposalExpired()` |
+| `0x1bce553b` | `ModuleInstallTimelockDisabled()` |
+| `0xce1d6b48` | `ModuleInstallTimelockNotExpired()` |
+| `0xfb3e466e` | `ModuleInstallTimelockTooLong()` |
+| `0x74be437f` | `ModuleInvalid()` |
+| `0x69cc141f` | `NoModuleInstallProposal()` |
 | `0xef6d0f02` | `NotGuardian()` |
 | `0xd7e6bcf8` | `NotInitializing()` |
 | `0x30cd7471` | `NotOwner()` |
+| `0x50a222f4` | `NotOwnerOrEntryPoint()` |
 | `0x1e142ec1` | `NoWeightChangeProposal()` |
 | `0x6e5510ce` | `RecoveryAlreadyActive()` |
 | `0xab143c06` | `Reentrancy()` |
@@ -3239,7 +3338,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## IAirAccountAgent
 
 - **Source:** `src/interfaces/IAirAccountAgent.sol`
-- **Functions:** 10 · **Events:** 0 · **Errors:** 0
+- **Functions:** 16 · **Events:** 0 · **Errors:** 0
 - **Title:** IAirAccountAgent
 - ABI surface for the cold functions that AAStarAirAccountV7 routes to the singleton         AirAccountExtension via fallback + delegatecall (diamond-lite): ERC-8004 agent         identity/reputation and weighted-signature config governance.
 
@@ -3249,12 +3348,18 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|---|---|
 | `0xcc2b82d9` | `approveWeightChange()` | nonpayable | — |  |
 | `0x67e3afe7` | `bindERC8004AgentWallet(address,uint256,address,uint256,bytes)` | nonpayable | — |  |
+| `0xb60295e1` | `cancelModuleInstall()` | nonpayable | — |  |
 | `0x5f9613dd` | `cancelWeightChange()` | nonpayable | — |  |
+| `0x4bc15d2b` | `executeModuleInstall(bytes)` | nonpayable | — |  |
 | `0x35905bb0` | `executeWeightChange()` | nonpayable | — |  |
 | `0x353f0860` | `mintAgentIdentity(address,string)` | nonpayable | — |  |
+| `0xc8175b3f` | `moduleInstallTimelock()` | view | — |  |
+| `0x8dbbce84` | `pendingModuleInstall()` | view | — |  |
+| `0x9bbbb8ae` | `proposeModuleInstall(uint256,address,bytes)` | nonpayable | — |  |
 | `0x6b56c654` | `proposeWeightChange((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | — |  |
 | `0xf9c391f6` | `queryAgentReputation(address,uint256,address[],string,string)` | view | — |  |
 | `0x293e07f2` | `setAgentWallet(uint256,address,address,bytes)` | nonpayable | — |  |
+| `0xa5b915b5` | `setModuleInstallTimelock(uint256,bytes)` | nonpayable | — |  |
 | `0x10d47802` | `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | — |  |
 | `0x6e795333` | `submitAgentReputation(address,uint256,int128,uint8,string,string,string,string,bytes32)` | nonpayable | — |  |
 
@@ -3276,9 +3381,21 @@ Authoritative, auto-generated reference for every external/public function, even
 | `deadline` | `uint256` |  |
 | `signature` | `bytes` |  |
 
+#### `cancelModuleInstall()`
+
+`0xb60295e1` · nonpayable · access: —
+
 #### `cancelWeightChange()`
 
 `0x5f9613dd` · nonpayable · access: —
+
+#### `executeModuleInstall(bytes moduleInitData)`
+
+`0x4bc15d2b` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `moduleInitData` | `bytes` |  |
 
 #### `executeWeightChange()`
 
@@ -3296,6 +3413,36 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `agentId` | `uint256` |  |
+
+#### `moduleInstallTimelock()`
+
+`0xc8175b3f` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `pendingModuleInstall()`
+
+`0x8dbbce84` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `module` | `address` |  |
+| `moduleTypeId` | `uint8` |  |
+| `proposedAt` | `uint40` |  |
+| `executeAfter` | `uint40` |  |
+| `initDataHash` | `bytes32` |  |
+
+#### `proposeModuleInstall(uint256 moduleTypeId, address module, bytes initData)`
+
+`0x9bbbb8ae` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `moduleTypeId` | `uint256` |  |
+| `module` | `address` |  |
+| `initData` | `bytes` |  |
 
 #### `proposeWeightChange((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8) proposed)`
 
@@ -3333,6 +3480,15 @@ Authoritative, auto-generated reference for every external/public function, even
 | `agentWallet` | `address` |  |
 | `agentRegistry` | `address` |  |
 | `agentWalletSig` | `bytes` |  |
+
+#### `setModuleInstallTimelock(uint256 newTimelock, bytes guardianSigs)`
+
+`0xa5b915b5` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `newTimelock` | `uint256` |  |
+| `guardianSigs` | `bytes` |  |
 
 #### `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8) config)`
 
