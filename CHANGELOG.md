@@ -8,6 +8,71 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.18.0-beta.2] - 2026-06-14 (quick-wins batch + redeploy)
+
+Low-cost hardening/cleanup batch on top of v0.18.0-beta.1, redeployed to Sepolia. **805 unit tests (cancun) + 805 under EIP-2537/prague (full suite), 0 failed.**
+
+### What changed (PR #111)
+- **🔴 VERSION fix** — the v0.18 contracts self-reported `"0.17.2"`; bumped `ACCOUNT_VERSION` / `FACTORY_VERSION` / `accountId()` → **`0.18.0`** (verified on-chain on the new deployment).
+- **[#104](https://github.com/AAStarCommunity/airaccount-contract/issues/104)** — removed the dead `g2Add`/`_g2Add` (EIP-2537 `0x0e`=G2MSM) helper from `AAStarBLSAlgorithm` (live hash-to-curve uses `0x0d`, untouched); fixed `test_aggregateKeys_twoNodes` → the **full prague test suite is now green** (CI job widened from scoped to full).
+- **[#22](https://github.com/AAStarCommunity/airaccount-contract/issues/22)** — Guard strict mode: opt-in `blockUnconfiguredTokens` flag (default **OFF**, backward-compatible) on `AAStarGlobalGuard` + owner-gated `guardSetStrictMode` → allowlist mode (unconfigured tokens revert `TokenNotConfigured()`).
+- **Docs** — recovery timelock aligned to **48h** (the actual `RECOVERY_TIMELOCK = 2 days` constant; the "72h" was a doc error).
+- **Deferred to v0.19 ([#42](https://github.com/AAStarCommunity/airaccount-contract/issues/42)):** Safe/ERC-1271 guardians (`SignatureChecker` can't recover an address + the 2 guardian sites run inside `validateUserOp` where ERC-7562 forbids the external staticcall).
+
+### Deployed (Sepolia 2026-06-14 — supersedes beta.1)
+| Contract | Address |
+|---|---|
+| Factory | [`0x1b694Aa55fBe2953e724037d2449905d531C1e65`](https://sepolia.etherscan.io/address/0x1b694Aa55fBe2953e724037d2449905d531C1e65) |
+| Implementation | [`0x9Bf4d9FeFaA1e7358e58583294569adf730A97b0`](https://sepolia.etherscan.io/address/0x9Bf4d9FeFaA1e7358e58583294569adf730A97b0) |
+| Extension | [`0x008B136106e98384B640bD5F0D0fb6012542F24D`](https://sepolia.etherscan.io/address/0x008B136106e98384B640bD5F0D0fb6012542F24D) |
+| AAStarBLSAlgorithm | [`0xA9EE4f8A59fCE1B56f9da8e153c3f5F38D3C59ED`](https://sepolia.etherscan.io/address/0xA9EE4f8A59fCE1B56f9da8e153c3f5F38D3C59ED) |
+| AAStarBLSAggregator | [`0x321D68F5eD927B59E1A953Fd97972FbCB21f7601`](https://sepolia.etherscan.io/address/0x321D68F5eD927B59E1A953Fd97972FbCB21f7601) |
+| ValidatorRouter | [`0xe8e5a8c5eeDfb75adb7FbA2BCCD3A6b1B766d6f0`](https://sepolia.etherscan.io/address/0xe8e5a8c5eeDfb75adb7FbA2BCCD3A6b1B766d6f0) |
+| SessionKeyValidator | [`0xBB79BF812aE239443fF48323dD24860F9bFb2874`](https://sepolia.etherscan.io/address/0xBB79BF812aE239443fF48323dD24860F9bFb2874) |
+| ForceExitModule | [`0xEaDb9EEDD1aF021AEC687C18C3491337a481e4Ed`](https://sepolia.etherscan.io/address/0xEaDb9EEDD1aF021AEC687C18C3491337a481e4Ed) |
+| AirAccountDelegate | [`0x6b60897172B7CA2fa3986d19a55B25d968988c22`](https://sepolia.etherscan.io/address/0x6b60897172B7CA2fa3986d19a55B25d968988c22) |
+| AgentRegistry | [`0x00D7045617b9807cE36db9591a63b5af66036192`](https://sepolia.etherscan.io/address/0x00D7045617b9807cE36db9591a63b5af66036192) |
+| CalldataParserRegistry | [`0xD6A16905C25F1D928e2fF5204f1385379e84D3Ff`](https://sepolia.etherscan.io/address/0xD6A16905C25F1D928e2fF5204f1385379e84D3Ff) |
+
+---
+
+## [v0.18.0-beta.1] - 2026-06-14 (Security hardening + #45 CRITICAL BLS↔userOpHash binding + gas)
+
+The v0.18 contract milestone: 8 parallel workstreams (WS-A…WS-G + WS-A2) merged, the #45 CRITICAL fixed, gas optimizations, and a prague EIP-2537 CI job. **799 unit tests (cancun) + EIP-2537/prague crypto tests, 0 failed. E2E 13-16 verified on-chain.**
+
+### 🔴 CRITICAL — #45 BLS↔userOpHash binding (WS-A2, PR #105)
+- The BLS aggregate is now bound to the exact operation: `validate()` **recomputes** `messagePoint = hashToG2(userOpHash)` on-chain (RFC 9380) and **drops the caller-supplied point** (Option B). A valid `(messagePoint, aggSig)` produced for one `userOpHash` can no longer be replayed onto another. Covers **both** single-op and batch (`AAStarBLSAggregator` recomputes each op's point from its own `userOpHash`).
+- **Safe-governed aggregator** — the batch aggregator is a single protocol-level value on `AAStarBLSAlgorithm` (`Ownable2Step`), set only by the protocol Gnosis Safe; no per-account aggregator setter.
+- **Set-once validator** — `setValidator` can be set once then is immutable, so a compromised owner cannot swap in a fake BLS algorithm to nullify the DVT factor.
+
+### Security hardening
+- **WS-A (PR #99, [#75](https://github.com/AAStarCommunity/airaccount-contract/issues/75)/#84)** — guardian-sig hash hardening: module-management nonce + version epoch fold into the signed hash → no replay after uninstall+reinstall.
+- **WS-B (PR #98, [#70](https://github.com/AAStarCommunity/airaccount-contract/issues/70)/#77)** — ForceExit TOCTOU: `executeForceExit` re-verifies approving guardians are still current (reverts `ApproverNoLongerGuardian`).
+- **WS-C (PR #101, [#83](https://github.com/AAStarCommunity/airaccount-contract/issues/83)/#57)** — session-key cap (50) + sliding-window velocity limit.
+- **WS-G (PR #100, [#78](https://github.com/AAStarCommunity/airaccount-contract/issues/78))** — P256 low-S guard (reject malleated high-S) + ERC-1271 NatSpec + ctor error tests.
+- **WS-D (PR #102, [#58](https://github.com/AAStarCommunity/airaccount-contract/issues/58)/KI-6)** — optional module-install timelock with owner+2-guardian immediate-bypass + authHash binding.
+
+### ⛽ Gas (WS-E, PR #107)
+- **[#82](https://github.com/AAStarCommunity/airaccount-contract/issues/82)** TokenConfig packed 3→2 slots; **[#81](https://github.com/AAStarCommunity/airaccount-contract/issues/81)** guard SLOAD cache; **[#80](https://github.com/AAStarCommunity/airaccount-contract/issues/80)** SessionState 3→1 slot; **[#79](https://github.com/AAStarCommunity/airaccount-contract/issues/79)** popcount.
+- **Factory EIP-3860 fix** — implementation injected as a constructor arg (no longer embedded in factory creation code): initcode 49,134 → 13,324 bytes.
+
+### Testing & CI
+- **WS-F (PR #103, [#90](https://github.com/AAStarCommunity/airaccount-contract/issues/90))** — E2E completeness + v0.18 scaffolds (Phase 13-16).
+- **CI (PR #106)** — prague EIP-2537 job runs the #45 crypto tests (G1ADD/G2ADD/PAIRING/MAP_FP2_TO_G2).
+
+### Deployed (Sepolia 2026-06-14 — superseded by beta.2)
+| Contract | Address |
+|---|---|
+| Factory | [`0xB14a870e4f63CA21a7EB753588CC4eBFb429E163`](https://sepolia.etherscan.io/address/0xB14a870e4f63CA21a7EB753588CC4eBFb429E163) |
+| Implementation | [`0x1Bc1119e3Ce4B6D158a6eadb31A06FdcE51992cF`](https://sepolia.etherscan.io/address/0x1Bc1119e3Ce4B6D158a6eadb31A06FdcE51992cF) |
+| AAStarBLSAlgorithm | [`0x2869EEb04218ca666c6373c0DC5aCDa04F00adFA`](https://sepolia.etherscan.io/address/0x2869EEb04218ca666c6373c0DC5aCDa04F00adFA) |
+| AAStarBLSAggregator | [`0x9AD55930B77C002dF884F4dac846D2077CDA7C8b`](https://sepolia.etherscan.io/address/0x9AD55930B77C002dF884F4dac846D2077CDA7C8b) |
+| ValidatorRouter | [`0xe785AF830aD33F3E550FfdC0fEB81D42507DA39D`](https://sepolia.etherscan.io/address/0xe785AF830aD33F3E550FfdC0fEB81D42507DA39D) |
+
+> Full beta.1 address set (Extension / SessionKeyValidator / ForceExitModule / AirAccountDelegate / AgentRegistry / CalldataParserRegistry) is recorded in `.env.sepolia` as `AIRACCOUNT_V018_BETA1_*`.
+
+---
+
 ## [v0.17.2-beta.4] - 2026-06-13 (Bundler-compatible algId — guard accounts work through any ERC-4337 bundler)
 
 Fixes the headline limitation that guard-enabled accounts could **not** transact through a standard ERC-4337 bundler. Non-behavioral for existing accounts; new impl + factory deployed (existing beta.3 clones are non-upgradable and keep old behavior — migrate to the beta.4 factory for bundler use).
