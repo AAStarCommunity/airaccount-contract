@@ -23,4 +23,7 @@ cache/
 .claude/
 broadcast/
 deploy-v0172-beta-*.log
+# Deploy / E2E run logs (release checklist oversight #6)
+deploy-*.log
+e2e-*.log
 broadcast/

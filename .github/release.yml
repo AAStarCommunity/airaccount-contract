@@ -1,0 +1,33 @@
+# GitHub auto-generated release notes configuration.
+# Categorizes merged PRs by label when you click "Generate release notes".
+# Pair this with docs/RELEASE_CHECKLIST.md (the human pre-release gate).
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - duplicate
+  categories:
+    - title: 🔴 Security & Critical
+      labels:
+        - security
+        - critical
+    - title: ✨ Features
+      labels:
+        - feature
+        - enhancement
+    - title: 🐛 Fixes
+      labels:
+        - bug
+        - fix
+    - title: ⛽ Gas & Performance
+      labels:
+        - gas
+        - performance
+    - title: 📝 Docs & Chore
+      labels:
+        - documentation
+        - docs
+        - chore
+    - title: Other Changes
+      labels:
+        - "*"
