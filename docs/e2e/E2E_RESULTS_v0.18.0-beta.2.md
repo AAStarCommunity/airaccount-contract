@@ -112,3 +112,17 @@ Independent Codex verification via Sepolia RPC of 10 representative txs (incl. D
 `to`/gas sane (DVT Tier2/3 ~349K/357K consistent with EIP-2537 BLS precompile cost; deploy ~1.22M with 15 logs),
 account `0x45Dfe3D5…` has bytecode. Conclusion: genuine on-chain executions of the claimed AirAccount features.
 **→ Release bar (E2E aspect) MET.**
+
+## Round 2 — remaining scenarios (2026-06-16, 100%-coverage push)
+| Scenario | Feature | Result | Tx |
+|---|---|---|---|
+| C7 Combined-T1 (0x06) | P256 AND ECDSA zero-trust | ✅ PASS | [`0xe4b07122…`](https://sepolia.etherscan.io/tx/0xe4b0712287f2ff669ae56d2a34c165e7978b555abc57933d986496b6c6452b76) |
+| C7 neg | wrong P256 → reject | ✅ REVERTED | (handleOps revert) |
+| B3 ERC-20 per-asset guard | transfer within tier1, guard records | ✅ PASS | [`0xf4479531…`](https://sepolia.etherscan.io/tx/0xf4479531fa548d9c2f2ee265ddd9755c73af269d8770e4dc7295caaf0c2cdd9e) |
+| B3 neg | over tier1 → InsufficientTokenTier | ✅ REVERTED | (execute revert) |
+| C6 Weighted (0x07) A | P256+ECDSA weight≥threshold | ✅ PASS | [`0x85a7f7fc…`](https://sepolia.etherscan.io/tx/0x85a7f7fcf9277462cb0164d0b05c5387a162b552312265c6f95dc883240aef32) (D backward-compat) |
+| C6 B/C neg | single-factor weight insufficient | ✅ REVERTED | (handleOps revert) |
+| **L6 weight-config governance** | propose→approve→timelock→cancel (guardian-gated) | ✅ PASS | propose [`0x3936b427…`](https://sepolia.etherscan.io/tx/0x3936b4273fa648fd0fc2c2880de40b3529fcc8d1e3269743560a022186a64591) / approve [`0xaa6c983b…`](https://sepolia.etherscan.io/tx/0xaa6c983b6ae0d6a7a2e56860abdafac4cbdb1eb0dd67bb8ce4fd8109f7b4b394) / cancel [`0xcb318318…`](https://sepolia.etherscan.io/tx/0xcb3183182fe3fd8026cc822f311dfe8c93417bcc28bda152a432503c61fc868e) |
+| **J2 guardApproveAlgorithm** | account-owned algorithm whitelist | ✅ PASS | [`0xd095d42b…`](https://sepolia.etherscan.io/tx/0xd095d42b373ba9e0494004f2aa46fe1f0977d5916f10e4dcb55633d02430eca8) |
+
+Test accounts: C7/combined `0x107379B5…`, B3/erc20 `0xB3b21cd3…`, C6/J2 `0xc1a3A9Ad…`.

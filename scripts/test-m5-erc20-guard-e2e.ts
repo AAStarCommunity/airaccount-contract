@@ -54,7 +54,7 @@ const ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
 // aPNTs token on Sepolia (from gasless test)
 const APNTS_TOKEN = "0xDf669834F04988BcEE0E3B6013B6b867Bd38778d" as Address;
 const RECIPIENT = "0x000000000000000000000000000000000000dEaD" as Address;
-const SALT = 500n; // M5 test account salt
+const SALT = BigInt(Math.floor(Date.now() / 1000)) + 500_000n; // unique per run
 
 // Token guard config for aPNTs (6 decimals like USDC):
 // tier1 = 100 aPNTs, tier2 = 1000 aPNTs, daily = 5000 aPNTs
@@ -93,8 +93,8 @@ const ACCOUNT_ABI = [
       { name: "token", type: "address" },
       { name: "config", type: "tuple",
         components: [
-          { name: "tier1Limit", type: "uint256" },
-          { name: "tier2Limit", type: "uint256" },
+          { name: "tier1Limit", type: "uint128" },
+          { name: "tier2Limit", type: "uint128" },
           { name: "dailyLimit", type: "uint256" },
         ]},
     ], outputs: [] },
@@ -104,8 +104,8 @@ const GUARD_ABI = [
   { name: "tokenConfigs", type: "function", stateMutability: "view",
     inputs: [{ name: "token", type: "address" }],
     outputs: [
-      { name: "tier1Limit", type: "uint256" },
-      { name: "tier2Limit", type: "uint256" },
+      { name: "tier1Limit", type: "uint128" },
+      { name: "tier2Limit", type: "uint128" },
       { name: "dailyLimit", type: "uint256" },
     ]},
   { name: "tokenTodaySpent", type: "function", stateMutability: "view",
@@ -127,8 +127,8 @@ const FACTORY_ABI = [
           { name: "initialTokens", type: "address[]" },
           { name: "initialTokenConfigs", type: "tuple[]",
             components: [
-              { name: "tier1Limit", type: "uint256" },
-              { name: "tier2Limit", type: "uint256" },
+              { name: "tier1Limit", type: "uint128" },
+              { name: "tier2Limit", type: "uint128" },
               { name: "dailyLimit", type: "uint256" },
             ]},
         ]},
@@ -146,8 +146,8 @@ const FACTORY_ABI = [
           { name: "initialTokens", type: "address[]" },
           { name: "initialTokenConfigs", type: "tuple[]",
             components: [
-              { name: "tier1Limit", type: "uint256" },
-              { name: "tier2Limit", type: "uint256" },
+              { name: "tier1Limit", type: "uint128" },
+              { name: "tier2Limit", type: "uint128" },
               { name: "dailyLimit", type: "uint256" },
             ]},
         ]},
@@ -207,7 +207,7 @@ async function main() {
 
   const publicClient = createPublicClient({ chain: sepolia, transport: http(RPC_URL) });
   const account = privateKeyToAccount(PRIVATE_KEY);
-  const walletClient = createWalletClient({ account, chain: sepolia, transport: http(RPC_URL) });
+  const walletClient = createWalletClient({ account, chain: { ...sepolia, fees: { baseFeeMultiplier: 2, maxPriorityFeePerGas: 2_000_000_000n } }, transport: http(RPC_URL) });
 
   const ownerAddr = account.address;
   console.log(`Owner:     ${ownerAddr}`);
