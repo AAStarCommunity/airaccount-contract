@@ -18,7 +18,7 @@ import { resolve } from "node:path";
 config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
 const RPC = process.env.SEPOLIA_RPC_URL as string;
-const FACTORY = (process.env.AIRACCOUNT_V018_FACTORY ?? "0x1b694Aa55fBe2953e724037d2449905d531C1e65") as Address;
+const FACTORY = (process.env.AIRACCOUNT_V019_FACTORY ?? process.env.AIRACCOUNT_V018_FACTORY ?? "0x52c5190E7308Ea9B149157FF016cC99B6C6bf984") as Address;
 const SAFE_FACTORY = "0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67" as Address; // SafeProxyFactory 1.4.1
 const SAFE_SINGLETON = "0x41675C099F32341bf84BFc5382aF534df5C7461a" as Address; // Safe 1.4.1
 

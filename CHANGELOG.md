@@ -8,6 +8,35 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.19.0-beta.2] - 2026-06-16 (Safe guardian E2E + KMS contract-side verification)
+
+v0.19 milestone release. **805 unit tests (cancun) + 805 under EIP-2537/prague (full suite), 0 failed.** EIP-170 headroom: 1,104 bytes.
+
+### What changed
+
+- **Version bump** — `ACCOUNT_VERSION` / `FACTORY_VERSION` / `accountId()` bumped to **`"0.19.0"`** (on-chain self-reporting accurate per RELEASE_CHECKLIST Known Oversight #1 fix).
+- **[#42](https://github.com/AAStarCommunity/airaccount-contract/issues/42) Closed — Gnosis Safe community guardian social recovery** (E2E verified, PR #116): a Gnosis Safe 1.4.1 proxy acting as guardian[2] participates in 2-of-3 social recovery by calling `approveRecovery()` via `Safe.execTransaction`. The recovery flow is `msg.sender`-based (`_guardianIndex`) — no ERC-1271 needed (avoids ERC-7562 validation-phase staticcall restriction). Proof: `approvalBitmap = 5 (0b101)` — jason EOA (bit0) + Safe (bit2). Live Sepolia tx recorded in E2E results.
+- **[#67](https://github.com/AAStarCommunity/airaccount-contract/issues/67) KMS cross-version contract-side verification** — all 4 KMS PRs verified on contract side: P256 session 149-byte sig (#13), EIP-712 ERC-1271 `isValidSignature` 0x1626ba7e (#17), off-chain grantSession (#19). Ball is in KMS+SDK for true cross-stack E2E.
+- **No new Solidity logic** — v0.19 is a verification+milestone release on top of the v0.18 contract surface. Full feature set identical to v0.18.
+
+### Deployed (Sepolia 2026-06-16)
+
+| Contract | Address |
+|---|---|
+| Factory | [`0x52c5190E7308Ea9B149157FF016cC99B6C6bf984`](https://sepolia.etherscan.io/address/0x52c5190E7308Ea9B149157FF016cC99B6C6bf984) |
+| Implementation | [`0x7fe62d512f0b8238DE6Ff17175DcE40eA312bBF2`](https://sepolia.etherscan.io/address/0x7fe62d512f0b8238DE6Ff17175DcE40eA312bBF2) |
+| Extension | [`0xD61C0F3DE6D98070E9986743d35A56d56855A249`](https://sepolia.etherscan.io/address/0xD61C0F3DE6D98070E9986743d35A56d56855A249) |
+| AAStarBLSAlgorithm | [`0x68c381Ad3A2e3380F22840008027E9Ec2783F43A`](https://sepolia.etherscan.io/address/0x68c381Ad3A2e3380F22840008027E9Ec2783F43A) |
+| AAStarBLSAggregator | [`0x77f7bf95B8602b7851f392F412257539242947e0`](https://sepolia.etherscan.io/address/0x77f7bf95B8602b7851f392F412257539242947e0) |
+| ValidatorRouter | [`0xC20A986Bcd5bF5Cc2fE5fFde6b155B8419E0389e`](https://sepolia.etherscan.io/address/0xC20A986Bcd5bF5Cc2fE5fFde6b155B8419E0389e) |
+| SessionKeyValidator | [`0x70de2e36004d6Ddc24DEB80e1Ef76c03EdC0c2AE`](https://sepolia.etherscan.io/address/0x70de2e36004d6Ddc24DEB80e1Ef76c03EdC0c2AE) |
+| ForceExitModule | [`0xd882a16Ea37Be463D1885EF4a397Dbbf157dC211`](https://sepolia.etherscan.io/address/0xd882a16Ea37Be463D1885EF4a397Dbbf157dC211) |
+| AirAccountDelegate | [`0xA8D7f70c9D36bC4a4eb14F0dCEE19053FCB3309f`](https://sepolia.etherscan.io/address/0xA8D7f70c9D36bC4a4eb14F0dCEE19053FCB3309f) |
+| AgentRegistry | [`0x3895b3E6fEf4e121E6289dC7881A0eEd5283C652`](https://sepolia.etherscan.io/address/0x3895b3E6fEf4e121E6289dC7881A0eEd5283C652) |
+| CalldataParserRegistry | [`0xb8Af1C039dF88F6bD9fE36Ca683492a3c09e7D17`](https://sepolia.etherscan.io/address/0xb8Af1C039dF88F6bD9fE36Ca683492a3c09e7D17) |
+
+---
+
 ## [v0.18.0-beta.2] - 2026-06-14 (quick-wins batch + redeploy)
 
 Low-cost hardening/cleanup batch on top of v0.18.0-beta.1, redeployed to Sepolia. **805 unit tests (cancun) + 805 under EIP-2537/prague (full suite), 0 failed.**

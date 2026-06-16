@@ -39,7 +39,7 @@ contract ForceExitModule is IERC7579Module {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this module deployment. Used by SDKs for programmatic version detection.
-    string public constant MODULE_VERSION = "0.18.0";
+    string public constant MODULE_VERSION = "0.19.0";
 
     // ─── Constants ─────────────────────────────────────────────────────────
 

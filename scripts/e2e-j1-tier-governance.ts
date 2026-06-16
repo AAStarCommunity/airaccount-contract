@@ -38,13 +38,11 @@ const ABI = [
     ], outputs: [] },
 ] as const;
 
-// _tierLimitNonce has no public getter on some builds; read via a raw call fallback if needed.
+// _tierLimitNonce is internal (no Solidity getter). Read directly from storage slot 16
+// (declared at AAStarAgentStorageLayout.sol slot 16 = 0x10).
 async function tierNonce(): Promise<bigint> {
-  try {
-    return await pub.readContract({ address: ACCOUNT, abi: ABI, functionName: "_tierLimitNonce" }) as bigint;
-  } catch {
-    return 0n; // first modify
-  }
+  const raw = await pub.getStorageAt({ address: ACCOUNT, slot: "0x0000000000000000000000000000000000000000000000000000000000000010" });
+  return BigInt(raw ?? "0x0");
 }
 
 async function guardianSig(signer: typeof anni, changeHashRaw: Hex): Promise<Hex> {
