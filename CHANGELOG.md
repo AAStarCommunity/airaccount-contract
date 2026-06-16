@@ -8,7 +8,7 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
-## [v0.19.0-beta.1] - 2026-06-16 (Safe guardian E2E + KMS contract-side verification)
+## [v0.19.0-beta.2] - 2026-06-16 (Safe guardian E2E + KMS contract-side verification)
 
 v0.19 milestone release. **805 unit tests (cancun) + 805 under EIP-2537/prague (full suite), 0 failed.** EIP-170 headroom: 1,104 bytes.
 
