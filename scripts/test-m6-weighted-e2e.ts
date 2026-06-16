@@ -317,9 +317,9 @@ async function main() {
   console.log("M6.1: Bitmap-driven weighted multi-signature");
   console.log("M6.2: Guardian consent for weight-config weakening\n");
 
-  const publicClient = createPublicClient({ chain: sepolia, transport: http(RPC_URL) });
+  const publicClient = createPublicClient({ chain: { ...sepolia, fees: { baseFeeMultiplier: 2, maxPriorityFeePerGas: 2_000_000_000n } }, transport: http(RPC_URL) });
   const ownerAccount = privateKeyToAccount(PRIVATE_KEY);
-  const walletClient = createWalletClient({ account: ownerAccount, chain: sepolia, transport: http(RPC_URL) });
+  const walletClient = createWalletClient({ account: ownerAccount, chain: { ...sepolia, fees: { baseFeeMultiplier: 2, maxPriorityFeePerGas: 2_000_000_000n } }, transport: http(RPC_URL) });
   const ownerAddr = ownerAccount.address;
 
   const guardian0Account = privateKeyToAccount(GUARDIAN0_KEY);
@@ -646,7 +646,7 @@ async function main() {
     // guardian0 = bob (0xF7B..., 0.177 ETH on Sepolia) — already funded, no top-up needed
     console.log("\n  [E2] Guardian0 approves...");
     const g0WalletClient = createWalletClient({
-      account: guardian0Account, chain: sepolia, transport: http(RPC_URL),
+      account: guardian0Account, chain: { ...sepolia, fees: { baseFeeMultiplier: 2, maxPriorityFeePerGas: 2_000_000_000n } }, transport: http(RPC_URL),
     });
     const approveTxHash = await g0WalletClient.writeContract({
       address: accountAddr, abi: ACCOUNT_ABI, functionName: "approveWeightChange",

@@ -47,18 +47,22 @@ function pk(name: string): `0x${string}` {
 
 // ─── Deployed v0.17.2-beta.1 Sepolia addresses ─────────────────────────
 
+// Prefer v0.18 (beta.2) addresses when present (AIRACCOUNT_V018_*), else fall back to beta.4.
+// This points phases 08-12 at the current beta.2 deployment without per-phase edits.
+const a18 = (v018: string, beta: string): Address =>
+  (process.env[v018] ?? envRequired(beta)) as Address;
 export const ADDR = {
-  blsAlgorithm:        envRequired("AIRACCOUNT_V0172_BETA_BLS_ALGORITHM")        as Address,
-  validatorRouter:     envRequired("AIRACCOUNT_V0172_BETA_VALIDATOR_ROUTER")     as Address,
-  blsAggregator:       envRequired("AIRACCOUNT_V0172_BETA_BLS_AGGREGATOR")       as Address,
-  sessionKeyValidator: envRequired("AIRACCOUNT_V0172_BETA_SESSION_KEY_VALIDATOR") as Address,
-  forceExitModule:     envRequired("AIRACCOUNT_V0172_BETA_FORCE_EXIT_MODULE")    as Address,
-  delegate:            envRequired("AIRACCOUNT_V0172_BETA_DELEGATE")             as Address,
-  parserRegistry:      envRequired("AIRACCOUNT_V0172_BETA_PARSER_REGISTRY")      as Address,
-  factory:             envRequired("AIRACCOUNT_V0172_BETA_FACTORY")              as Address,
-  impl:                envRequired("AIRACCOUNT_V0172_BETA_IMPL")                 as Address,
-  extension:           envRequired("AIRACCOUNT_V0172_BETA_EXTENSION")            as Address,
-  agentRegistry:       envRequired("AIRACCOUNT_V0172_BETA_AGENT_REGISTRY")       as Address,
+  blsAlgorithm:        a18("AIRACCOUNT_V018_BLS_ALGORITHM",        "AIRACCOUNT_V0172_BETA_BLS_ALGORITHM"),
+  validatorRouter:     a18("AIRACCOUNT_V018_VALIDATOR_ROUTER",     "AIRACCOUNT_V0172_BETA_VALIDATOR_ROUTER"),
+  blsAggregator:       a18("AIRACCOUNT_V018_BLS_AGGREGATOR",       "AIRACCOUNT_V0172_BETA_BLS_AGGREGATOR"),
+  sessionKeyValidator: a18("AIRACCOUNT_V018_SESSION_KEY_VALIDATOR", "AIRACCOUNT_V0172_BETA_SESSION_KEY_VALIDATOR"),
+  forceExitModule:     a18("AIRACCOUNT_V018_FORCE_EXIT_MODULE",    "AIRACCOUNT_V0172_BETA_FORCE_EXIT_MODULE"),
+  delegate:            a18("AIRACCOUNT_V018_DELEGATE",             "AIRACCOUNT_V0172_BETA_DELEGATE"),
+  parserRegistry:      a18("AIRACCOUNT_V018_PARSER_REGISTRY",      "AIRACCOUNT_V0172_BETA_PARSER_REGISTRY"),
+  factory:             a18("AIRACCOUNT_V018_FACTORY",             "AIRACCOUNT_V0172_BETA_FACTORY"),
+  impl:                a18("AIRACCOUNT_V018_IMPL",                 "AIRACCOUNT_V0172_BETA_IMPL"),
+  extension:           a18("AIRACCOUNT_V018_EXTENSION",            "AIRACCOUNT_V0172_BETA_EXTENSION"),
+  agentRegistry:       a18("AIRACCOUNT_V018_AGENT_REGISTRY",       "AIRACCOUNT_V0172_BETA_AGENT_REGISTRY"),
   entryPoint:          envRequired("ENTRY_POINT_ADDRESS")                        as Address,
   communityGuardian:   envRequired("COMMUNITY_GUARDIAN_ADDRESS")                 as Address,
 } as const;
@@ -70,9 +74,22 @@ const rpcUrl2 = process.env.SEPOLIA_RPC_URL2;
 const rpcUrl3 = process.env.SEPOLIA_RPC_URL3;
 const rpcs = [rpcUrl, rpcUrl2, rpcUrl3].filter(Boolean) as string[];
 
+// Robust EIP-1559 fee policy for Sepolia. Default viem baseFeeMultiplier (1.2) under-provisions
+// when Sepolia's baseFee is volatile → txs get dropped from the mempool as underpriced (observed
+// 2026-06: createAccount txs silently dropped, cascading into nonce snarls). This replicates the
+// PROVEN deploy-script formula (scripts/deploy-v0.18.ts `fees()`): maxFeePerGas = baseFee*2 + tip,
+// with a 2 gwei priority floor so inclusion never stalls. base*2 covers ~6 blocks of baseFee growth.
+const sepoliaRobust = {
+  ...sepolia,
+  fees: {
+    baseFeeMultiplier: 2,
+    maxPriorityFeePerGas: 2_000_000_000n, // 2 gwei floor (Sepolia tip)
+  },
+} as const;
+
 export const publicClient: PublicClient = createPublicClient({
   chain: sepolia,
-  transport: fallback(rpcs.map((u) => http(u, { timeout: 20_000 }))),
+  transport: fallback(rpcs.map((u) => http(u, { timeout: 60_000 }))),
 });
 
 export const annie  = privateKeyToAccount(pk("PRIVATE_KEY_ANNI"));
@@ -81,18 +98,18 @@ export const bob    = privateKeyToAccount(pk("PRIVATE_KEY_BOB"));
 
 export const wAnnie: WalletClient = createWalletClient({
   account: annie,
-  chain: sepolia,
-  transport: fallback(rpcs.map((u) => http(u, { timeout: 20_000 }))),
+  chain: sepoliaRobust,
+  transport: fallback(rpcs.map((u) => http(u, { timeout: 60_000 }))),
 });
 export const wJason: WalletClient = createWalletClient({
   account: jason,
-  chain: sepolia,
-  transport: fallback(rpcs.map((u) => http(u, { timeout: 20_000 }))),
+  chain: sepoliaRobust,
+  transport: fallback(rpcs.map((u) => http(u, { timeout: 60_000 }))),
 });
 export const wBob: WalletClient = createWalletClient({
   account: bob,
-  chain: sepolia,
-  transport: fallback(rpcs.map((u) => http(u, { timeout: 20_000 }))),
+  chain: sepoliaRobust,
+  transport: fallback(rpcs.map((u) => http(u, { timeout: 60_000 }))),
 });
 
 // ─── ABI loading ────────────────────────────────────────────────────────

@@ -71,7 +71,7 @@ const RPC_URL = process.env.SEPOLIA_RPC ?? process.env.SEPOLIA_RPC_URL ?? requir
 const ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
 
 const RECIPIENT = "0x000000000000000000000000000000000000dEaD" as Address;
-const SALT = 600n; // M5.8 combined-t1 test account
+const SALT = BigInt(Math.floor(Date.now() / 1000)) + 600_000n; // unique per run
 
 // Deterministic P256 private key for testing (derived from seed phrase, NOT production use)
 // This simulates the device-bound passkey (WebAuthn hardware key on real device)
@@ -113,8 +113,8 @@ const FACTORY_ABI = [
           { name: "initialTokens", type: "address[]" },
           { name: "initialTokenConfigs", type: "tuple[]",
             components: [
-              { name: "tier1Limit", type: "uint256" },
-              { name: "tier2Limit", type: "uint256" },
+              { name: "tier1Limit", type: "uint128" },
+              { name: "tier2Limit", type: "uint128" },
               { name: "dailyLimit", type: "uint256" },
             ]},
         ]},
@@ -132,8 +132,8 @@ const FACTORY_ABI = [
           { name: "initialTokens", type: "address[]" },
           { name: "initialTokenConfigs", type: "tuple[]",
             components: [
-              { name: "tier1Limit", type: "uint256" },
-              { name: "tier2Limit", type: "uint256" },
+              { name: "tier1Limit", type: "uint128" },
+              { name: "tier2Limit", type: "uint128" },
               { name: "dailyLimit", type: "uint256" },
             ]},
         ]},
@@ -242,7 +242,7 @@ async function main() {
 
   const publicClient = createPublicClient({ chain: sepolia, transport: http(RPC_URL) });
   const account = privateKeyToAccount(PRIVATE_KEY);
-  const walletClient = createWalletClient({ account, chain: sepolia, transport: http(RPC_URL) });
+  const walletClient = createWalletClient({ account, chain: { ...sepolia, fees: { baseFeeMultiplier: 2, maxPriorityFeePerGas: 2_000_000_000n } }, transport: http(RPC_URL) });
   const ownerAddr = account.address;
 
   console.log(`Owner (ECDSA/TE key): ${ownerAddr}`);
