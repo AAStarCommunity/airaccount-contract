@@ -3,9 +3,9 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-## Status: v0.18 — 2026-06-14
+## Status: v0.19.0-beta.2 — 2026-06-16
 
-Latest: **v0.18** — security-hardening + gas + #45 release. All work-streams WS-A/B/C/D/E/F/G merged to `main`, plus the **#45 CRITICAL** BLS↔userOpHash binding and the factory EIP-3860 initcode fix. Full stack redeployed + wired on Sepolia (the account is non-upgradable, so a new factory + implementation is mandatory). Forge test **799/0/0** under cancun, plus **22** `#45` BLS-binding tests under `--evm-version prague`. On-chain E2E phases 13-16 all green. See [`docs/deployment-v0.18.md`](docs/deployment-v0.18.md) + [`docs/issue45-fix1-yaa-changes.md`](docs/issue45-fix1-yaa-changes.md). Prior: [`v0.17.2-beta.4`](https://github.com/AAStarCommunity/airaccount-contract/releases) — bundler-compat algId fix.
+Latest: **v0.19.0-beta.2** — milestone verification release. Closes **#42** (Gnosis Safe 1.4.1 as community guardian in social recovery, Sepolia E2E verified, `approvalBitmap=5`). Closes **#67** KMS cross-version contract-side verification (P256 149-byte session, EIP-712/ERC-1271, off-chain `grantSession`). No new Solidity logic — full contract surface identical to v0.18. Forge test **805/0/0** under cancun + **805** under prague. Full 36-scenario E2E on Sepolia. Prior: [`v0.18.0-beta.2`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.18.0-beta.2) — security-hardening + gas + #45.
 
 ### What shipped in v0.18
 
