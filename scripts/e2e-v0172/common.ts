@@ -47,22 +47,22 @@ function pk(name: string): `0x${string}` {
 
 // ─── Deployed v0.17.2-beta.1 Sepolia addresses ─────────────────────────
 
-// Prefer v0.18 (beta.2) addresses when present (AIRACCOUNT_V018_*), else fall back to beta.4.
-// This points phases 08-12 at the current beta.2 deployment without per-phase edits.
-const a18 = (v018: string, beta: string): Address =>
-  (process.env[v018] ?? envRequired(beta)) as Address;
+// Prefer v0.19 (beta.1) addresses when present (AIRACCOUNT_V019_*),
+// else v0.18 (beta.2) (AIRACCOUNT_V018_*), else fall back to beta.4.
+const a = (v019: string, v018: string, beta: string): Address =>
+  (process.env[v019] ?? process.env[v018] ?? envRequired(beta)) as Address;
 export const ADDR = {
-  blsAlgorithm:        a18("AIRACCOUNT_V018_BLS_ALGORITHM",        "AIRACCOUNT_V0172_BETA_BLS_ALGORITHM"),
-  validatorRouter:     a18("AIRACCOUNT_V018_VALIDATOR_ROUTER",     "AIRACCOUNT_V0172_BETA_VALIDATOR_ROUTER"),
-  blsAggregator:       a18("AIRACCOUNT_V018_BLS_AGGREGATOR",       "AIRACCOUNT_V0172_BETA_BLS_AGGREGATOR"),
-  sessionKeyValidator: a18("AIRACCOUNT_V018_SESSION_KEY_VALIDATOR", "AIRACCOUNT_V0172_BETA_SESSION_KEY_VALIDATOR"),
-  forceExitModule:     a18("AIRACCOUNT_V018_FORCE_EXIT_MODULE",    "AIRACCOUNT_V0172_BETA_FORCE_EXIT_MODULE"),
-  delegate:            a18("AIRACCOUNT_V018_DELEGATE",             "AIRACCOUNT_V0172_BETA_DELEGATE"),
-  parserRegistry:      a18("AIRACCOUNT_V018_PARSER_REGISTRY",      "AIRACCOUNT_V0172_BETA_PARSER_REGISTRY"),
-  factory:             a18("AIRACCOUNT_V018_FACTORY",             "AIRACCOUNT_V0172_BETA_FACTORY"),
-  impl:                a18("AIRACCOUNT_V018_IMPL",                 "AIRACCOUNT_V0172_BETA_IMPL"),
-  extension:           a18("AIRACCOUNT_V018_EXTENSION",            "AIRACCOUNT_V0172_BETA_EXTENSION"),
-  agentRegistry:       a18("AIRACCOUNT_V018_AGENT_REGISTRY",       "AIRACCOUNT_V0172_BETA_AGENT_REGISTRY"),
+  blsAlgorithm:        a("AIRACCOUNT_V019_BLS_ALGORITHM",        "AIRACCOUNT_V018_BLS_ALGORITHM",        "AIRACCOUNT_V0172_BETA_BLS_ALGORITHM"),
+  validatorRouter:     a("AIRACCOUNT_V019_VALIDATOR_ROUTER",     "AIRACCOUNT_V018_VALIDATOR_ROUTER",     "AIRACCOUNT_V0172_BETA_VALIDATOR_ROUTER"),
+  blsAggregator:       a("AIRACCOUNT_V019_BLS_AGGREGATOR",       "AIRACCOUNT_V018_BLS_AGGREGATOR",       "AIRACCOUNT_V0172_BETA_BLS_AGGREGATOR"),
+  sessionKeyValidator: a("AIRACCOUNT_V019_SESSION_KEY_VALIDATOR", "AIRACCOUNT_V018_SESSION_KEY_VALIDATOR", "AIRACCOUNT_V0172_BETA_SESSION_KEY_VALIDATOR"),
+  forceExitModule:     a("AIRACCOUNT_V019_FORCE_EXIT_MODULE",    "AIRACCOUNT_V018_FORCE_EXIT_MODULE",    "AIRACCOUNT_V0172_BETA_FORCE_EXIT_MODULE"),
+  delegate:            a("AIRACCOUNT_V019_DELEGATE",             "AIRACCOUNT_V018_DELEGATE",             "AIRACCOUNT_V0172_BETA_DELEGATE"),
+  parserRegistry:      a("AIRACCOUNT_V019_PARSER_REGISTRY",      "AIRACCOUNT_V018_PARSER_REGISTRY",      "AIRACCOUNT_V0172_BETA_PARSER_REGISTRY"),
+  factory:             a("AIRACCOUNT_V019_FACTORY",              "AIRACCOUNT_V018_FACTORY",              "AIRACCOUNT_V0172_BETA_FACTORY"),
+  impl:                a("AIRACCOUNT_V019_IMPL",                 "AIRACCOUNT_V018_IMPL",                 "AIRACCOUNT_V0172_BETA_IMPL"),
+  extension:           a("AIRACCOUNT_V019_EXTENSION",            "AIRACCOUNT_V018_EXTENSION",            "AIRACCOUNT_V0172_BETA_EXTENSION"),
+  agentRegistry:       a("AIRACCOUNT_V019_AGENT_REGISTRY",       "AIRACCOUNT_V018_AGENT_REGISTRY",       "AIRACCOUNT_V0172_BETA_AGENT_REGISTRY"),
   entryPoint:          envRequired("ENTRY_POINT_ADDRESS")                        as Address,
   communityGuardian:   envRequired("COMMUNITY_GUARDIAN_ADDRESS")                 as Address,
 } as const;

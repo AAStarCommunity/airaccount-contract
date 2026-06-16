@@ -14,7 +14,7 @@ import { resolve } from "node:path";
 config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
 const RPC_URL = process.env.SEPOLIA_RPC_URL as string;
-const BLS_ALG = (process.env.AIRACCOUNT_V018_BLS_ALGORITHM ?? "0xA9EE4f8A59fCE1B56f9da8e153c3f5F38D3C59ED") as Address;
+const BLS_ALG = (process.env.AIRACCOUNT_V019_BLS_ALGORITHM ?? process.env.AIRACCOUNT_V018_BLS_ALGORITHM ?? "0xA9EE4f8A59fCE1B56f9da8e153c3f5F38D3C59ED") as Address;
 const BLS_DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 
 const NODE1 = process.env.BLS_TEST_NODE_ID_1 as Hex;
