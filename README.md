@@ -41,11 +41,22 @@ Combined `v0.17.2-beta.1` + `v0.17.2-beta.2`:
 - **Phase 08-12 E2E verified (2026-06-11~12)** — 45 new on-chain tests covering multi-account creation, execute variants, session keys, guardian recovery + modules, ERC-4337 UserOp via Pimlico bundler. Full suite: **79/79 PASS**, 100% non-deferred ABI coverage.
 - **Sepolia deploy + Etherscan verify (11/11)** + complete deploy runbook
 
+### ✅ v0.18.0-beta.2 — full on-chain E2E + Codex challenge (公示 / verified)
+
+**35/36 product scenarios were executed as real transactions on Sepolia and independently challenged by Codex** (only the DeFi Uniswap-parser scenario is deferred — Sepolia has no Uniswap; the practical per-asset ERC-20 case is covered). Every transaction is checked at **3 layers** — receipt status (incl. negative reverts at `status 0x0`), on-chain state delta, and a Codex feature challenge — so a green receipt alone never counts as "done".
+
+- **~60 real on-chain txs** across all 7 signature algIds (ECDSA / P256 / **DVT P256+BLS** / weighted / combined-T1 / session), tiered verification, ERC-20 per-asset guard, batch, bundler UserOp, session grant/use/scope/velocity/revoke, 2-of-3 social recovery, ERC-7579 modules, ForceExit + TOCTOU, guardian-gated governance, plus the negative/revert cases that prove the guards actually block.
+- **⭐ DVT combined-signature (cross-repo DVT-program anchor)** verified on-chain via EIP-2537: [C4 Tier2 P256+BLS](https://sepolia.etherscan.io/tx/0xa73f0d5fead697226bbd6cdfdd64b20c195b6a45d6afcf0b130c5354081eb243) · [C5 Tier3 +Guardian](https://sepolia.etherscan.io/tx/0x1a7e351291f1f10ad1638da77ae1a63ff7a84e6d76834b848d524a148879141b).
+- **Codex challenge: REAL + FEATURE-MET** per tx (RPC receipt + on-chain post-state + negative-revert verification) — every claimed product feature is backed by on-chain evidence.
+
+Docs: [E2E plan (36 scenarios, 3-layer verification)](docs/e2e/E2E_PLAN_v0.18.0-beta.2.md) · [E2E test data](docs/e2e/E2E_TESTDATA_v0.18.0-beta.2.md) · [**E2E results + tx records + Codex verdict**](docs/e2e/E2E_RESULTS_v0.18.0-beta.2.md) · [Release checklist (mandatory E2E + Codex gate)](docs/RELEASE_CHECKLIST.md).
+
 ### Key docs
 
 1. [CHANGELOG.md](CHANGELOG.md) — release-by-release feature evolution
-2. [docs/deployment-v0.18.md](docs/deployment-v0.18.md) — **v0.18** Sepolia deploy record (addresses, wiring, decisions, E2E)
-3. [docs/issue45-fix1-yaa-changes.md](docs/issue45-fix1-yaa-changes.md) — **#45** BLS↔userOpHash binding: new wire formats + SDK/DVT changes
+2. [docs/e2e/E2E_RESULTS_v0.18.0-beta.2.md](docs/e2e/E2E_RESULTS_v0.18.0-beta.2.md) — **v0.18 full E2E tx records + business-value/feature mapping + Codex challenge verdict**
+3. [docs/deployment-v0.18.md](docs/deployment-v0.18.md) — **v0.18** Sepolia deploy record (addresses, wiring, decisions, E2E)
+4. [docs/issue45-fix1-yaa-changes.md](docs/issue45-fix1-yaa-changes.md) — **#45** BLS↔userOpHash binding: new wire formats + SDK/DVT changes
 4. [docs/abi/reference.md](docs/abi/reference.md) · [docs/abi/selectors.md](docs/abi/selectors.md) · [docs/abi/capabilities.md](docs/abi/capabilities.md) — generated ABI reference (`pnpm gen:abi-docs`)
 5. [docs/DEPLOYMENT-v0.17.2-beta.1.md](docs/DEPLOYMENT-v0.17.2-beta.1.md) — full Sepolia deploy runbook
 3. [docs/DEPLOYMENT-v0.17.2-beta.2.md](docs/DEPLOYMENT-v0.17.2-beta.2.md) — beta.2 delta release (ForceExitModule only)
