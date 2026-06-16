@@ -36,6 +36,19 @@ categorization lives in `.github/release.yml`; this file is the correctness gate
 - [ ] **Set the prerelease flag correctly**: betas = pre-release; GA = `prerelease=false` + Latest. ⚠️ Known Oversight #3.
 - [ ] Cross-link the SDK PR if the release changes ABI / wire format.
 
+## 5. E2E on-chain + Codex challenge (MANDATORY GATE)
+A release does NOT meet the bar until ALL of the following pass (established 2026-06-16, owner-mandated):
+- [ ] **Run the full E2E scenario set on-chain** against the deployed contracts — the 36-scenario plan in
+      `docs/e2e/E2E_PLAN_v0.18.0-beta.2.md` (account variants, all algId tiers incl. **DVT P256+BLS combined sig**,
+      session, recovery, modules, ForceExit, governance, + negative/revert scenarios). Phases:
+      `scripts/e2e-v0172/08..16` (repointed to the release deployment) + `scripts/test-tiered-e2e.ts` (DVT C4/C5).
+- [ ] **Record every on-chain tx** with its scenario / feature / params into `docs/e2e/E2E_RESULTS_<ver>.md`
+      (the harness `recordResult` auto-appends tx + etherscan link; tiered DVT txs added manually).
+- [ ] **Codex challenge** the recorded txs (`/codex:rescue --fresh`): per-tx verify REAL via Sepolia RPC
+      (`eth_getTransactionReceipt` status, `to`, gas) AND feature-met (post-state), negatives correctly reverted.
+- [ ] **Bar met only when Codex returns REAL + FEATURE-MET for every tx.** Paste the verdict into the results doc.
+- [ ] Gas: harness must use `baseFee*2 + 2gwei` fees (⚠️ Known Oversight #7) or txs drop as underpriced.
+
 ---
 
 ## Known Oversights — DO NOT repeat (recorded from past releases)
@@ -55,5 +68,11 @@ These are real misses that shipped. Each release MUST re-check them.
 4. **ABI docs not regenerated** with the deployment — SDK can drift. `pnpm gen:abi-docs` every release.
 5. **Superseded addresses not archived** in `.env.sepolia` — keep `_BETAn_*` history + a clean canonical set.
 6. **Deploy/E2E logs committed** — keep `deploy-*.log` / `e2e-*.log` out of git.
+7. **Sepolia txs dropped as underpriced** (2026-06-16) — viem's default `baseFeeMultiplier` (1.2×) under-provisions
+   on volatile Sepolia → createAccount txs silently dropped → cascading confirmation-timeouts + nonce snarls
+   (worsened by killing runs mid-flight). FIX: wallet chain `fees: { baseFeeMultiplier: 2, maxPriorityFeePerGas: 2gwei }`
+   (= proven deploy-script `baseFee*2 + tip`). UserOps: use `pimlico_getUserOperationGasPrice`. NEVER re-send on
+   timeout (poll the receipt). Also: M3-era scripts drift vs current ABI — `TokenConfig` packed to uint128 (#82, the
+   tuple-type change flips the function selector) and BLS sig dropped the trailing messagePoint (#45); update both.
 
 > When a new oversight is found, append it here so the next release can't repeat it.

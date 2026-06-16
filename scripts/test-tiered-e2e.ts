@@ -59,9 +59,9 @@ const RPC_URL =
   process.env.SEPOLIA_RPC ?? process.env.SEPOLIA_RPC_URL ?? required("SEPOLIA_RPC_URL");
 const ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
 
-const FACTORY_ADDR = (process.env.FACTORY_ADDRESS ?? process.env.AIRACCOUNT_M5_FACTORY ?? "0x24cd3231a8dd261da8cb1e6b017d1d1c4077c078") as Address;
-const BLS_ALGORITHM_ADDR = "0xc2096E8D04beb3C337bb388F5352710d62De0287" as Address;
-const VALIDATOR_ROUTER_ADDR = "0x730a162Ce3202b94cC5B74181B75b11eBB3045B1" as Address;
+const FACTORY_ADDR = (process.env.AIRACCOUNT_V018_FACTORY ?? process.env.FACTORY_ADDRESS ?? process.env.AIRACCOUNT_M5_FACTORY ?? "0x24cd3231a8dd261da8cb1e6b017d1d1c4077c078") as Address;
+const BLS_ALGORITHM_ADDR = (process.env.AIRACCOUNT_V018_BLS_ALGORITHM ?? process.env.BLS_ALGORITHM_ADDRESS ?? "0xc2096E8D04beb3C337bb388F5352710d62De0287") as Address;
+const VALIDATOR_ROUTER_ADDR = (process.env.AIRACCOUNT_V018_VALIDATOR_ROUTER ?? process.env.VALIDATOR_ROUTER_ADDRESS ?? "0x730a162Ce3202b94cC5B74181B75b11eBB3045B1") as Address;
 
 const PRIVATE_KEY_ANNI = required("PRIVATE_KEY_ANNI") as Hex;
 const PRIVATE_KEY_BOB = required("PRIVATE_KEY_BOB") as Hex;
@@ -75,7 +75,7 @@ const BLS_PRIVATE_KEY_2 = required("BLS_TEST_PRIVATE_KEY_2");
 const BLS_PUBLIC_KEY_2 = required("BLS_TEST_PUBLIC_KEY_2") as Hex;
 
 const RECIPIENT = "0x000000000000000000000000000000000000dEaD" as Address;
-const SALT = 400n;
+const SALT = BigInt(Math.floor(Date.now() / 1000)) + 400_000n; // unique per run (avoid re-run collision)
 
 // Tier limits
 const TIER1_LIMIT = parseEther("0.01"); // ≤ 0.01 ETH: ECDSA only
@@ -163,8 +163,8 @@ const FACTORY_ABI = [
           { name: "minDailyLimit", type: "uint256" },
           { name: "initialTokens", type: "address[]" },
           { name: "initialTokenConfigs", type: "tuple[]", components: [
-            { name: "tier1Limit", type: "uint256" },
-            { name: "tier2Limit", type: "uint256" },
+            { name: "tier1Limit", type: "uint128" },
+            { name: "tier2Limit", type: "uint128" },
             { name: "dailyLimit", type: "uint256" },
           ]},
         ],
@@ -189,8 +189,8 @@ const FACTORY_ABI = [
           { name: "minDailyLimit", type: "uint256" },
           { name: "initialTokens", type: "address[]" },
           { name: "initialTokenConfigs", type: "tuple[]", components: [
-            { name: "tier1Limit", type: "uint256" },
-            { name: "tier2Limit", type: "uint256" },
+            { name: "tier1Limit", type: "uint128" },
+            { name: "tier2Limit", type: "uint128" },
             { name: "dailyLimit", type: "uint256" },
           ]},
         ],
@@ -353,7 +353,8 @@ async function main() {
   const publicClient = createPublicClient({ chain: sepolia, transport: http(RPC_URL) });
   const walletClient = createWalletClient({
     account: signer,
-    chain: sepolia,
+    // Robust Sepolia EIP-1559 fees (baseFee*2 + 2 gwei floor) so txs aren't dropped as underpriced.
+    chain: { ...sepolia, fees: { baseFeeMultiplier: 2, maxPriorityFeePerGas: 2_000_000_000n } },
     transport: http(RPC_URL),
   });
 
@@ -759,13 +760,12 @@ async function main() {
     toHex(2n, { size: 32 }).slice(2) + // nodeIdsLength = 2
     BLS_NODE_ID_1.slice(2) + // nodeId1 (32 bytes)
     BLS_NODE_ID_2.slice(2) + // nodeId2 (32 bytes)
-    bls2.aggSigEncoded.slice(2) + // blsSig (256 bytes)
-    bls2.msgPointEncoded.slice(2) + // messagePoint (256 bytes)
-    mpSig2.slice(2) // messagePointSig (65 bytes)
+    bls2.aggSigEncoded.slice(2) // blsSig (256 bytes) — #45: messagePoint dropped (recomputed on-chain)
   ) as Hex;
+  void mpSig2; // #45: messagePointSig no longer appended (kept to avoid reshuffling above)
 
   const tier2SigLen = (tier2Sig.length - 2) / 2;
-  const expectedT2Len = 1 + 64 + 32 + 64 + 256 + 256 + 65;
+  const expectedT2Len = 1 + 64 + 32 + 64 + 256;
   console.log(`  Signature : ${tier2SigLen} bytes (expected: ${expectedT2Len})`);
 
   userOp2.signature = tier2Sig;
@@ -817,14 +817,13 @@ async function main() {
     toHex(2n, { size: 32 }).slice(2) + // nodeIdsLength = 2
     BLS_NODE_ID_1.slice(2) + // nodeId1 (32 bytes)
     BLS_NODE_ID_2.slice(2) + // nodeId2 (32 bytes)
-    bls3.aggSigEncoded.slice(2) + // blsSig (256 bytes)
-    bls3.msgPointEncoded.slice(2) + // messagePoint (256 bytes)
-    mpSig3.slice(2) + // messagePointSig (65 bytes)
+    bls3.aggSigEncoded.slice(2) + // blsSig (256 bytes) — #45: messagePoint dropped (recomputed on-chain)
     guardianSig3.slice(2) // guardianECDSA (65 bytes)
   ) as Hex;
+  void mpSig3; // #45: messagePointSig no longer appended
 
   const tier3SigLen = (tier3Sig.length - 2) / 2;
-  const expectedT3Len = 1 + 64 + 32 + 64 + 256 + 256 + 65 + 65;
+  const expectedT3Len = 1 + 64 + 32 + 64 + 256 + 65;
   console.log(`  Signature : ${tier3SigLen} bytes (expected: ${expectedT3Len})`);
 
   userOp3.signature = tier3Sig;

@@ -27,3 +27,4 @@ deploy-v0172-beta-*.log
 deploy-*.log
 e2e-*.log
 broadcast/
+docs/e2e/runs/
