@@ -134,3 +134,15 @@ Test accounts: C7/combined `0x107379B5…`, B3/erc20 `0xB3b21cd3…`, C6/J2 `0xc
 | **L1 BLS replay binding (#45)** | aggregate accepted for its hash, REJECTED on replay | ✅ PASS | on-chain `validate()` on deployed BLS algo `0xA9EE4f8A…`: validate(A)=0 accept, validate(B)=1 reject (real EIP-2537) |
 
 J1 account `0x45Dfe3D5…`; L1 vs deployed `AAStarBLSAlgorithm 0xA9EE4f8A…`.
+
+## Round 4 — L2 velocity (2026-06-16) → 35/36 live (L5 deferred per owner)
+| Scenario | Feature | Result | Tx |
+|---|---|---|---|
+| **E3/E4 session-key USE** | session key submits a real UserOp via EntryPoint (algId 0x08) | ✅ PASS | [`0xb69ee1fa…`](https://sepolia.etherscan.io/tx/0xb69ee1fa992f47b19cf72abff4f645c45186bf34960729f9ca0f2786068185c1) |
+| **L2 velocity breach (#57)** | 2nd session op in window → VelocityLimitExceeded | ✅ REJECTED (correct) | (handleOps revert on op#2) |
+
+Note: account `0xc1a3A9Ad…` needed `setValidator(router)` for 0x08 session routing (the 0x08 path routes to SessionKeyValidator via the router; built-in algIds like 0x07 don't).
+
+## Final coverage: 35/36 scenarios LIVE on Sepolia (real txs, Codex-verifiable)
+A account variants · B1-B4 execute/batch/ERC20/deposit · C1-C7 all 7 algIds incl. **DVT P256+BLS (C4/C5, #42 anchor)** · D1 bundler · E1-E5 session (grant/use/scope/velocity/revoke) · F1-F3 recovery · G1-G3 module · H1/H2 ForceExit · I1-I3 negatives · J1/J2 governance · K1-K2 BLS/node · L1 BLS-replay · L2 velocity · L3 removeGuardian · L6 weight-gov.
+**L5 (DeFi Uniswap-parser) DEFERRED per owner** — Sepolia has no Uniswap; B3 already covers per-asset ERC-20 inner-calldata amount extraction (the practical case). Revisit on mainnet/fork.
