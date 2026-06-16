@@ -126,3 +126,11 @@ account `0x45Dfe3D5…` has bytecode. Conclusion: genuine on-chain executions of
 | **J2 guardApproveAlgorithm** | account-owned algorithm whitelist | ✅ PASS | [`0xd095d42b…`](https://sepolia.etherscan.io/tx/0xd095d42b373ba9e0494004f2aa46fe1f0977d5916f10e4dcb55633d02430eca8) |
 
 Test accounts: C7/combined `0x107379B5…`, B3/erc20 `0xB3b21cd3…`, C6/J2 `0xc1a3A9Ad…`.
+
+## Round 3 — J1 + L1 (2026-06-16)
+| Scenario | Feature | Result | Evidence |
+|---|---|---|---|
+| **J1 modifyTierLimitsWithGuardians** | guardian-gated tier change (2-of-3) | ✅ PASS | tx [`0x7eb6573f…`](https://sepolia.etherscan.io/tx/0x7eb6573f8b365bc6ce9383a9c1a542e90d6c2a6b201926af922287498bee4c4b) (tier1 0.01→0.02, tier2 0.1→0.2 via Anni+Bob sigs) |
+| **L1 BLS replay binding (#45)** | aggregate accepted for its hash, REJECTED on replay | ✅ PASS | on-chain `validate()` on deployed BLS algo `0xA9EE4f8A…`: validate(A)=0 accept, validate(B)=1 reject (real EIP-2537) |
+
+J1 account `0x45Dfe3D5…`; L1 vs deployed `AAStarBLSAlgorithm 0xA9EE4f8A…`.
