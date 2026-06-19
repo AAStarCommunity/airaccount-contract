@@ -10,6 +10,8 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 
 // ─── Minimal mock EntryPoint ─────────────────────────────────────────────────
+interface IAirAccountRecovery { function proposeRecovery(address newOwner) external; function approveRecovery() external; function executeRecovery() external; function cancelRecovery() external; }
+
 contract MockEP {
     function depositTo(address) external payable {}
     function balanceOf(address) external pure returns (uint256) { return 0; }
@@ -164,11 +166,11 @@ contract ModuleInstallTimelockTest is Test {
     ///      RECOVERY_TIMELOCK is 2 days; this advances time accordingly.
     function _runOwnerRecovery(address newOwner) internal {
         vm.prank(g0Wallet.addr);
-        account.proposeRecovery(newOwner);       // auto-approve #1
+        IAirAccountRecovery(address(account)).proposeRecovery(newOwner);       // auto-approve #1
         vm.prank(g1Wallet.addr);
-        account.approveRecovery();               // approval #2 → meets 2-of-3
+        IAirAccountRecovery(address(account)).approveRecovery();               // approval #2 → meets 2-of-3
         vm.warp(block.timestamp + 2 days + 1);   // past RECOVERY_TIMELOCK
-        account.executeRecovery();               // owner := newOwner
+        IAirAccountRecovery(address(account)).executeRecovery();               // owner := newOwner
     }
 
     // ───────────────────────────────────────────────────────────────────────────

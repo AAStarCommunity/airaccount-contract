@@ -9,6 +9,8 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 
 /// @title SocialRecovery Tests
 /// @notice Comprehensive tests for the social recovery (F28) features in AAStarAirAccountBase
+interface IAirAccountRecovery { function proposeRecovery(address newOwner) external; function approveRecovery() external; function executeRecovery() external; function cancelRecovery() external; }
+
 contract SocialRecoveryTest is Test {
     AAStarAirAccountV7 account;
 
@@ -28,10 +30,10 @@ contract SocialRecoveryTest is Test {
     // Re-declare events for expectEmit
     event GuardianAdded(uint8 indexed index, address indexed guardian);
     event GuardianRemoved(uint8 indexed index, address indexed guardian);
-    event RecoveryProposed(address indexed newOwner, address indexed proposedBy);
-    event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount);
+    event RecoveryProposed(address indexed newOwner, address indexed proposedBy, uint8 guardianIdx);
+    event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount, uint8 guardianIdx);
     event RecoveryExecuted(address indexed oldOwner, address indexed newOwner);
-    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount);
+    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount, uint8 guardianIdx);
     event RecoveryCancelled();
     event OwnerChanged(address indexed oldOwner, address indexed newOwner);
 
@@ -113,7 +115,7 @@ contract SocialRecoveryTest is Test {
 
     function _proposeRecoveryFromGuardian1() internal {
         vm.prank(guardian1);
-        account.proposeRecovery(newOwnerAddr);
+        IAirAccountRecovery(address(account)).proposeRecovery(newOwnerAddr);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -340,10 +342,10 @@ contract SocialRecoveryTest is Test {
 
         vm.prank(guardian1);
         vm.expectEmit(true, true, false, false);
-        emit RecoveryProposed(newOwnerAddr, guardian1);
+        emit RecoveryProposed(newOwnerAddr, guardian1, 0);
         vm.expectEmit(true, true, false, true);
-        emit RecoveryApproved(newOwnerAddr, guardian1, 1);
-        account.proposeRecovery(newOwnerAddr);
+        emit RecoveryApproved(newOwnerAddr, guardian1, 1, 0);
+        IAirAccountRecovery(address(account)).proposeRecovery(newOwnerAddr);
 
         (address proposed, uint256 proposedAt, uint256 bitmap,) = account.activeRecovery();
         assertEq(proposed, newOwnerAddr);
@@ -359,21 +361,21 @@ contract SocialRecoveryTest is Test {
         _addThreeGuardians();
         vm.prank(randomAddr);
         vm.expectRevert(abi.encodeWithSignature("NotGuardian()"));
-        account.proposeRecovery(newOwnerAddr);
+        IAirAccountRecovery(address(account)).proposeRecovery(newOwnerAddr);
     }
 
     function test_proposeRecovery_zeroNewOwnerReverts() public {
         _addThreeGuardians();
         vm.prank(guardian1);
         vm.expectRevert(abi.encodeWithSignature("InvalidNewOwner()"));
-        account.proposeRecovery(address(0));
+        IAirAccountRecovery(address(account)).proposeRecovery(address(0));
     }
 
     function test_proposeRecovery_currentOwnerReverts() public {
         _addThreeGuardians();
         vm.prank(guardian1);
         vm.expectRevert(abi.encodeWithSignature("InvalidNewOwner()"));
-        account.proposeRecovery(ownerAddr);
+        IAirAccountRecovery(address(account)).proposeRecovery(ownerAddr);
     }
 
     function test_proposeRecovery_alreadyActiveReverts() public {
@@ -382,7 +384,7 @@ contract SocialRecoveryTest is Test {
 
         vm.prank(guardian2);
         vm.expectRevert(abi.encodeWithSignature("RecoveryAlreadyActive()"));
-        account.proposeRecovery(newOwnerAddr);
+        IAirAccountRecovery(address(account)).proposeRecovery(newOwnerAddr);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -395,8 +397,8 @@ contract SocialRecoveryTest is Test {
 
         vm.prank(guardian2);
         vm.expectEmit(true, true, false, true);
-        emit RecoveryApproved(newOwnerAddr, guardian2, 2);
-        account.approveRecovery();
+        emit RecoveryApproved(newOwnerAddr, guardian2, 2, 1);
+        IAirAccountRecovery(address(account)).approveRecovery();
 
         (,, uint256 bitmap,) = account.activeRecovery();
         assertEq(bitmap, 3); // bit 0 + bit 1
@@ -412,14 +414,14 @@ contract SocialRecoveryTest is Test {
 
         vm.prank(guardian1);
         vm.expectRevert(abi.encodeWithSignature("AlreadyApproved()"));
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
     }
 
     function test_approveRecovery_noActiveRecoveryReverts() public {
         _addThreeGuardians();
         vm.prank(guardian1);
         vm.expectRevert(abi.encodeWithSignature("NoActiveRecovery()"));
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -431,7 +433,7 @@ contract SocialRecoveryTest is Test {
         _proposeRecoveryFromGuardian1();
 
         vm.prank(guardian2);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
 
         vm.warp(block.timestamp + 2 days);
 
@@ -440,7 +442,7 @@ contract SocialRecoveryTest is Test {
         vm.expectEmit(true, true, false, false);
         emit OwnerChanged(ownerAddr, newOwnerAddr);
 
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
 
         assertEq(account.owner(), newOwnerAddr);
         (address cleared,,,) = account.activeRecovery();
@@ -455,11 +457,11 @@ contract SocialRecoveryTest is Test {
         _addThreeGuardians();
         _proposeRecoveryFromGuardian1();
         vm.prank(guardian2);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
 
         vm.warp(block.timestamp + 2 days - 1);
         vm.expectRevert(abi.encodeWithSignature("RecoveryTimelockNotExpired()"));
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
     }
 
     function test_executeRecovery_revertsWithInsufficientApprovals() public {
@@ -468,12 +470,12 @@ contract SocialRecoveryTest is Test {
         vm.warp(block.timestamp + 2 days);
 
         vm.expectRevert(abi.encodeWithSignature("RecoveryNotApproved()"));
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
     }
 
     function test_executeRecovery_revertsNoActiveRecovery() public {
         vm.expectRevert(abi.encodeWithSignature("NoActiveRecovery()"));
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -484,13 +486,13 @@ contract SocialRecoveryTest is Test {
         _addThreeGuardians();
 
         vm.prank(guardian1);
-        account.proposeRecovery(newOwnerAddr);
+        IAirAccountRecovery(address(account)).proposeRecovery(newOwnerAddr);
 
         (address proposed,,,) = account.activeRecovery();
         assertEq(proposed, newOwnerAddr);
 
         vm.prank(guardian3);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
 
         (,, uint256 bitmap,) = account.activeRecovery();
         assertEq(bitmap, 5); // bit 0 + bit 2
@@ -498,7 +500,7 @@ contract SocialRecoveryTest is Test {
         vm.warp(block.timestamp + 2 days);
 
         vm.prank(randomAddr);
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
 
         assertEq(account.owner(), newOwnerAddr);
 
@@ -538,8 +540,8 @@ contract SocialRecoveryTest is Test {
         // One guardian votes to cancel — not enough
         vm.prank(guardian2);
         vm.expectEmit(true, false, false, true);
-        emit RecoveryCancelVoted(guardian2, 1);
-        account.cancelRecovery();
+        emit RecoveryCancelVoted(guardian2, 1, 1);
+        IAirAccountRecovery(address(account)).cancelRecovery();
 
         // Recovery still active
         (address stillActive,,,) = account.activeRecovery();
@@ -552,15 +554,15 @@ contract SocialRecoveryTest is Test {
 
         // First guardian votes to cancel
         vm.prank(guardian2);
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
 
         // Second guardian votes — reaches 2-of-3 threshold → cancellation happens
         vm.prank(guardian3);
         vm.expectEmit(true, false, false, true);
-        emit RecoveryCancelVoted(guardian3, 2);
+        emit RecoveryCancelVoted(guardian3, 2, 2);
         vm.expectEmit(false, false, false, false);
         emit RecoveryCancelled();
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
 
         // Recovery is cancelled
         (address cleared,,,) = account.activeRecovery();
@@ -577,7 +579,7 @@ contract SocialRecoveryTest is Test {
 
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("NotGuardian()"));
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -590,7 +592,7 @@ contract SocialRecoveryTest is Test {
 
         vm.prank(randomAddr);
         vm.expectRevert(abi.encodeWithSignature("NotGuardian()"));
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -601,7 +603,7 @@ contract SocialRecoveryTest is Test {
         _addThreeGuardians();
         vm.prank(guardian1);
         vm.expectRevert(abi.encodeWithSignature("NoActiveRecovery()"));
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -613,11 +615,11 @@ contract SocialRecoveryTest is Test {
         _proposeRecoveryFromGuardian1();
 
         vm.prank(guardian2);
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
 
         vm.prank(guardian2);
         vm.expectRevert(abi.encodeWithSignature("AlreadyCancelVoted()"));
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -629,15 +631,15 @@ contract SocialRecoveryTest is Test {
         _proposeRecoveryFromGuardian1();
 
         vm.prank(guardian2);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
         vm.prank(guardian3);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
 
         (,, uint256 bitmap,) = account.activeRecovery();
         assertEq(bitmap, 7); // 0b111
 
         vm.warp(block.timestamp + 2 days);
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
         assertEq(account.owner(), newOwnerAddr);
     }
 
@@ -651,10 +653,10 @@ contract SocialRecoveryTest is Test {
         _proposeRecoveryFromGuardian1();
 
         vm.prank(guardian2);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
 
         vm.warp(proposalTime + 2 days);
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
         assertEq(account.owner(), newOwnerAddr);
     }
 
@@ -668,19 +670,19 @@ contract SocialRecoveryTest is Test {
         vm.warp(1000);
         _proposeRecoveryFromGuardian1();
         vm.prank(guardian2);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
         vm.warp(1000 + 2 days);
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
         assertEq(account.owner(), newOwnerAddr);
 
         address secondNewOwner = makeAddr("secondNewOwner");
         vm.warp(1000 + 3 days);
         vm.prank(guardian1);
-        account.proposeRecovery(secondNewOwner);
+        IAirAccountRecovery(address(account)).proposeRecovery(secondNewOwner);
         vm.prank(guardian3);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
         vm.warp(1000 + 5 days);
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
         assertEq(account.owner(), secondNewOwner);
     }
 
@@ -693,16 +695,16 @@ contract SocialRecoveryTest is Test {
 
         _proposeRecoveryFromGuardian1();
         vm.prank(guardian2);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
 
         // Thief tries to cancel — not a guardian
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("NotGuardian()"));
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
 
         // Recovery succeeds
         vm.warp(block.timestamp + 2 days);
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
         assertEq(account.owner(), newOwnerAddr);
     }
 
@@ -716,9 +718,9 @@ contract SocialRecoveryTest is Test {
 
         // 2 guardians cancel
         vm.prank(guardian1);
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
         vm.prank(guardian2);
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
 
         (address cleared,,,) = account.activeRecovery();
         assertEq(cleared, address(0));
@@ -726,12 +728,12 @@ contract SocialRecoveryTest is Test {
         // Re-propose with different owner
         address anotherOwner = makeAddr("anotherOwner");
         vm.prank(guardian2);
-        account.proposeRecovery(anotherOwner);
+        IAirAccountRecovery(address(account)).proposeRecovery(anotherOwner);
         vm.prank(guardian3);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
 
         vm.warp(block.timestamp + 2 days);
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
         assertEq(account.owner(), anotherOwner);
     }
 
@@ -747,18 +749,18 @@ contract SocialRecoveryTest is Test {
 
         // guardian2 votes to cancel
         vm.prank(guardian2);
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
 
         // guardian1 (proposer) also votes to cancel — 2 votes → cancels recovery, clears activeRecovery
         vm.prank(guardian1);
-        account.cancelRecovery();
+        IAirAccountRecovery(address(account)).cancelRecovery();
 
         (address cleared,,,) = account.activeRecovery();
         assertEq(cleared, address(0));
 
         // New proposal — cancel bitmap should be fresh
         vm.prank(guardian1);
-        account.proposeRecovery(newOwnerAddr);
+        IAirAccountRecovery(address(account)).proposeRecovery(newOwnerAddr);
 
         (,,, uint256 cancelBitmap) = account.activeRecovery();
         assertEq(cancelBitmap, 0); // Clean slate
