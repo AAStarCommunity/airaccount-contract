@@ -54,6 +54,8 @@ contract ProtocolAggregatorTest is Test {
     function _emptyConfig() internal pure returns (AAStarAirAccountBase.InitConfig memory) {
         return AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: new uint8[](0),
             minDailyLimit: 0,

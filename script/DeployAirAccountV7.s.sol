@@ -45,6 +45,8 @@ contract DeployAirAccountV7 is Script {
         uint8[] memory emptyAlgs = new uint8[](0);
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: emptyAlgs,
             minDailyLimit: 0,

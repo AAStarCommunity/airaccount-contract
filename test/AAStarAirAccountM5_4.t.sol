@@ -55,6 +55,8 @@ contract AAStarAirAccountM5_4Test is Test {
 
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -158,6 +160,8 @@ contract AAStarAirAccountM5_4Test is Test {
         algIds[0] = 0x03;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: algIds,
             minDailyLimit: 0,

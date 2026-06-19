@@ -208,6 +208,8 @@ contract CalldataParserTest is Test {
 
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: guardians,
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -248,6 +250,8 @@ contract CalldataParserTest is Test {
 
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: guardians,
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -291,6 +295,8 @@ contract CalldataParserTest is Test {
 
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: guardians,
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 10 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -343,6 +349,8 @@ contract CalldataParserTest is Test {
 
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: guardians,
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 10 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -394,6 +402,8 @@ contract CalldataParserTest is Test {
 
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: guardians,
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 10 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -458,6 +468,8 @@ contract CalldataParserTest is Test {
 
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: guardians,
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 10 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,

@@ -35,6 +35,8 @@ contract Beta4AlgIdBundlerFixTest is Test {
         account = new AAStarAirAccountV7();
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: dailyLimit,
             approvedAlgIds: algs,
             minDailyLimit: 0,

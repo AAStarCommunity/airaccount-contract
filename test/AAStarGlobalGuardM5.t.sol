@@ -246,6 +246,8 @@ contract AAStarGlobalGuardM5Test is Test {
         address owner = address(0x1234);
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -285,6 +287,8 @@ contract AAStarGlobalGuardM5Test is Test {
         address owner = makeAddr("owner");
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -319,6 +323,8 @@ contract AAStarGlobalGuardM5Test is Test {
         address owner = makeAddr("owner2");
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,

@@ -64,6 +64,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         uint8[] memory noAlgs = new uint8[](0);
         return AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
@@ -175,6 +177,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         algIds[1] = 0x03;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [g1Wallet.addr, g2Wallet.addr, address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 5 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -300,6 +304,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         algIds[0] = 0x02;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [g1Wallet.addr, g2Wallet.addr, address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -496,6 +502,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         algIds[0] = 0x02;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [g1Wallet.addr, g1Wallet.addr, communityGuardian],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -512,6 +520,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         algIds[0] = 0x02;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [g1Wallet.addr, g2Wallet.addr, g1Wallet.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -528,6 +538,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         algIds[0] = 0x02;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [g1Wallet.addr, g2Wallet.addr, g2Wallet.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -542,6 +554,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
     function test_createAccount_zeroGuardiansAllowed() public {
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: new uint8[](0),
             minDailyLimit: 0,
@@ -559,6 +573,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         algIds[0] = 0x02;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [g1Wallet.addr, address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -580,6 +596,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         algs[0] = 0x02;
         AAStarAirAccountBase.InitConfig memory victimCfg = AAStarAirAccountBase.InitConfig({
             guardians: [g1Wallet.addr, g2Wallet.addr, address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algs,
             minDailyLimit: 0, // victim wants no floor (can tighten later)

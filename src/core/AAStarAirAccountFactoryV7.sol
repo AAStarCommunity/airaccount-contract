@@ -436,6 +436,8 @@ contract AAStarAirAccountFactoryV7 {
 
         return AAStarAirAccountBase.InitConfig({
             guardians: [guardian1, guardian2, defaultCommunityGuardian],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: dailyLimit,
             approvedAlgIds: algIds,
             minDailyLimit: minLimit,
@@ -452,6 +454,8 @@ contract AAStarAirAccountFactoryV7 {
     function _getConfigHash(AAStarAirAccountBase.InitConfig memory config) internal pure returns (bytes32) {
         return keccak256(abi.encode(
             config.guardians,
+            config.guardianP256X,
+            config.guardianP256Y,
             config.dailyLimit,
             config.approvedAlgIds,
             config.minDailyLimit,

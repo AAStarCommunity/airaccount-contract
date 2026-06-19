@@ -96,6 +96,8 @@ contract ModuleInstallTimelockTest is Test {
         uint8[] memory algs = new uint8[](0);
         account.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: algs,
             minDailyLimit: 0,

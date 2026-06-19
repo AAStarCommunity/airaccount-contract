@@ -105,6 +105,8 @@ contract AAStarAirAccountSessionKeyTest is Test {
 
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians:           [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit:          0,
             approvedAlgIds:      algIds,
             minDailyLimit:       0,
@@ -321,6 +323,8 @@ contract ParserTryCatchTest is Test {
 
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians:           [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit:          1 ether,
             approvedAlgIds:      algIds,
             minDailyLimit:       0,
@@ -427,6 +431,8 @@ contract SessionKeyBatchScopeTest is Test {
 
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians:           [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit:          0,
             approvedAlgIds:      algIds,
             minDailyLimit:       0,

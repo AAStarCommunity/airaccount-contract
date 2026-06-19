@@ -588,6 +588,8 @@ contract AgentRegistryTest is Test {
             ownerAddr,
             AAStarAirAccountBase.InitConfig({
                 guardians: [makeAddr("g0"), makeAddr("g1"), makeAddr("g2")],
+                guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+                guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
                 dailyLimit: 0,
                 approvedAlgIds: algs,
                 minDailyLimit: 0,
@@ -636,6 +638,8 @@ contract AgentRegistryTest is Test {
             ownerAddr,
             AAStarAirAccountBase.InitConfig({
                 guardians: [makeAddr("g0"), makeAddr("g1"), makeAddr("g2")],
+                guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+                guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
                 dailyLimit: 0,
                 approvedAlgIds: algs,
                 minDailyLimit: 0,
@@ -660,6 +664,8 @@ contract AgentRegistryTest is Test {
             ownerAddr,
             AAStarAirAccountBase.InitConfig({
                 guardians: [makeAddr("g0"), makeAddr("g1"), makeAddr("g2")],
+                guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+                guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
                 dailyLimit: 0,
                 approvedAlgIds: algs,
                 minDailyLimit: 0,

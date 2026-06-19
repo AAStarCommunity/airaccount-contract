@@ -149,6 +149,8 @@ contract AAStarAirAccountV7_M7Test is Test {
         uint8[] memory algs = new uint8[](0);
         account.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: algs,
             minDailyLimit: 0,
@@ -208,11 +210,11 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_accountId_is_0_18_0() public view {
-        assertEq(account.accountId(), "airaccount.v7@0.19.0");
+        assertEq(account.accountId(), "airaccount.v7@0.20.0");
     }
 
     function test_ACCOUNT_VERSION_constant() public view {
-        assertEq(account.ACCOUNT_VERSION(), "0.19.0");
+        assertEq(account.ACCOUNT_VERSION(), "0.20.0");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────
@@ -365,6 +367,8 @@ contract AAStarAirAccountV7_M7Test is Test {
         uint8[] memory algs = new uint8[](0);
         noGuardAccount.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: algs,
             minDailyLimit: 0,
@@ -636,6 +640,8 @@ contract AAStarAirAccountV7_M7Test is Test {
         );
         gacct.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 2 ether,
             approvedAlgIds: algs,
             minDailyLimit: 0,
@@ -1106,6 +1112,8 @@ contract AAStarAirAccountV7_M7Test is Test {
         uint8[] memory algs = new uint8[](0);
         acc.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: algs,
             minDailyLimit: 0,
@@ -1302,6 +1310,8 @@ contract AAStarAirAccountV7_M7Test is Test {
         );
         acct.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algs,
             minDailyLimit: 0,
@@ -1352,6 +1362,8 @@ contract AAStarAirAccountV7_M7Test is Test {
             ownerWallet.addr,
             AAStarAirAccountBase.InitConfig({
                 guardians: [g0Wallet.addr, g1Wallet.addr, address(0)],
+                guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+                guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
                 dailyLimit: 0,
                 approvedAlgIds: algs,
                 minDailyLimit: 0,
@@ -1371,6 +1383,8 @@ contract AAStarAirAccountV7_M7Test is Test {
         uint8[] memory algs = new uint8[](0);
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: algs,
             minDailyLimit: 0,
