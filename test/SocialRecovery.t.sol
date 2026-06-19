@@ -37,8 +37,11 @@ contract SocialRecoveryTest is Test {
 
     function setUp() public {
         uint8[] memory noAlgs = new uint8[](0);
+        // Init with all 3 guardians — post-init guardian additions require guardian consensus.
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
-            guardians: [address(0), address(0), address(0)],
+            guardians: [guardian1, guardian2, guardian3],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
@@ -47,17 +50,35 @@ contract SocialRecoveryTest is Test {
         });
         account = new AAStarAirAccountV7();
         account.initialize(entryPointAddr, ownerAddr, config);
-
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────
 
-    function _addThreeGuardians() internal {
-        vm.startPrank(ownerAddr);
-        account.addGuardian(guardian1);
-        account.addGuardian(guardian2);
-        account.addGuardian(guardian3);
-        vm.stopPrank();
+    // No-op: setUp now initializes 3 guardians directly via InitConfig.
+    function _addThreeGuardians() internal {}
+
+    // Creates a fresh account with no guardians — use in tests that exercise bootstrap addGuardian.
+    function _resetToEmptyAccount() internal {
+        uint8[] memory noAlgs = new uint8[](0);
+        account = new AAStarAirAccountV7();
+        account.initialize(entryPointAddr, ownerAddr, AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
+            dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        }));
+    }
+
+    // Signs an ADD_GUARDIAN op for addGuardianWithMixedSigs.
+    function _signAddition(uint256 privKey, address guardianAddr, uint256 nonce) internal view returns (bytes memory) {
+        bytes32 h = keccak256(abi.encode(
+            GUARDIAN_SIG_VERSION, block.chainid, address(account), "ADD_GUARDIAN",
+            abi.encode(nonce, guardianAddr)
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privKey, MessageHashUtils.toEthSignedMessageHash(h));
+        return abi.encodePacked(r, s, v);
     }
 
     // GUARDIAN_SIG_VERSION (issue #84) — mirror of the internal constant in AAStarAirAccountBase.
@@ -100,6 +121,7 @@ contract SocialRecoveryTest is Test {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_addGuardian_ownerAddsSuccessfully() public {
+        _resetToEmptyAccount(); // bootstrap: no guardians yet
         vm.prank(ownerAddr);
 
         vm.expectEmit(true, true, false, false);
@@ -126,11 +148,12 @@ contract SocialRecoveryTest is Test {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_addGuardian_maxThreeGuardians() public {
-        _addThreeGuardians();
+        // setUp already provides 3 guardians; direct addGuardian reverts UseGuardianConsensus (count>0).
+        // MaxGuardiansReached is reached via addGuardianWithMixedSigs with full slots.
         assertEq(account.guardianCount(), 3);
 
         vm.prank(ownerAddr);
-        vm.expectRevert(abi.encodeWithSignature("MaxGuardiansReached()"));
+        vm.expectRevert(abi.encodeWithSignature("UseGuardianConsensus()"));
         account.addGuardian(guardian4);
     }
 
@@ -139,9 +162,11 @@ contract SocialRecoveryTest is Test {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_addGuardian_duplicateReverts() public {
+        _resetToEmptyAccount(); // bootstrap: 0 guardians
         vm.startPrank(ownerAddr);
-        account.addGuardian(guardian1);
+        account.addGuardian(guardian1); // count 0→1 (below RECOVERY_THRESHOLD, direct add still allowed)
 
+        // count=1 < RECOVERY_THRESHOLD so consensus not yet required; duplicate is caught before threshold.
         vm.expectRevert(abi.encodeWithSignature("GuardianAlreadySet()"));
         account.addGuardian(guardian1);
         vm.stopPrank();
@@ -152,12 +177,14 @@ contract SocialRecoveryTest is Test {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_addGuardian_zeroAddressReverts() public {
+        _resetToEmptyAccount(); // bootstrap path: InvalidGuardian check runs before consensus check
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("InvalidGuardian()"));
         account.addGuardian(address(0));
     }
 
     function test_addGuardian_ownerAddressReverts() public {
+        _resetToEmptyAccount(); // bootstrap path
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("InvalidGuardian()"));
         account.addGuardian(ownerAddr);
@@ -216,11 +243,9 @@ contract SocialRecoveryTest is Test {
     }
 
     function test_removeGuardian_minGuardianRequired_reverts() public {
-        // Only 2 guardians — cannot remove any
-        vm.startPrank(ownerAddr);
-        account.addGuardian(guardian1);
-        account.addGuardian(guardian2);
-        vm.stopPrank();
+        // Drop to 2 guardians by removing guardian3 first.
+        vm.prank(ownerAddr);
+        account.removeGuardian(2, _twoGuardianSigs(guardian3));
 
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("MinGuardianRequired()"));
@@ -261,19 +286,27 @@ contract SocialRecoveryTest is Test {
     }
 
     function test_removeGuardian_noncePreventsReplay() public {
-        _addThreeGuardians();
-        bytes[] memory sigs = _twoGuardianSigs(guardian3);
-
+        bytes[] memory removeSigs = _twoGuardianSigs(guardian3);
         vm.prank(ownerAddr);
-        account.removeGuardian(2, sigs); // nonce 0 → 1
+        account.removeGuardian(2, removeSigs); // removalNonce 0 → 1
 
+        // Restore guardian3 via guardian consensus (addGuardianWithMixedSigs).
+        // After removal: guardian1=idx0, guardian2=idx1 (additionNonce still 0).
+        uint8[] memory addIdxs = new uint8[](2);
+        addIdxs[0] = 0; addIdxs[1] = 1;
+        bytes[] memory addSigs = new bytes[](2);
+        addSigs[0] = _signAddition(guardian1Key, guardian3, 0);
+        addSigs[1] = _signAddition(guardian2Key, guardian3, 0);
         vm.prank(ownerAddr);
-        account.addGuardian(guardian3); // restore to 3 guardians
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "addGuardianWithMixedSigs(address,uint8[],bytes[])", guardian3, addIdxs, addSigs
+        ));
+        assertTrue(ok);
 
-        // Old sigs (nonce 0) no longer valid — recovered addresses are garbage
+        // Old removal sigs (removalNonce=0) no longer valid — recovered addresses are garbage.
         vm.prank(ownerAddr);
         vm.expectRevert(); // NotGuardian
-        account.removeGuardian(2, sigs);
+        account.removeGuardian(2, removeSigs);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -469,15 +502,29 @@ contract SocialRecoveryTest is Test {
 
         assertEq(account.owner(), newOwnerAddr);
 
+        // Old owner can no longer call addGuardian (fails NotOwner before UseGuardianConsensus).
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("NotOwner()"));
         account.addGuardian(makeAddr("newGuardian"));
 
+        // New owner removes guardian1 (count: 3→2); then adds a new guardian via consensus.
+        // After removal: guardian2=idx0, guardian3=idx1 (additionNonce=0).
         bytes[] memory removeSigs = _twoGuardianSigs(guardian1);
-        vm.startPrank(newOwnerAddr);
+        vm.prank(newOwnerAddr);
         account.removeGuardian(0, removeSigs);
-        account.addGuardian(makeAddr("newGuardian"));
-        vm.stopPrank();
+
+        address newG = makeAddr("newGuardian");
+        uint8[] memory addIdxs = new uint8[](2);
+        addIdxs[0] = 0; addIdxs[1] = 1;
+        bytes[] memory addSigs = new bytes[](2);
+        addSigs[0] = _signAddition(guardian2Key, newG, 0);
+        addSigs[1] = _signAddition(guardian3Key, newG, 0);
+        vm.prank(newOwnerAddr);
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "addGuardianWithMixedSigs(address,uint8[],bytes[])", newG, addIdxs, addSigs
+        ));
+        assertTrue(ok);
+        assertEq(account.guardianCount(), 3);
     }
 
     // ═══════════════════════════════════════════════════════════════════

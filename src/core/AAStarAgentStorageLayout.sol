@@ -154,4 +154,53 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     /// @dev Pending module-install proposal (issue #58 / KI-6). proposedAt == 0 means none pending.
     ///      Appended at slots 27-29 (3-slot struct) — never reorder.
     ModuleInstallProposal internal _pendingModuleInstall;                                 // slots 27-29
+
+    // ── P-256 guardian keys (issue #119) — appended at slots 30-36; never reorder ──────────────
+    // When a guardian slot holds P256_GUARDIAN_SENTINEL (address(0x7026)), the corresponding
+    // key pair below stores the guardian's passkey public key (secp256r1 / P-256).
+    // Unused slots hold (0, 0). Layout mirrors the three guardian address slots above.
+
+    /// @dev P-256 public key for guardian slot 0 (x-coord). Non-zero iff _guardian0 == SENTINEL.
+    bytes32 internal _guardianP256X0;                                                      // slot 30
+    /// @dev P-256 public key for guardian slot 0 (y-coord).
+    bytes32 internal _guardianP256Y0;                                                      // slot 31
+    /// @dev P-256 public key for guardian slot 1 (x-coord). Non-zero iff _guardian1 == SENTINEL.
+    bytes32 internal _guardianP256X1;                                                      // slot 32
+    /// @dev P-256 public key for guardian slot 1 (y-coord).
+    bytes32 internal _guardianP256Y1;                                                      // slot 33
+    /// @dev P-256 public key for guardian slot 2 (x-coord). Non-zero iff _guardian2 == SENTINEL.
+    bytes32 internal _guardianP256X2;                                                      // slot 34
+    /// @dev P-256 public key for guardian slot 2 (y-coord).
+    bytes32 internal _guardianP256Y2;                                                      // slot 35
+
+    /// @dev Monotonic counter incremented each time a recovery round ends (executeRecovery or
+    ///      cancelRecovery). P-256 guardian signatures embed this nonce so a signature collected
+    ///      during round N cannot be replayed in round N+1. Appended at slot 36.
+    uint256 internal _recoveryNonce;                                                       // slot 36
+
+    /// @dev Monotonic counter for guardian addition operations. Prevents replay of a
+    ///      guardian-signed "add guardian X" message after that addition is completed.
+    uint256 internal _guardianAdditionNonce;                                               // slot 37
+
+    // ── P-256 key slot helpers ─────────────────────────────────────────────────────────────────────
+    // Shared by AAStarAirAccountBase (removeGuardian) and AirAccountExtension (all P-256 ops).
+    // Defined here so both inheritors use a single implementation without duplicating logic.
+
+    function _getP256Key(uint8 i) internal view virtual returns (bytes32 x, bytes32 y) {
+        if (i == 0) return (_guardianP256X0, _guardianP256Y0);
+        if (i == 1) return (_guardianP256X1, _guardianP256Y1);
+        return (_guardianP256X2, _guardianP256Y2);
+    }
+
+    function _setP256Key(uint8 i, bytes32 x, bytes32 y) internal virtual {
+        if (i == 0) { _guardianP256X0 = x; _guardianP256Y0 = y; return; }
+        if (i == 1) { _guardianP256X1 = x; _guardianP256Y1 = y; return; }
+        _guardianP256X2 = x; _guardianP256Y2 = y;
+    }
+
+    function _clearP256Key(uint8 i) internal virtual {
+        if (i == 0) { _guardianP256X0 = 0; _guardianP256Y0 = 0; return; }
+        if (i == 1) { _guardianP256X1 = 0; _guardianP256Y1 = 0; return; }
+        _guardianP256X2 = 0; _guardianP256Y2 = 0;
+    }
 }

@@ -57,6 +57,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     /// @dev EIP-7212 P256 verification precompile
     address internal constant P256_VERIFIER = address(0x100);
 
+    /// @dev Sentinel stored in a guardian address slot to mark it as a P-256 (passkey) guardian.
+    ///      The paired P-256 public key (x, y) is stored in the parallel _guardianP256X/Y slots.
+    ///      0x7026 has no known private key and is not a system address; the value evokes "P-256".
+    address internal constant P256_GUARDIAN_SENTINEL = address(0x7026);
+
     /// @dev secp256r1 (P-256) curve order divided by 2 — low-S canonicality bound.
     ///      EIP-7212 / RIP-7696 do NOT mandate low-S: the precompile accepts both (r, s)
     ///      and (r, n-s) as valid, so malleable high-S signatures would pass without this guard.
@@ -150,7 +155,9 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
     /// @notice Account initialization config (used by constructor)
     struct InitConfig {
-        address[3] guardians;                      // Recovery guardians (address(0) = unused slot)
+        address[3] guardians;                      // Recovery guardians: address(0) = unused; P256_GUARDIAN_SENTINEL = P-256 slot
+        bytes32[3] guardianP256X;                  // P-256 x-coord for each slot; non-zero iff guardians[i] == address(0) (P-256 slot)
+        bytes32[3] guardianP256Y;                  // P-256 y-coord for each slot
         uint256 dailyLimit;                        // Guard ETH daily spending limit in wei (0 = no guard)
         uint8[] approvedAlgIds;                    // Guard approved algorithms (empty = no guard)
         uint256 minDailyLimit;                     // Floor for decreaseDailyLimit (0 = no floor)
@@ -180,8 +187,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     error InvalidNewOwner();
     error Reentrancy();
     error InvalidGuardianSignature();
+    error InvalidP256GuardianKey();
+    error DuplicateP256GuardianKey();
+    error InvalidP256GuardianSignature(uint8 gIdx);
     error SessionScopeViolation();
     error InvalidTierConfig();
+    error UseGuardianConsensus();
     error CannotIncreaseTierLimit();
     error TierLimitSigExpired();
     /// @dev HIGH-2: Agent session keys must use execute(), not executeBatch(), when a hook module
@@ -235,6 +246,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     event TierLimitsSet(uint256 tier1, uint256 tier2);
     event GuardianAdded(uint8 indexed index, address indexed guardian);
     event GuardianRemoved(uint8 indexed index, address indexed guardian);
+    event P256GuardianAdded(uint8 indexed index, bytes32 x, bytes32 y);
     event RecoveryProposed(address indexed newOwner, address indexed proposedBy);
     event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount);
     event RecoveryExecuted(address indexed oldOwner, address indexed newOwner);
@@ -327,6 +339,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         address _entryPoint,
         address _owner,
         address[3] memory _guardians,
+        bytes32[3] memory _guardianP256X,
+        bytes32[3] memory _guardianP256Y,
         uint256 _minDailyLimit,
         address _guardAddr,
         uint8[] memory _approvedAlgIds
@@ -341,12 +355,28 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             emit AlgorithmApproved(_approvedAlgIds[i]);
         }
 
-        // Initialize guardians (skip address(0) slots)
+        // Initialize guardians (skip empty slots; detect P-256 slots by guardianP256X[i] != 0)
         for (uint8 i = 0; i < 3; i++) {
             address g = _guardians[i];
-            if (g != address(0)) {
+            bytes32 px = _guardianP256X[i];
+
+            if (px != bytes32(0) && g == address(0)) {
+                // P-256 guardian slot: store sentinel address + public key
+                bytes32 py = _guardianP256Y[i];
+                if (py == bytes32(0)) revert InvalidP256GuardianKey();
+                for (uint8 j = 0; j < _guardianCount; j++) {
+                    if (_getGuardian(j) == P256_GUARDIAN_SENTINEL) {
+                        (bytes32 ex,) = _getP256Key(j);
+                        if (ex == px) revert DuplicateP256GuardianKey();
+                    }
+                }
+                _setGuardian(_guardianCount, P256_GUARDIAN_SENTINEL);
+                _setP256Key(_guardianCount, px, py);
+                emit P256GuardianAdded(_guardianCount, px, py);
+                _guardianCount++;
+            } else if (g != address(0)) {
+                // ECDSA guardian slot
                 if (g == _owner) revert InvalidGuardian();
-                // Check no duplicates with previously added guardians
                 for (uint8 j = 0; j < _guardianCount; j++) {
                     if (_getGuardian(j) == g) revert GuardianAlreadySet();
                 }
@@ -519,6 +549,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     /// @notice Returns number of active guardians.
     function guardianCount() external view returns (uint8) {
         return _guardianCount;
+    }
+
+    /// @notice Returns the current recovery nonce (monotonic counter for P-256 sig replay protection).
+    function getRecoveryNonce() external view returns (uint256) {
+        return _recoveryNonce;
     }
 
 
@@ -1420,9 +1455,14 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
     // ─── Social Recovery (F28) ───────────────────────────────────────
 
-    /// @notice Add a recovery guardian. Max 3 guardians.
+    /// @notice Add a recovery guardian. Owner-only when fewer than RECOVERY_THRESHOLD guardians exist
+    ///         (pre-consensus bootstrap — a single guardian cannot form the required quorum anyway).
+    ///         Once RECOVERY_THRESHOLD guardians are set, use addGuardianWithMixedSigs so a stolen
+    ///         owner key cannot unilaterally change the guardian set.
     function addGuardian(address _guardian) external onlyOwner {
-        if (_guardian == address(0) || _guardian == owner) revert InvalidGuardian();
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+        if (_guardianCount >= RECOVERY_THRESHOLD) revert UseGuardianConsensus();
+        if (_guardian == address(0) || _guardian == owner || _guardian == P256_GUARDIAN_SENTINEL) revert InvalidGuardian();
         if (_guardianCount >= 3) revert MaxGuardiansReached();
 
         // Check not already set
@@ -1471,8 +1511,20 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
         _guardianRemovalNonce++;
 
+        // Clear P-256 key of removed slot (if applicable)
+        if (guardianToRemove == P256_GUARDIAN_SENTINEL) {
+            _clearP256Key(index);
+        }
+
+        // Shift remaining guardians left; also shift parallel P-256 keys for P-256 slots
         for (uint8 i = index; i < _guardianCount - 1; i++) {
-            _setGuardian(i, _getGuardian(uint8(i + 1)));
+            address nextG = _getGuardian(uint8(i + 1));
+            _setGuardian(i, nextG);
+            if (nextG == P256_GUARDIAN_SENTINEL) {
+                (bytes32 nx, bytes32 ny) = _getP256Key(uint8(i + 1));
+                _setP256Key(i, nx, ny);
+                _clearP256Key(uint8(i + 1));
+            }
         }
         _setGuardian(_guardianCount - 1, address(0));
         _guardianCount--;
@@ -1532,6 +1584,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         address oldOwner = owner;
         owner = r.newOwner;
         delete activeRecovery;
+        _recoveryNonce++;
 
         emit RecoveryExecuted(oldOwner, r.newOwner);
         emit OwnerChanged(oldOwner, r.newOwner);
@@ -1556,6 +1609,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
         if (count >= RECOVERY_THRESHOLD) {
             delete activeRecovery;
+            _recoveryNonce++;
             emit RecoveryCancelled();
         }
     }

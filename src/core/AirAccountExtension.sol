@@ -142,6 +142,12 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         return _guardian2;
     }
 
+    function _setGuardian(uint8 i, address addr) private {
+        if (i == 0) { _guardian0 = addr; return; }
+        if (i == 1) { _guardian1 = addr; return; }
+        _guardian2 = addr;
+    }
+
     function _guardianIndex(address addr) private view returns (uint8) {
         for (uint8 i = 0; i < _guardianCount; i++) {
             if (_getGuardian(i) == addr) return i;
@@ -557,5 +563,414 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         if (proposed.tier2Threshold  < current.tier2Threshold)  return true;
         if (proposed.tier3Threshold  < current.tier3Threshold)  return true;
         return false;
+    }
+
+    // ─── P-256 Guardian Support (issue #119) ─────────────────────────────
+
+    /// @dev EIP-7212 P256 verification precompile (mirror AAStarAirAccountBase)
+    address private constant P256_VERIFIER = address(0x100);
+
+    /// @dev secp256r1 curve order / 2 for low-S canonicality (mirror AAStarAirAccountBase)
+    uint256 private constant SECP256R1_N_OVER_2 =
+        0x7FFFFFFF800000007FFFFFFFFFFFFFFFDE737D56D38BCF4279DCE5617E3192A8;
+
+    /// @dev Sentinel address indicating a P-256 guardian slot (mirror AAStarAirAccountBase)
+    address private constant P256_GUARDIAN_SENTINEL = address(0x7026);
+
+    uint256 private constant RECOVERY_THRESHOLD = 2;
+
+    // Errors (same selectors as AAStarAirAccountBase)
+    error MaxGuardiansReached();
+    error GuardianAlreadySet();
+    error InvalidP256GuardianKey();
+    error DuplicateP256GuardianKey();
+    error InvalidP256GuardianSignature(uint8 gIdx);
+    error InvalidGuardianSignature();
+    error NoActiveRecovery();
+    error RecoveryAlreadyProposed();
+    error AlreadyApproved();
+    error AlreadyCancelVoted();
+    error InvalidNewOwner();
+    error DuplicateGuardianSig();
+    error InsufficientGuardianApprovals();
+    error MinGuardianRequired();
+    error TierLimitSigExpired();
+    error InvalidTierConfig();
+    error CannotIncreaseTierLimit();
+    error UseGuardianConsensus();
+    error InvalidAuthenticatorData();
+
+    // Events (same selectors as AAStarAirAccountBase)
+    event GuardianAdded(uint8 indexed index, address indexed guardian);
+    event GuardianRemoved(uint8 indexed index, address indexed guardian);
+    event P256GuardianAdded(uint8 indexed index, bytes32 x, bytes32 y);
+    event RecoveryProposed(address indexed newOwner, address indexed proposedBy);
+    event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount);
+    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount);
+    event RecoveryCancelled();
+    event TierLimitsSet(uint256 tier1, uint256 tier2);
+
+    // ── P-256 key storage helpers (mirror AAStarAirAccountBase, access same delegatecall slots) ──
+
+    function _isP256Guardian(uint8 i) private view returns (bool) {
+        return _getGuardian(i) == P256_GUARDIAN_SENTINEL;
+    }
+
+    /// @dev Compute the operation challenge (keccak_hash) that becomes the WebAuthn challenge.
+    ///      The SDK passes this as the challenge to navigator.credentials.get(); the browser
+    ///      base64url-encodes it into clientDataJSON before signing.
+    function _p256GuardianChallenge(string memory opLabel, bytes memory opData) private view returns (bytes32) {
+        return keccak256(abi.encode(
+            GUARDIAN_SIG_VERSION, block.chainid, address(this), "P256_GUARDIAN", opLabel, opData
+        ));
+    }
+
+    /// @dev Base64URL-encode exactly 32 bytes (no padding). Used to reconstruct clientDataJSON.
+    ///      Output is 43 characters: floor(32/3)=10 full groups → 40 chars, remaining 2 bytes → 3 chars.
+    function _base64UrlEncode32(bytes32 input) private pure returns (bytes memory result) {
+        result = new bytes(43);
+        bytes memory data = abi.encodePacked(input);
+        bytes memory t = bytes("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_");
+        uint256 j = 0;
+        for (uint256 i = 0; i < 30; i += 3) {
+            uint256 b0 = uint8(data[i]);
+            uint256 b1 = uint8(data[i + 1]);
+            uint256 b2 = uint8(data[i + 2]);
+            result[j++] = t[b0 >> 2];
+            result[j++] = t[((b0 & 0x03) << 4) | (b1 >> 4)];
+            result[j++] = t[((b1 & 0x0F) << 2) | (b2 >> 6)];
+            result[j++] = t[b2 & 0x3F];
+        }
+        // Final 2 bytes (indices 30, 31) → 3 base64url chars (no padding)
+        uint256 b30 = uint8(data[30]);
+        uint256 b31 = uint8(data[31]);
+        result[j++] = t[b30 >> 2];
+        result[j++] = t[((b30 & 0x03) << 4) | (b31 >> 4)];
+        result[j]   = t[(b31 & 0x0F) << 2];
+    }
+
+    /// @dev Verify a full WebAuthn assertion for a P-256 guardian.
+    ///      Reconstructs clientDataJSON = prefix || base64url(challenge) || suffix, then
+    ///      verifies: P256(sha256(authenticatorData || sha256(clientDataJSON)), r, s, x, y).
+    ///      This matches what navigator.credentials.get() actually produces in all browsers.
+    ///
+    ///      sig encoding: abi.encode(bytes authenticatorData, bytes clientDataJSONPrefix,
+    ///                               bytes clientDataJSONSuffix, bytes32 r, bytes32 s)
+    function _verifyWebAuthnP256Sig(uint8 gIdx, bytes32 challenge, bytes memory sig) private view {
+        // Minimum encoding: 5×32 (head offsets) + 3×(32 length + 32 min-content) = 352 bytes.
+        // r and s are fixed 32-byte values already counted in the head. Reject short blobs early
+        // so malformed input emits InvalidP256GuardianSignature instead of a generic revert.
+        if (sig.length < 352) revert InvalidP256GuardianSignature(gIdx);
+        (
+            bytes memory authenticatorData,
+            bytes memory clientDataJSONPrefix,
+            bytes memory clientDataJSONSuffix,
+            bytes32 r,
+            bytes32 s
+        ) = abi.decode(sig, (bytes, bytes, bytes, bytes32, bytes32));
+
+        // Minimum authenticatorData: rpIdHash(32) + flags(1) + signCount(4) = 37 bytes
+        if (authenticatorData.length < 37) revert InvalidAuthenticatorData();
+        // UP (User Present) flag must be set (bit 0 of byte 32)
+        if (uint8(authenticatorData[32]) & 0x01 == 0) revert InvalidAuthenticatorData();
+
+        // Reconstruct clientDataJSON from parts around the challenge
+        bytes memory clientDataJSON = abi.encodePacked(
+            clientDataJSONPrefix,
+            _base64UrlEncode32(challenge),
+            clientDataJSONSuffix
+        );
+
+        // WebAuthn: signed payload = authenticatorData || sha256(clientDataJSON)
+        // Signing algorithm is ECDSA-SHA-256, so precompile receives sha256 of that payload
+        bytes32 clientDataHash = sha256(clientDataJSON);
+        bytes32 payloadHash    = sha256(abi.encodePacked(authenticatorData, clientDataHash));
+
+        if (uint256(s) > SECP256R1_N_OVER_2) revert InvalidP256GuardianSignature(gIdx);
+        (bytes32 px, bytes32 py) = _getP256Key(gIdx);
+        (bool ok, bytes memory result) = P256_VERIFIER.staticcall(abi.encode(payloadHash, r, s, px, py));
+        if (!ok || result.length < 32 || abi.decode(result, (uint256)) != 1) {
+            revert InvalidP256GuardianSignature(gIdx);
+        }
+    }
+
+    /// @dev Dispatch guardian signature verification by slot type.
+    ///      P-256 guardian: full WebAuthn Assertion (authenticatorData + clientDataJSON parts + r,s).
+    ///      ECDSA guardian: 65-byte eth-signed keccak hash (existing format, no domain tag).
+    function _verifyGuardianSigByIdx(
+        uint8 gIdx,
+        bytes memory sig,
+        string memory opLabel,
+        bytes memory opData
+    ) private view {
+        if (_isP256Guardian(gIdx)) {
+            bytes32 challenge = _p256GuardianChallenge(opLabel, opData);
+            _verifyWebAuthnP256Sig(gIdx, challenge, sig);
+        } else {
+            bytes32 ethHash = keccak256(abi.encode(
+                GUARDIAN_SIG_VERSION, block.chainid, address(this), opLabel, opData
+            )).toEthSignedMessageHash();
+            address recovered = ethHash.recover(sig);
+            if (recovered != _getGuardian(gIdx)) revert InvalidGuardianSignature();
+        }
+    }
+
+    // ── Public functions ──────────────────────────────────────────────────
+
+    /// @notice Add a P-256 (passkey) guardian — owner-only while fewer than RECOVERY_THRESHOLD
+    ///         guardians exist (pre-consensus bootstrap; a single guardian cannot form a quorum).
+    ///         Once RECOVERY_THRESHOLD guardians are set, call addP256GuardianWithMixedSigs instead.
+    function addP256Guardian(bytes32 x, bytes32 y) external onlyOwner {
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+        if (_guardianCount >= RECOVERY_THRESHOLD) revert UseGuardianConsensus();
+        _addP256GuardianInternal(x, y);
+    }
+
+    /// @notice Add a P-256 (passkey) guardian with existing guardian consensus.
+    ///         Requires RECOVERY_THRESHOLD valid guardian signatures so a stolen owner key
+    ///         cannot expand the guardian set without the current guardians' approval.
+    function addP256GuardianWithMixedSigs(
+        bytes32 x,
+        bytes32 y,
+        uint8[] calldata signerIdxs,
+        bytes[] calldata sigs
+    ) external onlyOwner {
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+        if (signerIdxs.length != sigs.length) revert InsufficientGuardianApprovals();
+        if (signerIdxs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        bytes memory opData = abi.encode(_guardianAdditionNonce, x, y);
+        uint256 approvalBitmap = 0;
+        for (uint256 i = 0; i < signerIdxs.length; i++) {
+            uint8 gIdx = signerIdxs[i];
+            if (gIdx >= _guardianCount) revert InvalidGuardian();
+            uint256 bit = uint256(1) << gIdx;
+            if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
+            approvalBitmap |= bit;
+            _verifyGuardianSigByIdx(gIdx, sigs[i], "ADD_P256_GUARDIAN", opData);
+        }
+        if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        _guardianAdditionNonce++;
+        _addP256GuardianInternal(x, y);
+    }
+
+    /// @notice Add an ECDSA guardian with existing guardian consensus.
+    ///         Requires RECOVERY_THRESHOLD valid guardian signatures.
+    function addGuardianWithMixedSigs(
+        address _guardian,
+        uint8[] calldata signerIdxs,
+        bytes[] calldata sigs
+    ) external onlyOwner {
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+        if (_guardian == address(0) || _guardian == owner || _guardian == P256_GUARDIAN_SENTINEL) revert InvalidGuardian();
+        if (_guardianCount >= 3) revert MaxGuardiansReached();
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_getGuardian(i) == _guardian) revert GuardianAlreadySet();
+        }
+        if (signerIdxs.length != sigs.length) revert InsufficientGuardianApprovals();
+        if (signerIdxs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        bytes memory opData = abi.encode(_guardianAdditionNonce, _guardian);
+        uint256 approvalBitmap = 0;
+        for (uint256 i = 0; i < signerIdxs.length; i++) {
+            uint8 gIdx = signerIdxs[i];
+            if (gIdx >= _guardianCount) revert InvalidGuardian();
+            uint256 bit = uint256(1) << gIdx;
+            if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
+            approvalBitmap |= bit;
+            _verifyGuardianSigByIdx(gIdx, sigs[i], "ADD_GUARDIAN", opData);
+        }
+        if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        _guardianAdditionNonce++;
+        _setGuardian(_guardianCount, _guardian);
+        emit GuardianAdded(_guardianCount, _guardian);
+        _guardianCount++;
+    }
+
+    function _addP256GuardianInternal(bytes32 x, bytes32 y) private {
+        if (x == bytes32(0) || y == bytes32(0)) revert InvalidP256GuardianKey();
+        if (_guardianCount >= 3) revert MaxGuardiansReached();
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_isP256Guardian(i)) {
+                (bytes32 ex, bytes32 ey) = _getP256Key(i);
+                if (ex == x && ey == y) revert DuplicateP256GuardianKey();
+            }
+        }
+        uint8 idx = _guardianCount;
+        _setGuardian(idx, P256_GUARDIAN_SENTINEL);
+        _setP256Key(idx, x, y);
+        emit P256GuardianAdded(idx, x, y);
+        _guardianCount++;
+    }
+
+    /// @notice Get the P-256 public key stored for a guardian slot (returns (0,0) if not a P-256 slot).
+    function getGuardianP256Key(uint8 index) external view returns (bytes32 x, bytes32 y) {
+        if (index >= _guardianCount || !_isP256Guardian(index)) return (bytes32(0), bytes32(0));
+        return _getP256Key(index);
+    }
+
+    /// @notice P-256 guardian proposes a recovery (any relayer can submit the pre-signed calldata).
+    /// @param newOwner  Target owner address after recovery
+    /// @param gIdx      Guardian slot index (0/1/2)
+    /// @param sig       64-byte P-256 signature (r||s), low-S canonical
+    function proposeRecoveryWithSig(address newOwner, uint8 gIdx, bytes calldata sig) external {
+        if (newOwner == address(0) || newOwner == owner) revert InvalidNewOwner();
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_getGuardian(i) == newOwner) revert InvalidNewOwner();
+        }
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+        if (gIdx >= _guardianCount || !_isP256Guardian(gIdx)) revert InvalidGuardian();
+
+        _verifyGuardianSigByIdx(
+            gIdx, sig, "PROPOSE_RECOVERY",
+            abi.encode(_recoveryNonce, newOwner)
+        );
+
+        activeRecovery = RecoveryProposal({
+            newOwner: newOwner,
+            proposedAt: block.timestamp,
+            approvalBitmap: uint256(1) << gIdx,
+            cancellationBitmap: 0
+        });
+
+        emit RecoveryProposed(newOwner, msg.sender);
+        emit RecoveryApproved(newOwner, msg.sender, 1);
+    }
+
+    /// @notice P-256 guardian approves an active recovery proposal.
+    /// @param gIdx  Guardian slot index
+    /// @param sig   64-byte P-256 signature (r||s)
+    function approveRecoveryWithSig(uint8 gIdx, bytes calldata sig) external {
+        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
+        if (gIdx >= _guardianCount || !_isP256Guardian(gIdx)) revert InvalidGuardian();
+
+        uint256 bit = uint256(1) << gIdx;
+        if (activeRecovery.approvalBitmap & bit != 0) revert AlreadyApproved();
+
+        _verifyGuardianSigByIdx(
+            gIdx, sig, "APPROVE_RECOVERY",
+            abi.encode(_recoveryNonce, activeRecovery.newOwner)
+        );
+
+        activeRecovery.approvalBitmap |= bit;
+        uint256 count = _popcount(activeRecovery.approvalBitmap);
+        emit RecoveryApproved(activeRecovery.newOwner, msg.sender, count);
+    }
+
+    /// @notice P-256 guardian votes to cancel an active recovery proposal.
+    /// @param gIdx  Guardian slot index
+    /// @param sig   64-byte P-256 signature (r||s)
+    function cancelRecoveryWithSig(uint8 gIdx, bytes calldata sig) external {
+        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
+        if (gIdx >= _guardianCount || !_isP256Guardian(gIdx)) revert InvalidGuardian();
+
+        uint256 bit = uint256(1) << gIdx;
+        if (activeRecovery.cancellationBitmap & bit != 0) revert AlreadyCancelVoted();
+
+        _verifyGuardianSigByIdx(
+            gIdx, sig, "CANCEL_RECOVERY",
+            abi.encode(_recoveryNonce, activeRecovery.newOwner)
+        );
+
+        activeRecovery.cancellationBitmap |= bit;
+        uint256 count = _popcount(activeRecovery.cancellationBitmap);
+        emit RecoveryCancelVoted(msg.sender, count);
+
+        if (count >= RECOVERY_THRESHOLD) {
+            delete activeRecovery;
+            _recoveryNonce++;
+            emit RecoveryCancelled();
+        }
+    }
+
+    /// @notice Remove a guardian by index using mixed-type guardian signatures (ECDSA or P-256).
+    ///         Required when at least one guardian is a P-256 type (which can't use the ECDSA-only path).
+    /// @param index      Slot to remove (0-indexed)
+    /// @param signerIdxs Guardian slot indices corresponding to each signature
+    /// @param sigs       Signatures: 64 bytes (r||s) for P-256 guardians, 65 bytes for ECDSA guardians
+    function removeGuardianWithMixedSigs(
+        uint8 index,
+        uint8[] calldata signerIdxs,
+        bytes[] calldata sigs
+    ) external onlyOwner {
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+        if (_guardianCount <= 2) revert MinGuardianRequired();
+        if (index >= _guardianCount) revert InvalidGuardian();
+        if (signerIdxs.length != sigs.length) revert InsufficientGuardianApprovals();
+        if (signerIdxs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        address guardianToRemove = _getGuardian(index);
+        bytes memory opData = abi.encode(_guardianRemovalNonce, guardianToRemove);
+
+        uint256 approvalBitmap = 0;
+        for (uint256 i = 0; i < signerIdxs.length; i++) {
+            uint8 gIdx = signerIdxs[i];
+            if (gIdx >= _guardianCount) revert InvalidGuardian();
+            uint256 bit = uint256(1) << gIdx;
+            if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
+            approvalBitmap |= bit;
+            _verifyGuardianSigByIdx(gIdx, sigs[i], "REMOVE_GUARDIAN", opData);
+        }
+        if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        _guardianRemovalNonce++;
+
+        // If removing a P-256 slot, clear the stored key
+        if (guardianToRemove == P256_GUARDIAN_SENTINEL) {
+            _clearP256Key(index);
+        }
+
+        // Shift remaining guardians left (also shift P-256 keys for P-256 slots)
+        for (uint8 i = index; i < _guardianCount - 1; i++) {
+            address nextG = _getGuardian(uint8(i + 1));
+            _setGuardian(i, nextG);
+            if (nextG == P256_GUARDIAN_SENTINEL) {
+                (bytes32 nx, bytes32 ny) = _getP256Key(uint8(i + 1));
+                _setP256Key(i, nx, ny);
+                _clearP256Key(uint8(i + 1));
+            }
+        }
+        _setGuardian(_guardianCount - 1, address(0));
+        _guardianCount--;
+
+        emit GuardianRemoved(index, guardianToRemove);
+    }
+
+    /// @notice Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).
+    ///         Required when at least one guardian is a P-256 type.
+    /// @param signerIdxs Guardian slot indices corresponding to each signature
+    /// @param sigs       Signatures: 64 bytes (r||s) for P-256, 65 bytes for ECDSA
+    function modifyTierLimitsWithMixedGuardians(
+        uint256 _tier1,
+        uint256 _tier2,
+        uint256 deadline,
+        uint8[] calldata signerIdxs,
+        bytes[] calldata sigs
+    ) external onlyOwner {
+        if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
+        if (block.timestamp > deadline) revert TierLimitSigExpired();
+        if (signerIdxs.length != sigs.length) revert InsufficientGuardianApprovals();
+        if (signerIdxs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        bytes memory opData = abi.encode(_tierLimitNonce, _tier1, _tier2, deadline);
+
+        uint256 approvalBitmap = 0;
+        for (uint256 i = 0; i < signerIdxs.length; i++) {
+            uint8 gIdx = signerIdxs[i];
+            if (gIdx >= _guardianCount) revert InvalidGuardian();
+            uint256 bit = uint256(1) << gIdx;
+            if (approvalBitmap & bit != 0) revert DuplicateGuardianSig();
+            approvalBitmap |= bit;
+            _verifyGuardianSigByIdx(gIdx, sigs[i], "MODIFY_TIER_LIMITS", opData);
+        }
+        if (_popcount(approvalBitmap) < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
+
+        _tierLimitNonce++;
+        _tierLimitsInitialized = true;
+        tier1Limit = _tier1;
+        tier2Limit = _tier2;
+        emit TierLimitsSet(_tier1, _tier2);
     }
 }

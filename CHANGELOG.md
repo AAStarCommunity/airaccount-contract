@@ -8,6 +8,37 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.20.0-beta.1] - 2026-06-19 (P-256 / WebAuthn guardian support)
+
+v0.20 feature release. **828 unit tests, 0 failed.** EIP-170 headroom: 206 bytes (main), ~7,862 bytes (extension).
+
+### What changed
+
+- **[#119](https://github.com/AAStarCommunity/airaccount-contract/issues/119) P-256 (WebAuthn passkey) guardian support**
+  - Guardian slots now support two types: ECDSA EOA (existing) and P-256 passkey (new)
+  - P-256 guardian is marked via sentinel `address(0x7026)` in the guardian address slot; public key (x, y) stored in parallel storage slots 30-35
+  - `_recoveryNonce` (slot 36) added: monotonic counter incremented on `executeRecovery`/`cancelRecovery` to prevent P-256 sig replay across recovery rounds
+  - `InitConfig` extended with `guardianP256X[3]` / `guardianP256Y[3]` — accounts can be deployed with passkey guardians in a single transaction
+  - **`addP256Guardian(bytes32 x, bytes32 y)`** — owner adds a P-256 guardian (extension)
+  - **`getGuardianP256Key(uint8 index)`** — view P-256 public key for any slot (extension)
+  - **`proposeRecoveryWithSig(address, uint8, bytes)`** — relayer-submittable recovery proposal from P-256 guardian (extension)
+  - **`approveRecoveryWithSig(uint8, bytes)`** — P-256 guardian approval (extension)
+  - **`cancelRecoveryWithSig(uint8, bytes)`** — P-256 guardian cancel vote (extension)
+  - **`removeGuardianWithMixedSigs(uint8, uint8[], bytes[])`** — remove guardian using mixed ECDSA + P-256 sigs (extension)
+  - **`modifyTierLimitsWithMixedGuardians(uint256, uint256, uint256, uint8[], bytes[])`** — modify tier limits with mixed guardian types (extension)
+  - **`getRecoveryNonce()`** — public view for current recovery nonce
+  - Hash format: P-256 sigs use `sha256(keccak256(...))` to match WebAuthn's internal SHA-256 (subtle.crypto.sign ECDSA-SHA-256); ECDSA guardian path unchanged (eth-signed keccak)
+  - Key storage uses `AAStarAgentStorageLayout` slots 30-36 (appended, never reordered)
+  - 23 new tests in `test/P256Guardian.t.sol`
+
+### Upgrade notes for SDK
+
+- `InitConfig` has 2 new array fields (`guardianP256X`, `guardianP256Y`). Old constructors without these fields will fail to compile — add `[bytes32(0), bytes32(0), bytes32(0)]` for accounts without P-256 guardians.
+- New extension functions are available via the existing fallback→delegatecall path (no ABI changes to main contract calls).
+- See `docs/p256-guardian-spec.md` for complete hash format and SDK integration guide.
+
+---
+
 ## [v0.19.0-beta.2] - 2026-06-16 (Safe guardian E2E + KMS contract-side verification)
 
 v0.19 milestone release. **805 unit tests (cancun) + 805 under EIP-2537/prague (full suite), 0 failed.** EIP-170 headroom: 1,104 bytes.
