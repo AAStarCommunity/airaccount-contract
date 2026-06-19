@@ -8,6 +8,21 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [Unreleased] - 2026-06-19 (recovery refactor + #120 review follow-ups)
+
+Refactor PR stacked on #120. **835 unit tests, 0 failed.** EIP-170 headroom for the main account jumps from **11 bytes → 1,258 bytes** (V7 24,565 → 23,318 B); extension 19,745 B (4,831 B headroom). Codex adversarial review: APPROVED (0 CRITICAL/HIGH/MEDIUM/LOW).
+
+### What changed
+
+- **Social recovery relocated to `AirAccountExtension` (diamond-lite)**
+  - The 4 ECDSA recovery externals (`proposeRecovery` / `approveRecovery` / `executeRecovery` / `cancelRecovery`) moved out of `AAStarAirAccountBase` into the extension, reached via the V7 `fallback`→`delegatecall` boundary. This frees main-account runtime bytecode that was 11 bytes from the EIP-170 limit.
+  - ECDSA and P-256 recovery paths now share private core helpers (`_validateNewOwner` / `_commitProposal` / `_commitApproval` / `_commitCancelVote`) — single implementation, no path drift. Behavior is identical to the previous inline functions (delegatecall preserves `msg.sender` / storage).
+  - **ABI note:** these 4 selectors are no longer on the V7 ABI surface; integrators call them against the account address (selector + semantics unchanged, runtime-routed through the extension).
+- **[#120 review Medium] Event attribution** — `RecoveryProposed` / `RecoveryApproved` / `RecoveryCancelVoted` gain a `uint8 guardianIdx` field naming the actual authorizing guardian slot. On P-256 (relayer-submitted) paths `msg.sender` is the relayer, not the guardian; `guardianIdx` lets off-chain forensics answer "which guardian acted". **Event topic0 changes — indexers must update.**
+- **[#120 review Low] Dedup consistency** — `_initAccount` P-256 guardian dedup now compares BOTH coordinates (`ex == px && ey == py`), matching `_addP256GuardianInternal` (was x-only).
+
+---
+
 ## [v0.20.0-beta.1] - 2026-06-19 (P-256 / WebAuthn guardian support)
 
 v0.20 feature release. **828 unit tests, 0 failed.** EIP-170 headroom: 206 bytes (main), ~7,862 bytes (extension).

@@ -247,10 +247,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     event GuardianAdded(uint8 indexed index, address indexed guardian);
     event GuardianRemoved(uint8 indexed index, address indexed guardian);
     event P256GuardianAdded(uint8 indexed index, bytes32 x, bytes32 y);
-    event RecoveryProposed(address indexed newOwner, address indexed proposedBy);
-    event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount);
+    // Declared for V7 ABI completeness; emitted from AirAccountExtension (delegatecall) — signatures
+    // MUST match the extension's so topic0 agrees. guardianIdx added per #120 review follow-up.
+    event RecoveryProposed(address indexed newOwner, address indexed proposedBy, uint8 guardianIdx);
+    event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount, uint8 guardianIdx);
     event RecoveryExecuted(address indexed oldOwner, address indexed newOwner);
-    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount);
+    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount, uint8 guardianIdx);
     event RecoveryCancelled();
     event OwnerChanged(address indexed oldOwner, address indexed newOwner);
     event WeightConfigUpdated(WeightConfig config);
@@ -366,8 +368,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
                 if (py == bytes32(0)) revert InvalidP256GuardianKey();
                 for (uint8 j = 0; j < _guardianCount; j++) {
                     if (_getGuardian(j) == P256_GUARDIAN_SENTINEL) {
-                        (bytes32 ex,) = _getP256Key(j);
-                        if (ex == px) revert DuplicateP256GuardianKey();
+                        // #120 review [Low]: check BOTH coordinates, matching
+                        // _addP256GuardianInternal — two keys sharing only x are the curve negation
+                        // of each other, but security-critical dedup should be self-consistent.
+                        (bytes32 ex, bytes32 ey) = _getP256Key(j);
+                        if (ex == px && ey == py) revert DuplicateP256GuardianKey();
                     }
                 }
                 _setGuardian(_guardianCount, P256_GUARDIAN_SENTINEL);
@@ -1532,87 +1537,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         emit GuardianRemoved(index, guardianToRemove);
     }
 
-    /// @notice Propose a recovery: change owner to a new address.
-    ///         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals.
-    function proposeRecovery(address _newOwner) external {
-        if (_newOwner == address(0) || _newOwner == owner) revert InvalidNewOwner();
-        for (uint8 i = 0; i < _guardianCount; i++) {
-            if (_getGuardian(i) == _newOwner) revert InvalidNewOwner();
-        }
-        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
-
-        uint8 guardianIndex = _guardianIndex(msg.sender);
-
-        activeRecovery = RecoveryProposal({
-            newOwner: _newOwner,
-            proposedAt: block.timestamp,
-            approvalBitmap: uint256(1) << guardianIndex,
-            cancellationBitmap: 0
-        });
-
-        emit RecoveryProposed(_newOwner, msg.sender);
-        emit RecoveryApproved(_newOwner, msg.sender, 1);
-    }
-
-    /// @notice Approve an active recovery proposal.
-    function approveRecovery() external {
-        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
-
-        uint8 guardianIndex = _guardianIndex(msg.sender);
-        uint256 bit = uint256(1) << guardianIndex;
-        if (activeRecovery.approvalBitmap & bit != 0) revert AlreadyApproved();
-
-        activeRecovery.approvalBitmap |= bit;
-
-        // #79: guardian bitmap — at most 3 bits set, so _popcount's all-ones edge is unreachable here.
-        uint256 count = _popcount(activeRecovery.approvalBitmap);
-        emit RecoveryApproved(activeRecovery.newOwner, msg.sender, count);
-    }
-
-    /// @notice Execute recovery after timelock and threshold are met.
-    function executeRecovery() external {
-        RecoveryProposal memory r = activeRecovery;
-        if (r.newOwner == address(0)) revert NoActiveRecovery();
-        if (block.timestamp < r.proposedAt + RECOVERY_TIMELOCK) {
-            revert RecoveryTimelockNotExpired();
-        }
-        // #79: guardian bitmap — at most 3 bits set, so _popcount's all-ones edge is unreachable here.
-        if (_popcount(r.approvalBitmap) < RECOVERY_THRESHOLD) {
-            revert RecoveryNotApproved();
-        }
-
-        address oldOwner = owner;
-        owner = r.newOwner;
-        delete activeRecovery;
-        _recoveryNonce++;
-
-        emit RecoveryExecuted(oldOwner, r.newOwner);
-        emit OwnerChanged(oldOwner, r.newOwner);
-    }
-
-    /// @notice Vote to cancel active recovery. Requires 2-of-3 guardian threshold.
-    /// @dev Same security level as recovery itself. Owner cannot cancel because
-    ///      if the key is stolen, the thief could block legitimate recovery.
-    ///      Each guardian votes independently; when threshold is reached, recovery is cancelled.
-    function cancelRecovery() external {
-        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
-
-        uint8 guardianIndex = _guardianIndex(msg.sender);
-        uint256 bit = uint256(1) << guardianIndex;
-        if (activeRecovery.cancellationBitmap & bit != 0) revert AlreadyCancelVoted();
-
-        activeRecovery.cancellationBitmap |= bit;
-        // #79: guardian bitmap — at most 3 bits set, so _popcount's all-ones edge is unreachable here.
-        uint256 count = _popcount(activeRecovery.cancellationBitmap);
-
-        emit RecoveryCancelVoted(msg.sender, count);
-
-        if (count >= RECOVERY_THRESHOLD) {
-            delete activeRecovery;
-            _recoveryNonce++;
-            emit RecoveryCancelled();
-        }
-    }
+    // Social recovery (proposeRecovery / approveRecovery / executeRecovery / cancelRecovery and the
+    // P-256 *WithSig variants) lives in AirAccountExtension and is reached via the fallback→delegatecall
+    // boundary. It was relocated there to free V7 runtime bytecode (EIP-170) and to merge the ECDSA and
+    // P-256 paths onto shared core helpers. The recovery events are still declared below so the V7 ABI
+    // surfaces them for indexers; they are emitted from the extension in this account's storage context.
 
     /// @dev Get guardian address by index from packed storage.
     function _getGuardian(uint8 i) private view returns (address) {

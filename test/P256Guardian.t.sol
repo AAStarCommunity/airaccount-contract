@@ -9,6 +9,8 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 
 // ─── P-256 precompile mocks ───────────────────────────────────────────────────
 
+interface IAirAccountRecovery { function proposeRecovery(address newOwner) external; function approveRecovery() external; function executeRecovery() external; function cancelRecovery() external; }
+
 contract MockP256Valid {
     fallback(bytes calldata) external returns (bytes memory) {
         return abi.encode(uint256(1));
@@ -57,9 +59,9 @@ contract P256GuardianTest is Test {
     event GuardianAdded(uint8 indexed index, address indexed guardian);
     event P256GuardianAdded(uint8 indexed index, bytes32 x, bytes32 y);
     event GuardianRemoved(uint8 indexed index, address indexed guardian);
-    event RecoveryProposed(address indexed newOwner, address indexed proposedBy);
-    event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount);
-    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount);
+    event RecoveryProposed(address indexed newOwner, address indexed proposedBy, uint8 guardianIdx);
+    event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount, uint8 guardianIdx);
+    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount, uint8 guardianIdx);
     event RecoveryCancelled();
 
     // ── Deploy helpers ─────────────────────────────────────────────────────────
@@ -368,7 +370,7 @@ contract P256GuardianTest is Test {
         vm.etch(P256_PRECOMPILE, address(new MockP256Valid()).code);
 
         vm.expectEmit(true, true, false, false);
-        emit RecoveryProposed(newOwner, address(this));
+        emit RecoveryProposed(newOwner, address(this), 0);
         (bool ok,) = address(account).call(abi.encodeWithSignature(
             "proposeRecoveryWithSig(address,uint8,bytes)", newOwner, uint8(0), _mockP256Sig()
         ));
@@ -431,7 +433,7 @@ contract P256GuardianTest is Test {
         ));
 
         vm.expectEmit(true, true, false, true);
-        emit RecoveryApproved(newOwner, address(this), 2);
+        emit RecoveryApproved(newOwner, address(this), 2, 1);
         (bool ok,) = address(account).call(abi.encodeWithSignature(
             "approveRecoveryWithSig(uint8,bytes)", uint8(1), _mockP256Sig()
         ));
@@ -500,12 +502,12 @@ contract P256GuardianTest is Test {
         _deploy(ecdsaGuardian, g2addr, address(0));
 
         vm.prank(ecdsaGuardian);
-        account.proposeRecovery(newOwner);
+        IAirAccountRecovery(address(account)).proposeRecovery(newOwner);
         vm.prank(g2addr);
-        account.approveRecovery();
+        IAirAccountRecovery(address(account)).approveRecovery();
 
         vm.warp(block.timestamp + 3 days);
-        account.executeRecovery();
+        IAirAccountRecovery(address(account)).executeRecovery();
 
         assertEq(account.getRecoveryNonce(), 1);
     }

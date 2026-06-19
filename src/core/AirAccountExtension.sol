@@ -578,9 +578,12 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     address private constant P256_GUARDIAN_SENTINEL = address(0x7026);
 
     uint256 private constant RECOVERY_THRESHOLD = 2;
+    uint256 private constant RECOVERY_TIMELOCK = 2 days;
 
     // Errors (same selectors as AAStarAirAccountBase)
     error MaxGuardiansReached();
+    error RecoveryTimelockNotExpired();
+    error RecoveryNotApproved();
     error GuardianAlreadySet();
     error InvalidP256GuardianKey();
     error DuplicateP256GuardianKey();
@@ -604,10 +607,16 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     event GuardianAdded(uint8 indexed index, address indexed guardian);
     event GuardianRemoved(uint8 indexed index, address indexed guardian);
     event P256GuardianAdded(uint8 indexed index, bytes32 x, bytes32 y);
-    event RecoveryProposed(address indexed newOwner, address indexed proposedBy);
-    event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount);
-    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount);
+    // guardianIdx (review #120 follow-up): the WithSig paths are submitted by a relayer, so
+    // msg.sender (proposedBy/approvedBy/votedBy) is NOT the authorizing guardian. guardianIdx
+    // names the actual guardian slot whose signature (P-256) or msg.sender (ECDSA) authorized
+    // the op, so off-chain forensics can answer "which guardian acted" without decoding calldata.
+    event RecoveryProposed(address indexed newOwner, address indexed proposedBy, uint8 guardianIdx);
+    event RecoveryApproved(address indexed newOwner, address indexed approvedBy, uint256 approvalCount, uint8 guardianIdx);
+    event RecoveryCancelVoted(address indexed votedBy, uint256 cancelCount, uint8 guardianIdx);
     event RecoveryCancelled();
+    event RecoveryExecuted(address indexed oldOwner, address indexed newOwner);
+    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
     event TierLimitsSet(uint256 tier1, uint256 tier2);
 
     // ── P-256 key storage helpers (mirror AAStarAirAccountBase, access same delegatecall slots) ──
@@ -811,78 +820,134 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         return _getP256Key(index);
     }
 
-    /// @notice P-256 guardian proposes a recovery (any relayer can submit the pre-signed calldata).
-    /// @param newOwner  Target owner address after recovery
-    /// @param gIdx      Guardian slot index (0/1/2)
-    /// @param sig       64-byte P-256 signature (r||s), low-S canonical
-    function proposeRecoveryWithSig(address newOwner, uint8 gIdx, bytes calldata sig) external {
+    // ─── Social recovery (unified ECDSA + P-256) ──────────────────────────────────────────────────
+    //
+    // Moved here from AAStarAirAccountBase as part of the #120 follow-up refactor. The account
+    // (V7) sat 11 bytes under EIP-170; relocating these low-frequency externals across the
+    // fallback→delegatecall boundary frees that runtime budget. ECDSA (msg.sender-authed) and
+    // P-256 (sig-authed) paths now share the _commit* core helpers, so the bitmap/event logic
+    // exists in exactly one place — the very duplication that produced the removeGuardian
+    // key-shift drift in #120. delegatecall preserves msg.sender/address(this)/storage, so these
+    // behave identically to inline functions. None read V7 immutables (only storage + constants).
+
+    /// @dev Shared cheap pre-checks for a new proposal: target validity + no active recovery.
+    ///      Runs before (expensive) guardian authentication so both paths fail fast.
+    function _validateNewOwner(address newOwner) private view {
         if (newOwner == address(0) || newOwner == owner) revert InvalidNewOwner();
         for (uint8 i = 0; i < _guardianCount; i++) {
             if (_getGuardian(i) == newOwner) revert InvalidNewOwner();
         }
         if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
-        if (gIdx >= _guardianCount || !_isP256Guardian(gIdx)) revert InvalidGuardian();
+    }
 
-        _verifyGuardianSigByIdx(
-            gIdx, sig, "PROPOSE_RECOVERY",
-            abi.encode(_recoveryNonce, newOwner)
-        );
-
+    /// @dev Open a fresh proposal, auto-approving the proposing guardian. `guardianIdx` is the
+    ///      authorized slot (msg.sender's slot for ECDSA, gIdx for P-256).
+    function _commitProposal(address newOwner, uint8 guardianIdx) private {
         activeRecovery = RecoveryProposal({
             newOwner: newOwner,
             proposedAt: block.timestamp,
-            approvalBitmap: uint256(1) << gIdx,
+            approvalBitmap: uint256(1) << guardianIdx,
             cancellationBitmap: 0
         });
-
-        emit RecoveryProposed(newOwner, msg.sender);
-        emit RecoveryApproved(newOwner, msg.sender, 1);
+        emit RecoveryProposed(newOwner, msg.sender, guardianIdx);
+        emit RecoveryApproved(newOwner, msg.sender, 1, guardianIdx);
     }
 
-    /// @notice P-256 guardian approves an active recovery proposal.
-    /// @param gIdx  Guardian slot index
-    /// @param sig   64-byte P-256 signature (r||s)
-    function approveRecoveryWithSig(uint8 gIdx, bytes calldata sig) external {
-        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
-        if (gIdx >= _guardianCount || !_isP256Guardian(gIdx)) revert InvalidGuardian();
-
-        uint256 bit = uint256(1) << gIdx;
-        if (activeRecovery.approvalBitmap & bit != 0) revert AlreadyApproved();
-
-        _verifyGuardianSigByIdx(
-            gIdx, sig, "APPROVE_RECOVERY",
-            abi.encode(_recoveryNonce, activeRecovery.newOwner)
-        );
-
-        activeRecovery.approvalBitmap |= bit;
+    /// @dev Record an approval vote for `guardianIdx` (caller verified slot + de-dup beforehand).
+    function _commitApproval(uint8 guardianIdx) private {
+        activeRecovery.approvalBitmap |= (uint256(1) << guardianIdx);
         uint256 count = _popcount(activeRecovery.approvalBitmap);
-        emit RecoveryApproved(activeRecovery.newOwner, msg.sender, count);
+        emit RecoveryApproved(activeRecovery.newOwner, msg.sender, count, guardianIdx);
     }
 
-    /// @notice P-256 guardian votes to cancel an active recovery proposal.
-    /// @param gIdx  Guardian slot index
-    /// @param sig   64-byte P-256 signature (r||s)
-    function cancelRecoveryWithSig(uint8 gIdx, bytes calldata sig) external {
-        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
-        if (gIdx >= _guardianCount || !_isP256Guardian(gIdx)) revert InvalidGuardian();
-
-        uint256 bit = uint256(1) << gIdx;
-        if (activeRecovery.cancellationBitmap & bit != 0) revert AlreadyCancelVoted();
-
-        _verifyGuardianSigByIdx(
-            gIdx, sig, "CANCEL_RECOVERY",
-            abi.encode(_recoveryNonce, activeRecovery.newOwner)
-        );
-
-        activeRecovery.cancellationBitmap |= bit;
+    /// @dev Record a cancellation vote for `guardianIdx`; clears recovery once threshold is met.
+    function _commitCancelVote(uint8 guardianIdx) private {
+        activeRecovery.cancellationBitmap |= (uint256(1) << guardianIdx);
         uint256 count = _popcount(activeRecovery.cancellationBitmap);
-        emit RecoveryCancelVoted(msg.sender, count);
-
+        emit RecoveryCancelVoted(msg.sender, count, guardianIdx);
         if (count >= RECOVERY_THRESHOLD) {
             delete activeRecovery;
             _recoveryNonce++;
             emit RecoveryCancelled();
         }
+    }
+
+    // ── ECDSA paths (msg.sender is the guardian) ──────────────────────────────────────────────────
+
+    /// @notice An ECDSA guardian proposes a recovery. Any guardian may propose; auto-approves self.
+    function proposeRecovery(address newOwner) external {
+        _validateNewOwner(newOwner);
+        uint8 guardianIdx = _guardianIndex(msg.sender); // reverts if caller is not a guardian
+        _commitProposal(newOwner, guardianIdx);
+    }
+
+    /// @notice An ECDSA guardian approves the active recovery proposal.
+    function approveRecovery() external {
+        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
+        uint8 guardianIdx = _guardianIndex(msg.sender);
+        if (activeRecovery.approvalBitmap & (uint256(1) << guardianIdx) != 0) revert AlreadyApproved();
+        _commitApproval(guardianIdx);
+    }
+
+    /// @notice Execute recovery after timelock and threshold are met. Permissionless trigger.
+    function executeRecovery() external {
+        RecoveryProposal memory r = activeRecovery;
+        if (r.newOwner == address(0)) revert NoActiveRecovery();
+        if (block.timestamp < r.proposedAt + RECOVERY_TIMELOCK) revert RecoveryTimelockNotExpired();
+        // #79: guardian bitmap — at most 3 bits set, so _popcount's all-ones edge is unreachable here.
+        if (_popcount(r.approvalBitmap) < RECOVERY_THRESHOLD) revert RecoveryNotApproved();
+
+        address oldOwner = owner;
+        owner = r.newOwner;
+        delete activeRecovery;
+        _recoveryNonce++;
+
+        emit RecoveryExecuted(oldOwner, r.newOwner);
+        emit OwnerChanged(oldOwner, r.newOwner);
+    }
+
+    /// @notice An ECDSA guardian votes to cancel the active recovery. 2-of-3 threshold clears it.
+    /// @dev Owner cannot cancel: a stolen owner key could otherwise block legitimate recovery.
+    function cancelRecovery() external {
+        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
+        uint8 guardianIdx = _guardianIndex(msg.sender);
+        if (activeRecovery.cancellationBitmap & (uint256(1) << guardianIdx) != 0) revert AlreadyCancelVoted();
+        _commitCancelVote(guardianIdx);
+    }
+
+    // ── P-256 paths (relayer submits a pre-signed assertion; gIdx names the signing guardian) ─────
+
+    /// @notice P-256 guardian proposes a recovery (any relayer can submit the pre-signed calldata).
+    /// @param newOwner  Target owner address after recovery
+    /// @param gIdx      Guardian slot index (0/1/2)
+    /// @param sig       WebAuthn assertion blob authorizing this proposal
+    function proposeRecoveryWithSig(address newOwner, uint8 gIdx, bytes calldata sig) external {
+        _validateNewOwner(newOwner);
+        if (gIdx >= _guardianCount || !_isP256Guardian(gIdx)) revert InvalidGuardian();
+        _verifyGuardianSigByIdx(gIdx, sig, "PROPOSE_RECOVERY", abi.encode(_recoveryNonce, newOwner));
+        _commitProposal(newOwner, gIdx);
+    }
+
+    /// @notice P-256 guardian approves an active recovery proposal.
+    /// @param gIdx  Guardian slot index
+    /// @param sig   WebAuthn assertion blob authorizing this approval
+    function approveRecoveryWithSig(uint8 gIdx, bytes calldata sig) external {
+        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
+        if (gIdx >= _guardianCount || !_isP256Guardian(gIdx)) revert InvalidGuardian();
+        if (activeRecovery.approvalBitmap & (uint256(1) << gIdx) != 0) revert AlreadyApproved();
+        _verifyGuardianSigByIdx(gIdx, sig, "APPROVE_RECOVERY", abi.encode(_recoveryNonce, activeRecovery.newOwner));
+        _commitApproval(gIdx);
+    }
+
+    /// @notice P-256 guardian votes to cancel an active recovery proposal.
+    /// @param gIdx  Guardian slot index
+    /// @param sig   WebAuthn assertion blob authorizing this cancel vote
+    function cancelRecoveryWithSig(uint8 gIdx, bytes calldata sig) external {
+        if (activeRecovery.newOwner == address(0)) revert NoActiveRecovery();
+        if (gIdx >= _guardianCount || !_isP256Guardian(gIdx)) revert InvalidGuardian();
+        if (activeRecovery.cancellationBitmap & (uint256(1) << gIdx) != 0) revert AlreadyCancelVoted();
+        _verifyGuardianSigByIdx(gIdx, sig, "CANCEL_RECOVERY", abi.encode(_recoveryNonce, activeRecovery.newOwner));
+        _commitCancelVote(gIdx);
     }
 
     /// @notice Remove a guardian by index using mixed-type guardian signatures (ECDSA or P-256).
