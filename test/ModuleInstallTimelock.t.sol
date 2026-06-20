@@ -303,6 +303,8 @@ contract ModuleInstallTimelockTest is Test {
         ext.proposeModuleInstall(VALIDATOR, address(mod), sig);
 
         // Mutate the stored P-256 pubkey (address slots + count untouched) → authHash must shift.
+        // Slot 32 is _guardianP256X0 (forge inspect storage-layout; the source comments were
+        // off-by-2 and have been corrected). Any of the six P-256 key slots exercises the fix.
         vm.store(address(account), bytes32(uint256(32)), bytes32(uint256(0xdead)));
 
         vm.warp(block.timestamp + TIMELOCK + 1);
