@@ -42,5 +42,5 @@ factory [`0x081124d9…`](https://sepolia.etherscan.io/tx/0x081124d9cee8c67f8275
 ## Notes
 - Owner of `AAStarBLSAlgorithm` + `AAStarValidator` = deployer EOA (no Safe on testnet).
 - Optional steps skipped: `setAggregator` (set `DEPLOY_SET_AGGREGATOR=1`), `addStake` (set `DEPLOY_ADD_STAKE_ETH=<n>`).
-- Etherscan source verification: see `## Verification` once run (`forge verify-contract`).
+- Source verification: **impl / extension / factory verified on both Etherscan and Sourcify** (2026-06-20).
 - Mainnet GA TODO: two-step `transferOwnership(blsAlgorithm)` to the protocol Safe after key registration.
