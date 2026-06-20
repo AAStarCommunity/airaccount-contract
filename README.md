@@ -293,6 +293,31 @@ WalletBeat evaluates wallets across Stage 0, 1, 2. AirAccount is a **smart contr
 
 ---
 
+## Deployed Contracts (Sepolia) — v0.20.0 ⭐ latest
+
+v0.20.0 is a **full stack redeploy** (11 contracts + 6 wiring txs) — the first on-chain deployment
+carrying **P-256 / WebAuthn guardian** logic (#119). The account is non-upgradable, so P-256 support
+requires a fresh implementation + factory; **v0.18/v0.19 addresses do NOT have P-256**. Full record
+(all addresses, tx hashes, explorer links): [`docs/DEPLOYMENT-v0.20.0.md`](docs/DEPLOYMENT-v0.20.0.md).
+
+| Contract | Address |
+|----------|---------|
+| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` (canonical) |
+| **Factory** | `0x99C9300d52EDD9f4B7135DEd1811fBa6FFa1DDC6` |
+| **Implementation** | `0xd51db7eB20FF99c8588281CBe1785681Bb17D473` |
+| **Extension** | `0x5529f50811814E0a4966cFC21200DCeF9C3FCb5B` |
+| Validator Router | `0xfcDfd17a373E037c3F9C8ffE2c781915E7Ae6e11` |
+| SessionKeyValidator | `0x6810CfB7c72D16e044a17694fAa8076e517264D0` |
+| BLSAlgorithm | `0xAF525A161CB17e0A1b6254ef0B8d8473bdA05174` |
+| BLSAggregator | `0x35775df9a4f4dB42Ea0C46118a12dDd0cEc70609` |
+| ForceExitModule | `0x3fDe77868b74a7979A40a2293a1CD265fbe66EEc` |
+| Delegate | `0xd2735E54C5f5f2BF523b8a9ddd0E183624c3f2c0` |
+| CalldataParserRegistry | `0x7dEea4544446826601014bD94d0F6432A67496F5` |
+| AgentRegistry | `0xbcE1163817EEBA2E07d39424427B10937bF1D121` |
+
+Deployer `0xEcAACb915f7D92e9916f449F7ad42BD0408733c9`; blocks 11098656–11098665 (2026-06-20). Source
+verification submitted to Sourcify (impl/extension/factory). Deploy: `pnpm tsx scripts/deploy-v0.20.ts`.
+
 ## Deployed Contracts (Sepolia) — v0.18
 
 v0.18 is a **full stack redeploy** (10 contracts + 6 wiring txs). Because the account is non-upgradable, the
