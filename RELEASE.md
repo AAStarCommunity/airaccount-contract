@@ -114,6 +114,6 @@ This document is the single source of truth for how a version ships. Update it w
 | 7 Tx archive | ☑ | `docs/tx-archive/v0.20.0.md` (real-passkey E2E gas) |
 | 8 README | ☑ | Status → v0.20.0 |
 | 10 Merge to main (code) | ☑ | code merged via #120 (merge commit d07eea8) |
-| 9 Deploy/addresses | ☑ | Sepolia full stack deployed 2026-06-20 (blocks 11098656–11098665) via `scripts/deploy-v0.20.ts`. `docs/DEPLOYMENT-v0.20.0.md` written; README + tx-archive updated. Sourcify verification submitted (impl/extension/factory). Etherscan key invalid — re-verify when refreshed. Deploy PR pending merge. |
-| 11 GitHub release | ⏳ | after the deploy PR merges — tag `v0.20.0` + notes listing deployed addresses |
-| 12 SDK issue | ⏳ | after §11 — references release + deployed addresses |
+| 9 Deploy/addresses | ☑ | Sepolia full stack deployed 2026-06-20 (blocks 11098656–11098665) via `scripts/deploy-v0.20.ts` (#122). `docs/DEPLOYMENT-v0.20.0.md` + README + tx-archive updated. impl/extension/factory **verified on Etherscan + Sourcify**. On-chain passkey-recovery E2E archived (#124). |
+| 11 GitHub release | ☑ | [v0.20.0](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.20.0) tagged on main with deployed addresses + ABI attached. (An earlier addresses-less release was created and deleted — never release before §9.) |
+| 12 SDK issue | ☑ | [aastar-sdk#111](https://github.com/AAStarCommunity/aastar-sdk/issues/111) filed with breaking changes + Batch 2 technical checklist (COSE→x,y, assertion assembler, REMOVE_GUARDIAN payload, ECDSA-only module-gov limitation). |
