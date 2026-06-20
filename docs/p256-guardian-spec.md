@@ -1,8 +1,14 @@
 # P-256 Guardian 技术规格
 
 **Issue**: airaccount-contract #119 / AirAccount #102  
-**版本**: v0.20.0-beta  
-**状态**: 实现完成，测试通过（828 tests, 0 failed）
+**版本**: v0.20.0（已发布，Sepolia 部署 + 链上 P-256 recovery E2E 通过）  
+**状态**: 实现完成，**844 tests, 0 failed**
+
+> ⚠️ **以已发布的 v0.20.0 ABI + 合约实现为准。** 早期版本的本文档把验证路径写成"简化 WebAuthn
+> 路径（不验 authenticatorData、sig = 64 字节 r‖s）"——那是**设计草稿，不是实现**。实际发布的合约
+> 做的是**完整 WebAuthn Assertion 验证**：sig 是 ABI 编码的 assertion blob，且强制
+> `clientDataJSONPrefix == '{"type":"webauthn.get","challenge":"'`。下文 §2、§5、§6 已对齐实现。
+> 权威来源：`src/core/AirAccountExtension.sol::_verifyWebAuthnP256Sig` + `abi/AAStarAirAccountV7.full.json`。
 
 ---
 
@@ -32,48 +38,52 @@ Guardian 槽位支持 P-256 类型，让 passkey 本身就是钥匙：
 
 ## 2. 技术选型
 
-### 2.1 签名验证路径
+### 2.1 签名验证路径（完整 WebAuthn Assertion）
 
-本实现选用 **简化 WebAuthn 路径**（不含 authenticatorData 验证）：
+实现做的是**完整 WebAuthn Assertion 验证**，与 `navigator.credentials.get()` 实际返回的数据结构逐字节一致：
 
 ```
-客户端签名:
-  challenge = SHA256(keccak256_op_hash_bytes)   ← subtle.crypto.sign 内部执行
-  sig = P256.sign(challenge)   via navigator.credentials.get() + WebAuthn API
+客户端（passkey authenticator）:
+  challenge = keccak_hash（合约派生的 32 字节，见 §2.2）
+  navigator.credentials.get({ publicKey: { challenge, ... } })
+  → 返回 authenticatorData、clientDataJSON、ES256 签名 (r, s)
+  authenticator 内部对  authenticatorData || SHA256(clientDataJSON)  做 ECDSA-SHA-256 签名
 
-合约验证:
-  sha256_hash = sha256(keccak_op_hash)           ← 调用 sha256 precompile(0x02)
-  P256_VERIFIER(sha256_hash, r, s, x, y)         ← EIP-7212 precompile(0x100)
+合约验证（AirAccountExtension._verifyWebAuthnP256Sig）:
+  1. abi.decode(sig) → (authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s)
+  2. require authenticatorData.length >= 37  且  UP flag 置位: authenticatorData[32] & 0x01 != 0
+  3. require clientDataJSONPrefix == '{"type":"webauthn.get","challenge":"'   ← 操作类型绑定
+  4. clientDataJSON = clientDataJSONPrefix || base64url(challenge) || clientDataJSONSuffix
+  5. payloadHash = sha256(authenticatorData || sha256(clientDataJSON))
+  6. require uint256(s) <= SECP256R1_N_OVER_2   ← 低-S
+  7. EIP-7212 precompile(0x100): abi.encode(payloadHash, r, s, x, y) 返回 1
 ```
 
-**为什么选这条路而不是裸 keccak 传 precompile：**
-- WebAuthn passkey 私钥由 OS/硬件保护，无法导出，只能通过 `navigator.credentials.get()` 调用，该 API 内部强制使用 ECDSA-SHA-256（即对消息 SHA-256 后再 P-256 签名）
-- 直接传裸 keccak 给 precompile 要求客户端有"裸 P-256 签名"能力，passkey 不支持
-- 本路径与 ERC-4337 生态（Coinbase Smart Wallet、Kernel v3）主流实践一致
-
-**为什么不做完整 WebAuthn Assertion 验证（含 authenticatorData）：**
-- 合约无法 enforce `rpId`（不知道前端域名），验证 authenticatorData 增加 ~5,000 gas 且无安全增益
-- `challenge` 绑定已足够：`chainId + account + nonce + newOwner` 覆盖所有重放攻击面
-- 简化实现仍保留 P-256 曲线安全属性，仅放弃 rpId 绑定这一层（应用层 SDK 负责）
+**绑定 / 不绑定**（详见 §9.5）：
+- **绑定**：P-256 曲线签名正确性、操作 `type`（`webauthn.get` 前缀严格匹配，防 `webauthn.create` 混淆）、`challenge` 域隔离（`chainId + account + nonce + 目标`）、UP flag。
+- **不绑定**：`origin` / `rpIdHash`（平台层已强制 RP 绑定 + challenge 域隔离已覆盖重放面；与 webauthn-sol / Coinbase Smart Wallet 取舍一致）、UV flag（兼容仅 UP 的 authenticator）。
 
 ### 2.2 哈希结构
 
 ```solidity
-// keccak 层：绑定版本、链、账户、操作标签
-bytes32 keccak_hash = keccak256(abi.encode(
-    GUARDIAN_SIG_VERSION,  // 当前 = 4
+// challenge：即 WebAuthn challenge（嵌入 clientDataJSON 并被签名覆盖）
+bytes32 challenge = keccak256(abi.encode(
+    GUARDIAN_SIG_VERSION,  // 当前 = 4 (uint8)
     block.chainid,
     address(this),
     "P256_GUARDIAN",       // 域分隔符，防止与 ECDSA guardian hash 混淆
-    opLabel,               // "PROPOSE_RECOVERY" / "APPROVE_RECOVERY" / etc.
-    opData                 // abi.encode(_recoveryNonce, newOwner, ...)
+    opLabel,               // "PROPOSE_RECOVERY" / "APPROVE_RECOVERY" / "REMOVE_GUARDIAN" / ...
+    opData                 // 见 §6（按操作不同）
 ));
 
-// sha256 层：适配 WebAuthn 签名（subtle.crypto.sign 内部哈希）
-bytes32 verify_hash = sha256(abi.encodePacked(keccak_hash));
-
-// 合约传给 P256 precompile 的是 verify_hash
+// clientDataJSON 由 prefix/suffix 包裹 base64url(challenge)，prefix 被合约强制为固定串：
+//   clientDataJSON = '{"type":"webauthn.get","challenge":"' || base64url(challenge) || suffix
+// 合约传给 P-256 precompile 的 payloadHash 就是 WebAuthn assertion 实际签名的内容：
+bytes32 payloadHash = sha256(abi.encodePacked(authenticatorData, sha256(clientDataJSON)));
 ```
+
+> 注：`base64url(challenge)` 是 32 字节定长 base64url（43 字符，无 padding），由合约的
+> `_base64UrlEncode32` 在链上重建——SDK 拆 prefix/suffix 时必须让 challenge 紧跟在 prefix 之后。
 
 ### 2.3 Guardian 类型编码
 
@@ -165,20 +175,22 @@ function getGuardianP256Key(uint8 index) external view returns (bytes32 x, bytes
 ### 5.2 Social Recovery 接口（P-256 guardian 专用）
 
 ```solidity
-/// @notice P-256 guardian 提议恢复
+/// @notice P-256 guardian 提议恢复（任何 relayer 可提交预签名 calldata）
 /// @param newOwner  目标 owner 地址
 /// @param gIdx      guardian slot 索引（0/1/2）
-/// @param sig       64 字节 P-256 签名 (r||s)，含低-S 规范化
+/// @param sig       WebAuthn assertion blob（低-S）:
+///                  abi.encode(bytes authenticatorData, bytes clientDataJSONPrefix,
+///                             bytes clientDataJSONSuffix, bytes32 r, bytes32 s)
 function proposeRecoveryWithSig(address newOwner, uint8 gIdx, bytes calldata sig) external;
 
 /// @notice P-256 guardian 批准已有恢复提案
 /// @param gIdx  guardian slot 索引
-/// @param sig   64 字节 P-256 签名
+/// @param sig   WebAuthn assertion blob（同上）
 function approveRecoveryWithSig(uint8 gIdx, bytes calldata sig) external;
 
 /// @notice P-256 guardian 取消已有恢复提案
 /// @param gIdx  guardian slot 索引
-/// @param sig   64 字节 P-256 签名
+/// @param sig   WebAuthn assertion blob（同上）
 function cancelRecoveryWithSig(uint8 gIdx, bytes calldata sig) external;
 ```
 
@@ -187,7 +199,9 @@ function cancelRecoveryWithSig(uint8 gIdx, bytes calldata sig) external;
 ```solidity
 /// @notice 混合签名修改 tier 限额（同时支持 ECDSA 和 P-256 guardian 签名）
 /// @param signerIdxs  每个签名对应的 guardian slot 索引
-/// @param guardianSigs ECDSA guardian: 65 字节 (r||s||v)；P-256 guardian: 64 字节 (r||s)
+/// @param guardianSigs ECDSA guardian: 65 字节 (r||s||v) eth-signed；
+///                     P-256 guardian: WebAuthn assertion blob
+///                     abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s)
 function modifyTierLimitsWithMixedGuardians(
     uint256 tier1, uint256 tier2, uint256 deadline,
     uint8[] calldata signerIdxs,
@@ -236,31 +250,32 @@ _recoveryNonce++;
 opLabel = "PROPOSE_RECOVERY"  （提议）
 opLabel = "APPROVE_RECOVERY"  （批准）
 
-keccak_hash = keccak256(
+challenge = keccak256(
     GUARDIAN_SIG_VERSION = 4,   // uint8
     chainId,                     // uint256
     accountAddress,              // address
     "P256_GUARDIAN",             // string domain tag
     opLabel,                     // string
-    abi.encode(_recoveryNonce, newOwner)  // bytes
+    abi.encode(_recoveryNonce, newOwner)  // bytes opData
 )
 
-verify_hash = SHA256(keccak_hash)   // 32 bytes
+guardian 签名（完整 WebAuthn assertion）:
+    navigator.credentials.get({publicKey: {challenge: <challenge 的 32 字节>, ...}})
+    → 返回 authenticatorData + clientDataJSON + ES256 sig(r, s)
+    其中 clientDataJSON 形如 '{"type":"webauthn.get","challenge":"' || base64url(challenge) || '",...}'
+    实际被签内容（= 合约传给 EIP-7212 的 payloadHash）:
+        payloadHash = SHA256(authenticatorData || SHA256(clientDataJSON))
 
-guardian 签名:
-    navigator.credentials.get({publicKey: {challenge: keccak_hash_bytes, ...}})
-    → 返回 authenticatorData + clientDataJSON + sig(r, s)
-    注意: clientDataJSON.challenge = base64url(keccak_hash_bytes)
-    实际被签内容: SHA256(authenticatorData || SHA256(clientDataJSON))
-    
-    简化场景（不含 authenticatorData 验证）:
-    verify_hash ≈ SHA256(keccak_hash_bytes) [近似，SDK 需与合约对齐]
+提交给合约的 sig（SDK 组装）:
+    sig = abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s)
+    约束: clientDataJSONPrefix 必须严格等于 '{"type":"webauthn.get","challenge":"'
+          challenge 必须紧跟其后；s 必须低-S（s <= n/2）
 ```
 
 ### 6.2 取消恢复
 
 ```
-keccak_hash = keccak256(
+challenge = keccak256(
     GUARDIAN_SIG_VERSION = 4,
     chainId,
     accountAddress,
@@ -268,13 +283,13 @@ keccak_hash = keccak256(
     "CANCEL_RECOVERY",
     abi.encode(_recoveryNonce, activeRecovery.newOwner)
 )
-verify_hash = SHA256(keccak_hash)
+// guardian 签名 + sig 组装：完整 WebAuthn assertion blob，同 §6.1
 ```
 
 ### 6.3 修改 Tier 限额
 
 ```
-keccak_hash = keccak256(
+challenge = keccak256(
     GUARDIAN_SIG_VERSION = 4,
     chainId,
     accountAddress,
@@ -282,25 +297,51 @@ keccak_hash = keccak256(
     "MODIFY_TIER_LIMITS",
     abi.encode(_tierLimitNonce, tier1, tier2, deadline)
 )
-verify_hash = SHA256(keccak_hash)
+// guardian 签名 + sig 组装：完整 WebAuthn assertion blob，同 §6.1
 ```
+
+### 6.4 移除 Guardian（REMOVE_GUARDIAN）
+
+> #120 final-review [HIGH] 后变更：opData 现在绑定 **slot index + P-256 公钥**。因为 P-256 guardian
+> 在地址槽共用 sentinel `0x7026`，旧的 `abi.encode(nonce, guardianToRemove)` 对每个 P-256 槽都相同，
+> 一个"移除槽 A"的签名可被重放去移除槽 B。新 payload 绑定具体槽与公钥，杜绝跨槽重放。
+
+```
+opLabel = "REMOVE_GUARDIAN"
+opData = abi.encode(
+    _guardianRemovalNonce,  // uint256
+    index,                  // uint8   被移除的 slot
+    guardianToRemove,       // address 该槽的 guardian 地址（P-256 槽为 sentinel 0x7026）
+    p256X,                  // bytes32 该槽的 P-256 x（ECDSA 槽为 0）
+    p256Y                   // bytes32 该槽的 P-256 y（ECDSA 槽为 0）
+)
+challenge = keccak256(GUARDIAN_SIG_VERSION=4, chainId, accountAddress, "P256_GUARDIAN", opLabel, opData)
+// 每个 signer（混合 ECDSA / P-256）对该 challenge 签名：
+//   ECDSA signer → 65 字节 eth-signed sig
+//   P-256 signer → WebAuthn assertion blob（同 §6.1）
+```
+
+> `addGuardianWithMixedSigs` / `addP256GuardianWithMixedSigs` 的 opData 为
+> `abi.encode(_guardianAdditionNonce, guardian或x,y)`，opLabel 分别为 `"ADD_GUARDIAN"` /
+> `"ADD_P256_GUARDIAN"`（域分隔，防跨函数重放）。
 
 ---
 
 ## 7. Gas 成本参考
 
-| 操作 | 预估 Gas | 备注 |
+| 操作 | Gas | 备注 |
 |------|----------|------|
 | `addP256Guardian` | ~75,000 | 3× SSTORE new(sentinel+x+y) |
 | `addGuardian` (ECDSA，现有) | ~50,000 | 1× SSTORE new |
-| `proposeRecoveryWithSig` | ~110,000 | sha256+P256验证+activeRecovery init |
-| `approveRecoveryWithSig` | ~32,000 | sha256+P256验证+bitmap update |
-| `cancelRecoveryWithSig` | ~32,000 | sha256+P256验证+bitmap update |
+| `proposeRecoveryWithSig` | **150,831**（Sepolia 实测）| 完整 WebAuthn：base64url 重建 + sha256×2 + EIP-7212 + activeRecovery init |
+| `approveRecoveryWithSig` | **84,559**（Sepolia 实测）| 完整 WebAuthn 验证 + bitmap update |
+| `cancelRecoveryWithSig` | ~85,000（估，同 approve 路径）| 完整 WebAuthn 验证 + cancel bitmap |
 | `executeRecovery` (现有) | ~45,000 | owner update+delete+nonce++ |
-| `removeGuardianWithMixedSigs` | ~95,000 | 2× sig verify + storage shift |
-| **完整恢复（提议+批准+执行）** | **~187,000** | 3 笔 tx 合计 |
+| `removeGuardianWithMixedSigs` | ~95,000+ | N× sig verify + storage shift |
 
-*sha256 precompile: ~200 gas；P256 precompile: ~3,450 gas（EIP-7212 指定值）*
+*EIP-7212 P256 precompile: ~3,450 gas（指定值）；sha256 precompile: ~200 gas。propose/approve 为
+v0.20 Sepolia 链上实测（见 `docs/tx-archive/v0.20.0.md`）——比早期"简化路径"预估高，因为完整 WebAuthn
+要在链上 base64url 重建 clientDataJSON 并做两次 sha256。*
 
 Sepolia / L2（5 gwei）：完整恢复 ~$0.05-0.2  
 Ethereum mainnet（20 gwei，$3500/ETH）：完整恢复 ~$10-15
