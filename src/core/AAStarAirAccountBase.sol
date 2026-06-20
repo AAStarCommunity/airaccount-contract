@@ -389,7 +389,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
                 _guardianCount++;
             } else if (g != address(0)) {
                 // ECDSA guardian slot
-                if (g == _owner) revert InvalidGuardian();
+                // #120 final review [Medium]: reject the P-256 sentinel as a plain ECDSA guardian.
+                // Without P-256 coords it would mark the slot as P-256 (_isP256Guardian == true) yet
+                // hold key (0,0) — a guardian that can neither ECDSA-sign nor produce a valid P-256
+                // assertion, permanently breaking recovery on this non-upgradable account. The
+                // runtime add paths already reject the sentinel; the init path must too.
+                if (g == _owner || g == P256_GUARDIAN_SENTINEL) revert InvalidGuardian();
                 for (uint8 j = 0; j < _guardianCount; j++) {
                     if (_getGuardian(j) == g) revert GuardianAlreadySet();
                 }
@@ -1503,11 +1508,14 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             revert InsufficientGuardianApprovals();
 
         address guardianToRemove = _getGuardian(index);
-        // Hash binds to the actual guardian address (not just index) to prevent mismatch
-        // if slot order ever changes without incrementing the nonce.
+        // #120 final review [HIGH]: P-256 guardians share the sentinel address, so binding only
+        // (nonce, guardianToRemove) makes every P-256 slot's removal payload identical — a signature
+        // to remove P-256 slot A could be replayed to remove slot B, or survive a key rotation. Bind
+        // the slot index AND the P-256 key ((0,0) for ECDSA) so the signature authorizes one key.
+        (bytes32 remX, bytes32 remY) = _getP256Key(index);
         bytes32 ethHash = _guardianOpHash(
             "REMOVE_GUARDIAN",
-            abi.encode(_guardianRemovalNonce, guardianToRemove)
+            abi.encode(_guardianRemovalNonce, index, guardianToRemove, remX, remY)
         );
 
         uint256 approvalBitmap = 0;

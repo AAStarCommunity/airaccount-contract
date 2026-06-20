@@ -86,31 +86,32 @@ contract SocialRecoveryTest is Test {
     // GUARDIAN_SIG_VERSION (issue #84) — mirror of the internal constant in AAStarAirAccountBase.
     uint8 internal constant GUARDIAN_SIG_VERSION = 4;
 
-    // Signs over the guardian's actual address (not just index) — matches the updated contract hash.
-    // #84: version-bound domain via _guardianOpHash; opData = abi.encode(nonce, guardianAddr).
-    function _signRemoval(uint256 privKey, address guardianAddr, uint256 nonce) internal view returns (bytes memory) {
+    // #120 final review [HIGH]: removal opData now binds (nonce, index, guardianAddr, p256X, p256Y).
+    // These helpers remove ECDSA guardians, so the P-256 key is (0,0). The slot `index` is passed
+    // explicitly (matching the removeGuardian(index, ...) call) so the helper makes NO external call
+    // to the account — an account view call here would consume the test's vm.prank(owner).
+    function _signRemoval(uint256 privKey, address guardianAddr, uint256 nonce, uint8 index) internal view returns (bytes memory) {
         bytes32 removalHash = keccak256(abi.encode(
             GUARDIAN_SIG_VERSION, block.chainid, address(account), "REMOVE_GUARDIAN",
-            abi.encode(nonce, guardianAddr)
+            abi.encode(nonce, index, guardianAddr, bytes32(0), bytes32(0))
         ));
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(removalHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privKey, ethHash);
         return abi.encodePacked(r, s, v);
     }
 
-    // Returns 2 guardian sigs for removing the given guardian address (nonce = 0).
-    // Takes address directly to avoid external calls that would consume vm.prank.
-    function _twoGuardianSigs(address guardianAddr) internal view returns (bytes[] memory sigs) {
+    // Returns 2 guardian sigs for removing the guardian at `index` (address `guardianAddr`), nonce = 0.
+    function _twoGuardianSigs(address guardianAddr, uint8 index) internal view returns (bytes[] memory sigs) {
         sigs = new bytes[](2);
-        sigs[0] = _signRemoval(guardian1Key, guardianAddr, 0);
-        sigs[1] = _signRemoval(guardian2Key, guardianAddr, 0);
+        sigs[0] = _signRemoval(guardian1Key, guardianAddr, 0, index);
+        sigs[1] = _signRemoval(guardian2Key, guardianAddr, 0, index);
     }
 
     // Variant for nonce != 0 (e.g. second removal in the same test).
-    function _twoGuardianSigsNonce(address guardianAddr, uint256 nonce) internal view returns (bytes[] memory sigs) {
+    function _twoGuardianSigsNonce(address guardianAddr, uint256 nonce, uint8 index) internal view returns (bytes[] memory sigs) {
         sigs = new bytes[](2);
-        sigs[0] = _signRemoval(guardian1Key, guardianAddr, nonce);
-        sigs[1] = _signRemoval(guardian2Key, guardianAddr, nonce);
+        sigs[0] = _signRemoval(guardian1Key, guardianAddr, nonce, index);
+        sigs[1] = _signRemoval(guardian2Key, guardianAddr, nonce, index);
     }
 
     function _proposeRecoveryFromGuardian1() internal {
@@ -202,7 +203,7 @@ contract SocialRecoveryTest is Test {
         vm.prank(ownerAddr);
         vm.expectEmit(true, true, false, false);
         emit GuardianRemoved(0, guardian1);
-        account.removeGuardian(0, _twoGuardianSigs(guardian1));
+        account.removeGuardian(0, _twoGuardianSigs(guardian1, 0));
 
         assertEq(account.guardianCount(), 2);
         assertEq(account.guardians(0), guardian2);
@@ -213,7 +214,7 @@ contract SocialRecoveryTest is Test {
     function test_removeGuardian_removesMiddle() public {
         _addThreeGuardians();
         vm.prank(ownerAddr);
-        account.removeGuardian(1, _twoGuardianSigs(guardian2));
+        account.removeGuardian(1, _twoGuardianSigs(guardian2, 1));
 
         assertEq(account.guardianCount(), 2);
         assertEq(account.guardians(0), guardian1);
@@ -223,7 +224,7 @@ contract SocialRecoveryTest is Test {
     function test_removeGuardian_removesLast() public {
         _addThreeGuardians();
         vm.prank(ownerAddr);
-        account.removeGuardian(2, _twoGuardianSigs(guardian3));
+        account.removeGuardian(2, _twoGuardianSigs(guardian3, 2));
 
         assertEq(account.guardianCount(), 2);
         assertEq(account.guardians(0), guardian1);
@@ -247,7 +248,7 @@ contract SocialRecoveryTest is Test {
     function test_removeGuardian_minGuardianRequired_reverts() public {
         // Drop to 2 guardians by removing guardian3 first.
         vm.prank(ownerAddr);
-        account.removeGuardian(2, _twoGuardianSigs(guardian3));
+        account.removeGuardian(2, _twoGuardianSigs(guardian3, 2));
 
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("MinGuardianRequired()"));
@@ -257,7 +258,7 @@ contract SocialRecoveryTest is Test {
     function test_removeGuardian_insufficientSigs_reverts() public {
         _addThreeGuardians();
         bytes[] memory sigs = new bytes[](1);
-        sigs[0] = _signRemoval(guardian1Key, guardian1, 0);
+        sigs[0] = _signRemoval(guardian1Key, guardian1, 0, 0);
 
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("InsufficientGuardianApprovals()"));
@@ -267,8 +268,8 @@ contract SocialRecoveryTest is Test {
     function test_removeGuardian_duplicateSig_reverts() public {
         _addThreeGuardians();
         bytes[] memory sigs = new bytes[](2);
-        sigs[0] = _signRemoval(guardian1Key, guardian1, 0);
-        sigs[1] = _signRemoval(guardian1Key, guardian1, 0); // same guardian twice
+        sigs[0] = _signRemoval(guardian1Key, guardian1, 0, 0);
+        sigs[1] = _signRemoval(guardian1Key, guardian1, 0, 0); // same guardian twice
 
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("DuplicateGuardianSig()"));
@@ -279,8 +280,8 @@ contract SocialRecoveryTest is Test {
         _addThreeGuardians();
         uint256 randomKey = uint256(keccak256(abi.encodePacked("random")));
         bytes[] memory sigs = new bytes[](2);
-        sigs[0] = _signRemoval(guardian1Key, guardian1, 0);
-        sigs[1] = _signRemoval(randomKey, guardian1, 0); // not a guardian
+        sigs[0] = _signRemoval(guardian1Key, guardian1, 0, 0);
+        sigs[1] = _signRemoval(randomKey, guardian1, 0, 0); // not a guardian
 
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("NotGuardian()"));
@@ -288,7 +289,7 @@ contract SocialRecoveryTest is Test {
     }
 
     function test_removeGuardian_noncePreventsReplay() public {
-        bytes[] memory removeSigs = _twoGuardianSigs(guardian3);
+        bytes[] memory removeSigs = _twoGuardianSigs(guardian3, 2);
         vm.prank(ownerAddr);
         account.removeGuardian(2, removeSigs); // removalNonce 0 → 1
 
@@ -326,7 +327,7 @@ contract SocialRecoveryTest is Test {
         // prevents using pre-collected guardian sigs to cancel recovery.
         vm.prank(ownerAddr);
         vm.expectRevert(abi.encodeWithSignature("RecoveryAlreadyActive()"));
-        account.removeGuardian(2, _twoGuardianSigs(guardian3));
+        account.removeGuardian(2, _twoGuardianSigs(guardian3, 2));
 
         // Recovery is still active
         (address stillActive,,,) = account.activeRecovery();
@@ -511,7 +512,7 @@ contract SocialRecoveryTest is Test {
 
         // New owner removes guardian1 (count: 3→2); then adds a new guardian via consensus.
         // After removal: guardian2=idx0, guardian3=idx1 (additionNonce=0).
-        bytes[] memory removeSigs = _twoGuardianSigs(guardian1);
+        bytes[] memory removeSigs = _twoGuardianSigs(guardian1, 0);
         vm.prank(newOwnerAddr);
         account.removeGuardian(0, removeSigs);
 

@@ -151,12 +151,17 @@ contract ModuleInstallTimelockTest is Test {
     }
 
     // REMOVE_GUARDIAN sig (mirror AAStarAirAccountBase domain).
+    // #120 final review [HIGH]: opData binds (nonce, index, guardianAddr, p256X, p256Y); removing an
+    // ECDSA guardian here, so P-256 key is (0,0) and index is resolved by address.
     function _removalSig(Vm.Wallet memory w, address guardianToRemove, uint256 nonce)
         internal view returns (bytes memory)
     {
+        uint8 index;
+        uint8 n = account.guardianCount();
+        for (uint8 i = 0; i < n; i++) { if (account.guardians(i) == guardianToRemove) { index = i; break; } }
         bytes32 raw = keccak256(abi.encode(
             GUARDIAN_SIG_VERSION, block.chainid, address(account), "REMOVE_GUARDIAN",
-            abi.encode(nonce, guardianToRemove)
+            abi.encode(nonce, index, guardianToRemove, bytes32(0), bytes32(0))
         ));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, raw.toEthSignedMessageHash());
         return abi.encodePacked(r, s, v);

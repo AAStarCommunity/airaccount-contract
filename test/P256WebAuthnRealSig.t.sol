@@ -18,6 +18,7 @@ pragma solidity ^0.8.33;
 // Requires: forge test --ffi  (calls node test/webauthn/gen_p256_assertion.mjs)
 
 import {Test} from "forge-std/Test.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
@@ -52,6 +53,7 @@ contract P256WebAuthnRealSigTest is Test {
     AAStarAirAccountV7 account;
 
     address constant P256_PRECOMPILE = address(0x100);
+    address constant P256_GUARDIAN_SENTINEL = address(0x7026);
     uint8 constant SIG_VERSION = 4;
 
     // Public keys of the two fixed test passkeys in gen_p256_assertion.mjs (key 0 and key 1).
@@ -205,5 +207,77 @@ contract P256WebAuthnRealSigTest is Test {
         bytes memory sig = _realSig(c, 1);
         vm.expectRevert();
         IExt(address(account)).proposeRecoveryWithSig(newOwnerAddr, 0, sig);
+    }
+
+    // ── #120 final review [HIGH] regression: removal opData binds slot index + P-256 key ──────────
+
+    /// @dev Deploy 3 guardians: slot0 = P-256 key0, slot1 = P-256 key1, slot2 = ECDSA `ecdsaG`.
+    ///      (removeGuardianWithMixedSigs requires guardianCount > 2.)
+    function _deployTwoP256OneEcdsa(address ecdsaG) internal {
+        uint8[] memory noAlgs = new uint8[](0);
+        account = new AAStarAirAccountV7();
+        account.initialize(entryPointAddr, ownerAddr, AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), ecdsaG],
+            guardianP256X: [PK0_X, PK1_X, bytes32(0)],
+            guardianP256Y: [PK0_Y, PK1_Y, bytes32(0)],
+            dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        }));
+    }
+
+    /// @dev ECDSA guardian signature over the REMOVE_GUARDIAN domain for the given opData.
+    function _ecdsaRemovalSig(uint256 pk, bytes memory opData) internal view returns (bytes memory) {
+        bytes32 h = keccak256(abi.encode(
+            SIG_VERSION, block.chainid, address(account), "REMOVE_GUARDIAN", opData
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, MessageHashUtils.toEthSignedMessageHash(h));
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// Positive control: a removal authorized for slot 1 (its real opData) succeeds. Uses a REAL
+    /// P-256 assertion (slot 0) + a real ECDSA sig (slot 2) — no mock.
+    function test_removeMixedSigs_realSig_correctSlotSucceeds() public {
+        uint256 gEKey = uint256(keccak256("ecdsaGuardian"));
+        _deployTwoP256OneEcdsa(vm.addr(gEKey));
+
+        // Authorize removing slot 1 (P-256 key1): opData binds (nonce, index=1, sentinel, PK1).
+        bytes memory opData = abi.encode(uint256(0), uint8(1), P256_GUARDIAN_SENTINEL, PK1_X, PK1_Y);
+        bytes32 ch = _challenge("REMOVE_GUARDIAN", opData);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _realSig(ch, 0);                 // P-256 guardian slot 0 signs the real assertion
+        sigs[1] = _ecdsaRemovalSig(gEKey, opData); // ECDSA guardian slot 2
+        uint8[] memory idxs = new uint8[](2); idxs[0] = 0; idxs[1] = 2;
+
+        vm.prank(ownerAddr);
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "removeGuardianWithMixedSigs(uint8,uint8[],bytes[])", uint8(1), idxs, sigs));
+        assertTrue(ok, "correct-slot removal should succeed");
+        assertEq(account.guardianCount(), 2);
+    }
+
+    /// THE H1 REGRESSION: signatures authorizing removal of slot 1 must NOT be replayable to remove
+    /// slot 0. Before the fix, every P-256 slot's removal opData was identical (nonce, sentinel), so
+    /// these sigs would have removed slot 0. Now opData binds index + P-256 key, so the contract
+    /// rebuilds a different challenge for slot 0 and the REAL P-256 verifier rejects the assertion.
+    function test_removeMixedSigs_realSig_crossSlotRejected() public {
+        uint256 gEKey = uint256(keccak256("ecdsaGuardian"));
+        _deployTwoP256OneEcdsa(vm.addr(gEKey));
+
+        // Sigs authorize removing slot 1 (key1).
+        bytes memory opData1 = abi.encode(uint256(0), uint8(1), P256_GUARDIAN_SENTINEL, PK1_X, PK1_Y);
+        bytes32 ch1 = _challenge("REMOVE_GUARDIAN", opData1);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _realSig(ch1, 0);
+        sigs[1] = _ecdsaRemovalSig(gEKey, opData1);
+        uint8[] memory idxs = new uint8[](2); idxs[0] = 0; idxs[1] = 2;
+
+        // Attacker submits them targeting slot 0. Contract rebuilds opData for slot 0 → different
+        // challenge → real secp256r1 verification of sig0 fails → revert. No guardian removed.
+        vm.prank(ownerAddr);
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "removeGuardianWithMixedSigs(uint8,uint8[],bytes[])", uint8(0), idxs, sigs));
+        assertFalse(ok, "cross-slot removal must be rejected by the index/key binding");
+        assertEq(account.guardianCount(), 3, "no guardian should have been removed");
     }
 }

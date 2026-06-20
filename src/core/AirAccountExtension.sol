@@ -990,7 +990,13 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         if (signerIdxs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
 
         address guardianToRemove = _getGuardian(index);
-        bytes memory opData = abi.encode(_guardianRemovalNonce, guardianToRemove);
+        // #120 final review [HIGH]: P-256 guardians all share the sentinel address, so binding only
+        // (nonce, guardianToRemove) makes every P-256 slot's removal payload IDENTICAL — a signature
+        // collected to remove P-256 slot A could be replayed to remove a different P-256 slot B, or
+        // survive a key rotation on the same slot. Bind the slot index AND the P-256 key ((0,0) for
+        // ECDSA) so a signature authorizes the removal of one specific guardian/key.
+        (bytes32 remX, bytes32 remY) = _getP256Key(index);
+        bytes memory opData = abi.encode(_guardianRemovalNonce, index, guardianToRemove, remX, remY);
 
         uint256 approvalBitmap = 0;
         for (uint256 i = 0; i < signerIdxs.length; i++) {

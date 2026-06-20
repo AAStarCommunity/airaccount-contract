@@ -114,6 +114,24 @@ contract P256GuardianTest is Test {
         account.initialize(entryPoint, owner, cfg);
     }
 
+    // #120 final review [Medium] regression: the P-256 sentinel (0x7026) must be rejected as a
+    // plain ECDSA guardian at init. Otherwise the slot is marked P-256 with key (0,0) — a guardian
+    // that can neither ECDSA-sign nor produce a valid P-256 assertion, permanently breaking recovery
+    // on this non-upgradable account.
+    function test_init_rejectsSentinelAsEcdsaGuardian() public {
+        uint8[] memory noAlgs = new uint8[](0);
+        AAStarAirAccountV7 a = new AAStarAirAccountV7();
+        vm.expectRevert(abi.encodeWithSignature("InvalidGuardian()"));
+        a.initialize(entryPoint, owner, AAStarAirAccountBase.InitConfig({
+            guardians: [address(0x7026), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
+            dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        }));
+    }
+
     // Deploy with 1 ECDSA + 1 P-256 guardian (mixed init)
     function _deployMixed(address ecdsa, bytes32 x1, bytes32 y1) internal {
         uint8[] memory noAlgs = new uint8[](0);
@@ -543,7 +561,9 @@ contract P256GuardianTest is Test {
         address g3 = makeAddr("g3");
         _deploy(g1, g2, g3);
 
-        bytes memory opData = abi.encode(uint256(0), g3); // _guardianRemovalNonce=0
+        // #120 final review [HIGH]: opData binds (nonce, index, guardianAddr, p256X, p256Y).
+        // Removing g3 at slot 2 (ECDSA → key (0,0)).
+        bytes memory opData = abi.encode(uint256(0), uint8(2), g3, bytes32(0), bytes32(0));
         bytes32 ethHash = keccak256(abi.encode(
             GUARDIAN_SIG_VER, block.chainid, address(account), "REMOVE_GUARDIAN", opData
         )).toEthSignedMessageHash();
@@ -607,10 +627,11 @@ contract P256GuardianTest is Test {
         }));
         // layout: g2=idx0(ECDSA), P256=idx1(X0/Y0), g3=idx2(ECDSA)
 
-        // Build ECDSA removal sigs for removing idx 0 (g2 address)
+        // Build ECDSA removal sigs for removing idx 0 (g2 address). #120 final review [HIGH]:
+        // opData binds (nonce, index, guardianAddr, p256X, p256Y); ECDSA slot → key (0,0).
         bytes32 h = keccak256(abi.encode(
             uint8(4), block.chainid, address(account), "REMOVE_GUARDIAN",
-            abi.encode(uint256(0), g2)
+            abi.encode(uint256(0), uint8(0), g2, bytes32(0), bytes32(0))
         ));
         bytes32 ethH = MessageHashUtils.toEthSignedMessageHash(h);
         bytes[] memory sigs = new bytes[](2);
@@ -631,7 +652,7 @@ contract P256GuardianTest is Test {
         // layout: g1a=idx0(ECDSA), P256=idx1(X0/Y0), g3=idx2(ECDSA)
         h = keccak256(abi.encode(
             uint8(4), block.chainid, address(account), "REMOVE_GUARDIAN",
-            abi.encode(uint256(0), g1a)
+            abi.encode(uint256(0), uint8(0), g1a, bytes32(0), bytes32(0))
         ));
         ethH = MessageHashUtils.toEthSignedMessageHash(h);
         { (uint8 v, bytes32 r, bytes32 s) = vm.sign(g1Key, ethH); sigs[0] = abi.encodePacked(r, s, v); }
