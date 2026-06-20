@@ -64,6 +64,46 @@ This is a one-time cost shared by all users — economically fine.
 
 ---
 
+## EIP-7212 P-256 Precompile — Cross-Chain Availability (issue #28)
+
+P-256 verification cost depends entirely on whether the chain has the EIP-7212 (RIP-7212) precompile
+at `0x100`: **~3,450 gas with it, ~300,000 gas without** (pure-Solidity secp256r1 fallback).
+
+**Probe `0x100` with a valid `abi.encode(hash,r,s,x,y)` — returns `1` iff the precompile is live.**
+Reproduce: `bash scripts/probe-eip7212.sh`.
+
+| Chain | EIP-7212 @ 0x100 | Probed |
+|-------|------------------|--------|
+| ETH mainnet | ✅ present (Fusaka) | 2026-06-20 |
+| ETH Sepolia | ✅ present | 2026-06-20 |
+| OP Mainnet | ✅ present (Fjord/Isthmus) | 2026-06-20 |
+| OP Sepolia | ✅ present | 2026-06-20 |
+| Base Mainnet | ✅ present | 2026-06-20 |
+| Base Sepolia | ✅ present | 2026-06-20 |
+| Arbitrum One | ✅ present (ArbOS 31+) | 2026-06-20 |
+| Arbitrum Sepolia | ✅ present | 2026-06-20 |
+| Polygon PoS | ✅ present | 2026-06-20 |
+| Avalanche C-chain | ✅ present | 2026-06-20 |
+
+**As of 2026-06-20, all 10 probed chains have the precompile** — including ETH mainnet (Fusaka shipped),
+so the "expensive on some chains" risk that motivated #28 is effectively resolved for our targets.
+
+**Real on-chain P-256 guardian gas (Sepolia, v0.20.0 — full WebAuthn assertion verify):**
+
+| Op | Gas | Notes |
+|----|-----|-------|
+| `proposeRecoveryWithSig` | 150,831 | base64url rebuild + sha256×2 + EIP-7212 + activeRecovery init |
+| `approveRecoveryWithSig` | 84,559 | WebAuthn verify + bitmap update |
+
+> The ~3,450 gas is just the precompile; the rest is the on-chain WebAuthn envelope
+> (`_base64UrlEncode32` + 2× sha256 + assertion decode). Source: `docs/tx-archive/v0.20.0.md`.
+
+**Deploy guard:** `scripts/deploy-v0.20.ts` probes `0x100` before deploying and warns if the target
+chain lacks the precompile (P-256 guardians would be unusable / ~300k gas there). On a chain without
+it, configure ECDSA guardians only (the account supports mixed guardian sets natively).
+
+---
+
 ## Execution Gas
 
 | Operation | Min | Avg | Max | Notes |
