@@ -8,6 +8,15 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [Unreleased] - 2026-06-20 (release hardening — full-release Codex review R2)
+
+R2 verified all R1 fixes and found 1 MEDIUM + 1 LOW:
+
+- **[Medium] Module-install auth snapshot now covers P-256 keys** — `_moduleAuthHash()` folded `_guardian0/1/2` + count but NOT the P-256 pubkeys. Since P-256 guardians share the sentinel in the address slots, a remove+add P-256 rotation left the snapshot unchanged, so an in-flight module-install proposal could survive a guardian rotation (violating the "any guardian change invalidates a pending proposal" invariant). Fixed by folding `_guardianP256X/Y{0,1,2}` into the hash. New test `test_execute_p256KeyRotation_invalidatesProposal`.
+- **[Low] Module governance is ECDSA-only** — documented as a known limitation (`docs/p256-guardian-spec.md` §10): guardian-consensus module-governance paths accept only 65-byte ECDSA sigs; a pure-P-256 guardian set can't authorize them (recovery / guardian add-remove / tier-limit fully support P-256; owner-only and low-threshold module paths unaffected). Mixed-sig support for module governance deferred to a follow-up issue.
+
+**841 tests, 0 failed** (with `--ffi`).
+
 ## [Unreleased] - 2026-06-20 (release hardening — full-release Codex review R1)
 
 Holistic adversarial review of the complete v0.20 release (P-256 + recovery refactor + real-passkey tests) surfaced 2 MEDIUM + 2 LOW; all addressed:

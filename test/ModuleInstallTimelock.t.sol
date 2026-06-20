@@ -291,6 +291,25 @@ contract ModuleInstallTimelockTest is Test {
         ext.proposeModuleInstall(VALIDATOR, address(mod), sig2);
     }
 
+    /// #120 R2 [Medium]: P-256 guardians share the sentinel in the address slots, so a remove+add
+    /// rotation leaves _guardian0/1/2 + count unchanged. The pending-proposal auth snapshot must
+    /// still detect it because _moduleAuthHash now folds in the P-256 pubkeys. Simulate the rotation
+    /// by writing the stored P-256 X0 key (storage slot 32 per forge inspect) and confirm the
+    /// pending proposal is invalidated.
+    function test_execute_p256KeyRotation_invalidatesProposal() public {
+        _enableTimelock(TIMELOCK);
+        bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), "");
+        vm.prank(ownerWallet.addr);
+        ext.proposeModuleInstall(VALIDATOR, address(mod), sig);
+
+        // Mutate the stored P-256 pubkey (address slots + count untouched) → authHash must shift.
+        vm.store(address(account), bytes32(uint256(32)), bytes32(uint256(0xdead)));
+
+        vm.warp(block.timestamp + TIMELOCK + 1);
+        vm.expectRevert(); // ModuleInstallAuthChanged
+        ext.executeModuleInstall("");
+    }
+
     // ───────────────────────────────────────────────────────────────────────────
     // 3. owner+2-guardian bypass installs immediately even with timelock>0;
     //    owner+1-guardian does NOT bypass.

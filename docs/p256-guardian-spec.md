@@ -355,6 +355,7 @@ struct InitConfig {
 
 - M-of-N 阈值（N > 3）→ 独立 issue
 - 链上 origin/rpIdHash 绑定 → 刻意不做（见 §9.5），依赖平台层 RP 绑定 + challenge 域隔离
+- **ERC-7579 模块治理的 P-256 授权** → 已知限制，后续 issue。`installModule` / `proposeModuleInstall` / `setModuleInstallTimelock` 等需 guardian-consensus 的模块治理路径目前仅接受 65 字节 ECDSA guardian 签名（`_checkGuardianSigs`）。**纯 P-256 guardian 集**无法授权这些操作（社交恢复、guardian 增删、tier 限额修改均已全面支持 P-256，不受影响；owner-only 与低 threshold 的模块路径也不受影响）。后续将像 recovery 一样为模块治理增加混合签名分发。
 - KMS 侧代码变更 → 无需（见 AirAccount #102 结论）
 
 ---

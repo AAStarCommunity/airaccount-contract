@@ -188,8 +188,16 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     /// @dev Snapshot of the auth config a module-install proposal is bound to. Any change to the owner
     ///      (social recovery) or the guardian set (add/remove/replace) shifts this hash, invalidating an
     ///      in-flight proposal so it cannot be silently executed under a different signer set.
+    /// @dev #120 R2 [Medium]: P-256 guardians all share the sentinel in _guardian0/1/2, so a
+    ///      remove+add P-256 rotation leaves the address slots and count unchanged. The public keys
+    ///      MUST therefore be folded in too, else a P-256 key swap would survive an in-flight proposal.
     function _moduleAuthHash() private view returns (bytes32) {
-        return keccak256(abi.encode(owner, _guardian0, _guardian1, _guardian2, _guardianCount));
+        return keccak256(abi.encode(
+            owner, _guardian0, _guardian1, _guardian2, _guardianCount,
+            _guardianP256X0, _guardianP256Y0,
+            _guardianP256X1, _guardianP256Y1,
+            _guardianP256X2, _guardianP256Y2
+        ));
     }
 
     /// @notice Read the active module-install timelock (seconds). 0 = disabled (immediate installs).
