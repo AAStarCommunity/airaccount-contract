@@ -113,7 +113,7 @@ This document is the single source of truth for how a version ships. Update it w
 | 6 CHANGELOG | ☑ | finalized below the hardening sections |
 | 7 Tx archive | ☑ | `docs/tx-archive/v0.20.0.md` (real-passkey E2E gas) |
 | 8 README | ☑ | Status → v0.20.0 |
-| 9 Deploy/addresses | ◻ | code-only; on-chain redeploy TBD by maintainer |
-| 10 Merge to main | ⏳ | pending final re-approval (ruleset: non-last-pusher) |
-| 11 GitHub release | ⏳ | after merge |
-| 12 SDK issue | ⏳ | after merge |
+| 10 Merge to main (code) | ☑ | code merged via #120 (merge commit d07eea8) |
+| 9 Deploy/addresses | ☑ | Sepolia full stack deployed 2026-06-20 (blocks 11098656–11098665) via `scripts/deploy-v0.20.ts`. `docs/DEPLOYMENT-v0.20.0.md` written; README + tx-archive updated. Sourcify verification submitted (impl/extension/factory). Etherscan key invalid — re-verify when refreshed. Deploy PR pending merge. |
+| 11 GitHub release | ⏳ | after the deploy PR merges — tag `v0.20.0` + notes listing deployed addresses |
+| 12 SDK issue | ⏳ | after §11 — references release + deployed addresses |
