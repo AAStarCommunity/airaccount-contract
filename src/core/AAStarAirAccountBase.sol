@@ -361,11 +361,19 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         for (uint8 i = 0; i < 3; i++) {
             address g = _guardians[i];
             bytes32 px = _guardianP256X[i];
+            bytes32 py = _guardianP256Y[i];
 
-            if (px != bytes32(0) && g == address(0)) {
-                // P-256 guardian slot: store sentinel address + public key
-                bytes32 py = _guardianP256Y[i];
-                if (py == bytes32(0)) revert InvalidP256GuardianKey();
+            // #120 R1 [Medium]: reject ambiguous/malformed slot config instead of silently
+            // mis-installing or dropping a guardian (this is a non-upgradable recovery system).
+            // - An ECDSA slot (g != 0) must carry no P-256 coordinates.
+            // - P-256 coordinates are all-or-nothing: (x == 0) iff (y == 0). A half-specified
+            //   key (e.g. y != 0, x == 0) would otherwise fall through to "empty slot" and be
+            //   silently skipped, leaving the owner believing a passkey guardian was installed.
+            if (g != address(0) && (px != bytes32(0) || py != bytes32(0))) revert InvalidGuardian();
+            if ((px == bytes32(0)) != (py == bytes32(0))) revert InvalidP256GuardianKey();
+
+            if (px != bytes32(0)) {
+                // P-256 guardian slot (g == 0 and py != 0 guaranteed by the checks above)
                 for (uint8 j = 0; j < _guardianCount; j++) {
                     if (_getGuardian(j) == P256_GUARDIAN_SENTINEL) {
                         // #120 review [Low]: check BOTH coordinates, matching

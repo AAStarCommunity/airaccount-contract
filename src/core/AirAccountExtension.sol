@@ -683,6 +683,19 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         // UP (User Present) flag must be set (bit 0 of byte 32)
         if (uint8(authenticatorData[32]) & 0x01 == 0) revert InvalidAuthenticatorData();
 
+        // #120 R1 [Medium]: bind the WebAuthn operation TYPE. clientDataJSONPrefix must be exactly
+        // the standard assertion preamble, so a relayer cannot supply arbitrary JSON or replay a
+        // webauthn.create (registration) assertion through the webauthn.get (recovery) path. All
+        // major platform authenticators (iOS/macOS Safari, Android/Chrome, Windows Hello) emit
+        // clientDataJSON with `type` first and `challenge` immediately after, in this exact form.
+        // NOTE: origin / rpIdHash are intentionally NOT bound on-chain — the platform enforces RP
+        // binding (a passkey only signs under its own rpId's origin) and the challenge is already
+        // domain-separated (chainId + account + nonce + newOwner). Same stance as webauthn-sol /
+        // Coinbase Smart Wallet. See docs/p256-guardian-spec.md.
+        if (keccak256(clientDataJSONPrefix) != keccak256(bytes('{"type":"webauthn.get","challenge":"'))) {
+            revert InvalidAuthenticatorData();
+        }
+
         // Reconstruct clientDataJSON from parts around the challenge
         bytes memory clientDataJSON = abi.encodePacked(
             clientDataJSONPrefix,
@@ -954,7 +967,9 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     ///         Required when at least one guardian is a P-256 type (which can't use the ECDSA-only path).
     /// @param index      Slot to remove (0-indexed)
     /// @param signerIdxs Guardian slot indices corresponding to each signature
-    /// @param sigs       Signatures: 64 bytes (r||s) for P-256 guardians, 65 bytes for ECDSA guardians
+    /// @param sigs       Signatures: 65-byte (r||s||v) eth-signed sig for ECDSA guardians; for P-256
+    ///                   guardians the WebAuthn assertion blob
+    ///                   abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s)
     function removeGuardianWithMixedSigs(
         uint8 index,
         uint8[] calldata signerIdxs,
@@ -1006,7 +1021,8 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     /// @notice Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).
     ///         Required when at least one guardian is a P-256 type.
     /// @param signerIdxs Guardian slot indices corresponding to each signature
-    /// @param sigs       Signatures: 64 bytes (r||s) for P-256, 65 bytes for ECDSA
+    /// @param sigs       Signatures: 65-byte (r||s||v) eth-signed sig for ECDSA; for P-256 the WebAuthn
+    ///                   assertion blob abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s)
     function modifyTierLimitsWithMixedGuardians(
         uint256 _tier1,
         uint256 _tier2,

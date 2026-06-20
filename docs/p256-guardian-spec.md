@@ -335,10 +335,26 @@ struct InitConfig {
 - 一次 `factory.createAccount(owner, config)` 完成所有设置
 - Guardian 可以是任意类型（ECDSA MetaMask / Apple passkey / Google passkey），用户自选
 
+## 9.5 签名验证范围与威胁模型（on-chain verification scope）
+
+合约在链上验证 WebAuthn assertion 时，**绑定**以下内容、**不绑定** origin/rpId：
+
+**绑定（on-chain enforced）**
+- **签名正确性**：P-256（secp256r1）验证 `sha256(authenticatorData || sha256(clientDataJSON))`，公钥为注册时存储的 `(x, y)`。
+- **operation type**：`clientDataJSONPrefix` 必须严格等于 `{"type":"webauthn.get","challenge":"`。这关闭了 type 混淆（`webauthn.create` 注册断言被当作 `webauthn.get` 恢复断言重放）以及任意 JSON prefix 滥用。所有主流平台 authenticator（iOS/macOS Safari、Android/Chrome、Windows Hello）的 assertion 都是 `type` 在前、`challenge` 紧随其后的紧凑格式。
+- **challenge 域隔离**：challenge = `keccak256(abi.encode(version, chainId, address(this), "P256_GUARDIAN", opLabel, opData))`，其中 `opData` 含 `_recoveryNonce` + `newOwner`。因此签名绑定到特定链、特定账户、特定 recovery 轮次与目标 owner，无法跨账户/跨轮重放。
+- **UP flag**：`authenticatorData[32] & 0x01` 必须置位（User Present）。
+
+**不绑定（链下/平台层职责，刻意为之）**
+- **origin / rpIdHash**：不在链上校验。理由：(1) **平台层已强制 RP 绑定** —— 为 `airaccount` 的 rpId 注册的 passkey，浏览器/OS 只会在该 rpId 对应的 origin 下用它签名，钓鱼站无法调出该 passkey；(2) challenge 已做域隔离，签名无法被挪用到其他账户/操作；(3) 社交恢复还有 2-of-3 consensus + 2 天 timelock + cancel 投票的深度防御。这与业界主流链上 WebAuthn 验证器（webauthn-sol / Coinbase Smart Wallet、Daimo）的取舍一致——它们同样不在链上校验 origin/rpId。
+- **UV (User Verification / 生物识别) flag**：不强制，以兼容仅 UP 的 authenticator。
+
+> 该取舍在 #120 的多轮对抗 review 中被显式评估并由维护者确认。合约不可升级，因此此处为最终决策。
+
 ## 10. 不在本次范围内
 
 - M-of-N 阈值（N > 3）→ 独立 issue
-- 完整 WebAuthn Assertion 验证（含 authenticatorData、rpId） → 未来 V2
+- 链上 origin/rpIdHash 绑定 → 刻意不做（见 §9.5），依赖平台层 RP 绑定 + challenge 域隔离
 - KMS 侧代码变更 → 无需（见 AirAccount #102 结论）
 
 ---

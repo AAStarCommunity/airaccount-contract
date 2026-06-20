@@ -379,6 +379,27 @@ contract P256GuardianTest is Test {
         assertEq(proposedOwner, newOwner);
     }
 
+    /// #120 R1 [Medium]: a non-standard clientDataJSON type (here webauthn.create instead of
+    /// webauthn.get) must be rejected by the type-prefix binding even when the precompile would
+    /// otherwise accept the signature — guards against type confusion / arbitrary-JSON prefixes.
+    function test_proposeRecoveryWithSig_rejectsNonGetType() public {
+        _deployWithP256Init(P256_X0, P256_Y0, P256_X1, P256_Y1);
+        vm.etch(P256_PRECOMPILE, address(new MockP256Valid()).code);
+
+        bytes memory authenticatorData = new bytes(37);
+        authenticatorData[32] = 0x01; // UP flag set
+        bytes memory badPrefix = bytes('{"type":"webauthn.create","challenge":"'); // wrong type
+        bytes memory suffix = bytes('","origin":"https://airaccount.test","crossOrigin":false}');
+        bytes memory badSig = abi.encode(authenticatorData, badPrefix, suffix, VALID_R, VALID_S);
+
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "proposeRecoveryWithSig(address,uint8,bytes)", newOwner, uint8(0), badSig
+        ));
+        assertFalse(ok, "non-webauthn.get assertion must be rejected");
+        (address proposedOwner,,,) = account.activeRecovery();
+        assertEq(proposedOwner, address(0), "no proposal should have been created");
+    }
+
     function test_proposeRecoveryWithSig_invalidPrecompile_reverts() public {
         _deployWithP256Init(P256_X0, P256_Y0, P256_X1, P256_Y1);
         vm.etch(P256_PRECOMPILE, address(new MockP256Invalid()).code);

@@ -8,6 +8,17 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [Unreleased] - 2026-06-20 (release hardening — full-release Codex review R1)
+
+Holistic adversarial review of the complete v0.20 release (P-256 + recovery refactor + real-passkey tests) surfaced 2 MEDIUM + 2 LOW; all addressed:
+
+- **[Medium] WebAuthn operation-type binding** — `_verifyWebAuthnP256Sig` now requires `clientDataJSONPrefix` to be exactly `{"type":"webauthn.get","challenge":"`, closing type-confusion (replaying a `webauthn.create` assertion) and arbitrary-JSON-prefix abuse. origin/rpId remain intentionally unbound on-chain (platform RP-binding + challenge domain-separation; same stance as webauthn-sol/Coinbase). Documented in `docs/p256-guardian-spec.md` §9.5.
+- **[Medium] Init-time guardian config validation** — `_initAccount` now rejects ambiguous/malformed slots (ECDSA slot carrying P-256 coords; half-specified P-256 key where `(x==0) != (y==0)`) instead of silently mis-installing or dropping a guardian.
+- **[Low] `FACTORY_VERSION`** bumped 0.19.0 → 0.20.0 (matched to `ACCOUNT_VERSION`).
+- **[Low] NatSpec** for the mixed-sig guardian methods corrected: P-256 sig is the ABI-encoded WebAuthn assertion blob, not 64-byte r||s.
+
+New test `test_proposeRecoveryWithSig_rejectsNonGetType` proves the type binding. **840 tests, 0 failed** (with `--ffi`).
+
 ## [Unreleased] - 2026-06-19 (recovery refactor + #120 review follow-ups)
 
 Refactor PR stacked on #120. **835 unit tests, 0 failed.** EIP-170 headroom for the main account jumps from **11 bytes → 1,258 bytes** (V7 24,565 → 23,318 B); extension 19,745 B (4,831 B headroom). Codex adversarial review: APPROVED (0 CRITICAL/HIGH/MEDIUM/LOW).
