@@ -8,7 +8,31 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
-## [Unreleased] - 2026-06-20 (release hardening — full-release Codex review R2)
+## [v0.20.0] - 2026-06-20 (P-256 / WebAuthn guardian — release)
+
+First-class **passkey (P-256 / WebAuthn) guardian** support for social recovery (#119), plus a
+diamond-lite refactor that relocates the cold recovery path into `AirAccountExtension` (frees V7
+runtime from **11 B → 1,258 B** under EIP-170) and a multi-round adversarial hardening pass.
+
+**Highlights**
+- Guardian slots accept passkeys (Touch ID / Face ID) alongside ECDSA EOAs; full recovery
+  (propose / approve / execute / cancel) via real WebAuthn assertions verified through EIP-7212.
+- ECDSA + P-256 recovery paths merged onto shared core helpers; recovery events carry `guardianIdx`.
+- Real-passkey E2E tests with genuine secp256r1 (OZ `P256.verifySolidity`) — no mock.
+
+**Breaking for integrators**
+- The 4 ECDSA recovery selectors are no longer on the V7 ABI surface (call against the account
+  address; routed via fallback→delegatecall, selector + semantics unchanged).
+- Recovery event topic0 changed (new `guardianIdx` field).
+- `REMOVE_GUARDIAN` signing payload now binds `(nonce, index, guardianAddr, p256X, p256Y)`.
+
+**Validation**: 844 forge tests pass (`--ffi`), 0 failed. Codex multi-round challenge → **SHIP**;
+independent clestons re-review → APPROVED. See `RELEASE.md` for the full runbook and
+`docs/tx-archive/v0.20.0.md` for transaction records.
+
+The subsections below are the chronological hardening + feature history that rolled up into this release.
+
+### Hardening — full-release Codex review R2
 
 R2 verified all R1 fixes and found 1 MEDIUM + 1 LOW:
 
@@ -17,7 +41,16 @@ R2 verified all R1 fixes and found 1 MEDIUM + 1 LOW:
 
 **841 tests, 0 failed** (with `--ffi`).
 
-## [Unreleased] - 2026-06-20 (release hardening — full-release Codex review R1)
+### Hardening — final line-by-line Codex challenge
+
+A final pre-tag line-by-line adversarial challenge found 1 HIGH + 1 MEDIUM (both permanent on a non-upgradable wallet); fixed and proven with real-signature regression tests:
+
+- **[HIGH] Guardian-removal signatures now bind slot index + P-256 key** — P-256 guardians all share the sentinel address, so the old removal opData `(nonce, guardianToRemove)` was IDENTICAL for every P-256 slot. A signature collected to remove P-256 slot A could be replayed to remove slot B, or survive a key rotation on the same slot — defeating guardian consensus. opData is now `(nonce, index, guardianToRemove, p256X, p256Y)` on BOTH `removeGuardianWithMixedSigs` (extension) and `removeGuardian` (base). **Breaking: SDK must update the REMOVE_GUARDIAN signing payload.**
+- **[MEDIUM] `_initAccount` rejects the P-256 sentinel (0x7026) as a plain ECDSA guardian** — otherwise the slot would be marked P-256 with key (0,0), an unusable guardian that permanently breaks recovery.
+
+Regression tests use a REAL secp256r1 verifier (OZ `P256.verifySolidity`) + real ES256 signatures: `test_removeMixedSigs_realSig_crossSlotRejected` (+ positive control `_correctSlotSucceeds`) and `test_init_rejectsSentinelAsEcdsaGuardian`. The cross-slot test was confirmed to FAIL when the fix is reverted (the attack succeeds without it) — proving it genuinely catches the vulnerability, not a hollow assertion. **844 tests, 0 failed** (`--ffi`). Codex verdict: **SHIP**.
+
+### Hardening — full-release Codex review R1
 
 Holistic adversarial review of the complete v0.20 release (P-256 + recovery refactor + real-passkey tests) surfaced 2 MEDIUM + 2 LOW; all addressed:
 
@@ -28,7 +61,7 @@ Holistic adversarial review of the complete v0.20 release (P-256 + recovery refa
 
 New test `test_proposeRecoveryWithSig_rejectsNonGetType` proves the type binding. **840 tests, 0 failed** (with `--ffi`).
 
-## [Unreleased] - 2026-06-19 (recovery refactor + #120 review follow-ups)
+### Recovery refactor — #120 review follow-ups
 
 Refactor PR stacked on #120. **835 unit tests, 0 failed.** EIP-170 headroom for the main account jumps from **11 bytes → 1,258 bytes** (V7 24,565 → 23,318 B); extension 19,745 B (4,831 B headroom). Codex adversarial review: APPROVED (0 CRITICAL/HIGH/MEDIUM/LOW).
 
@@ -43,7 +76,7 @@ Refactor PR stacked on #120. **835 unit tests, 0 failed.** EIP-170 headroom for 
 
 ---
 
-## [v0.20.0-beta.1] - 2026-06-19 (P-256 / WebAuthn guardian support)
+### Initial feature — P-256 / WebAuthn guardian support
 
 v0.20 feature release. **828 unit tests, 0 failed.** EIP-170 headroom: 206 bytes (main), ~7,862 bytes (extension).
 
