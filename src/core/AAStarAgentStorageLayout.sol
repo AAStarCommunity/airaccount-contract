@@ -135,13 +135,13 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     ///      but NOT the separate unstaked guard's storage). The guard no longer owns a whitelist,
     ///      eliminating the dual-source desync the mirror approach would have created.
     ///      Only approveAlgorithm() mutates it (monotonic add). Appended at slot 24 — never reorder.
-    mapping(uint8 => bool) public approvedAlgorithms;                                     // slot 24
+    mapping(uint8 => bool) public approvedAlgorithms;                                     // slot 26 (forge inspect; comment was off-by-2)
 
     /// @dev Monotonic nonce for ERC-7579 module install/uninstall guardian signatures (issue #75).
     ///      Incremented after every successful installModule AND uninstallModule so a guardian
     ///      signature collected for one install can never be replayed after an uninstall+reinstall.
     ///      Appended at slot 25 — never reorder.
-    uint256 internal _moduleManagementNonce;                                              // slot 25
+    uint256 internal _moduleManagementNonce;                                              // slot 27 (forge inspect; comment was off-by-2)
 
     /// @notice Optional per-account module-install timelock in seconds (issue #58 / KI-6).
     /// @dev 0 = disabled (default): module installs are immediate at the configured threshold,
@@ -149,11 +149,11 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     ///      becomes a two-step propose → (wait `_moduleInstallTimelock`) → execute flow, giving other
     ///      guardians/owner a window to cancel a single dual-key compromise. An elevated owner+2-guardian
     ///      authorization may still install immediately (bypass). Appended at slot 26 — never reorder.
-    uint256 internal _moduleInstallTimelock;                                              // slot 26
+    uint256 internal _moduleInstallTimelock;                                              // slot 28 (forge inspect; comment was off-by-2)
 
     /// @dev Pending module-install proposal (issue #58 / KI-6). proposedAt == 0 means none pending.
     ///      Appended at slots 27-29 (3-slot struct) — never reorder.
-    ModuleInstallProposal internal _pendingModuleInstall;                                 // slots 27-29
+    ModuleInstallProposal internal _pendingModuleInstall;                                 // slots 29-31 (forge inspect; comment was off-by-2)
 
     // ── P-256 guardian keys (issue #119) — appended at slots 32-37; never reorder ──────────────
     // When a guardian slot holds P256_GUARDIAN_SENTINEL (address(0x7026)), the corresponding
