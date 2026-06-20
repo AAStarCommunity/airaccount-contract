@@ -10,21 +10,133 @@ Authoritative, auto-generated reference for every external/public function, even
 
 ## Contracts
 
+- [AAStarBLSAggregator](#aastarblsaggregator) — `src/aggregator/AAStarBLSAggregator.sol`
 - [ERC8004Addresses](#erc8004addresses) — `src/config/ERC8004Addresses.sol`
 - [AAStarAgentStorageLayout](#aastaragentstoragelayout) — `src/core/AAStarAgentStorageLayout.sol`
 - [AAStarAirAccountBase](#aastarairaccountbase) — `src/core/AAStarAirAccountBase.sol`
 - [IBLSAggregatorSource](#iblsaggregatorsource) — `src/core/AAStarAirAccountBase.sol`
+- [AAStarAirAccountFactoryV7](#aastarairaccountfactoryv7) — `src/core/AAStarAirAccountFactoryV7.sol`
 - [AAStarAirAccountV7](#aastarairaccountv7) — `src/core/AAStarAirAccountV7.sol`
 - [AAStarGlobalGuard](#aastarglobalguard) — `src/core/AAStarGlobalGuard.sol`
+- [AirAccountDelegate](#airaccountdelegate) — `src/core/AirAccountDelegate.sol`
+- [IERC5564Announcer](#ierc5564announcer) — `src/core/AirAccountDelegate.sol`
 - [AirAccountExtension](#airaccountextension) — `src/core/AirAccountExtension.sol`
+- [CalldataParserRegistry](#calldataparserregistry) — `src/core/CalldataParserRegistry.sol`
+- [ForceExitModule](#forceexitmodule) — `src/core/ForceExitModule.sol`
+- [IArbSys](#iarbsys) — `src/core/ForceExitModule.sol`
+- [IL2ToL1MessagePasser](#il2tol1messagepasser) — `src/core/ForceExitModule.sol`
 - [IAAStarAlgorithm](#iaastaralgorithm) — `src/interfaces/IAAStarAlgorithm.sol`
 - [IAAStarValidator](#iaastarvalidator) — `src/interfaces/IAAStarValidator.sol`
 - [IAirAccountAgent](#iairaccountagent) — `src/interfaces/IAirAccountAgent.sol`
 - [ICalldataParser](#icalldataparser) — `src/interfaces/ICalldataParser.sol`
 - [ICalldataParserRegistry](#icalldataparserregistry) — `src/interfaces/ICalldataParser.sol`
+- [IERC7579Hook](#ierc7579hook) — `src/interfaces/IERC7579Module.sol`
+- [IERC7579Module](#ierc7579module) — `src/interfaces/IERC7579Module.sol`
+- [IERC7579Validator](#ierc7579validator) — `src/interfaces/IERC7579Module.sol`
 - [IERC8004IdentityRegistry](#ierc8004identityregistry) — `src/interfaces/IERC8004IdentityRegistry.sol`
 - [IERC8004ReputationRegistry](#ierc8004reputationregistry) — `src/interfaces/IERC8004ReputationRegistry.sol`
+- [IERC8004ValidationRegistry](#ierc8004validationregistry) — `src/interfaces/IERC8004ValidationRegistry.sol`
+- [RailgunParser](#railgunparser) — `src/parsers/RailgunParser.sol`
+- [UniswapV3Parser](#uniswapv3parser) — `src/parsers/UniswapV3Parser.sol`
+- [AgentRegistry](#agentregistry) — `src/registries/AgentRegistry.sol`
 - [AlgTierLib](#algtierlib) — `src/utils/AlgTierLib.sol`
+- [AAStarBLSAlgorithm](#aastarblsalgorithm) — `src/validators/AAStarBLSAlgorithm.sol`
+- [AAStarValidator](#aastarvalidator) — `src/validators/AAStarValidator.sol`
+- [SessionKeyValidator](#sessionkeyvalidator) — `src/validators/SessionKeyValidator.sol`
+
+## AAStarBLSAggregator
+
+- **Source:** `src/aggregator/AAStarBLSAggregator.sol`
+- **Functions:** 5 · **Events:** 0 · **Errors:** 5
+- **Title:** AAStarBLSAggregator - IAggregator implementation for batch BLS verification
+- Aggregates BLS signatures across multiple UserOps into a single pairing check.         Gas savings: N UserOps share one pairing (102,900 gas) instead of N pairings.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0xae574a43` | `aggregateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[])` | view | — | Aggregate multiple signatures into a single value. This method is called off-chain to calculate the signature to pass with handleOps() bundler MAY use optimized custom code to perform this aggregation. |
+| `0xf8acde7b` | `blsAlgorithm()` | view | — | Reference to the BLS algorithm contract for key lookups + on-chain hash_to_curve. |
+| `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint, used to derive each op's userOpHash for the #45 binding. |
+| `0x2dd81133` | `validateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],bytes)` | view | — | Validate an aggregated signature. Reverts if the aggregated signature does not match the given list of operations. |
+| `0x062a422b` | `validateUserOpSignature((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes))` | pure | — | Validate the signature of a single userOp. This method should be called by bundler after EntryPointSimulation.simulateValidation() returns the aggregator this account uses. First it validates the signature over the userOp. Then it returns data to be used when creating the handleOps. |
+
+### Functions
+
+#### `aggregateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[] userOps)`
+
+`0xae574a43` · view · access: —
+
+> Aggregate multiple signatures into a single value. This method is called off-chain to calculate the signature to pass with handleOps() bundler MAY use optimized custom code to perform this aggregation.
+
+*@dev* Aggregates BLS signatures from all UserOps; the aggregate MESSAGE POINT is recomputed      from each op's userOpHash (issue #45), NOT taken from the op signature.      Returns: aggBlsSig(256) \| aggMsgPoint(256) \| nodeIdsLength(32) \| nodeIds(N×32).      (validateSignatures ignores the returned blob and recomputes independently; the      aggMsgPoint is included for parity/diagnostics only.)
+
+| param | type | description |
+|---|---|---|
+| `userOps` | `(address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[]` | - An array of UserOperations to collect the signatures from. |
+
+| returns | type | description |
+|---|---|---|
+| `aggregatedSignature` | `bytes` | - The aggregated signature. |
+
+#### `blsAlgorithm()`
+
+`0xf8acde7b` · view · access: —
+
+> Reference to the BLS algorithm contract for key lookups + on-chain hash_to_curve.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `entryPoint()`
+
+`0xb0d691fe` · view · access: —
+
+> The ERC-4337 EntryPoint, used to derive each op's userOpHash for the #45 binding.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `validateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[] userOps, bytes arg1)`
+
+`0x2dd81133` · view · access: —
+
+> Validate an aggregated signature. Reverts if the aggregated signature does not match the given list of operations.
+
+*@dev* v0.17.2-beta.1 round 5 HIGH-3 (Codex): the caller-supplied `signature` is      now IGNORED. Without this binding, a malicious bundler could submit a valid      aggregate for unrelated data while batching UserOps whose embedded BLS payloads      were never included — turning batch verification into a reusable proof      unrelated to the actual batch. We now recompute the aggregate from      `userOps[i].signature` and pair against THAT — what the EntryPoint actually      executes is what we verify.
+
+| param | type | description |
+|---|---|---|
+| `userOps` | `(address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[]` | - An array of UserOperations to validate the signature for. |
+| `arg1` | `bytes` |  |
+
+#### `validateUserOpSignature((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes) userOp)`
+
+`0x062a422b` · pure · access: —
+
+> Validate the signature of a single userOp. This method should be called by bundler after EntryPointSimulation.simulateValidation() returns the aggregator this account uses. First it validates the signature over the userOp. Then it returns data to be used when creating the handleOps.
+
+*@dev* Validates per-UserOp non-BLS components (signature format check).      ECDSA×2 validation is done by the account's validateUserOp.      Returns empty bytes (no signature modification needed).
+
+| param | type | description |
+|---|---|---|
+| `userOp` | `(address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)` | - The userOperation received from the user. |
+
+| returns | type | description |
+|---|---|---|
+| `sigForUserOp` | `bytes` | - The value to put into the signature field of the userOp when calling handleOps.                        (usually empty, unless account and aggregator support some kind of "multisig". |
+
+### Errors
+
+| selector | error |
+|---|---|
+| `0xb891ab5c` | `AggregatedSignatureInvalid()` |
+| `0xc2e5347d` | `EmptyBatch()` |
+| `0x8529df1f` | `InvalidSignatureFormat()` |
+| `0xc097dd74` | `NodeSetMismatch()` |
+| `0x8d5f8a45` | `PairingVerificationFailed()` |
 
 ## ERC8004Addresses
 
@@ -770,6 +882,283 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `address` |  |
+
+## AAStarAirAccountFactoryV7
+
+- **Source:** `src/core/AAStarAirAccountFactoryV7.sol`
+- **Functions:** 15 · **Events:** 3 · **Errors:** 26
+- **Title:** AAStarAirAccountFactoryV7 - EIP-1167 clone factory for V7 accounts
+- Deploys minimal proxy clones pointing to a shared implementation, then calls initialize().         This keeps factory bytecode well under EIP-170's 24,576-byte limit.         Account address = Clones.predictDeterministicAddress(implementation, keccak256(owner ++ salt))
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x0d1cfcae` | `agentRegistry()` | view | — |  |
+| `0x5512953b` | `createAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | — | Deploy a new account with full configuration. |
+| `0xdd8d1e3a` | `createAccountWithDefaults(address,uint256,address,bytes,address,bytes,uint256)` | nonpayable | — | Deploy account with default community guardian as third guardian. |
+| `0x2b690ea6` | `createAgentAccount(address,bytes32,address,bytes,bytes,uint48,uint256)` | nonpayable | — | Create a dedicated AirAccount for an autonomous AI agent.         The human caller (msg.sender) becomes the account OWNER (not a guardian).         Guardians are [guardian2, communityGuardian] (2-of-2); only guardian2 must sign. |
+| `0x0753414f` | `defaultCommunityGuardian()` | view | — |  |
+| `0xb0d691fe` | `entryPoint()` | view | — |  |
+| `0xbd382b40` | `FACTORY_VERSION()` | view | — | Semantic version of this factory deployment. Used by SDKs for programmatic version detection. |
+| `0x17d8ec7f` | `factoryAdmin()` | view | — |  |
+| `0x3989c6b8` | `getAddress(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict the counterfactual address for a full-config account. |
+| `0x203df583` | `getAddressWithChainId(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict account address AND its chain-qualified identifier in one call. |
+| `0x17253640` | `getAddressWithDefaults(address,uint256,address,address,uint256)` | view | — | Predict address for a default-config account. |
+| `0x303f69a1` | `getAgentAddress(address,address,bytes32)` | view | — | Predict the address of a future agent account. |
+| `0x990bb980` | `getChainQualifiedAddress(address)` | view | — | ERC-7828: Returns a chain-qualified address identifier.         Enables cross-chain address disambiguation for accounts deployed at the same address         on multiple L2s via CREATE2 with the same salt. |
+| `0x5c60da1b` | `implementation()` | view | — |  |
+| `0x28342ecf` | `setAgentRegistry(address)` | nonpayable | — | One-time setter for the AgentRegistry whose `isValidAccount` mapping records         which accounts were created by this factory. Caller must be `factoryAdmin`         (i.e., the deployer of this factory). Set-once: cannot be re-pointed. |
+
+### Functions
+
+#### `agentRegistry()`
+
+`0x0d1cfcae` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `createAccount(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+
+`0x5512953b` · nonpayable · access: —
+
+> Deploy a new account with full configuration.
+
+| param | type | description |
+|---|---|---|
+| `owner` | `address` | Account owner (ECDSA signer) |
+| `salt` | `uint256` | CREATE2 salt for deterministic address |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Full initialization config (guardians, guard, algorithms) |
+
+| returns | type | description |
+|---|---|---|
+| `account` | `address` |  |
+
+#### `createAccountWithDefaults(address owner, uint256 salt, address guardian1, bytes guardian1Sig, address guardian2, bytes guardian2Sig, uint256 dailyLimit)`
+
+`0xdd8d1e3a` · nonpayable · access: —
+
+> Deploy account with default community guardian as third guardian.
+
+*@dev* User provides 2 personal guardians with acceptance signatures.      Each guardian must sign: keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt, dailyLimit)).toEthSignedMessageHash()      Guard is initialized with user-specified dailyLimit and all 3 standard algorithms.Guardian acceptance hash is domain-separated:      keccak256(abi.encodePacked("ACCEPT_GUARDIAN", chainId, factory, owner, salt, dailyLimit)).toEthSignedMessageHash()      Including chainId and address(this) prevents cross-chain and cross-factory replay;      dailyLimit prevents front-run with a weaker limit on the same address.
+
+| param | type | description |
+|---|---|---|
+| `owner` | `address` | Account owner |
+| `salt` | `uint256` | CREATE2 salt |
+| `guardian1` | `address` | User's backup key (passkey, EOA, or second device) |
+| `guardian1Sig` | `bytes` | guardian1's acceptance signature |
+| `guardian2` | `address` | Trusted person (spouse, family) or another passkey |
+| `guardian2Sig` | `bytes` | guardian2's acceptance signature |
+| `dailyLimit` | `uint256` | Daily spending limit in wei (user chooses based on their needs) |
+
+| returns | type | description |
+|---|---|---|
+| `account` | `address` |  |
+
+#### `createAgentAccount(address agentKey, bytes32 agentId, address guardian2, bytes guardian2Sig, bytes agentKeySig, uint48 deadline, uint256 dailyLimit)`
+
+`0x2b690ea6` · nonpayable · access: —
+
+> Create a dedicated AirAccount for an autonomous AI agent.         The human caller (msg.sender) becomes the account OWNER (not a guardian).         Guardians are [guardian2, communityGuardian] (2-of-2); only guardian2 must sign.
+
+| param | type | description |
+|---|---|---|
+| `agentKey` | `address` | The agent's signing key (EOA address). NOT the account owner — it is the                   agent's intended session key, authorized after deployment via                   AgentSessionKeyValidator.grantAgentSession(). The owner is msg.sender (human).                   For autonomous agents: use a secure server-side / KMS-held key. |
+| `agentId` | `bytes32` | A bytes32 identifier for this agent (e.g. keccak256("my-agent-v1")).                   Combined with msg.sender to derive a unique deterministic salt. |
+| `guardian2` | `address` | Second guardian (human's personal backup key, trusted person, etc.) |
+| `guardian2Sig` | `bytes` | guardian2's acceptance signature. Signs:                   keccak256("ACCEPT_AGENT_GUARDIAN" \|\| chainId \|\| factory \|\| agentKey \|\| humanOwner \|\| agentId \|\| deadline).toEthSignedMessageHash()                   The "ACCEPT_AGENT_GUARDIAN" domain and explicit humanOwner + agentId prevent                   cross-namespace collision with createAccountWithDefaults signatures. |
+| `agentKeySig` | `bytes` | agentKey's consent signature. Signs:                   keccak256("ACCEPT_AGENT_KEY" \|\| chainId \|\| factory \|\| agentKey \|\| humanOwner \|\| agentId \|\| deadline).toEthSignedMessageHash()                   Proves the KMS/agent key holder explicitly authorized this creation;                   prevents a human from binding an arbitrary EOA as the agent's session key. |
+| `deadline` | `uint48` | Expiry timestamp for guardian2Sig and agentKeySig — prevents replay of stale signatures |
+| `dailyLimit` | `uint256` | Daily spending limit in wei for this agent account |
+
+| returns | type | description |
+|---|---|---|
+| `account` | `address` | The deployed agent account address |
+
+#### `defaultCommunityGuardian()`
+
+`0x0753414f` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `entryPoint()`
+
+`0xb0d691fe` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `FACTORY_VERSION()`
+
+`0xbd382b40` · view · access: —
+
+> Semantic version of this factory deployment. Used by SDKs for programmatic version detection.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `string` |  |
+
+#### `factoryAdmin()`
+
+`0x17d8ec7f` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `getAddress(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+
+`0x3989c6b8` · view · access: —
+
+> Predict the counterfactual address for a full-config account.
+
+*@dev* Address depends on owner + salt + keccak256(guardians, dailyLimit) to prevent      front-running attacks where an attacker pre-deploys the account with malicious guardians.
+
+| param | type | description |
+|---|---|---|
+| `owner` | `address` |  |
+| `salt` | `uint256` |  |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `getAddressWithChainId(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+
+`0x203df583` · view · access: —
+
+> Predict account address AND its chain-qualified identifier in one call.
+
+*@dev* Convenience function for frontends building cross-chain address registries.
+
+| param | type | description |
+|---|---|---|
+| `owner` | `address` |  |
+| `salt` | `uint256` |  |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+
+| returns | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `chainQualified` | `bytes32` |  |
+
+#### `getAddressWithDefaults(address owner, uint256 salt, address arg2, address arg3, uint256 arg4)`
+
+`0x17253640` · view · access: —
+
+> Predict address for a default-config account.
+
+*@dev* With the clone pattern, the address depends only on implementation + salt (not guardian config).
+
+| param | type | description |
+|---|---|---|
+| `owner` | `address` |  |
+| `salt` | `uint256` |  |
+| `arg2` | `address` |  |
+| `arg3` | `address` |  |
+| `arg4` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `getAgentAddress(address humanOwner, address agentKey, bytes32 agentId)`
+
+`0x303f69a1` · view · access: —
+
+> Predict the address of a future agent account.
+
+| param | type | description |
+|---|---|---|
+| `humanOwner` | `address` | The human who will call createAgentAccount (msg.sender) |
+| `agentKey` | `address` | The agent's signing key address |
+| `agentId` | `bytes32` | The bytes32 agent identifier |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `getChainQualifiedAddress(address account)`
+
+`0x990bb980` · view · access: —
+
+> ERC-7828: Returns a chain-qualified address identifier.         Enables cross-chain address disambiguation for accounts deployed at the same address         on multiple L2s via CREATE2 with the same salt.
+
+*@dev* keccak256(account ++ chainId) — unique per (address, chain) pair.      Use for canonical cross-chain account references.
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` | The account address to qualify |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes32` | Chain-qualified address bytes32 identifier |
+
+#### `implementation()`
+
+`0x5c60da1b` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `setAgentRegistry(address _agentRegistry)`
+
+`0x28342ecf` · nonpayable · access: —
+
+> One-time setter for the AgentRegistry whose `isValidAccount` mapping records         which accounts were created by this factory. Caller must be `factoryAdmin`         (i.e., the deployer of this factory). Set-once: cannot be re-pointed.
+
+*@dev* Why a setter and not a constructor param: AgentRegistry's own constructor needs         to know the factory address (to gate `markValid`), creating a circular dependency         at deploy time. Deployment order is: factory → AgentRegistry(factory) →         factory.setAgentRegistry(agentRegistry). Until set, createAccount* still works         but does NOT call markValid — those accounts will not be able to registerAgent         until the registry is bound. Recommended to set immediately after deploy.
+
+| param | type | description |
+|---|---|---|
+| `_agentRegistry` | `address` |  |
+
+### Events
+
+| topic0 | event |
+|---|---|
+| `0x33310a89c32d8cc00057ad6ef6274d2f8fe22389a992cf89983e09fc84f6cfff` | `AccountCreated(address,address,uint256)` |
+| `0x42c4105e67e78337e7a891b020494a3df6f5c1726fa935c8c4ce74da0110f8be` | `AgentAccountCreated(address,address,address,bytes32,address,uint256)` |
+| `0x1c3b6db6b438df64d69fe11676a03581a3860962063a836411d7cac590063f56` | `AgentRegistrySet(address)` |
+
+### Errors
+
+| selector | error |
+|---|---|
+| `0xd0e6f84a` | `AgentKeyCannotBeCommunityGuardian()` |
+| `0x619a04aa` | `AgentKeyCannotBeGuardian2()` |
+| `0xa7957160` | `AgentKeyDidNotAccept()` |
+| `0x25d2471f` | `AgentKeyRequired()` |
+| `0xff3e2107` | `AgentRegistryAlreadySet()` |
+| `0x4438e1a9` | `AgentRegistryMarkValidFailed()` |
+| `0xa55d6ad1` | `AgentRegistryNotContract()` |
+| `0x422a0c98` | `CallerCannotBeGuardian2()` |
+| `0xf8fc18ad` | `DailyLimitRequired()` |
+| `0xea7ae9e4` | `DeadlineTooFarInFuture()` |
+| `0xadbf5bb3` | `DefaultTokenAddressZero(address)` |
+| `0xd6b1cb85` | `DuplicateDefaultToken(address)` |
+| `0x6f3bdabb` | `DuplicateGuardian()` |
+| `0xb06ebf3d` | `FailedDeployment()` |
+| `0xf7909bb3` | `Guardian2CannotBeCommunityGuardian()` |
+| `0x3e6234cb` | `Guardian2Required()` |
+| `0x41cbe881` | `GuardianDidNotAccept(address)` |
+| `0x8f2afd27` | `GuardianSigExpired()` |
+| `0xfe828c5a` | `GuardiansMustBeDistinct()` |
+| `0x4fd6779b` | `GuardiansRequired()` |
+| `0xa3e362f0` | `HumanOwnerCannotBeCommunityGuardian()` |
+| `0x16ec23b0` | `ImplementationRequired()` |
+| `0xcf479181` | `InsufficientBalance(uint256,uint256)` |
+| `0xfa98b70d` | `InvalidDefaultTokenConfig(address)` |
+| `0x9a1a53b4` | `NotFactoryAdmin()` |
+| `0xcc9741af` | `TokenConfigLengthMismatch()` |
 
 ## AAStarAirAccountV7
 
@@ -1782,6 +2171,277 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x7ef81e65` | `TokenDailyLimitExceeded(address,uint256,uint256)` |
 | `0xec398688` | `TokenNotConfigured()` |
 
+## AirAccountDelegate
+
+- **Source:** `src/core/AirAccountDelegate.sol`
+- **Functions:** 18 · **Events:** 5 · **Errors:** 18
+- **Title:** AirAccountDelegate
+- EIP-7702 compatible AirAccount implementation contract. Business scenario: An existing EOA (MetaMask wallet, etc.) wants AirAccount features (daily limit, guardian recovery, ERC-4337 support) WITHOUT changing their address. The EOA sends a Type 4 transaction delegating to this contract, then calls initialize(). Key design differences from AirAccountV7:  - owner() = address(this)  — the EOA IS the account, no separate owner address  - ERC-7201 namespaced storage — avoids collision with any prior EOA storage slots  - No constructor initialization — EOA calls initialize() after delegation is active  - Guardian rescue (not owner rotation) — recovery transfers assets to a new address  - Deployed once, referenced by all 7702 delegates (singleton implementation) EIP-7702 activation flow:  1. User sends Type 4 tx with authorization_list = [{chainId, address(this), nonce, sig}]  2. EOA's code is set to 0xef0100 \|\| address(AirAccountDelegate)  3. User sends Type 2 tx to own address calling initialize(g1, g1sig, g2, g2sig, dailyLimit)  4. AirAccount features are now active on the EOA's existing address
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x4a58db19` | `addDeposit()` | payable | — |  |
+| `0x9dc6e6b3` | `announceForStealth(address,address,bytes,bytes)` | nonpayable | — | Publish a stealth address announcement via ERC-5564 Announcer. |
+| `0x3812fa00` | `approveRescue()` | nonpayable | — | Add guardian approval to an active rescue proposal. |
+| `0x441e13e2` | `cancelRescue()` | nonpayable | — | Vote to cancel a pending rescue. Requires RESCUE_THRESHOLD guardian votes. |
+| `0xb0d691fe` | `entryPoint()` | pure | — |  |
+| `0xb61d27f6` | `execute(address,uint256,bytes)` | nonpayable | — | Execute a single call. Caller must be EntryPoint or the EOA itself. |
+| `0x47e1da2a` | `executeBatch(address[],uint256[],bytes[])` | nonpayable | — | Execute a batch of calls atomically. |
+| `0x94c12786` | `executeRescue()` | nonpayable | — | Execute the rescue after threshold + timelock.         Transfers all ETH from this EOA to the approved rescue destination. |
+| `0xc399ec88` | `getDeposit()` | view | — |  |
+| `0xc9106389` | `getGuard()` | view | — |  |
+| `0x0665f04b` | `getGuardians()` | view | — |  |
+| `0x0e18e632` | `getRescueState()` | view | — |  |
+| `0xcf39cd0c` | `initialize(address,bytes,address,bytes,uint256)` | nonpayable | — | Initialize AirAccount features for this EOA. Must be called after 7702 delegation. |
+| `0x9162273d` | `initiateRescue(address)` | nonpayable | — | Initiate emergency rescue — propose transferring all ETH to a new address. |
+| `0x392e53cd` | `isInitialized()` | view | — |  |
+| `0x8da5cb5b` | `owner()` | view | — | The owner of this account is always the EOA itself. |
+| `0x19822f7c` | `validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32,uint256)` | nonpayable | — | Validate a UserOperation. Called by EntryPoint during validation phase. |
+| `0x4d44560d` | `withdrawDepositTo(address,uint256)` | nonpayable | — |  |
+
+### Functions
+
+#### `addDeposit()`
+
+`0x4a58db19` · payable · access: —
+
+#### `announceForStealth(address announcer, address stealthAddress, bytes ephemeralPubKey, bytes metadata)`
+
+`0x9dc6e6b3` · nonpayable · access: —
+
+> Publish a stealth address announcement via ERC-5564 Announcer.
+
+*@dev* This allows the recipient to scan announcements and find stealth payments.      The stealth address derivation is done OFF-CHAIN — this contract just publishes the announcement.      Receiving assets at stealth addresses requires no special handling (just a regular receive).
+
+| param | type | description |
+|---|---|---|
+| `announcer` | `address` | ERC-5564 Announcer contract address        (Ethereum: 0x55649E01B5Df198D18D95b5cc5051630cfD45564, Sepolia: 0x55649E01B5Df198D18D95b5cc5051630cfD45564) |
+| `stealthAddress` | `address` | The one-time stealth address derived from recipient's stealth meta-address |
+| `ephemeralPubKey` | `bytes` | The sender's ephemeral public key (33 bytes for secp256k1) |
+| `metadata` | `bytes` | Protocol-specific metadata (can encode view tag for efficient scanning) |
+
+#### `approveRescue()`
+
+`0x3812fa00` · nonpayable · access: —
+
+> Add guardian approval to an active rescue proposal.
+
+#### `cancelRescue()`
+
+`0x441e13e2` · nonpayable · access: —
+
+> Vote to cancel a pending rescue. Requires RESCUE_THRESHOLD guardian votes.
+
+*@dev* Mirrors AAStarAirAccountBase.cancelRecovery() design rationale:      The EOA private key holder CANNOT cancel — if the key is stolen, the attacker      could cancel any rescue and prevent asset recovery. Only a guardian threshold      can cancel, giving guardians full control over the rescue lifecycle.      Each guardian votes independently. When threshold is reached the rescue is cancelled.      A guardian cannot vote to cancel after already voting to approve.
+
+#### `entryPoint()`
+
+`0xb0d691fe` · pure · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `execute(address dest, uint256 value, bytes data)`
+
+`0xb61d27f6` · nonpayable · access: —
+
+> Execute a single call. Caller must be EntryPoint or the EOA itself.
+
+*@dev* Enforces ETH daily limit + ERC20 token tier/daily limit via guard before executing. v0.17.2-beta.1 round 5 MEDIUM-1: previously only ETH `value` was checked against the      guard; ERC20 `transfer` / `approve` could bypass token tier/daily limits via      `execute(token, 0, transferCalldata)`. Now we additionally parse `data` for the      ERC20 selectors and call `guard.checkTokenTransaction` to mirror the native      AirAccount path. The 7702 raw-key bypass (KI-1) remains a separate, documented      out-of-contract concern; this fix closes the in-contract ERC20 gap.
+
+| param | type | description |
+|---|---|---|
+| `dest` | `address` |  |
+| `value` | `uint256` |  |
+| `data` | `bytes` |  |
+
+#### `executeBatch(address[] dest, uint256[] value, bytes[] data)`
+
+`0x47e1da2a` · nonpayable · access: —
+
+> Execute a batch of calls atomically.
+
+| param | type | description |
+|---|---|---|
+| `dest` | `address[]` |  |
+| `value` | `uint256[]` |  |
+| `data` | `bytes[]` |  |
+
+#### `executeRescue()`
+
+`0x94c12786` · nonpayable · access: —
+
+> Execute the rescue after threshold + timelock.         Transfers all ETH from this EOA to the approved rescue destination.
+
+#### `getDeposit()`
+
+`0xc399ec88` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `getGuard()`
+
+`0xc9106389` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `getGuardians()`
+
+`0x0665f04b` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address[3]` |  |
+
+#### `getRescueState()`
+
+`0x0e18e632` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `rescueTo` | `address` |  |
+| `rescueTimestamp` | `uint256` |  |
+| `rescueApprovals` | `uint8` |  |
+| `approved` | `bool` |  |
+| `cancellations` | `uint8` |  |
+
+#### `initialize(address guardian1, bytes g1Sig, address guardian2, bytes g2Sig, uint256 dailyLimit)`
+
+`0xcf39cd0c` · nonpayable · access: —
+
+> Initialize AirAccount features for this EOA. Must be called after 7702 delegation.
+
+*@dev* Must be called FROM the EOA itself (msg.sender == address(this)).      With 7702, the EOA sends a regular tx to its own address calling this function.⚠️ GUARDIAN TRUST WARNING:      Two guardians acting together can initiate and approve a rescue transfer of all      ETH to any address — including their own. The 2-day timelock gives the EOA owner      a window to cancel, but ONLY if the private key is still accessible.      Choose guardians you trust as much as your private key.
+
+| param | type | description |
+|---|---|---|
+| `guardian1` | `address` | First personal guardian address |
+| `g1Sig` | `bytes` | Guardian1's acceptance signature over domain hash |
+| `guardian2` | `address` | Second personal guardian address |
+| `g2Sig` | `bytes` | Guardian2's acceptance signature over domain hash |
+| `dailyLimit` | `uint256` | ETH daily spending limit in wei (0 = unlimited) |
+
+#### `initiateRescue(address rescueTo)`
+
+`0x9162273d` · nonpayable · access: —
+
+> Initiate emergency rescue — propose transferring all ETH to a new address.
+
+*@dev* Called by a guardian when the EOA private key is compromised or lost.      Once initiated, other guardians call approveRescue(). After RESCUE_THRESHOLD      approvals and a 2-day timelock, anyone calls executeRescue().      Once a rescue is pending, it cannot be overridden by another guardian      (prevents DoS via competing initiations). Only the EOA owner can cancel      via cancelRescue() if the key is still accessible.
+
+| param | type | description |
+|---|---|---|
+| `rescueTo` | `address` | Destination address to transfer all ETH to (must be non-zero) |
+
+#### `isInitialized()`
+
+`0x392e53cd` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `owner()`
+
+`0x8da5cb5b` · view · access: —
+
+> The owner of this account is always the EOA itself.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes) userOp, bytes32 userOpHash, uint256 missingFunds)`
+
+`0x19822f7c` · nonpayable · access: —
+
+> Validate a UserOperation. Called by EntryPoint during validation phase.
+
+*@dev* For 7702 EOA: owner = address(this). ECDSA signature must recover to address(this).      algId byte prefix is optional (raw 65-byte ECDSA also accepted for compatibility).
+
+| param | type | description |
+|---|---|---|
+| `userOp` | `(address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)` |  |
+| `userOpHash` | `bytes32` |  |
+| `missingFunds` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `validationData` | `uint256` |  |
+
+#### `withdrawDepositTo(address to, uint256 amount)`
+
+`0x4d44560d` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `to` | `address` |  |
+| `amount` | `uint256` |  |
+
+### Events
+
+| topic0 | event |
+|---|---|
+| `0xcc38ba2cfec1b0490c82910f656d4b894eddfef357e942ddb413e461ac0fc475` | `DelegateInitialized(address,address,address,address)` |
+| `0x78900704ad68ab461b48e4b48e44e901f492c49e302cdb9cf0e3f4f3f682fcf3` | `RescueApproved(address,address,uint8)` |
+| `0x906bd5c1c5ea673fb529dbd288ec03458713a6f811f1abff54c803eb5c13b199` | `RescueCancelled(address)` |
+| `0xfcf739fed0bf519b94a625ab220552af9d831b695bea37c6f5bae8820aced04c` | `RescueExecuted(address,address,uint256)` |
+| `0x06694ad85a151921bea3fa2ccfd4bdcb29658c81bc9a5336e3d0a51ccf57f8a9` | `RescueInitiated(address,address,address)` |
+
+### Errors
+
+| selector | error |
+|---|---|
+| `0x0dc149f0` | `AlreadyInitialized()` |
+| `0xa24a13a6` | `ArrayLengthMismatch()` |
+| `0xa5fa8d2b` | `CallFailed(bytes)` |
+| `0xf645eedf` | `ECDSAInvalidSignature()` |
+| `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
+| `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
+| `0xf6b3aa65` | `GuardianAlreadyApproved()` |
+| `0x2004e7c1` | `GuardianAlreadyCancelVoted()` |
+| `0xe6c4247b` | `InvalidAddress()` |
+| `0x82d3b471` | `InvalidGuardianSignature(address)` |
+| `0x49748684` | `NoRescuePending()` |
+| `0x87138d5c` | `NotInitialized()` |
+| `0xcae1d956` | `OnlyGuardian()` |
+| `0x14d4a4e8` | `OnlySelf()` |
+| `0x54a78516` | `OnlySelfOrEntryPoint()` |
+| `0x2f681d07` | `RescueAlreadyPending()` |
+| `0xa7b890f2` | `RescueNotApproved()` |
+| `0x9e1fddf6` | `RescueTimelockNotExpired()` |
+
+## IERC5564Announcer
+
+- **Source:** `src/core/AirAccountDelegate.sol`
+- **Functions:** 1 · **Events:** 0 · **Errors:** 0
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x4d1f9583` | `announce(uint256,address,bytes,bytes)` | nonpayable | — |  |
+
+### Functions
+
+#### `announce(uint256 schemeId, address stealthAddress, bytes ephemeralPubKey, bytes metadata)`
+
+`0x4d1f9583` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `schemeId` | `uint256` |  |
+| `stealthAddress` | `address` |  |
+| `ephemeralPubKey` | `bytes` |  |
+| `metadata` | `bytes` |  |
+
 ## AirAccountExtension
 
 - **Source:** `src/core/AirAccountExtension.sol`
@@ -2407,6 +3067,396 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xc30fc6f5` | `WeightChangePending()` |
 | `0xac2edbf6` | `WeightChangeTimelockNotExpired()` |
 
+## CalldataParserRegistry
+
+- **Source:** `src/core/CalldataParserRegistry.sol`
+- **Functions:** 5 · **Events:** 2 · **Errors:** 3
+- **Title:** CalldataParserRegistry — Singleton registry mapping DeFi protocols to their parsers
+- Maps destination contract addresses to their corresponding ICalldataParser implementations.         Accounts that enable parser support store a reference to this registry.         Accounts without a registry reference fall back to native ERC20 transfer parsing.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x280973a2` | `getParser(address)` | view | — | Look up the parser for a destination contract.         Returns address(0) if no parser is registered for this dest. |
+| `0x8da5cb5b` | `owner()` | view | — | Registry owner (should be protocol-controlled Safe multisig in production) |
+| `0x753cd38a` | `parserFor(address)` | view | — | dest contract address → parser contract address (address(0) = no parser) |
+| `0xa16a4fa2` | `registerParser(address,address)` | nonpayable | — | Register a parser for a destination contract.         Only-add: once registered, a parser cannot be replaced (monotonic). |
+| `0xf2fde38b` | `transferOwnership(address)` | nonpayable | — |  |
+
+### Functions
+
+#### `getParser(address dest)`
+
+`0x280973a2` · view · access: —
+
+> Look up the parser for a destination contract.         Returns address(0) if no parser is registered for this dest.
+
+| param | type | description |
+|---|---|---|
+| `dest` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `owner()`
+
+`0x8da5cb5b` · view · access: —
+
+> Registry owner (should be protocol-controlled Safe multisig in production)
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `parserFor(address arg0)`
+
+`0x753cd38a` · view · access: —
+
+> dest contract address → parser contract address (address(0) = no parser)
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `registerParser(address dest, address parser)`
+
+`0xa16a4fa2` · nonpayable · access: —
+
+> Register a parser for a destination contract.         Only-add: once registered, a parser cannot be replaced (monotonic).
+
+| param | type | description |
+|---|---|---|
+| `dest` | `address` | The DeFi protocol contract address (e.g., Uniswap V3 SwapRouter) |
+| `parser` | `address` | The parser contract implementing ICalldataParser |
+
+#### `transferOwnership(address newOwner)`
+
+`0xf2fde38b` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `newOwner` | `address` |  |
+
+### Events
+
+| topic0 | event |
+|---|---|
+| `0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0` | `OwnershipTransferred(address,address)` |
+| `0xc8d5737e400caecd09d5aaa762b3b331ce7e9c3a82c438c447032e1c36ad59e7` | `ParserRegistered(address,address)` |
+
+### Errors
+
+| selector | error |
+|---|---|
+| `0xe6c4247b` | `InvalidAddress()` |
+| `0x5fc483c5` | `OnlyOwner()` |
+| `0xc4a123df` | `ParserAlreadyRegistered()` |
+
+## ForceExitModule
+
+- **Source:** `src/core/ForceExitModule.sol`
+- **Functions:** 17 · **Events:** 4 · **Errors:** 15
+- **Title:** ForceExitModule
+- ERC-7579 Executor module enabling L2→L1 forced withdrawal with 2-of-3 guardian protection.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0xe838cb68` | `accountL2Type(address)` | view | — | Which L2 type the account is deployed on (1=OP, 2=Arbitrum) |
+| `0x3ab34290` | `APPROVAL_THRESHOLD()` | view | — |  |
+| `0x63756589` | `approveForceExit(address,bytes)` | nonpayable | — | Guardian approves the pending force-exit proposal. |
+| `0xbd8e62d6` | `ARB_SYS()` | view | — |  |
+| `0x2600cf31` | `cancelForceExit(address)` | nonpayable | — |  |
+| `0x145a8078` | `executeForceExit(address)` | nonpayable | — | Execute the force-exit after 2-of-3 guardian approvals. |
+| `0x14cd23d5` | `getPendingExit(address)` | view | — | Explicit getter for the full ExitProposal struct (including bytes and address[3]).         The auto-generated public mapping getter omits dynamic and array fields. |
+| `0xd60b347f` | `isInitialized(address)` | view | — | Returns true if the module is installed for the given account. |
+| `0x066b985d` | `L2_TO_L1_MESSAGE_PASSER_OP()` | view | — |  |
+| `0xf09e980a` | `L2_TYPE_ARBITRUM()` | view | — |  |
+| `0xaffa4167` | `L2_TYPE_OPTIMISM()` | view | — |  |
+| `0x81ed9808` | `MODULE_VERSION()` | view | — | Semantic version of this module deployment. Used by SDKs for programmatic version detection. |
+| `0x6d61fe70` | `onInstall(bytes)` | nonpayable | — | Initialize the module for the calling account. |
+| `0x8a91b0e3` | `onUninstall(bytes)` | nonpayable | — | Remove the module from the calling account. |
+| `0x12592bab` | `OP_DEFAULT_GAS_LIMIT()` | view | — |  |
+| `0x9c95759d` | `pendingExit(address)` | view | — | Pending force-exit proposal per account |
+| `0x3e956573` | `proposeForceExit(address,uint256,bytes)` | nonpayable | — | Propose a force-exit withdrawal. Must be called by the account owner. |
+
+### Functions
+
+#### `accountL2Type(address account)`
+
+`0xe838cb68` · view · access: —
+
+> Which L2 type the account is deployed on (1=OP, 2=Arbitrum)
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint8` |  |
+
+#### `APPROVAL_THRESHOLD()`
+
+`0x3ab34290` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `approveForceExit(address account, bytes guardianSig)`
+
+`0x63756589` · nonpayable · access: —
+
+> Guardian approves the pending force-exit proposal.
+
+*@dev* Verifies ECDSA signature over keccak256("FORCE_EXIT" \|\| chainId \|\| account \|\| target \|\| value \|\| data \|\| proposedAt).      Each guardian may only approve once. Bit i in approvalBitmap corresponds to guardians[i].
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` | The AA account whose proposal is being approved |
+| `guardianSig` | `bytes` | ECDSA signature (65 bytes) from the approving guardian |
+
+#### `ARB_SYS()`
+
+`0xbd8e62d6` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `cancelForceExit(address account)`
+
+`0x2600cf31` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+
+#### `executeForceExit(address account)`
+
+`0x145a8078` · nonpayable · access: —
+
+> Execute the force-exit after 2-of-3 guardian approvals.
+
+*@dev* Callable by anyone once the threshold is met.      Calls the appropriate L2 precompile and transfers the account's ETH.      Clears the proposal on success.
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` | The AA account to execute the exit for |
+
+#### `getPendingExit(address account)`
+
+`0x14cd23d5` · view · access: —
+
+> Explicit getter for the full ExitProposal struct (including bytes and address[3]).         The auto-generated public mapping getter omits dynamic and array fields.
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `target` | `address` |  |
+| `value` | `uint256` |  |
+| `data` | `bytes` |  |
+| `proposedAt` | `uint256` |  |
+| `approvalBitmap` | `uint256` |  |
+| `guardians` | `address[3]` |  |
+
+#### `isInitialized(address smartAccount)`
+
+`0xd60b347f` · view · access: —
+
+> Returns true if the module is installed for the given account.
+
+| param | type | description |
+|---|---|---|
+| `smartAccount` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `L2_TO_L1_MESSAGE_PASSER_OP()`
+
+`0x066b985d` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `L2_TYPE_ARBITRUM()`
+
+`0xf09e980a` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint8` |  |
+
+#### `L2_TYPE_OPTIMISM()`
+
+`0xaffa4167` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint8` |  |
+
+#### `MODULE_VERSION()`
+
+`0x81ed9808` · view · access: —
+
+> Semantic version of this module deployment. Used by SDKs for programmatic version detection.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `string` |  |
+
+#### `onInstall(bytes data)`
+
+`0x6d61fe70` · nonpayable · access: —
+
+> Initialize the module for the calling account.
+
+| param | type | description |
+|---|---|---|
+| `data` | `bytes` | abi.encode(uint8 l2Type) — 1=OP Stack, 2=Arbitrum |
+
+#### `onUninstall(bytes arg0)`
+
+`0x8a91b0e3` · nonpayable · access: —
+
+> Remove the module from the calling account.
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `bytes` |  |
+
+#### `OP_DEFAULT_GAS_LIMIT()`
+
+`0x12592bab` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `pendingExit(address account)`
+
+`0x9c95759d` · view · access: —
+
+> Pending force-exit proposal per account
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `target` | `address` |  |
+| `value` | `uint256` |  |
+| `data` | `bytes` |  |
+| `proposedAt` | `uint256` |  |
+| `approvalBitmap` | `uint256` |  |
+
+#### `proposeForceExit(address target, uint256 value, bytes data)`
+
+`0x3e956573` · nonpayable · access: —
+
+> Propose a force-exit withdrawal. Must be called by the account owner.
+
+*@dev* Reads guardian addresses from the account via getConfigDescription() staticcall.      Reverts with AlreadyProposed if a proposal is already pending.
+
+| param | type | description |
+|---|---|---|
+| `target` | `address` | L1 address that will receive the ETH and/or calldata |
+| `value` | `uint256` | ETH amount in wei to exit |
+| `data` | `bytes` | Calldata to forward to target on L1 |
+
+### Events
+
+| topic0 | event |
+|---|---|
+| `0x8a5e1de4fc7c94a4dae42d9295603c882152c403750fcaf0f41babd4f8d8d1ec` | `ExitApproved(address,address,uint256)` |
+| `0x91c2e943be9b1896a63fd826425c05548b2a5583446fe30c455ed129c89f86a3` | `ExitCancelled(address)` |
+| `0x980da781d62da9c7dd806dd340e69f7517cf1315809634dfad56dd8c33975f5a` | `ExitExecuted(address,address,uint256)` |
+| `0x4bc5a5383386ddc8ca046e71afc9f36199d32d5c29218a10b8ca51def6207fae` | `ExitProposed(address,address,uint256)` |
+
+### Errors
+
+| selector | error |
+|---|---|
+| `0x101f817a` | `AlreadyApproved()` |
+| `0x79429186` | `AlreadyProposed()` |
+| `0x23a1daa9` | `ApproverNoLongerGuardian()` |
+| `0xf645eedf` | `ECDSAInvalidSignature()` |
+| `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
+| `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
+| `0x50fa3d7f` | `ForceExitCallFailed()` |
+| `0xea87e89a` | `IncompatibleAccount()` |
+| `0x89b9c34b` | `InvalidGuardianSig()` |
+| `0x0dc5fde9` | `NoProposal()` |
+| `0x24bcdbea` | `NotEnoughApprovals()` |
+| `0x2c283ef6` | `NotInstalled()` |
+| `0x30cd7471` | `NotOwner()` |
+| `0x694faed2` | `SignerNoLongerGuardian()` |
+| `0xc6103c49` | `UnsupportedL2Type()` |
+
+## IArbSys
+
+- **Source:** `src/core/ForceExitModule.sol`
+- **Functions:** 1 · **Events:** 0 · **Errors:** 0
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x928c169a` | `sendTxToL1(address,bytes)` | payable | — |  |
+
+### Functions
+
+#### `sendTxToL1(address destination, bytes calldataForL1)`
+
+`0x928c169a` · payable · access: —
+
+| param | type | description |
+|---|---|---|
+| `destination` | `address` |  |
+| `calldataForL1` | `bytes` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+## IL2ToL1MessagePasser
+
+- **Source:** `src/core/ForceExitModule.sol`
+- **Functions:** 1 · **Events:** 0 · **Errors:** 0
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0xc2b3e5ac` | `initiateWithdrawal(address,uint256,bytes)` | payable | — |  |
+
+### Functions
+
+#### `initiateWithdrawal(address _target, uint256 _gasLimit, bytes _data)`
+
+`0xc2b3e5ac` · payable · access: —
+
+| param | type | description |
+|---|---|---|
+| `_target` | `address` |  |
+| `_gasLimit` | `uint256` |  |
+| `_data` | `bytes` |  |
+
 ## IAAStarAlgorithm
 
 - **Source:** `src/interfaces/IAAStarAlgorithm.sol`
@@ -2717,6 +3767,217 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `address` | Parser contract address, or address(0) if not registered |
+
+## IERC7579Hook
+
+- **Source:** `src/interfaces/IERC7579Module.sol`
+- **Functions:** 5 · **Events:** 0 · **Errors:** 0
+- **Title:** IERC7579Hook — ERC-7579 hook module interface
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0xd60b347f` | `isInitialized(address)` | view | — | Returns true if the module is initialized for the given account |
+| `0x6d61fe70` | `onInstall(bytes)` | nonpayable | — | Initialize the module for a specific account |
+| `0x8a91b0e3` | `onUninstall(bytes)` | nonpayable | — | Cleanup when module is uninstalled from an account |
+| `0x173bf7da` | `postCheck(bytes)` | nonpayable | — | Called after execution |
+| `0xd68f6025` | `preCheck(address,uint256,bytes)` | nonpayable | — | Called before execution — can revert to block the call |
+
+### Functions
+
+#### `isInitialized(address smartAccount)`
+
+`0xd60b347f` · view · access: —
+
+> Returns true if the module is initialized for the given account
+
+| param | type | description |
+|---|---|---|
+| `smartAccount` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `onInstall(bytes data)`
+
+`0x6d61fe70` · nonpayable · access: —
+
+> Initialize the module for a specific account
+
+| param | type | description |
+|---|---|---|
+| `data` | `bytes` |  |
+
+#### `onUninstall(bytes data)`
+
+`0x8a91b0e3` · nonpayable · access: —
+
+> Cleanup when module is uninstalled from an account
+
+| param | type | description |
+|---|---|---|
+| `data` | `bytes` |  |
+
+#### `postCheck(bytes hookData)`
+
+`0x173bf7da` · nonpayable · access: —
+
+> Called after execution
+
+| param | type | description |
+|---|---|---|
+| `hookData` | `bytes` |  |
+
+#### `preCheck(address msgSender, uint256 msgValue, bytes msgData)`
+
+`0xd68f6025` · nonpayable · access: —
+
+> Called before execution — can revert to block the call
+
+| param | type | description |
+|---|---|---|
+| `msgSender` | `address` |  |
+| `msgValue` | `uint256` |  |
+| `msgData` | `bytes` |  |
+
+| returns | type | description |
+|---|---|---|
+| `hookData` | `bytes` |  |
+
+## IERC7579Module
+
+- **Source:** `src/interfaces/IERC7579Module.sol`
+- **Functions:** 3 · **Events:** 0 · **Errors:** 0
+- **Title:** IERC7579Module — Base interface for all ERC-7579 modules
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0xd60b347f` | `isInitialized(address)` | view | — | Returns true if the module is initialized for the given account |
+| `0x6d61fe70` | `onInstall(bytes)` | nonpayable | — | Initialize the module for a specific account |
+| `0x8a91b0e3` | `onUninstall(bytes)` | nonpayable | — | Cleanup when module is uninstalled from an account |
+
+### Functions
+
+#### `isInitialized(address smartAccount)`
+
+`0xd60b347f` · view · access: —
+
+> Returns true if the module is initialized for the given account
+
+| param | type | description |
+|---|---|---|
+| `smartAccount` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `onInstall(bytes data)`
+
+`0x6d61fe70` · nonpayable · access: —
+
+> Initialize the module for a specific account
+
+| param | type | description |
+|---|---|---|
+| `data` | `bytes` |  |
+
+#### `onUninstall(bytes data)`
+
+`0x8a91b0e3` · nonpayable · access: —
+
+> Cleanup when module is uninstalled from an account
+
+| param | type | description |
+|---|---|---|
+| `data` | `bytes` |  |
+
+## IERC7579Validator
+
+- **Source:** `src/interfaces/IERC7579Module.sol`
+- **Functions:** 5 · **Events:** 0 · **Errors:** 0
+- **Title:** IERC7579Validator — ERC-7579 validator module interface
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0xd60b347f` | `isInitialized(address)` | view | — | Returns true if the module is initialized for the given account |
+| `0xf551e2ee` | `isValidSignatureWithSender(address,bytes32,bytes)` | view | — | ERC-1271 signature validation |
+| `0x6d61fe70` | `onInstall(bytes)` | nonpayable | — | Initialize the module for a specific account |
+| `0x8a91b0e3` | `onUninstall(bytes)` | nonpayable | — | Cleanup when module is uninstalled from an account |
+| `0x97003203` | `validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)` | nonpayable | — | Validate a UserOperation |
+
+### Functions
+
+#### `isInitialized(address smartAccount)`
+
+`0xd60b347f` · view · access: —
+
+> Returns true if the module is initialized for the given account
+
+| param | type | description |
+|---|---|---|
+| `smartAccount` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `isValidSignatureWithSender(address sender, bytes32 hash, bytes data)`
+
+`0xf551e2ee` · view · access: —
+
+> ERC-1271 signature validation
+
+| param | type | description |
+|---|---|---|
+| `sender` | `address` |  |
+| `hash` | `bytes32` |  |
+| `data` | `bytes` |  |
+
+| returns | type | description |
+|---|---|---|
+| `magicValue` | `bytes4` |  |
+
+#### `onInstall(bytes data)`
+
+`0x6d61fe70` · nonpayable · access: —
+
+> Initialize the module for a specific account
+
+| param | type | description |
+|---|---|---|
+| `data` | `bytes` |  |
+
+#### `onUninstall(bytes data)`
+
+`0x8a91b0e3` · nonpayable · access: —
+
+> Cleanup when module is uninstalled from an account
+
+| param | type | description |
+|---|---|---|
+| `data` | `bytes` |  |
+
+#### `validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes) userOp, bytes32 userOpHash)`
+
+`0x97003203` · nonpayable · access: —
+
+> Validate a UserOperation
+
+| param | type | description |
+|---|---|---|
+| `userOp` | `(address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)` |  |
+| `userOpHash` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `validationData` | `uint256` | 0=success, 1=failure, or aggregator address packed |
 
 ## IERC8004IdentityRegistry
 
@@ -3213,9 +4474,1353 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x6a4a61743519c9d648a14e6493f47dbe3ff1aa29e7785c96c8326a205e58febc` | `NewFeedback(uint256,address,uint64,int128,uint8,string,string,string,string,string,bytes32)` |
 | `0xb1c6be0b5b8aef6539e2fac0fd131a2faa7b49edf8e505b5eb0ad487d56051d4` | `ResponseAppended(uint256,address,uint64,address,string,bytes32)` |
 
+## IERC8004ValidationRegistry
+
+- **Source:** `src/interfaces/IERC8004ValidationRegistry.sol`
+- **Functions:** 8 · **Events:** 2 · **Errors:** 0
+- **Title:** IERC8004ValidationRegistry — ERC-8004 "Trustless Agents" Validation Registry
+- Interface matching the official ERC-8004 ValidationRegistryUpgradeable.         Third-party validators post on-chain proof-of-validation records for agents.         NOTE: The ERC-8004 spec states the ValidationRegistry is still under active         development with the TEE community. These interfaces may change.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x8d5d0c2d` | `getAgentValidations(uint256)` | view | — |  |
+| `0xbc4d861b` | `getIdentityRegistry()` | view | — |  |
+| `0x1b7cabd6` | `getSummary(uint256,address[],string)` | view | — | Aggregate validation summary for an agent across validators. |
+| `0xff2febfc` | `getValidationStatus(bytes32)` | view | — |  |
+| `0x4bf3158c` | `getValidatorRequests(address)` | view | — |  |
+| `0xc4d66de8` | `initialize(address)` | nonpayable | — |  |
+| `0xaaf400c4` | `validationRequest(address,uint256,string,bytes32)` | nonpayable | — | Request validation from a validator smart contract. |
+| `0x3d659a96` | `validationResponse(bytes32,uint8,string,bytes32,string)` | nonpayable | — | Validator posts a response to a validation request. |
+
+### Functions
+
+#### `getAgentValidations(uint256 agentId)`
+
+`0x8d5d0c2d` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `agentId` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `requestHashes` | `bytes32[]` |  |
+
+#### `getIdentityRegistry()`
+
+`0xbc4d861b` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `getSummary(uint256 agentId, address[] validatorAddresses, string tag)`
+
+`0x1b7cabd6` · view · access: —
+
+> Aggregate validation summary for an agent across validators.
+
+| param | type | description |
+|---|---|---|
+| `agentId` | `uint256` |  |
+| `validatorAddresses` | `address[]` |  |
+| `tag` | `string` |  |
+
+| returns | type | description |
+|---|---|---|
+| `count` | `uint64` |  |
+| `averageResponse` | `uint8` |  |
+
+#### `getValidationStatus(bytes32 requestHash)`
+
+`0xff2febfc` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `requestHash` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `validatorAddress` | `address` |  |
+| `agentId` | `uint256` |  |
+| `response` | `uint8` |  |
+| `responseHash` | `bytes32` |  |
+| `tag` | `string` |  |
+| `lastUpdate` | `uint256` |  |
+
+#### `getValidatorRequests(address validatorAddress)`
+
+`0x4bf3158c` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `validatorAddress` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `requestHashes` | `bytes32[]` |  |
+
+#### `initialize(address identityRegistry_)`
+
+`0xc4d66de8` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `identityRegistry_` | `address` |  |
+
+#### `validationRequest(address validatorAddress, uint256 agentId, string requestURI, bytes32 requestHash)`
+
+`0xaaf400c4` · nonpayable · access: —
+
+> Request validation from a validator smart contract.
+
+| param | type | description |
+|---|---|---|
+| `validatorAddress` | `address` | Address of the validator that should respond. |
+| `agentId` | `uint256` | ERC-8004 agent token ID to be validated. |
+| `requestURI` | `string` | URI to the validation request payload (IPFS or HTTPS). |
+| `requestHash` | `bytes32` | keccak256 of the off-chain request payload. |
+
+#### `validationResponse(bytes32 requestHash, uint8 response, string responseURI, bytes32 responseHash, string tag)`
+
+`0x3d659a96` · nonpayable · access: —
+
+> Validator posts a response to a validation request.
+
+| param | type | description |
+|---|---|---|
+| `requestHash` | `bytes32` | Hash identifying the original request. |
+| `response` | `uint8` | Response code: 0=pending, 1=approved, 2=rejected. |
+| `responseURI` | `string` | URI to the validation response payload. |
+| `responseHash` | `bytes32` | keccak256 of the off-chain response payload. |
+| `tag` | `string` | Optional tag (e.g. "security", "hallucination", "compliance"). |
+
+### Events
+
+| topic0 | event |
+|---|---|
+| `0x530436c3634a98e1e626b0898be2f1e9980cc1bd2a78c07a0aba52d0a48a5059` | `ValidationRequest(address,uint256,string,bytes32)` |
+| `0xafddf629e874ccc3963b6a888c477bd464a6c8525024fc88759ea3b2326349ae` | `ValidationResponse(address,uint256,bytes32,uint8,string,bytes32,string)` |
+
+## RailgunParser
+
+- **Source:** `src/parsers/RailgunParser.sol`
+- **Functions:** 1 · **Events:** 0 · **Errors:** 0
+- **Title:** RailgunParser — ICalldataParser for Railgun V2.1 privacy pool transactions (M7.11)
+- Parses Railgun shield/transact calldata to extract (tokenAddress, amount) for guard enforcement.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x94ddedee` | `parseTokenTransfer(bytes)` | pure | — | Parse Railgun V2.1 calldata to extract (tokenAddress, amount).         Returns (address(0), 0) on unknown selector or parse failure. |
+
+### Functions
+
+#### `parseTokenTransfer(bytes data)`
+
+`0x94ddedee` · pure · access: —
+
+> Parse Railgun V2.1 calldata to extract (tokenAddress, amount).         Returns (address(0), 0) on unknown selector or parse failure.
+
+| param | type | description |
+|---|---|---|
+| `data` | `bytes` |  |
+
+| returns | type | description |
+|---|---|---|
+| `tokenIn` | `address` |  |
+| `amountIn` | `uint256` |  |
+
+## UniswapV3Parser
+
+- **Source:** `src/parsers/UniswapV3Parser.sol`
+- **Functions:** 1 · **Events:** 0 · **Errors:** 0
+- **Title:** UniswapV3Parser — ICalldataParser for Uniswap V3 SwapRouter
+- Parses Uniswap V3 swap calldata to extract tokenIn + amountIn for guard enforcement.         The guard uses this to enforce tier/daily limits on Uniswap swaps, which otherwise         appear as value=0 ETH transactions and would bypass token tier checks.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x94ddedee` | `parseTokenTransfer(bytes)` | pure | — | Parse calldata to extract the effective token address and spend amount. |
+
+### Functions
+
+#### `parseTokenTransfer(bytes data)`
+
+`0x94ddedee` · pure · access: —
+
+> Parse calldata to extract the effective token address and spend amount.
+
+| param | type | description |
+|---|---|---|
+| `data` | `bytes` | Full calldata of the external call (includes 4-byte selector) |
+
+| returns | type | description |
+|---|---|---|
+| `token` | `address` | ERC20 token address being spent (address(0) = not applicable) |
+| `amount` | `uint256` | Amount of token being spent in token native units (0 = not applicable) |
+
+## AgentRegistry
+
+- **Source:** `src/registries/AgentRegistry.sol`
+- **Functions:** 18 · **Events:** 4 · **Errors:** 13
+- **Title:** AgentRegistry — maps agent execution wallets to their human AirAccount owners
+- Any AirAccount owner can register their agent's wallet address.         Provides the reverse lookup needed by SuperPaymaster to verify sponsorship eligibility.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x9bd1ab7a` | `agentWalletOwner(address)` | view | — |  |
+| `0x70a08231` | `balanceOf(address)` | view | — | Returns count of agent wallets registered by this owner.         Implements IAgentIdentityRegistry.balanceOf(address) — returns actual count. |
+| `0xcaa109be` | `bindFactory(address)` | nonpayable | — | One-time binding of the factory address. Caller must be `deployer` (the account         that deployed this registry). Once bound, cannot be re-bound — the binding is         permanent. Performed post-deploy because deploy order has a circular dependency         (factory↔registry), and using a setter avoids needing CREATE2 address prediction. |
+| `0xd5f39488` | `deployer()` | view | — | The account that deployed this AgentRegistry. Set at construction time and         immutable. The sole caller authorised to bind the factory (one-time). |
+| `0x8f6c0f92` | `deregisterAgent(address)` | nonpayable | — | Deregister an agent wallet. Only the original registrant can deregister. |
+| `0xc45a0155` | `factory()` | view | — |  |
+| `0x6ee377a8` | `getAgentByIndex(address,uint256)` | view | — | Returns agentWallets[index] for a given owner (for enumeration). |
+| `0x55c6a766` | `getAgentCount(address)` | view | — | Returns count of agent wallets registered by this owner. |
+| `0xc2a8702d` | `getAgents(address)` | view | — | Returns all agent wallets registered by a human owner. |
+| `0x87fedcdc` | `getAgentsPage(address,uint256,uint256)` | view | — | Paginated enumeration of agent wallets for a human owner. |
+| `0x31f2935a` | `getHumanOwner(address)` | view | — | Convenience lookup: returns the human AirAccount that registered agentWallet.         Returns address(0) if agentWallet is not registered. |
+| `0xe21b38d2` | `isRegisteredAgent(address)` | view | — | Returns true if agentWallet is registered (has any owner). |
+| `0x23cca69c` | `isValidAccount(address)` | view | — |  |
+| `0x8892ab1c` | `markValid(address)` | nonpayable | — | Called by the factory at the end of each createAccount* to record provenance. |
+| `0x62febe4f` | `ownerAgents(address,uint256)` | view | — |  |
+| `0x6352211e` | `ownerOf(uint256)` | pure | — | Not supported — AgentRegistry does not use token IDs.         Reverts unconditionally. Exists only for IAgentIdentityRegistry interface compatibility. |
+| `0x2e4d25c4` | `registerAgent(address,bytes)` | nonpayable | — | Register msg.sender (AirAccount created by the bound factory) as the human owner         of agentWallet. agentWalletSig proves the caller controls agentWallet, preventing         front-run griefing. Supports both EOA (ECDSA) and smart-contract (ERC-1271) agent wallets. |
+| `0x7da6ac0d` | `revokeAgent(address)` | nonpayable | — | Alias for deregisterAgent — matches IAgentIdentityRegistry.revokeAgent(address). |
+
+### Functions
+
+#### `agentWalletOwner(address arg0)`
+
+`0x9bd1ab7a` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `balanceOf(address humanOwner)`
+
+`0x70a08231` · view · access: —
+
+> Returns count of agent wallets registered by this owner.         Implements IAgentIdentityRegistry.balanceOf(address) — returns actual count.
+
+| param | type | description |
+|---|---|---|
+| `humanOwner` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `bindFactory(address _factory)`
+
+`0xcaa109be` · nonpayable · access: —
+
+> One-time binding of the factory address. Caller must be `deployer` (the account         that deployed this registry). Once bound, cannot be re-bound — the binding is         permanent. Performed post-deploy because deploy order has a circular dependency         (factory↔registry), and using a setter avoids needing CREATE2 address prediction.
+
+| param | type | description |
+|---|---|---|
+| `_factory` | `address` |  |
+
+#### `deployer()`
+
+`0xd5f39488` · view · access: —
+
+> The account that deployed this AgentRegistry. Set at construction time and         immutable. The sole caller authorised to bind the factory (one-time).
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `deregisterAgent(address agentWallet)`
+
+`0x8f6c0f92` · nonpayable · access: —
+
+> Deregister an agent wallet. Only the original registrant can deregister.
+
+| param | type | description |
+|---|---|---|
+| `agentWallet` | `address` |  |
+
+#### `factory()`
+
+`0xc45a0155` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `getAgentByIndex(address owner, uint256 index)`
+
+`0x6ee377a8` · view · access: —
+
+> Returns agentWallets[index] for a given owner (for enumeration).
+
+| param | type | description |
+|---|---|---|
+| `owner` | `address` |  |
+| `index` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `getAgentCount(address owner)`
+
+`0x55c6a766` · view · access: —
+
+> Returns count of agent wallets registered by this owner.
+
+| param | type | description |
+|---|---|---|
+| `owner` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `getAgents(address humanOwner)`
+
+`0xc2a8702d` · view · access: —
+
+> Returns all agent wallets registered by a human owner.
+
+| param | type | description |
+|---|---|---|
+| `humanOwner` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address[]` |  |
+
+#### `getAgentsPage(address owner, uint256 start, uint256 count)`
+
+`0x87fedcdc` · view · access: —
+
+> Paginated enumeration of agent wallets for a human owner.
+
+| param | type | description |
+|---|---|---|
+| `owner` | `address` |  |
+| `start` | `uint256` | Index to start from (0-based) |
+| `count` | `uint256` | Maximum number of entries to return |
+
+| returns | type | description |
+|---|---|---|
+| `page` | `address[]` |  |
+
+#### `getHumanOwner(address agentWallet)`
+
+`0x31f2935a` · view · access: —
+
+> Convenience lookup: returns the human AirAccount that registered agentWallet.         Returns address(0) if agentWallet is not registered.
+
+| param | type | description |
+|---|---|---|
+| `agentWallet` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `isRegisteredAgent(address agentWallet)`
+
+`0xe21b38d2` · view · access: —
+
+> Returns true if agentWallet is registered (has any owner).
+
+| param | type | description |
+|---|---|---|
+| `agentWallet` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `isValidAccount(address arg0)`
+
+`0x23cca69c` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `markValid(address account)`
+
+`0x8892ab1c` · nonpayable · access: —
+
+> Called by the factory at the end of each createAccount* to record provenance.
+
+*@dev* Only the bound factory may call this. Reverts if factory is not yet bound or if      the caller is not the bound factory.
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+
+#### `ownerAgents(address arg0, uint256 arg1)`
+
+`0x62febe4f` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+| `arg1` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `ownerOf(uint256 arg0)`
+
+`0x6352211e` · pure · access: —
+
+> Not supported — AgentRegistry does not use token IDs.         Reverts unconditionally. Exists only for IAgentIdentityRegistry interface compatibility.
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `registerAgent(address agentWallet, bytes agentWalletSig)`
+
+`0x2e4d25c4` · nonpayable · access: —
+
+> Register msg.sender (AirAccount created by the bound factory) as the human owner         of agentWallet. agentWalletSig proves the caller controls agentWallet, preventing         front-run griefing. Supports both EOA (ECDSA) and smart-contract (ERC-1271) agent wallets.
+
+| param | type | description |
+|---|---|---|
+| `agentWallet` | `address` | The agent's wallet address (EOA or smart contract) |
+| `agentWalletSig` | `bytes` | Signature from agentWallet over:        keccak256(abi.encodePacked("REGISTER_AGENT", chainId, address(this), msg.sender, agentWallet)).toEthSignedMessageHash() |
+
+#### `revokeAgent(address agentWallet)`
+
+`0x7da6ac0d` · nonpayable · access: —
+
+> Alias for deregisterAgent — matches IAgentIdentityRegistry.revokeAgent(address).
+
+| param | type | description |
+|---|---|---|
+| `agentWallet` | `address` |  |
+
+### Events
+
+| topic0 | event |
+|---|---|
+| `0x929416f798511fc09aa87ff997b3b8c3b1faa1989113769926a4b572a586f9cb` | `AccountMarkedValid(address)` |
+| `0xfe090bac19e577c95f970f37bc4c133edc7de8420d1d9832618a138a08a46202` | `AgentDeregistered(address,address)` |
+| `0xf9d00cf58ec82af69e3a10e900f60959d5fd25f219f6adcd25fd4bb4cbd5f63e` | `AgentRegistered(address,address)` |
+| `0x223ed41fd6ed03a561a021bd1e19f3bd6bab57e440422809cf7c117ab75ee274` | `FactoryBound(address)` |
+
+### Errors
+
+| selector | error |
+|---|---|
+| `0xe098d3ee` | `AgentAlreadyRegistered()` |
+| `0xa96b3b37` | `CallerNotAirAccount()` |
+| `0xf645eedf` | `ECDSAInvalidSignature()` |
+| `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
+| `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
+| `0x09a658a5` | `FactoryAlreadyBound()` |
+| `0xe6c4247b` | `InvalidAddress()` |
+| `0x311d795a` | `InvalidAgentSignature()` |
+| `0x390772fc` | `NotAgentOwner()` |
+| `0x8b906c97` | `NotDeployer()` |
+| `0xa0387940` | `NotSupported()` |
+| `0x0c6d42ae` | `OnlyFactory()` |
+| `0xeee0ef57` | `SelfRegistrationForbidden()` |
+
 ## AlgTierLib
 
 - **Source:** `src/utils/AlgTierLib.sol`
 - **Functions:** 0 · **Events:** 0 · **Errors:** 0
 - **Title:** AlgTierLib
 - Shared algorithm-to-security-tier mapping for AAStarAirAccountBase and AAStarGlobalGuard.
+
+## AAStarBLSAlgorithm
+
+- **Source:** `src/validators/AAStarBLSAlgorithm.sol`
+- **Functions:** 23 · **Events:** 6 · **Errors:** 14
+- **Title:** AAStarBLSAlgorithm - BLS12-381 aggregate signature verification with node management
+- Extracted from YetAnotherAA AAStarValidator with assembly optimizations.         ABI-compatible with the NestJS backend (registerPublicKey, isRegistered, etc.)
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x79ba5097` | `acceptOwnership()` | nonpayable | — | Complete a two-step ownership transfer. Only the pending owner may accept. |
+| `0xb06e5ab4` | `aggregateKeys(bytes32[])` | view | — | Public aggregation for external callers (e.g., BLSAggregator).         Always on-demand — cache removed in v0.17.2-beta.1 (see HIGH-1 above). |
+| `0x245a7bfc` | `aggregator()` | view | — |  |
+| `0x0fb2df82` | `batchRegisterPublicKeys(bytes32[],bytes[])` | nonpayable | onlyOwner |  |
+| `0xb5abc0a2` | `cacheAggregatedKey(bytes32[])` | pure | — | DEPRECATED in v0.17.2-beta.1 — cache mechanism removed (Codex round 5 HIGH-1).         The previous design cached aggregate keys per `keccak256(nodeIds)` but did not         invalidate them on `updatePublicKey` / `revokePublicKey`, so a compromised key         remained usable through any cached set. Aggregation is now always on-demand. |
+| `0xe0034220` | `computeSetHash(bytes32[])` | pure | — | Compute the cache key for a set of nodeIds (retained for off-chain compatibility). |
+| `0x8990fd25` | `getGasEstimate(uint256)` | pure | — | Public gas estimate (NestJS-compatible) |
+| `0x29173a92` | `getRegisteredNodeCount()` | view | — |  |
+| `0x4ce0737e` | `getRegisteredNodes(uint256,uint256)` | view | — |  |
+| `0xa54126dd` | `hashToG2(bytes32)` | view | — | Map a 32-byte message (the userOpHash) to a BLS12-381 G2 point, byte-identical to         `bls12_381.G2.hashToCurve(getBytes(message), { DST })` in noble-curves (the DVT). |
+| `0x27258b22` | `isRegistered(bytes32)` | view | — |  |
+| `0x8da5cb5b` | `owner()` | view | — |  |
+| `0xe30c3978` | `pendingOwner()` | view | — |  |
+| `0x1e85f051` | `registeredKeys(bytes32)` | view | — |  |
+| `0x61ca89fa` | `registeredNodes(uint256)` | view | — |  |
+| `0x9017ddee` | `registerPublicKey(bytes32,bytes)` | nonpayable | onlyOwner |  |
+| `0xa8c59169` | `revokePublicKey(bytes32)` | nonpayable | onlyOwner |  |
+| `0xf9120af6` | `setAggregator(address)` | nonpayable | onlyOwner | issue #45 Part B: set the single protocol-level batch BLS aggregator.         Only `owner` (intended to be the protocol Gnosis Safe) may call this. There is no         per-account aggregator and no end-user setter — this one value governs the batch         path for every account that reads `blsAlgorithm.aggregator()`. Pass `address(0)` to         disable batch aggregation protocol-wide (accounts fall back to inline single-op BLS). |
+| `0xf2fde38b` | `transferOwnership(address)` | nonpayable | onlyOwner | Begin a two-step ownership transfer (Ownable2Step). Records `newOwner` as pending;         the transfer only completes when `newOwner` calls `acceptOwnership()`. Use this for         the deployer-EOA → protocol-Safe handover so a wrong address cannot take ownership.         Pass `address(0)` to cancel a pending transfer. |
+| `0x133108f7` | `updatePublicKey(bytes32,bytes)` | nonpayable | onlyOwner |  |
+| `0x65a8613c` | `validate(bytes32,bytes)` | view | — |  |
+| `0x399ef999` | `validateAggregateSignature(bytes32[],bytes,bytes)` | view | — | Verify aggregate BLS signature against a caller-supplied point (view, no events).         ⚠️ NOT op-bound — see the security note above. Do not use for UserOp authorization. |
+| `0xcdcbd867` | `verifyAggregateSignature(bytes32[],bytes,bytes)` | nonpayable | — | Verify aggregate BLS signature (state-changing for event compat) |
+
+### Functions
+
+#### `acceptOwnership()`
+
+`0x79ba5097` · nonpayable · access: —
+
+> Complete a two-step ownership transfer. Only the pending owner may accept.
+
+#### `aggregateKeys(bytes32[] nodeIds)`
+
+`0xb06e5ab4` · view · access: —
+
+> Public aggregation for external callers (e.g., BLSAggregator).         Always on-demand — cache removed in v0.17.2-beta.1 (see HIGH-1 above).
+
+| param | type | description |
+|---|---|---|
+| `nodeIds` | `bytes32[]` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes` |  |
+
+#### `aggregator()`
+
+`0x245a7bfc` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `batchRegisterPublicKeys(bytes32[] nodeIds, bytes[] publicKeys)`
+
+`0x0fb2df82` · nonpayable · access: onlyOwner
+
+| param | type | description |
+|---|---|---|
+| `nodeIds` | `bytes32[]` |  |
+| `publicKeys` | `bytes[]` |  |
+
+#### `cacheAggregatedKey(bytes32[] arg0)`
+
+`0xb5abc0a2` · pure · access: —
+
+> DEPRECATED in v0.17.2-beta.1 — cache mechanism removed (Codex round 5 HIGH-1).         The previous design cached aggregate keys per `keccak256(nodeIds)` but did not         invalidate them on `updatePublicKey` / `revokePublicKey`, so a compromised key         remained usable through any cached set. Aggregation is now always on-demand.
+
+*@dev* SDK / NestJS backend callers that still invoke this will get a clear revert and      can drop the call site — `_aggregateNodeKeys` no longer needs pre-warming.
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `bytes32[]` |  |
+
+#### `computeSetHash(bytes32[] nodeIds)`
+
+`0xe0034220` · pure · access: —
+
+> Compute the cache key for a set of nodeIds (retained for off-chain compatibility).
+
+| param | type | description |
+|---|---|---|
+| `nodeIds` | `bytes32[]` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes32` |  |
+
+#### `getGasEstimate(uint256 nodeCount)`
+
+`0x8990fd25` · pure · access: —
+
+> Public gas estimate (NestJS-compatible)
+
+| param | type | description |
+|---|---|---|
+| `nodeCount` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `getRegisteredNodeCount()`
+
+`0x29173a92` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `getRegisteredNodes(uint256 offset, uint256 limit)`
+
+`0x4ce0737e` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `offset` | `uint256` |  |
+| `limit` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `nodeIds` | `bytes32[]` |  |
+| `publicKeys` | `bytes[]` |  |
+
+#### `hashToG2(bytes32 message)`
+
+`0xa54126dd` · view · access: —
+
+> Map a 32-byte message (the userOpHash) to a BLS12-381 G2 point, byte-identical to         `bls12_381.G2.hashToCurve(getBytes(message), { DST })` in noble-curves (the DVT).
+
+*@dev* Exposed as an external view for golden-vector testing / off-chain cross-checking.      No security impact: it is a pure function of `message` (no storage, no msg.sender).
+
+| param | type | description |
+|---|---|---|
+| `message` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes` |  |
+
+#### `isRegistered(bytes32 arg0)`
+
+`0x27258b22` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `owner()`
+
+`0x8da5cb5b` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `pendingOwner()`
+
+`0xe30c3978` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `registeredKeys(bytes32 arg0)`
+
+`0x1e85f051` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes` |  |
+
+#### `registeredNodes(uint256 arg0)`
+
+`0x61ca89fa` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes32` |  |
+
+#### `registerPublicKey(bytes32 nodeId, bytes publicKey)`
+
+`0x9017ddee` · nonpayable · access: onlyOwner
+
+| param | type | description |
+|---|---|---|
+| `nodeId` | `bytes32` |  |
+| `publicKey` | `bytes` |  |
+
+#### `revokePublicKey(bytes32 nodeId)`
+
+`0xa8c59169` · nonpayable · access: onlyOwner
+
+| param | type | description |
+|---|---|---|
+| `nodeId` | `bytes32` |  |
+
+#### `setAggregator(address agg)`
+
+`0xf9120af6` · nonpayable · access: onlyOwner
+
+> issue #45 Part B: set the single protocol-level batch BLS aggregator.         Only `owner` (intended to be the protocol Gnosis Safe) may call this. There is no         per-account aggregator and no end-user setter — this one value governs the batch         path for every account that reads `blsAlgorithm.aggregator()`. Pass `address(0)` to         disable batch aggregation protocol-wide (accounts fall back to inline single-op BLS).
+
+| param | type | description |
+|---|---|---|
+| `agg` | `address` |  |
+
+#### `transferOwnership(address newOwner)`
+
+`0xf2fde38b` · nonpayable · access: onlyOwner
+
+> Begin a two-step ownership transfer (Ownable2Step). Records `newOwner` as pending;         the transfer only completes when `newOwner` calls `acceptOwnership()`. Use this for         the deployer-EOA → protocol-Safe handover so a wrong address cannot take ownership.         Pass `address(0)` to cancel a pending transfer.
+
+| param | type | description |
+|---|---|---|
+| `newOwner` | `address` |  |
+
+#### `updatePublicKey(bytes32 nodeId, bytes newPublicKey)`
+
+`0x133108f7` · nonpayable · access: onlyOwner
+
+| param | type | description |
+|---|---|---|
+| `nodeId` | `bytes32` |  |
+| `newPublicKey` | `bytes` |  |
+
+#### `validate(bytes32 hash, bytes signature)`
+
+`0x65a8613c` · view · access: —
+
+*@dev* issue #45 Fix 1 (Option B): signature format is now `[nodeIds...][blsSignature(256)]`.      The trailing caller-supplied `messagePoint(256)` has been REMOVED. The message point      is recomputed on-chain from `hash` (= the ERC-4337 userOpHash) via RFC 9380      hash_to_curve and the pairing is verified against THAT. This binds the BLS aggregate      to this exact operation: a valid (messagePoint, aggSig) produced for userOpHash_A can      no longer be replayed against userOpHash_B (the old code ignored `hash` and verified      against whatever point the caller supplied).      The nodeIds count is derived from (sig.length - 256) / 32.
+
+| param | type | description |
+|---|---|---|
+| `hash` | `bytes32` |  |
+| `signature` | `bytes` | The algorithm-specific signature data (algId prefix already stripped) |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` | 0 for success, 1 for failure |
+
+#### `validateAggregateSignature(bytes32[] nodeIds, bytes signature, bytes messagePoint)`
+
+`0x399ef999` · view · access: —
+
+> Verify aggregate BLS signature against a caller-supplied point (view, no events).         ⚠️ NOT op-bound — see the security note above. Do not use for UserOp authorization.
+
+| param | type | description |
+|---|---|---|
+| `nodeIds` | `bytes32[]` |  |
+| `signature` | `bytes` |  |
+| `messagePoint` | `bytes` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `verifyAggregateSignature(bytes32[] nodeIds, bytes signature, bytes messagePoint)`
+
+`0xcdcbd867` · nonpayable · access: —
+
+> Verify aggregate BLS signature (state-changing for event compat)
+
+| param | type | description |
+|---|---|---|
+| `nodeIds` | `bytes32[]` |  |
+| `signature` | `bytes` |  |
+| `messagePoint` | `bytes` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+### Events
+
+| topic0 | event |
+|---|---|
+| `0x94b241e14651a9658c51a45c82167e4f25ac3d3e7f8a2beae9d10b1ba07a94a0` | `AggregatorSet(address)` |
+| `0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0` | `OwnershipTransferred(address,address)` |
+| `0x38d16b8cac22d99fc7c124b9cd0de2d3fa1faef420bfe791d8c362d765e22700` | `OwnershipTransferStarted(address,address)` |
+| `0xb53698ad0068408d16d323c1bb45fdca9ff6bb47219ff6d0832591dbb505aac3` | `PublicKeyRegistered(bytes32,bytes)` |
+| `0xe23e76c154822a25bd6dd330dcf4f1998f97c4c45cd64ecac9e096f56c2511f7` | `PublicKeyRevoked(bytes32)` |
+| `0x004d4b9a68c914bd2b02ce9d82b3a990593cc1b1a335f3b001763c3c2ed52cd2` | `PublicKeyUpdated(bytes32,bytes,bytes)` |
+
+### Errors
+
+| selector | error |
+|---|---|
+| `0xa24a13a6` | `ArrayLengthMismatch()` |
+| `0x1a821827` | `BLSPointAtInfinity()` |
+| `0x72a109eb` | `CacheDeprecated()` |
+| `0xa600c81d` | `EmptyArrays()` |
+| `0x5384200c` | `InvalidKeyLength()` |
+| `0x8d0242c9` | `InvalidMessageLength()` |
+| `0x52793b0b` | `InvalidNodeId()` |
+| `0x4be6321b` | `InvalidSignatureLength()` |
+| `0x1d61a626` | `NodeAlreadyRegistered()` |
+| `0x014f5568` | `NodeNotRegistered()` |
+| `0xe2d401be` | `NoNodesProvided()` |
+| `0x1853971c` | `NotPendingOwner()` |
+| `0x5fc483c5` | `OnlyOwner()` |
+| `0x4df45e2f` | `PairingFailed()` |
+
+## AAStarValidator
+
+- **Source:** `src/validators/AAStarValidator.sol`
+- **Functions:** 13 · **Events:** 5 · **Errors:** 9
+- **Title:** AAStarValidator - Generic algorithm router for signature validation
+- Routes signature validation to registered algorithm implementations via algId.         algId is the first byte of the signature: 0x01=BLS, 0x02=ECDSA, 0x03=P256, etc.         Only-add registry: algorithms can be registered but never removed or replaced.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0xc327deef` | `algorithms(uint8)` | view | — |  |
+| `0x511fd45a` | `cancelProposal(uint8)` | nonpayable | — | Cancel a pending proposal. |
+| `0xb62f72f3` | `executeProposal(uint8)` | nonpayable | — | Execute a proposal after the timelock has expired. |
+| `0x36f107c1` | `finalizeSetup()` | nonpayable | — | Lock direct registration permanently. After this call, new algorithms require 7-day timelock. |
+| `0xacfff8f6` | `getAlgorithm(uint8)` | view | — |  |
+| `0x8da5cb5b` | `owner()` | view | — |  |
+| `0x84acf0f5` | `proposals(uint8)` | view | — |  |
+| `0xddb79b36` | `proposeAlgorithm(uint8,address)` | nonpayable | — | Propose a new algorithm with 7-day timelock.         Only-add: cannot propose for an algId that already has an algorithm. |
+| `0x283236c1` | `registerAlgorithm(uint8,address)` | nonpayable | — | Register an algorithm implementation. Only-add: cannot update or remove. |
+| `0xb6635be6` | `setupComplete()` | view | — |  |
+| `0x4623c81e` | `TIMELOCK_DURATION()` | view | — |  |
+| `0xf2fde38b` | `transferOwnership(address)` | nonpayable | — |  |
+| `0x333daf92` | `validateSignature(bytes32,bytes)` | view | — |  |
+
+### Functions
+
+#### `algorithms(uint8 arg0)`
+
+`0xc327deef` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `uint8` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `cancelProposal(uint8 algId)`
+
+`0x511fd45a` · nonpayable · access: —
+
+> Cancel a pending proposal.
+
+| param | type | description |
+|---|---|---|
+| `algId` | `uint8` |  |
+
+#### `executeProposal(uint8 algId)`
+
+`0xb62f72f3` · nonpayable · access: —
+
+> Execute a proposal after the timelock has expired.
+
+| param | type | description |
+|---|---|---|
+| `algId` | `uint8` |  |
+
+#### `finalizeSetup()`
+
+`0x36f107c1` · nonpayable · access: —
+
+> Lock direct registration permanently. After this call, new algorithms require 7-day timelock.
+
+*@dev* One-way: cannot be undone. Emits SetupFinalized.
+
+#### `getAlgorithm(uint8 algId)`
+
+`0xacfff8f6` · view · access: —
+
+*@dev* Check if an algorithm is registered
+
+| param | type | description |
+|---|---|---|
+| `algId` | `uint8` | The algorithm identifier |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` | The address of the algorithm implementation (address(0) if not registered) |
+
+#### `owner()`
+
+`0x8da5cb5b` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `proposals(uint8 arg0)`
+
+`0x84acf0f5` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `uint8` |  |
+
+| returns | type | description |
+|---|---|---|
+| `algorithm` | `address` |  |
+| `proposedAt` | `uint256` |  |
+
+#### `proposeAlgorithm(uint8 algId, address algorithm)`
+
+`0xddb79b36` · nonpayable · access: —
+
+> Propose a new algorithm with 7-day timelock.         Only-add: cannot propose for an algId that already has an algorithm.
+
+| param | type | description |
+|---|---|---|
+| `algId` | `uint8` |  |
+| `algorithm` | `address` |  |
+
+#### `registerAlgorithm(uint8 algId, address algorithm)`
+
+`0x283236c1` · nonpayable · access: —
+
+> Register an algorithm implementation. Only-add: cannot update or remove.
+
+*@dev* Disabled once setupComplete is true — use proposeAlgorithm + executeProposal after setup.
+
+| param | type | description |
+|---|---|---|
+| `algId` | `uint8` | The algorithm identifier (first byte of signature) |
+| `algorithm` | `address` | The algorithm contract address |
+
+#### `setupComplete()`
+
+`0xb6635be6` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `TIMELOCK_DURATION()`
+
+`0x4623c81e` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `transferOwnership(address newOwner)`
+
+`0xf2fde38b` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `newOwner` | `address` |  |
+
+#### `validateSignature(bytes32 hash, bytes signature)`
+
+`0x333daf92` · view · access: —
+
+*@dev* Routes to algorithm based on sig[0] (algId). Strips the algId byte before forwarding.
+
+| param | type | description |
+|---|---|---|
+| `hash` | `bytes32` |  |
+| `signature` | `bytes` | The signature to validate (sig[0] = algId) |
+
+| returns | type | description |
+|---|---|---|
+| `validationData` | `uint256` | 0 for success, 1 for failure |
+
+### Events
+
+| topic0 | event |
+|---|---|
+| `0x1ce9d3f5b5df489231c59668fbdf21a7ac500969710d6d0cd41e1d3e99ec9af7` | `AlgorithmProposed(uint8,address,uint256)` |
+| `0xba7c8be1e55b2d9edb41ca4cf7ca76ced16b7bf6112b111bbafe596b4200001c` | `AlgorithmRegistered(uint8,address)` |
+| `0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0` | `OwnershipTransferred(address,address)` |
+| `0x1fb4d9c77ff0707353cf17c9a3b2465f4474b34551a52be00576402b740bf5af` | `ProposalCancelled(uint8)` |
+| `0xde59f2818f40d4bea5a9ae67aeb7fa6a9ae51c7618ff74510ddd52ffff8d21bc` | `SetupFinalized()` |
+
+### Errors
+
+| selector | error |
+|---|---|
+| `0x8671e417` | `AlgorithmAlreadyRegistered()` |
+| `0xe9d4784c` | `AlgorithmNotRegistered()` |
+| `0xac241e11` | `EmptySignature()` |
+| `0x546d285f` | `InvalidAlgorithmAddress()` |
+| `0x3dc1d214` | `NoActiveProposal()` |
+| `0x5fc483c5` | `OnlyOwner()` |
+| `0x0c12a135` | `ProposalAlreadyPending()` |
+| `0x47a72efc` | `SetupAlreadyClosed()` |
+| `0x96a5c631` | `TimelockNotExpired(uint256)` |
+
+## SessionKeyValidator
+
+- **Source:** `src/validators/SessionKeyValidator.sol`
+- **Functions:** 21 · **Events:** 4 · **Errors:** 21
+- **Title:** SessionKeyValidator — Unified Session Key (algId 0x08) for AAStar AirAccount
+- Implements scoped, time-limited delegated signing keys for ERC-4337 accounts.         Supports two session-key kinds:           - ECDSA session (DApp / KMS-held key):  [0x08][account(20)][key(20)][ECDSA(65)] = 106 B             (router strips algId byte; this validator receives the trailing 105 B)           - P256 session (user's Passkey):        [0x08][account(20)][keyX(32)][keyY(32)][r(32)][s(32)] = 149 B             (validator receives the trailing 148 B)
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x57f252cc` | `buildGrantHash(address,address,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))` | view | — |  |
+| `0x980e65ca` | `buildP256GrantHash(address,bytes32,bytes32,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))` | view | — |  |
+| `0x090d09f9` | `checkSessionScope(address,bytes32,uint8,address,bytes4)` | view | — | Enforce session scope. View; reverts on violation. |
+| `0xa61c521f` | `getP256Session(address,bytes32)` | view | — |  |
+| `0xeaa5999a` | `getSession(address,address)` | view | — |  |
+| `0x08dafe61` | `grantNonces_p256(address,bytes32)` | view | — |  |
+| `0x750e75bf` | `grantNonces(address,address)` | view | — | Revocation nonces. Included in grant typed-hash so prior owner sigs invalidated on revoke. |
+| `0x3e5a0f8e` | `grantP256Session(address,bytes32,bytes32,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]),bytes)` | nonpayable | — |  |
+| `0x91d979d3` | `grantP256SessionDirect(address,bytes32,bytes32,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))` | nonpayable | — | Grant a P256 session by direct owner call. Owner EOA only. |
+| `0x3881ca82` | `grantSession(address,address,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]),bytes)` | nonpayable | — | Grant an ECDSA session via off-chain owner signature (gasless DApp on-boarding). |
+| `0x8bd22558` | `grantSessionDirect(address,address,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))` | nonpayable | — | Grant an ECDSA session by direct owner call. Owner EOA only. |
+| `0x67e24925` | `isP256SessionActive(address,bytes32,bytes32)` | view | — |  |
+| `0xb14bb914` | `isSessionActive(address,address)` | view | — |  |
+| `0x81ed9808` | `MODULE_VERSION()` | view | — | Semantic version of this module deployment. Used by SDKs for programmatic version detection. |
+| `0x02962ba7` | `recordCallForVelocity(address,bytes32,uint8)` | nonpayable | — | Increment velocity counter; reverts if limit exceeded. |
+| `0xfb677819` | `revokeP256Session(address,bytes32,bytes32)` | nonpayable | — |  |
+| `0x7fcd5787` | `revokeSession(address,address)` | nonpayable | — |  |
+| `0x34dd87cb` | `sessionKeyCount(address)` | view | — | Number of session-key slots currently consumed per account (issue #83).         Counts ECDSA and P256 sessions together; enforced against         MAX_SESSION_KEYS_PER_ACCOUNT on grant, released on revoke. |
+| `0xbfa52147` | `sessionStates_p256(address,bytes32)` | view | — |  |
+| `0x7dcaa59a` | `sessionStates(address,address)` | view | — | Velocity counters (execute-phase state). |
+| `0x65a8613c` | `validate(bytes32,bytes)` | view | — |  |
+
+### Functions
+
+#### `buildGrantHash(address account, address sessionKey, (uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]) cfg)`
+
+`0x57f252cc` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `sessionKey` | `address` |  |
+| `cfg` | `(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[])` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes32` |  |
+
+#### `buildP256GrantHash(address account, bytes32 p256KeyX, bytes32 p256KeyY, (uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]) cfg)`
+
+`0x980e65ca` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `p256KeyX` | `bytes32` |  |
+| `p256KeyY` | `bytes32` |  |
+| `cfg` | `(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[])` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes32` |  |
+
+#### `checkSessionScope(address account, bytes32 sessionKeyOrHash, uint8 sessionType, address dest, bytes4 selector)`
+
+`0x090d09f9` · view · access: —
+
+> Enforce session scope. View; reverts on violation.
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` | The AirAccount whose session is being checked. |
+| `sessionKeyOrHash` | `bytes32` | ECDSA: lower 20 bytes = key address. P256: full 32 bytes = key hash. |
+| `sessionType` | `uint8` | SESSION_TYPE_ECDSA (0x01) or SESSION_TYPE_P256 (0x02). |
+| `dest` | `address` | The destination contract of the current call. |
+| `selector` | `bytes4` | The function selector of the current call. |
+
+#### `getP256Session(address account, bytes32 p256KeyHash)`
+
+`0xa61c521f` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `p256KeyHash` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[])` |  |
+
+#### `getSession(address account, address sessionKey)`
+
+`0xeaa5999a` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `sessionKey` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[])` |  |
+
+#### `grantNonces_p256(address arg0, bytes32 arg1)`
+
+`0x08dafe61` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+| `arg1` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `grantNonces(address arg0, address arg1)`
+
+`0x750e75bf` · view · access: —
+
+> Revocation nonces. Included in grant typed-hash so prior owner sigs invalidated on revoke.
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+| `arg1` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `grantP256Session(address account, bytes32 p256KeyX, bytes32 p256KeyY, (uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]) cfg, bytes ownerSig)`
+
+`0x3e5a0f8e` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `p256KeyX` | `bytes32` |  |
+| `p256KeyY` | `bytes32` |  |
+| `cfg` | `(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[])` |  |
+| `ownerSig` | `bytes` |  |
+
+#### `grantP256SessionDirect(address account, bytes32 p256KeyX, bytes32 p256KeyY, (uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]) cfg)`
+
+`0x91d979d3` · nonpayable · access: —
+
+> Grant a P256 session by direct owner call. Owner EOA only.
+
+*@dev* See grantSessionDirect for why `msg.sender == account` is NOT accepted (round 3 fix).
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `p256KeyX` | `bytes32` |  |
+| `p256KeyY` | `bytes32` |  |
+| `cfg` | `(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[])` |  |
+
+#### `grantSession(address account, address sessionKey, (uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]) cfg, bytes ownerSig)`
+
+`0x3881ca82` · nonpayable · access: —
+
+> Grant an ECDSA session via off-chain owner signature (gasless DApp on-boarding).
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `sessionKey` | `address` |  |
+| `cfg` | `(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[])` |  |
+| `ownerSig` | `bytes` |  |
+
+#### `grantSessionDirect(address account, address sessionKey, (uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]) cfg)`
+
+`0x8bd22558` · nonpayable · access: —
+
+> Grant an ECDSA session by direct owner call. Owner EOA only.
+
+*@dev* Codex P1 round 3 (2026-05-30): the v0.17.2 round 2 fix briefly accepted      `msg.sender == account` to support "owner signs a UserOp whose calldata is      grantSessionDirect" — but that opens a confused-deputy attack: an existing      unscoped session key (callTargets empty + selectorAllowlist empty) can have the      account call this function via execute() and mint itself a new session, bypassing      owner re-authorisation entirely. So we revert to "owner-only" here. For UserOp /      gasless on-boarding flows, callers MUST use `grantSession` with the off-chain      owner signature (relayer-submittable, no account self-call required).
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `sessionKey` | `address` |  |
+| `cfg` | `(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[])` |  |
+
+#### `isP256SessionActive(address account, bytes32 p256KeyX, bytes32 p256KeyY)`
+
+`0x67e24925` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `p256KeyX` | `bytes32` |  |
+| `p256KeyY` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `isSessionActive(address account, address sessionKey)`
+
+`0xb14bb914` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `sessionKey` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `MODULE_VERSION()`
+
+`0x81ed9808` · view · access: —
+
+> Semantic version of this module deployment. Used by SDKs for programmatic version detection.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `string` |  |
+
+#### `recordCallForVelocity(address account, bytes32 sessionKeyOrHash, uint8 sessionType)`
+
+`0x02962ba7` · nonpayable · access: —
+
+> Increment velocity counter; reverts if limit exceeded.
+
+*@dev* Only callable when msg.sender is the bound account (anti-griefing).      Called from base._enforceGuard in execute / executeBatch / executeFromExecutor.      No-op for sessions with velocityLimit == 0.
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `sessionKeyOrHash` | `bytes32` |  |
+| `sessionType` | `uint8` |  |
+
+#### `revokeP256Session(address account, bytes32 p256KeyX, bytes32 p256KeyY)`
+
+`0xfb677819` · nonpayable · access: —
+
+*@dev* Revoke: same rationale as revokeSession — caller=owner OR caller=account both ok.
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `p256KeyX` | `bytes32` |  |
+| `p256KeyY` | `bytes32` |  |
+
+#### `revokeSession(address account, address sessionKey)`
+
+`0x7fcd5787` · nonpayable · access: —
+
+*@dev* Revoke remains caller=owner OR caller=account: revoking a session never grants      authority — it only removes it. Letting a session key self-revoke (by causing      the account to call revokeSession via execute) is actually a beneficial property      (a compromised session key can be turned off promptly without an EOA tx).
+
+| param | type | description |
+|---|---|---|
+| `account` | `address` |  |
+| `sessionKey` | `address` |  |
+
+#### `sessionKeyCount(address arg0)`
+
+`0x34dd87cb` · view · access: —
+
+> Number of session-key slots currently consumed per account (issue #83).         Counts ECDSA and P256 sessions together; enforced against         MAX_SESSION_KEYS_PER_ACCOUNT on grant, released on revoke.
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `sessionStates_p256(address arg0, bytes32 arg1)`
+
+`0xbfa52147` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+| `arg1` | `bytes32` |  |
+
+| returns | type | description |
+|---|---|---|
+| `windowStart` | `uint48` |  |
+| `callCount` | `uint32` |  |
+| `prevCount` | `uint32` |  |
+
+#### `sessionStates(address arg0, address arg1)`
+
+`0x7dcaa59a` · view · access: —
+
+> Velocity counters (execute-phase state).
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+| `arg1` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `windowStart` | `uint48` |  |
+| `callCount` | `uint32` |  |
+| `prevCount` | `uint32` |  |
+
+#### `validate(bytes32 userOpHash, bytes signature)`
+
+`0x65a8613c` · view · access: —
+
+*@dev* Dispatches by signature length: 105 → ECDSA, 148 → P256. View-only.
+
+| param | type | description |
+|---|---|---|
+| `userOpHash` | `bytes32` | The hash of the UserOperation |
+| `signature` | `bytes` | The algorithm-specific signature data (algId prefix already stripped) |
+
+| returns | type | description |
+|---|---|---|
+| `validationData` | `uint256` | 0 for success, 1 for failure |
+
+### Events
+
+| topic0 | event |
+|---|---|
+| `0x6e99c95ca3414e583b08f30efab85091680a5ae2a7714aa07330fb11fda8e8d9` | `P256SessionGranted(address,bytes32,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))` |
+| `0x344587a1c5ffd05aacfb5912e16b5b2865ccb4ebd2960745f36713653034187a` | `P256SessionRevoked(address,bytes32)` |
+| `0x74fb6746360fed8b33ee8e92264014e40b3b01ea8314863b4b8ce92b81f3043b` | `SessionGranted(address,address,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))` |
+| `0x9a20fd73f3c4985be44f081964b55d63f69ed94995474740c82bfbff9d6ab5c4` | `SessionRevoked(address,address)` |
+
+### Errors
+
+| selector | error |
+|---|---|
+| `0xdc3cb9b2` | `CallTargetForbidden(address)` |
+| `0xf645eedf` | `ECDSAInvalidSignature()` |
+| `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
+| `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
+| `0x79955a10` | `ExpiryInPast()` |
+| `0x4828eeca` | `ExpiryTooFar()` |
+| `0xd36c8500` | `InvalidExpiry()` |
+| `0xecad39e8` | `InvalidSessionType(uint8)` |
+| `0x6176a928` | `InvalidVelocityWindow()` |
+| `0x04bfc93e` | `MaxSelectorsExceeded()` |
+| `0x53baf714` | `MaxTargetsExceeded()` |
+| `0xfcfdb9b5` | `NotAccountOwner()` |
+| `0xe780655f` | `NotAirAccount()` |
+| `0x595c9732` | `NotBoundAccount()` |
+| `0x171abe36` | `SelectorForbidden(bytes4)` |
+| `0x46f25422` | `SessionAlreadyExists()` |
+| `0x1fd05a4a` | `SessionExpired()` |
+| `0x96c95f81` | `SessionNotFound()` |
+| `0x2ae0f83a` | `SessionRevoked_()` |
+| `0xbc9e4ddb` | `TooManySessionKeys()` |
+| `0x5a30e744` | `VelocityLimitExceeded()` |
