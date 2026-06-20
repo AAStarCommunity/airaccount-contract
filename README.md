@@ -3,9 +3,27 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-## Status: v0.19.0-beta.2 — 2026-06-16
+## Status: v0.20.0 — 2026-06-20
 
-Latest: **v0.19.0-beta.2** — milestone verification release. Closes **#42** (Gnosis Safe 1.4.1 as community guardian in social recovery, Sepolia E2E verified, `approvalBitmap=5`). Closes **#67** KMS cross-version contract-side verification (P256 149-byte session, EIP-712/ERC-1271, off-chain `grantSession`). No new Solidity logic — full contract surface identical to v0.18. Forge test **805/0/0** under cancun + **805** under prague. Full 36-scenario E2E on Sepolia. Prior: [`v0.18.0-beta.2`](https://github.com/AAStarCommunity/airaccount-contract/releases/tag/v0.18.0-beta.2) — security-hardening + gas + #45.
+Latest: **v0.20.0** — P-256 / WebAuthn (passkey) guardian support. Closes **#119**: guardian slots
+now accept passkeys (Touch ID / Face ID) alongside ECDSA EOAs, with full social recovery
+(propose / approve / execute / cancel) via real WebAuthn assertions verified through the EIP-7212
+precompile. Also relocates the cold recovery path into `AirAccountExtension` (frees V7 runtime from
+**11 B → 1,258 B** under EIP-170) and merges the ECDSA + P-256 paths onto shared core helpers.
+
+Hardened across a multi-round adversarial Codex challenge (P-256: 5 rounds; release-holistic:
+R1 2M+2L → R2 1M+1L → R3 1L → final 1H+1M → **SHIP**) plus an independent clestons re-review (APPROVED).
+Forge test **844/0/0** with `--ffi` (incl. 4 real-passkey E2E tests using OpenZeppelin
+`P256.verifySolidity` — genuine secp256r1, no mock). See [`CHANGELOG.md`](CHANGELOG.md),
+[`RELEASE.md`](RELEASE.md), and [`docs/p256-guardian-spec.md`](docs/p256-guardian-spec.md).
+
+> **Integrator note (breaking):** the 4 ECDSA recovery selectors (`proposeRecovery`/`approveRecovery`/
+> `executeRecovery`/`cancelRecovery`) are no longer on the V7 ABI surface — call them against the
+> account address (selector + semantics unchanged; routed via fallback→delegatecall). Recovery event
+> topic0 changed (new `guardianIdx` field). The `REMOVE_GUARDIAN` signing payload changed to bind
+> `(nonce, index, guardianAddr, p256X, p256Y)`. See the SDK migration issue.
+
+Prior: [`v0.19.0-beta.2`](https://github.com/AAStarCommunity/airaccount-contract/releases) — #42 Gnosis Safe community guardian + #67 KMS cross-version verification (no new Solidity logic).
 
 ### What shipped in v0.18
 

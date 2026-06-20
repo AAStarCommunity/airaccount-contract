@@ -10,6 +10,8 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 
 // ─── Minimal mock EntryPoint ─────────────────────────────────────────────────
+interface IAirAccountRecovery { function proposeRecovery(address newOwner) external; function approveRecovery() external; function executeRecovery() external; function cancelRecovery() external; }
+
 contract MockEP {
     function depositTo(address) external payable {}
     function balanceOf(address) external pure returns (uint256) { return 0; }
@@ -96,6 +98,8 @@ contract ModuleInstallTimelockTest is Test {
         uint8[] memory algs = new uint8[](0);
         account.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: algs,
             minDailyLimit: 0,
@@ -147,12 +151,17 @@ contract ModuleInstallTimelockTest is Test {
     }
 
     // REMOVE_GUARDIAN sig (mirror AAStarAirAccountBase domain).
+    // #120 final review [HIGH]: opData binds (nonce, index, guardianAddr, p256X, p256Y); removing an
+    // ECDSA guardian here, so P-256 key is (0,0) and index is resolved by address.
     function _removalSig(Vm.Wallet memory w, address guardianToRemove, uint256 nonce)
         internal view returns (bytes memory)
     {
+        uint8 index;
+        uint8 n = account.guardianCount();
+        for (uint8 i = 0; i < n; i++) { if (account.guardians(i) == guardianToRemove) { index = i; break; } }
         bytes32 raw = keccak256(abi.encode(
             GUARDIAN_SIG_VERSION, block.chainid, address(account), "REMOVE_GUARDIAN",
-            abi.encode(nonce, guardianToRemove)
+            abi.encode(nonce, index, guardianToRemove, bytes32(0), bytes32(0))
         ));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, raw.toEthSignedMessageHash());
         return abi.encodePacked(r, s, v);
@@ -162,11 +171,11 @@ contract ModuleInstallTimelockTest is Test {
     ///      RECOVERY_TIMELOCK is 2 days; this advances time accordingly.
     function _runOwnerRecovery(address newOwner) internal {
         vm.prank(g0Wallet.addr);
-        account.proposeRecovery(newOwner);       // auto-approve #1
+        IAirAccountRecovery(address(account)).proposeRecovery(newOwner);       // auto-approve #1
         vm.prank(g1Wallet.addr);
-        account.approveRecovery();               // approval #2 → meets 2-of-3
+        IAirAccountRecovery(address(account)).approveRecovery();               // approval #2 → meets 2-of-3
         vm.warp(block.timestamp + 2 days + 1);   // past RECOVERY_TIMELOCK
-        account.executeRecovery();               // owner := newOwner
+        IAirAccountRecovery(address(account)).executeRecovery();               // owner := newOwner
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -285,6 +294,27 @@ contract ModuleInstallTimelockTest is Test {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(); // ModuleInstallProposalExists
         ext.proposeModuleInstall(VALIDATOR, address(mod), sig2);
+    }
+
+    /// #120 R2 [Medium]: P-256 guardians share the sentinel in the address slots, so a remove+add
+    /// rotation leaves _guardian0/1/2 + count unchanged. The pending-proposal auth snapshot must
+    /// still detect it because _moduleAuthHash now folds in the P-256 pubkeys. Simulate the rotation
+    /// by writing the stored P-256 X0 key (storage slot 32 per forge inspect) and confirm the
+    /// pending proposal is invalidated.
+    function test_execute_p256KeyRotation_invalidatesProposal() public {
+        _enableTimelock(TIMELOCK);
+        bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), "");
+        vm.prank(ownerWallet.addr);
+        ext.proposeModuleInstall(VALIDATOR, address(mod), sig);
+
+        // Mutate the stored P-256 pubkey (address slots + count untouched) → authHash must shift.
+        // Slot 32 is _guardianP256X0 (forge inspect storage-layout; the source comments were
+        // off-by-2 and have been corrected). Any of the six P-256 key slots exercises the fix.
+        vm.store(address(account), bytes32(uint256(32)), bytes32(uint256(0xdead)));
+
+        vm.warp(block.timestamp + TIMELOCK + 1);
+        vm.expectRevert(); // ModuleInstallAuthChanged
+        ext.executeModuleInstall("");
     }
 
     // ───────────────────────────────────────────────────────────────────────────

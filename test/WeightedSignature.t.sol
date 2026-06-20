@@ -82,6 +82,8 @@ contract WeightedSignatureTest is Test {
         uint8[] memory noAlgs = new uint8[](0);
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: [guardian0W.addr, guardian1W.addr, guardian2W.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
@@ -362,6 +364,8 @@ contract WeightedSignatureTest is Test {
         uint8[] memory noAlgs = new uint8[](0);
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: [guardian0W.addr, address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
@@ -419,6 +423,8 @@ contract WeightedSignatureTest is Test {
         algIds[0] = 0x02; algIds[1] = 0x04; algIds[2] = 0x07; algIds[3] = 0x01;
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: [guardian0W.addr, guardian1W.addr, guardian2W.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 10 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -460,6 +466,8 @@ contract WeightedSignatureTest is Test {
         algIds[0] = 0x02; algIds[1] = 0x04; algIds[2] = 0x07;
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: [guardian0W.addr, guardian1W.addr, guardian2W.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 10 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,

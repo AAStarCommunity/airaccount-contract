@@ -148,6 +148,8 @@ contract M5ScenarioTests is Test {
         algIds[3] = ALG_T3;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -183,6 +185,8 @@ contract M5ScenarioTests is Test {
 
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -684,6 +688,8 @@ contract M5ScenarioTests is Test {
         algIds[0] = ALG_ECDSA;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0, // explicitly zero - allowed in raw createAccount
             approvedAlgIds: algIds,
             minDailyLimit: 0,
@@ -704,6 +710,8 @@ contract M5ScenarioTests is Test {
         algIds[0] = ALG_COMBINED_T1;
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 1 ether,
             approvedAlgIds: algIds,
             minDailyLimit: 0,

@@ -342,7 +342,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountBase
 
 - **Source:** `src/core/AAStarAirAccountBase.sol`
-- **Functions:** 38 · **Events:** 26 · **Errors:** 54
+- **Functions:** 35 · **Events:** 27 · **Errors:** 58
 - **Title:** AAStarAirAccountBase
 - Non-upgradable ERC-4337 smart wallet base with algId-based signature routing,         tiered verification, P256 passkey, social recovery, and global guard.
 
@@ -352,16 +352,14 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|---|---|
 | `0xb5cb7bb8` | `activeRecovery()` | view | — | Active recovery proposal |
 | `0x4a58db19` | `addDeposit()` | payable | — |  |
-| `0xa526d83b` | `addGuardian(address)` | nonpayable | onlyOwner | Add a recovery guardian. Max 3 guardians. |
+| `0xa526d83b` | `addGuardian(address)` | nonpayable | onlyOwner | Add a recovery guardian. Owner-only when fewer than RECOVERY_THRESHOLD guardians exist         (pre-consensus bootstrap — a single guardian cannot form the required quorum anyway).         Once RECOVERY_THRESHOLD guardians are set, use addGuardianWithMixedSigs so a stolen         owner key cannot unilaterally change the guardian set. |
 | `0x8fc2128e` | `agentExtension()` | view | — | Singleton AgentExtension holding ERC-8004 agent functions, reached via fallback. |
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
-| `0xfcae8d38` | `approveRecovery()` | nonpayable | — | Approve an active recovery proposal. |
-| `0x0ba234d6` | `cancelRecovery()` | nonpayable | — | Vote to cancel active recovery. Requires 2-of-3 guardian threshold. |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
 | `0xb61d27f6` | `execute(address,uint256,bytes)` | nonpayable | onlyOwnerOrEntryPoint, nonReentrant | Execute a single call from this account. |
 | `0x47e1da2a` | `executeBatch(address[],uint256[],bytes[])` | nonpayable | onlyOwnerOrEntryPoint, nonReentrant | Execute a batch of calls from this account. |
-| `0x20c5a3e1` | `executeRecovery()` | nonpayable | — | Execute recovery after timelock and threshold are met. |
 | `0xc399ec88` | `getDeposit()` | view | — |  |
+| `0x3e43b0b6` | `getRecoveryNonce()` | view | — | Returns the current recovery nonce (monotonic counter for P-256 sig replay protection). |
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
 | `0xc19c7050` | `guardAddTokenConfig(address,(uint128,uint128,uint256))` | nonpayable | onlyOwner | Add a new ERC20 token config to the guard (monotonic: add-only, never remove) |
 | `0xa314d1c5` | `guardApproveAlgorithm(uint8)` | nonpayable | onlyOwner | Approve a new algorithm (add-only, never revoke). |
@@ -376,7 +374,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xc4bb0566` | `p256KeyY()` | view | — | P256 public key y-coordinate |
 | `0x56dc31d0` | `parserRegistry()` | view | — | Optional calldata parser registry for DeFi protocol support (address(0) = disabled) |
 | `0x7bea8f76` | `pendingWeightChange()` | view | — | Pending weight-change proposal (M6.2). proposedAt == 0 means none pending. |
-| `0x7ee76082` | `proposeRecovery(address)` | nonpayable | — | Propose a recovery: change owner to a new address.         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals. |
 | `0x34e33bf6` | `removeGuardian(uint8,bytes[])` | nonpayable | onlyOwner | Remove a guardian by index.         Requires >= RECOVERY_THRESHOLD distinct guardian signatures to prevent unilateral removal.         Cannot remove when only 2 guardians remain (minimum 2 must be kept). |
 | `0xd0771689` | `requiredTier(uint256)` | view | — |  |
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | nonpayable | onlyOwner |  |
@@ -412,7 +409,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0xa526d83b` · nonpayable · access: onlyOwner
 
-> Add a recovery guardian. Max 3 guardians.
+> Add a recovery guardian. Owner-only when fewer than RECOVERY_THRESHOLD guardians exist         (pre-consensus bootstrap — a single guardian cannot form the required quorum anyway).         Once RECOVERY_THRESHOLD guardians are set, use addGuardianWithMixedSigs so a stolen         owner key cannot unilaterally change the guardian set.
 
 | param | type | description |
 |---|---|---|
@@ -441,20 +438,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `bool` |  |
-
-#### `approveRecovery()`
-
-`0xfcae8d38` · nonpayable · access: —
-
-> Approve an active recovery proposal.
-
-#### `cancelRecovery()`
-
-`0x0ba234d6` · nonpayable · access: —
-
-> Vote to cancel active recovery. Requires 2-of-3 guardian threshold.
-
-*@dev* Same security level as recovery itself. Owner cannot cancel because      if the key is stolen, the thief could block legitimate recovery.      Each guardian votes independently; when threshold is reached, recovery is cancelled.
 
 #### `entryPoint()`
 
@@ -490,15 +473,19 @@ Authoritative, auto-generated reference for every external/public function, even
 | `value` | `uint256[]` |  |
 | `func` | `bytes[]` |  |
 
-#### `executeRecovery()`
-
-`0x20c5a3e1` · nonpayable · access: —
-
-> Execute recovery after timelock and threshold are met.
-
 #### `getDeposit()`
 
 `0xc399ec88` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `getRecoveryNonce()`
+
+`0x3e43b0b6` · view · access: —
+
+> Returns the current recovery nonce (monotonic counter for P-256 sig replay protection).
 
 | returns | type | description |
 |---|---|---|
@@ -657,16 +644,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `proposedAt` | `uint256` |  |
 | `approvalBitmap` | `uint256` |  |
 
-#### `proposeRecovery(address _newOwner)`
-
-`0x7ee76082` · nonpayable · access: —
-
-> Propose a recovery: change owner to a new address.         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals.
-
-| param | type | description |
-|---|---|---|
-| `_newOwner` | `address` |  |
-
 #### `removeGuardian(uint8 index, bytes[] guardianSigs)`
 
 `0x34e33bf6` · nonpayable · access: onlyOwner
@@ -806,13 +783,14 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xd21d0b289f126c4b473ea641963e766833c2f13866e4ff480abd787c100ef123` | `ModuleInstalled(uint256,address)` |
 | `0x341347516a9de374859dfda710fa4828b2d48cb57d4fbe4c1149612b8e02276e` | `ModuleUninstalled(uint256,address)` |
 | `0xb532073b38c83145e3e5135377a08bf9aab55bc0fd7c1179cd4fb995d2a5159c` | `OwnerChanged(address,address)` |
+| `0x2ab721df8af22606080fcc695d2c255bf7bfb356dbe68e84057a3e29678de3ec` | `P256GuardianAdded(uint8,bytes32,bytes32)` |
 | `0x2e5ddc493d81d77b0b68b6603b29c467c94419656cea1684d2dce03f4bf321d6` | `P256KeySet(bytes32,bytes32)` |
 | `0x977b07fd434a26f95f2850c9ba651937e650394c8cfb96e9ffba8e42cb5ac76d` | `ParserRegistrySet(address)` |
-| `0x38f6835e133617134a3dec77dabbbf7e601b2a471d077ef5d72b4f8a7754c038` | `RecoveryApproved(address,address,uint256)` |
+| `0x3e6e8da9cdbaf0d18a1123306c76e088d32bb5e76edabe32eaaa4ba7a50adb37` | `RecoveryApproved(address,address,uint256,uint8)` |
 | `0xedd770ee01b7c0ef4f503125eafdc2725536cbf32342dffcaa300d95a7cafce3` | `RecoveryCancelled()` |
-| `0x884fb5da2c6cba411caabed041502fe9375907c22aa4109ab94d3ed305215dc6` | `RecoveryCancelVoted(address,uint256)` |
+| `0x85d108740bb57aaf934ce63690f939704d2ce4cd099bc9c8ac11cd38db40392b` | `RecoveryCancelVoted(address,uint256,uint8)` |
 | `0x60f9f98be64687700419cfa6fdd7877bc88c6daeb10bc664a2be9fdd6b0c7921` | `RecoveryExecuted(address,address)` |
-| `0xe189fc861f89a82adac6d12e9bb4465f134bae5af630f6045087e93257dff624` | `RecoveryProposed(address,address)` |
+| `0x201c40b4643e8b76c330a24e1a20d94dd5f798a3654180da40a29c00c18fe3b8` | `RecoveryProposed(address,address,uint8)` |
 | `0xcfe045f2bad73057c49e23a745cb13c8b763723eeb93336c01c3bcb32cb1fc91` | `TierLimitsSet(uint256,uint256)` |
 | `0x128d225533052ebf55fcccaa33435927c3530b794ac392f55bfda36e7d474543` | `ValidatorSet(address)` |
 | `0x15f128f27bdfb175cfbe98c20eeca3038a9ee15470ec88a4fbd5a16a20a73267` | `WeightChangeApproved(address,uint256)` |
@@ -833,6 +811,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xa5fa8d2b` | `CallFailed(bytes)` |
 | `0x9f081f40` | `CannotIncreaseTierLimit()` |
 | `0xa27fbc63` | `DuplicateGuardianSig()` |
+| `0x1e36aab2` | `DuplicateP256GuardianKey()` |
 | `0xf645eedf` | `ECDSAInvalidSignature()` |
 | `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
 | `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
@@ -849,6 +828,8 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xf92ee8a9` | `InvalidInitialization()` |
 | `0x2125deae` | `InvalidModuleType()` |
 | `0x54a56786` | `InvalidNewOwner()` |
+| `0x9b27bc53` | `InvalidP256GuardianKey()` |
+| `0x275178f8` | `InvalidP256GuardianSignature(uint8)` |
 | `0x2e14ce87` | `InvalidP256Key()` |
 | `0x9100d347` | `InvalidTierConfig()` |
 | `0xdfc3481a` | `MaxGuardiansReached()` |
@@ -872,6 +853,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x3f041335` | `SessionScopeViolation()` |
 | `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |
+| `0x6cd89112` | `UseGuardianConsensus()` |
 | `0x2157e2e7` | `ValidatorAlreadySet()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
 | `0xf6b2ebb8` | `WeightChangeAlreadyApproved()` |
@@ -913,15 +895,15 @@ Authoritative, auto-generated reference for every external/public function, even
 | selector | function | mutability | access | notice |
 |---|---|---|---|---|
 | `0x0d1cfcae` | `agentRegistry()` | view | — |  |
-| `0xa1d7a1d9` | `createAccount(address,uint256,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | — | Deploy a new account with full configuration. |
+| `0x5512953b` | `createAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | — | Deploy a new account with full configuration. |
 | `0xdd8d1e3a` | `createAccountWithDefaults(address,uint256,address,bytes,address,bytes,uint256)` | nonpayable | — | Deploy account with default community guardian as third guardian. |
 | `0x2b690ea6` | `createAgentAccount(address,bytes32,address,bytes,bytes,uint48,uint256)` | nonpayable | — | Create a dedicated AirAccount for an autonomous AI agent.         The human caller (msg.sender) becomes the account OWNER (not a guardian).         Guardians are [guardian2, communityGuardian] (2-of-2); only guardian2 must sign. |
 | `0x0753414f` | `defaultCommunityGuardian()` | view | — |  |
 | `0xb0d691fe` | `entryPoint()` | view | — |  |
 | `0xbd382b40` | `FACTORY_VERSION()` | view | — | Semantic version of this factory deployment. Used by SDKs for programmatic version detection. |
 | `0x17d8ec7f` | `factoryAdmin()` | view | — |  |
-| `0xd2b3ecc4` | `getAddress(address,uint256,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict the counterfactual address for a full-config account. |
-| `0x221f92cd` | `getAddressWithChainId(address,uint256,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict account address AND its chain-qualified identifier in one call. |
+| `0x3989c6b8` | `getAddress(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict the counterfactual address for a full-config account. |
+| `0x203df583` | `getAddressWithChainId(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict account address AND its chain-qualified identifier in one call. |
 | `0x17253640` | `getAddressWithDefaults(address,uint256,address,address,uint256)` | view | — | Predict address for a default-config account. |
 | `0x303f69a1` | `getAgentAddress(address,address,bytes32)` | view | — | Predict the address of a future agent account. |
 | `0x990bb980` | `getChainQualifiedAddress(address)` | view | — | ERC-7828: Returns a chain-qualified address identifier.         Enables cross-chain address disambiguation for accounts deployed at the same address         on multiple L2s via CREATE2 with the same salt. |
@@ -938,9 +920,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `createAccount(address owner, uint256 salt, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+#### `createAccount(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
 
-`0xa1d7a1d9` · nonpayable · access: —
+`0x5512953b` · nonpayable · access: —
 
 > Deploy a new account with full configuration.
 
@@ -948,7 +930,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` | Account owner (ECDSA signer) |
 | `salt` | `uint256` | CREATE2 salt for deterministic address |
-| `config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Full initialization config (guardians, guard, algorithms) |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Full initialization config (guardians, guard, algorithms) |
 
 | returns | type | description |
 |---|---|---|
@@ -1030,9 +1012,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `getAddress(address owner, uint256 salt, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+#### `getAddress(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
 
-`0xd2b3ecc4` · view · access: —
+`0x3989c6b8` · view · access: —
 
 > Predict the counterfactual address for a full-config account.
 
@@ -1042,15 +1024,15 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
-| `config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
 
 | returns | type | description |
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `getAddressWithChainId(address owner, uint256 salt, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+#### `getAddressWithChainId(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
 
-`0x221f92cd` · view · access: —
+`0x203df583` · view · access: —
 
 > Predict account address AND its chain-qualified identifier in one call.
 
@@ -1060,7 +1042,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
-| `config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
 
 | returns | type | description |
 |---|---|---|
@@ -1181,7 +1163,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 54 · **Events:** 26 · **Errors:** 55
+- **Functions:** 51 · **Events:** 27 · **Errors:** 59
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1193,18 +1175,16 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x9cfd7cff` | `accountId()` | pure | — | ERC-7579 account identity string.         Format: "vendor.name.version" — enables tooling to identify this account type. |
 | `0xb5cb7bb8` | `activeRecovery()` | view | — | Active recovery proposal |
 | `0x4a58db19` | `addDeposit()` | payable | — |  |
-| `0xa526d83b` | `addGuardian(address)` | nonpayable | — | Add a recovery guardian. Max 3 guardians. |
+| `0xa526d83b` | `addGuardian(address)` | nonpayable | — | Add a recovery guardian. Owner-only when fewer than RECOVERY_THRESHOLD guardians exist         (pre-consensus bootstrap — a single guardian cannot form the required quorum anyway).         Once RECOVERY_THRESHOLD guardians are set, use addGuardianWithMixedSigs so a stolen         owner key cannot unilaterally change the guardian set. |
 | `0x8fc2128e` | `agentExtension()` | view | — | Singleton AgentExtension holding ERC-8004 agent functions, reached via fallback. |
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
-| `0xfcae8d38` | `approveRecovery()` | nonpayable | — | Approve an active recovery proposal. |
-| `0x0ba234d6` | `cancelRecovery()` | nonpayable | — | Vote to cancel active recovery. Requires 2-of-3 guardian threshold. |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
 | `0xb61d27f6` | `execute(address,uint256,bytes)` | nonpayable | — | Execute a single call from this account. |
 | `0x47e1da2a` | `executeBatch(address[],uint256[],bytes[])` | nonpayable | — | Execute a batch of calls from this account. |
 | `0xd691c964` | `executeFromExecutor(bytes32,bytes)` | nonpayable | nonReentrant | ERC-7579: Execute a single call on behalf of this account, called by an installed executor module.         Executor modules are installed via guardians (installModule requires guardian sig), providing         authentication. The full guard is enforced here at Tier 1 (ALG_ECDSA). |
-| `0x20c5a3e1` | `executeRecovery()` | nonpayable | — | Execute recovery after timelock and threshold are met. |
 | `0x8dd7712f` | `executeUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)` | nonpayable | onlyEntryPoint |  |
 | `0xc399ec88` | `getDeposit()` | view | — |  |
+| `0x3e43b0b6` | `getRecoveryNonce()` | view | — | Returns the current recovery nonce (monotonic counter for P-256 sig replay protection). |
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
 | `0xc19c7050` | `guardAddTokenConfig(address,(uint128,uint128,uint256))` | nonpayable | — | Add a new ERC20 token config to the guard (monotonic: add-only, never remove) |
 | `0xa314d1c5` | `guardApproveAlgorithm(uint8)` | nonpayable | — | Approve a new algorithm (add-only, never revoke). |
@@ -1213,9 +1193,9 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x54387ad7` | `guardianCount()` | view | — | Returns number of active guardians. |
 | `0xf560c734` | `guardians(uint256)` | view | — | Returns guardian address at index (0-2). Returns address(0) for empty slots. |
 | `0x253e659b` | `guardSetStrictMode(bool)` | nonpayable | — | #22: toggle the guard's strict mode (block unconfigured tokens). Default OFF. |
-| `0xb8b72f02` | `initialize(address,address,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit. |
-| `0xd8844741` | `initialize(address,address,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization. |
-| `0x37e831ed` | `initializeAgentAccount(address,address,(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize an autonomous-agent account. |
+| `0x1ab193d8` | `initialize(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit. |
+| `0x3cb406a8` | `initialize(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization. |
+| `0xe2a30d26` | `initializeAgentAccount(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize an autonomous-agent account. |
 | `0x9517e29f` | `installModule(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | ERC-7579: Install a module. |
 | `0x112d3a7d` | `isModuleInstalled(uint256,address,bytes)` | view | — | ERC-7579: check whether a module is installed.         Checks the unified module registry for supported types (1,2,4).         Note: the built-in ECDSA validator is registered at initialize time. |
 | `0x1626ba7e` | `isValidSignature(bytes32,bytes)` | view | — | ERC-1271: on-chain signature validation used by ERC-7579 tooling and DeFi protocols.         Validates that the ECDSA signature was produced by this account's owner. |
@@ -1227,7 +1207,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xc4bb0566` | `p256KeyY()` | view | — | P256 public key y-coordinate |
 | `0x56dc31d0` | `parserRegistry()` | view | — | Optional calldata parser registry for DeFi protocol support (address(0) = disabled) |
 | `0x7bea8f76` | `pendingWeightChange()` | view | — | Pending weight-change proposal (M6.2). proposedAt == 0 means none pending. |
-| `0x7ee76082` | `proposeRecovery(address)` | nonpayable | — | Propose a recovery: change owner to a new address.         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals. |
 | `0x34e33bf6` | `removeGuardian(uint8,bytes[])` | nonpayable | — | Remove a guardian by index.         Requires >= RECOVERY_THRESHOLD distinct guardian signatures to prevent unilateral removal.         Cannot remove when only 2 guardians remain (minimum 2 must be kept). |
 | `0xd0771689` | `requiredTier(uint256)` | view | — |  |
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | nonpayable | — |  |
@@ -1287,7 +1266,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0xa526d83b` · nonpayable · access: —
 
-> Add a recovery guardian. Max 3 guardians.
+> Add a recovery guardian. Owner-only when fewer than RECOVERY_THRESHOLD guardians exist         (pre-consensus bootstrap — a single guardian cannot form the required quorum anyway).         Once RECOVERY_THRESHOLD guardians are set, use addGuardianWithMixedSigs so a stolen         owner key cannot unilaterally change the guardian set.
 
 | param | type | description |
 |---|---|---|
@@ -1316,20 +1295,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `bool` |  |
-
-#### `approveRecovery()`
-
-`0xfcae8d38` · nonpayable · access: —
-
-> Approve an active recovery proposal.
-
-#### `cancelRecovery()`
-
-`0x0ba234d6` · nonpayable · access: —
-
-> Vote to cancel active recovery. Requires 2-of-3 guardian threshold.
-
-*@dev* Same security level as recovery itself. Owner cannot cancel because      if the key is stolen, the thief could block legitimate recovery.      Each guardian votes independently; when threshold is reached, recovery is cancelled.
 
 #### `entryPoint()`
 
@@ -1382,12 +1347,6 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `returnData` | `bytes[]` | Single-element array with the call's return bytes |
 
-#### `executeRecovery()`
-
-`0x20c5a3e1` · nonpayable · access: —
-
-> Execute recovery after timelock and threshold are met.
-
 #### `executeUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes) userOp, bytes32 userOpHash)`
 
 `0x8dd7712f` · nonpayable · access: onlyEntryPoint
@@ -1400,6 +1359,16 @@ Authoritative, auto-generated reference for every external/public function, even
 #### `getDeposit()`
 
 `0xc399ec88` · view · access: —
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `getRecoveryNonce()`
+
+`0x3e43b0b6` · view · access: —
+
+> Returns the current recovery nonce (monotonic counter for P-256 sig replay protection).
 
 | returns | type | description |
 |---|---|---|
@@ -1493,9 +1462,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `enabled` | `bool` |  |
 
-#### `initialize(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
+#### `initialize(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
 
-`0xb8b72f02` · nonpayable · access: initializer
+`0x1ab193d8` · nonpayable · access: initializer
 
 > Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit.
 
@@ -1503,12 +1472,12 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_entryPoint` | `address` | ERC-4337 EntryPoint address |
 | `_owner` | `address` | Initial account owner (ECDSA signer) |
-| `_config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr) |
+| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr) |
 | `_guardAddr` | `address` | Pre-deployed AAStarGlobalGuard address bound to this account's address |
 
-#### `initialize(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config)`
+#### `initialize(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config)`
 
-`0xd8844741` · nonpayable · access: initializer
+`0x3cb406a8` · nonpayable · access: initializer
 
 > Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization.
 
@@ -1516,11 +1485,11 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_entryPoint` | `address` | ERC-4337 EntryPoint address |
 | `_owner` | `address` | Initial account owner (ECDSA signer) |
-| `_config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed) |
+| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed) |
 
-#### `initializeAgentAccount(address _entryPoint, address _owner, (address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
+#### `initializeAgentAccount(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
 
-`0x37e831ed` · nonpayable · access: initializer
+`0xe2a30d26` · nonpayable · access: initializer
 
 > Initialize an autonomous-agent account.
 
@@ -1530,7 +1499,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_entryPoint` | `address` |  |
 | `_owner` | `address` |  |
-| `_config` | `(address[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
 | `_guardAddr` | `address` |  |
 
 #### `installModule(uint256 moduleTypeId, address module, bytes initData)`
@@ -1669,16 +1638,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `proposed` | `(uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8)` |  |
 | `proposedAt` | `uint256` |  |
 | `approvalBitmap` | `uint256` |  |
-
-#### `proposeRecovery(address _newOwner)`
-
-`0x7ee76082` · nonpayable · access: —
-
-> Propose a recovery: change owner to a new address.         Any guardian can propose. Requires RECOVERY_THRESHOLD approvals.
-
-| param | type | description |
-|---|---|---|
-| `_newOwner` | `address` |  |
 
 #### `removeGuardian(uint8 index, bytes[] guardianSigs)`
 
@@ -1879,13 +1838,14 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xd21d0b289f126c4b473ea641963e766833c2f13866e4ff480abd787c100ef123` | `ModuleInstalled(uint256,address)` |
 | `0x341347516a9de374859dfda710fa4828b2d48cb57d4fbe4c1149612b8e02276e` | `ModuleUninstalled(uint256,address)` |
 | `0xb532073b38c83145e3e5135377a08bf9aab55bc0fd7c1179cd4fb995d2a5159c` | `OwnerChanged(address,address)` |
+| `0x2ab721df8af22606080fcc695d2c255bf7bfb356dbe68e84057a3e29678de3ec` | `P256GuardianAdded(uint8,bytes32,bytes32)` |
 | `0x2e5ddc493d81d77b0b68b6603b29c467c94419656cea1684d2dce03f4bf321d6` | `P256KeySet(bytes32,bytes32)` |
 | `0x977b07fd434a26f95f2850c9ba651937e650394c8cfb96e9ffba8e42cb5ac76d` | `ParserRegistrySet(address)` |
-| `0x38f6835e133617134a3dec77dabbbf7e601b2a471d077ef5d72b4f8a7754c038` | `RecoveryApproved(address,address,uint256)` |
+| `0x3e6e8da9cdbaf0d18a1123306c76e088d32bb5e76edabe32eaaa4ba7a50adb37` | `RecoveryApproved(address,address,uint256,uint8)` |
 | `0xedd770ee01b7c0ef4f503125eafdc2725536cbf32342dffcaa300d95a7cafce3` | `RecoveryCancelled()` |
-| `0x884fb5da2c6cba411caabed041502fe9375907c22aa4109ab94d3ed305215dc6` | `RecoveryCancelVoted(address,uint256)` |
+| `0x85d108740bb57aaf934ce63690f939704d2ce4cd099bc9c8ac11cd38db40392b` | `RecoveryCancelVoted(address,uint256,uint8)` |
 | `0x60f9f98be64687700419cfa6fdd7877bc88c6daeb10bc664a2be9fdd6b0c7921` | `RecoveryExecuted(address,address)` |
-| `0xe189fc861f89a82adac6d12e9bb4465f134bae5af630f6045087e93257dff624` | `RecoveryProposed(address,address)` |
+| `0x201c40b4643e8b76c330a24e1a20d94dd5f798a3654180da40a29c00c18fe3b8` | `RecoveryProposed(address,address,uint8)` |
 | `0xcfe045f2bad73057c49e23a745cb13c8b763723eeb93336c01c3bcb32cb1fc91` | `TierLimitsSet(uint256,uint256)` |
 | `0x128d225533052ebf55fcccaa33435927c3530b794ac392f55bfda36e7d474543` | `ValidatorSet(address)` |
 | `0x15f128f27bdfb175cfbe98c20eeca3038a9ee15470ec88a4fbd5a16a20a73267` | `WeightChangeApproved(address,uint256)` |
@@ -1906,6 +1866,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xa5fa8d2b` | `CallFailed(bytes)` |
 | `0x9f081f40` | `CannotIncreaseTierLimit()` |
 | `0xa27fbc63` | `DuplicateGuardianSig()` |
+| `0x1e36aab2` | `DuplicateP256GuardianKey()` |
 | `0xf645eedf` | `ECDSAInvalidSignature()` |
 | `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
 | `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
@@ -1922,6 +1883,8 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xf92ee8a9` | `InvalidInitialization()` |
 | `0x2125deae` | `InvalidModuleType()` |
 | `0x54a56786` | `InvalidNewOwner()` |
+| `0x9b27bc53` | `InvalidP256GuardianKey()` |
+| `0x275178f8` | `InvalidP256GuardianSignature(uint8)` |
 | `0x2e14ce87` | `InvalidP256Key()` |
 | `0x9100d347` | `InvalidTierConfig()` |
 | `0xdfc3481a` | `MaxGuardiansReached()` |
@@ -1946,6 +1909,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |
 | `0x63ce4efa` | `UnsupportedInnerSelector()` |
+| `0x6cd89112` | `UseGuardianConsensus()` |
 | `0x2157e2e7` | `ValidatorAlreadySet()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
 | `0xf6b2ebb8` | `WeightChangeAlreadyApproved()` |
@@ -2481,7 +2445,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AirAccountExtension
 
 - **Source:** `src/core/AirAccountExtension.sol`
-- **Functions:** 29 · **Events:** 15 · **Errors:** 35
+- **Functions:** 42 · **Events:** 25 · **Errors:** 56
 - **Title:** AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 - Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase         to keep the account under EIP-170's 24,576-byte runtime limit:           - ERC-8004 agent identity / reputation / wallet binding           - weighted-signature config governance (setWeightConfig + change proposal flow)         Deployed once (singleton) per implementation; the account reaches it via fallback +         delegatecall, so all logic runs in the ACCOUNT's storage/context: msg.sender,         address(this), owner, guardians, events and reverts are exactly as if inline.
 
@@ -2490,16 +2454,26 @@ Authoritative, auto-generated reference for every external/public function, even
 | selector | function | mutability | access | notice |
 |---|---|---|---|---|
 | `0xb5cb7bb8` | `activeRecovery()` | view | — | Active recovery proposal |
+| `0x79e26729` | `addGuardianWithMixedSigs(address,uint8[],bytes[])` | nonpayable | onlyOwner | Add an ECDSA guardian with existing guardian consensus.         Requires RECOVERY_THRESHOLD valid guardian signatures. |
+| `0x04f79674` | `addP256Guardian(bytes32,bytes32)` | nonpayable | onlyOwner | Add a P-256 (passkey) guardian — owner-only while fewer than RECOVERY_THRESHOLD         guardians exist (pre-consensus bootstrap; a single guardian cannot form a quorum).         Once RECOVERY_THRESHOLD guardians are set, call addP256GuardianWithMixedSigs instead. |
+| `0xd99b0a36` | `addP256GuardianWithMixedSigs(bytes32,bytes32,uint8[],bytes[])` | nonpayable | onlyOwner | Add a P-256 (passkey) guardian with existing guardian consensus.         Requires RECOVERY_THRESHOLD valid guardian signatures so a stolen owner key         cannot expand the guardian set without the current guardians' approval. |
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
+| `0xfcae8d38` | `approveRecovery()` | nonpayable | — | An ECDSA guardian approves the active recovery proposal. |
+| `0x47a90550` | `approveRecoveryWithSig(uint8,bytes)` | nonpayable | — | P-256 guardian approves an active recovery proposal. |
 | `0xcc2b82d9` | `approveWeightChange()` | nonpayable | — | Guardian approves the pending weight-change proposal. |
 | `0x67e3afe7` | `bindERC8004AgentWallet(address,uint256,address,uint256,bytes)` | nonpayable | onlyOwner, nonReentrant | Bind an execution wallet to an ERC-8004 agent identity NFT. |
 | `0xb60295e1` | `cancelModuleInstall()` | nonpayable | — | Cancel the pending module-install proposal during the timelock window (issue #58 / KI-6). |
+| `0x0ba234d6` | `cancelRecovery()` | nonpayable | — | An ECDSA guardian votes to cancel the active recovery. 2-of-3 threshold clears it. |
+| `0x20617b94` | `cancelRecoveryWithSig(uint8,bytes)` | nonpayable | — | P-256 guardian votes to cancel an active recovery proposal. |
 | `0x5f9613dd` | `cancelWeightChange()` | nonpayable | — | Cancel a pending weight-change proposal. Owner or any guardian can cancel. |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
 | `0x4bc15d2b` | `executeModuleInstall(bytes)` | nonpayable | nonReentrant | Execute a matured module-install proposal (issue #58 / KI-6). |
+| `0x20c5a3e1` | `executeRecovery()` | nonpayable | — | Execute recovery after timelock and threshold are met. Permissionless trigger. |
 | `0x35905bb0` | `executeWeightChange()` | nonpayable | — | Execute an approved weight-change after timelock and threshold are met. |
+| `0x43538f9c` | `getGuardianP256Key(uint8)` | view | — | Get the P-256 public key stored for a guardian slot (returns (0,0) if not a P-256 slot). |
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
 | `0x353f0860` | `mintAgentIdentity(address,string)` | nonpayable | onlyOwner, nonReentrant | Mint an ERC-8004 agent identity NFT to this AirAccount via the official registry. |
+| `0x642c7989` | `modifyTierLimitsWithMixedGuardians(uint256,uint256,uint256,uint8[],bytes[])` | nonpayable | onlyOwner | Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type. |
 | `0xc8175b3f` | `moduleInstallTimelock()` | view | — | Read the active module-install timelock (seconds). 0 = disabled (immediate installs). |
 | `0x8da5cb5b` | `owner()` | view | — | Account owner and ECDSA signer (mutable for social recovery) |
 | `0x863ee512` | `p256KeyX()` | view | — | P256 public key x-coordinate |
@@ -2508,8 +2482,11 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8dbbce84` | `pendingModuleInstall()` | view | — | Read the pending module-install proposal. proposedAt == 0 means none pending. |
 | `0x7bea8f76` | `pendingWeightChange()` | view | — | Pending weight-change proposal (M6.2). proposedAt == 0 means none pending. |
 | `0x9bbbb8ae` | `proposeModuleInstall(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | Propose a module install for the timelocked two-step flow (issue #58 / KI-6). |
+| `0x7ee76082` | `proposeRecovery(address)` | nonpayable | — | An ECDSA guardian proposes a recovery. Any guardian may propose; auto-approves self. |
+| `0x1110ac2e` | `proposeRecoveryWithSig(address,uint8,bytes)` | nonpayable | — | P-256 guardian proposes a recovery (any relayer can submit the pre-signed calldata). |
 | `0x6b56c654` | `proposeWeightChange((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | onlyOwner | Propose a weakening weight-config change (guardian-gated, M6.2). |
 | `0xf9c391f6` | `queryAgentReputation(address,uint256,address[],string,string)` | view | — | Query aggregated reputation for an agent across a set of clients. |
+| `0x8abb1c2a` | `removeGuardianWithMixedSigs(uint8,uint8[],bytes[])` | nonpayable | onlyOwner | Remove a guardian by index using mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type (which can't use the ECDSA-only path). |
 | `0x293e07f2` | `setAgentWallet(uint256,address,address,bytes)` | nonpayable | onlyOwner | Link an agent wallet to this AirAccount by registering it in AgentRegistry. |
 | `0xa5b915b5` | `setModuleInstallTimelock(uint256,bytes)` | nonpayable | onlyOwnerOrEntryPoint | Configure the optional module-install timelock (issue #58 / KI-6). |
 | `0x10d47802` | `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | onlyOwner | Set the weight configuration for algId 0x07. First-time: direct owner call.         Subsequent weakening changes require the guardian proposal flow (M6.2). |
@@ -2534,6 +2511,42 @@ Authoritative, auto-generated reference for every external/public function, even
 | `approvalBitmap` | `uint256` |  |
 | `cancellationBitmap` | `uint256` |  |
 
+#### `addGuardianWithMixedSigs(address _guardian, uint8[] signerIdxs, bytes[] sigs)`
+
+`0x79e26729` · nonpayable · access: onlyOwner
+
+> Add an ECDSA guardian with existing guardian consensus.         Requires RECOVERY_THRESHOLD valid guardian signatures.
+
+| param | type | description |
+|---|---|---|
+| `_guardian` | `address` |  |
+| `signerIdxs` | `uint8[]` |  |
+| `sigs` | `bytes[]` |  |
+
+#### `addP256Guardian(bytes32 x, bytes32 y)`
+
+`0x04f79674` · nonpayable · access: onlyOwner
+
+> Add a P-256 (passkey) guardian — owner-only while fewer than RECOVERY_THRESHOLD         guardians exist (pre-consensus bootstrap; a single guardian cannot form a quorum).         Once RECOVERY_THRESHOLD guardians are set, call addP256GuardianWithMixedSigs instead.
+
+| param | type | description |
+|---|---|---|
+| `x` | `bytes32` |  |
+| `y` | `bytes32` |  |
+
+#### `addP256GuardianWithMixedSigs(bytes32 x, bytes32 y, uint8[] signerIdxs, bytes[] sigs)`
+
+`0xd99b0a36` · nonpayable · access: onlyOwner
+
+> Add a P-256 (passkey) guardian with existing guardian consensus.         Requires RECOVERY_THRESHOLD valid guardian signatures so a stolen owner key         cannot expand the guardian set without the current guardians' approval.
+
+| param | type | description |
+|---|---|---|
+| `x` | `bytes32` |  |
+| `y` | `bytes32` |  |
+| `signerIdxs` | `uint8[]` |  |
+| `sigs` | `bytes[]` |  |
+
 #### `approvedAlgorithms(uint8 arg0)`
 
 `0x8450a928` · view · access: —
@@ -2547,6 +2560,23 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `bool` |  |
+
+#### `approveRecovery()`
+
+`0xfcae8d38` · nonpayable · access: —
+
+> An ECDSA guardian approves the active recovery proposal.
+
+#### `approveRecoveryWithSig(uint8 gIdx, bytes sig)`
+
+`0x47a90550` · nonpayable · access: —
+
+> P-256 guardian approves an active recovery proposal.
+
+| param | type | description |
+|---|---|---|
+| `gIdx` | `uint8` | Guardian slot index |
+| `sig` | `bytes` | WebAuthn assertion blob authorizing this approval |
 
 #### `approveWeightChange()`
 
@@ -2576,6 +2606,25 @@ Authoritative, auto-generated reference for every external/public function, even
 
 *@dev* Owner OR any single guardian may veto. The timelock exists precisely to let ANY other      stakeholder stop an install pushed through by a compromised owner+1-guardian pair, so a      single honest party must be able to cancel. This deliberately mirrors cancelWeightChange      (owner-or-any-guardian) rather than the 2-of-3 cancelRecovery: recovery's higher cancel bar      stops a lone compromised guardian from blocking legitimate recovery, but here easy      cancellation IS the defense, so the looser rule is the safer one.
 
+#### `cancelRecovery()`
+
+`0x0ba234d6` · nonpayable · access: —
+
+> An ECDSA guardian votes to cancel the active recovery. 2-of-3 threshold clears it.
+
+*@dev* Owner cannot cancel: a stolen owner key could otherwise block legitimate recovery.
+
+#### `cancelRecoveryWithSig(uint8 gIdx, bytes sig)`
+
+`0x20617b94` · nonpayable · access: —
+
+> P-256 guardian votes to cancel an active recovery proposal.
+
+| param | type | description |
+|---|---|---|
+| `gIdx` | `uint8` | Guardian slot index |
+| `sig` | `bytes` | WebAuthn assertion blob authorizing this cancel vote |
+
 #### `cancelWeightChange()`
 
 `0x5f9613dd` · nonpayable · access: —
@@ -2604,11 +2653,32 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `moduleInitData` | `bytes` | The module init data committed at propose time. |
 
+#### `executeRecovery()`
+
+`0x20c5a3e1` · nonpayable · access: —
+
+> Execute recovery after timelock and threshold are met. Permissionless trigger.
+
 #### `executeWeightChange()`
 
 `0x35905bb0` · nonpayable · access: —
 
 > Execute an approved weight-change after timelock and threshold are met.
+
+#### `getGuardianP256Key(uint8 index)`
+
+`0x43538f9c` · view · access: —
+
+> Get the P-256 public key stored for a guardian slot (returns (0,0) if not a P-256 slot).
+
+| param | type | description |
+|---|---|---|
+| `index` | `uint8` |  |
+
+| returns | type | description |
+|---|---|---|
+| `x` | `bytes32` |  |
+| `y` | `bytes32` |  |
 
 #### `guard()`
 
@@ -2634,6 +2704,20 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `agentId` | `uint256` |  |
+
+#### `modifyTierLimitsWithMixedGuardians(uint256 _tier1, uint256 _tier2, uint256 deadline, uint8[] signerIdxs, bytes[] sigs)`
+
+`0x642c7989` · nonpayable · access: onlyOwner
+
+> Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type.
+
+| param | type | description |
+|---|---|---|
+| `_tier1` | `uint256` |  |
+| `_tier2` | `uint256` |  |
+| `deadline` | `uint256` |  |
+| `signerIdxs` | `uint8[]` | Guardian slot indices corresponding to each signature |
+| `sigs` | `bytes[]` | Signatures: 65-byte (r\|\|s\|\|v) eth-signed sig for ECDSA; for P-256 the WebAuthn                   assertion blob abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s) |
 
 #### `moduleInstallTimelock()`
 
@@ -2725,6 +2809,28 @@ Authoritative, auto-generated reference for every external/public function, even
 | `module` | `address` | Module contract address (must be deployed). |
 | `initData` | `bytes` | Layout: guardian sig(s) prepended (per configured threshold), then module init data.        Sig hash: _guardianOpHash("INSTALL_MODULE", abi.encode(moduleTypeId, module, keccak256(moduleInitData), moduleManagementNonce)). |
 
+#### `proposeRecovery(address newOwner)`
+
+`0x7ee76082` · nonpayable · access: —
+
+> An ECDSA guardian proposes a recovery. Any guardian may propose; auto-approves self.
+
+| param | type | description |
+|---|---|---|
+| `newOwner` | `address` |  |
+
+#### `proposeRecoveryWithSig(address newOwner, uint8 gIdx, bytes sig)`
+
+`0x1110ac2e` · nonpayable · access: —
+
+> P-256 guardian proposes a recovery (any relayer can submit the pre-signed calldata).
+
+| param | type | description |
+|---|---|---|
+| `newOwner` | `address` | Target owner address after recovery |
+| `gIdx` | `uint8` | Guardian slot index (0/1/2) |
+| `sig` | `bytes` | WebAuthn assertion blob authorizing this proposal |
+
 #### `proposeWeightChange((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8) proposed)`
 
 `0x6b56c654` · nonpayable · access: onlyOwner
@@ -2754,6 +2860,18 @@ Authoritative, auto-generated reference for every external/public function, even
 | `count` | `uint64` |  |
 | `summaryValue` | `int128` |  |
 | `summaryDecimals` | `uint8` |  |
+
+#### `removeGuardianWithMixedSigs(uint8 index, uint8[] signerIdxs, bytes[] sigs)`
+
+`0x8abb1c2a` · nonpayable · access: onlyOwner
+
+> Remove a guardian by index using mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type (which can't use the ECDSA-only path).
+
+| param | type | description |
+|---|---|---|
+| `index` | `uint8` | Slot to remove (0-indexed) |
+| `signerIdxs` | `uint8[]` | Guardian slot indices corresponding to each signature |
+| `sigs` | `bytes[]` | Signatures: 65-byte (r\|\|s\|\|v) eth-signed sig for ECDSA guardians; for P-256                   guardians the WebAuthn assertion blob                   abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s) |
 
 #### `setAgentWallet(uint256 agentId, address agentWallet, address agentRegistry, bytes agentWalletSig)`
 
@@ -2866,12 +2984,22 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xee0112c63253e47e4ff7403776240bef35d82b6feba08ea6ecb20f8a4ab75e92` | `AgentReputationSubmitted(uint256,address,int128,string)` |
 | `0xc8982c1ad4646a1ed6bb40061ac7f2a6aaffef7f2e096aa9805cf705fa12933b` | `AgentWalletSet(uint256,address,address)` |
 | `0xaadd69bae4c5060e9be224899997360e78e4ee632c9951aa0055eeeb5bfc6662` | `ERC8004WalletBound(uint256,address,address)` |
+| `0xeca9cd482b52ddd909a1a2ffcceae1b6dd76b5491ec997d8d9ac05c6426fa344` | `GuardianAdded(uint8,address)` |
+| `0x21d14a63615c145863fb5004c412ccf4ba2439b31bfd93baf5892142417ae5bf` | `GuardianRemoved(uint8,address)` |
 | `0xc7f505b2f371ae2175ee4913f4499e1f2633a7b5936321eed1cdaeb6115181d2` | `Initialized(uint64)` |
 | `0xfc129a9cf9c86292bfb325ad90f24fea23449a3870fdaa024bbfbf1afdf3db31` | `ModuleInstallCancelled(uint256,address,address)` |
 | `0xd21d0b289f126c4b473ea641963e766833c2f13866e4ff480abd787c100ef123` | `ModuleInstalled(uint256,address)` |
 | `0xcb23826c065976de3d72ab586bb16e6910ad23028abf0885a015fa54face86b3` | `ModuleInstallExecuted(uint256,address)` |
 | `0x961131cbbaf1bc03ad2365a2fb7e266c712005e704c38832cfb7a3014a3580fb` | `ModuleInstallProposed(uint256,address,uint256)` |
 | `0x27db7bd98a100c6f2a3ebfce33cb9dd05ee5a152452bd211e8535ac2becb861a` | `ModuleInstallTimelockChanged(uint256,uint256)` |
+| `0xb532073b38c83145e3e5135377a08bf9aab55bc0fd7c1179cd4fb995d2a5159c` | `OwnerChanged(address,address)` |
+| `0x2ab721df8af22606080fcc695d2c255bf7bfb356dbe68e84057a3e29678de3ec` | `P256GuardianAdded(uint8,bytes32,bytes32)` |
+| `0x3e6e8da9cdbaf0d18a1123306c76e088d32bb5e76edabe32eaaa4ba7a50adb37` | `RecoveryApproved(address,address,uint256,uint8)` |
+| `0xedd770ee01b7c0ef4f503125eafdc2725536cbf32342dffcaa300d95a7cafce3` | `RecoveryCancelled()` |
+| `0x85d108740bb57aaf934ce63690f939704d2ce4cd099bc9c8ac11cd38db40392b` | `RecoveryCancelVoted(address,uint256,uint8)` |
+| `0x60f9f98be64687700419cfa6fdd7877bc88c6daeb10bc664a2be9fdd6b0c7921` | `RecoveryExecuted(address,address)` |
+| `0x201c40b4643e8b76c330a24e1a20d94dd5f798a3654180da40a29c00c18fe3b8` | `RecoveryProposed(address,address,uint8)` |
+| `0xcfe045f2bad73057c49e23a745cb13c8b763723eeb93336c01c3bcb32cb1fc91` | `TierLimitsSet(uint256,uint256)` |
 | `0x15f128f27bdfb175cfbe98c20eeca3038a9ee15470ec88a4fbd5a16a20a73267` | `WeightChangeApproved(address,uint256)` |
 | `0x576deb2334d64aacc3de78fdc843b12c4601431d7d7546f8ef6ff413d18ad8e7` | `WeightChangeCancelled()` |
 | `0xc94d426438944eb97ead040cba3930306dd959e6f9382bf215ad45427c03ecb6` | `WeightChangeExecuted((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8),(uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` |
@@ -2883,15 +3011,30 @@ Authoritative, auto-generated reference for every external/public function, even
 | selector | error |
 |---|---|
 | `0x71a31c27` | `AgentRegistrationFailed()` |
+| `0x101f817a` | `AlreadyApproved()` |
+| `0x0f5ff7bf` | `AlreadyCancelVoted()` |
+| `0x9f081f40` | `CannotIncreaseTierLimit()` |
+| `0xa27fbc63` | `DuplicateGuardianSig()` |
+| `0x1e36aab2` | `DuplicateP256GuardianKey()` |
 | `0xf645eedf` | `ECDSAInvalidSignature()` |
 | `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
 | `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
+| `0x53682430` | `GuardianAlreadySet()` |
 | `0xe04a2600` | `IdentityRegistrationFailed()` |
 | `0xa59a4151` | `InsecureWeightConfig()` |
 | `0xdb5c22f4` | `InstallModuleUnauthorized()` |
+| `0x16730a70` | `InsufficientGuardianApprovals()` |
+| `0xfc934792` | `InvalidAuthenticatorData()` |
 | `0xa6c1146b` | `InvalidGuardian()` |
+| `0x07a81bc4` | `InvalidGuardianSignature()` |
 | `0xf92ee8a9` | `InvalidInitialization()` |
 | `0x2125deae` | `InvalidModuleType()` |
+| `0x54a56786` | `InvalidNewOwner()` |
+| `0x9b27bc53` | `InvalidP256GuardianKey()` |
+| `0x275178f8` | `InvalidP256GuardianSignature(uint8)` |
+| `0x9100d347` | `InvalidTierConfig()` |
+| `0xdfc3481a` | `MaxGuardiansReached()` |
+| `0x36bf0fb2` | `MinGuardianRequired()` |
 | `0x24c377e2` | `ModuleAlreadyInstalled()` |
 | `0xe8e195da` | `ModuleInstallAuthChanged()` |
 | `0xf45e530b` | `ModuleInstallCallbackFailed(uint256,address)` |
@@ -2902,6 +3045,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xce1d6b48` | `ModuleInstallTimelockNotExpired()` |
 | `0xfb3e466e` | `ModuleInstallTimelockTooLong()` |
 | `0x74be437f` | `ModuleInvalid()` |
+| `0x8267d100` | `NoActiveRecovery()` |
 | `0x69cc141f` | `NoModuleInstallProposal()` |
 | `0xef6d0f02` | `NotGuardian()` |
 | `0xd7e6bcf8` | `NotInitializing()` |
@@ -2909,9 +3053,14 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x50a222f4` | `NotOwnerOrEntryPoint()` |
 | `0x1e142ec1` | `NoWeightChangeProposal()` |
 | `0x6e5510ce` | `RecoveryAlreadyActive()` |
+| `0xab4e316d` | `RecoveryAlreadyProposed()` |
+| `0x39d51cb2` | `RecoveryNotApproved()` |
+| `0xaa40cfc6` | `RecoveryTimelockNotExpired()` |
 | `0xab143c06` | `Reentrancy()` |
+| `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |
 | `0xc3a55c98` | `UnsupportedChain(uint256)` |
+| `0x6cd89112` | `UseGuardianConsensus()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
 | `0xf6b2ebb8` | `WeightChangeAlreadyApproved()` |
 | `0xf0854cb8` | `WeightChangeNotApproved()` |

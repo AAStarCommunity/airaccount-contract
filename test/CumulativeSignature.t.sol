@@ -87,6 +87,8 @@ contract CumulativeSignatureTest is Test {
         uint8[] memory noAlgs = new uint8[](0);
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [guardianWallet1.addr, guardianWallet2.addr, guardianWallet3.addr],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
@@ -161,6 +163,8 @@ contract CumulativeSignatureTest is Test {
         uint8[] memory noAlgs = new uint8[](0);
         AAStarAirAccountBase.InitConfig memory config = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,

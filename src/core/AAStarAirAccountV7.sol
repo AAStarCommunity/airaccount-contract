@@ -34,7 +34,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this contract deployment. Used by SDKs for programmatic version detection.
-    string public constant ACCOUNT_VERSION = "0.19.0";
+    string public constant ACCOUNT_VERSION = "0.20.0";
 
     /// @dev Implementation constructor. Does NOT disable initializers so that direct `new` in tests works.
     ///      The factory deploys one shared implementation and uses Clones for user accounts.
@@ -46,7 +46,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @param _owner Initial account owner (ECDSA signer)
     /// @param _config Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed)
     function initialize(address _entryPoint, address _owner, InitConfig calldata _config) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, address(0), _config.approvedAlgIds);
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.guardianP256X, _config.guardianP256Y, _config.minDailyLimit, address(0), _config.approvedAlgIds);
     }
 
     /// @notice Initialize this account with a pre-deployed guard.
@@ -58,7 +58,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @param _config Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr)
     /// @param _guardAddr Pre-deployed AAStarGlobalGuard address bound to this account's address
     function initialize(address _entryPoint, address _owner, InitConfig calldata _config, address _guardAddr) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.guardianP256X, _config.guardianP256Y, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
     }
 
     /// @notice Initialize an autonomous-agent account.
@@ -75,7 +75,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         InitConfig calldata _config,
         address _guardAddr
     ) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
+        _initAccount(_entryPoint, _owner, _config.guardians, _config.guardianP256X, _config.guardianP256Y, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
     }
 
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────
@@ -99,7 +99,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @notice ERC-7579 account identity string.
     ///         Format: "vendor.name.version" — enables tooling to identify this account type.
     function accountId() external pure returns (string memory) {
-        return "airaccount.v7@0.19.0";
+        return "airaccount.v7@0.20.0";
     }
 
     /// @notice ERC-7579: declare which module types this account supports.

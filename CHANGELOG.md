@@ -8,6 +8,105 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.20.0] - 2026-06-20 (P-256 / WebAuthn guardian — release)
+
+First-class **passkey (P-256 / WebAuthn) guardian** support for social recovery (#119), plus a
+diamond-lite refactor that relocates the cold recovery path into `AirAccountExtension` (frees V7
+runtime from **11 B → 1,258 B** under EIP-170) and a multi-round adversarial hardening pass.
+
+**Highlights**
+- Guardian slots accept passkeys (Touch ID / Face ID) alongside ECDSA EOAs; full recovery
+  (propose / approve / execute / cancel) via real WebAuthn assertions verified through EIP-7212.
+- ECDSA + P-256 recovery paths merged onto shared core helpers; recovery events carry `guardianIdx`.
+- Real-passkey E2E tests with genuine secp256r1 (OZ `P256.verifySolidity`) — no mock.
+
+**Breaking for integrators**
+- The 4 ECDSA recovery selectors are no longer on the V7 ABI surface (call against the account
+  address; routed via fallback→delegatecall, selector + semantics unchanged).
+- Recovery event topic0 changed (new `guardianIdx` field).
+- `REMOVE_GUARDIAN` signing payload now binds `(nonce, index, guardianAddr, p256X, p256Y)`.
+
+**Validation**: 844 forge tests pass (`--ffi`), 0 failed. Codex multi-round challenge → **SHIP**;
+independent clestons re-review → APPROVED. See `RELEASE.md` for the full runbook and
+`docs/tx-archive/v0.20.0.md` for transaction records.
+
+The subsections below are the chronological hardening + feature history that rolled up into this release.
+
+### Hardening — full-release Codex review R2
+
+R2 verified all R1 fixes and found 1 MEDIUM + 1 LOW:
+
+- **[Medium] Module-install auth snapshot now covers P-256 keys** — `_moduleAuthHash()` folded `_guardian0/1/2` + count but NOT the P-256 pubkeys. Since P-256 guardians share the sentinel in the address slots, a remove+add P-256 rotation left the snapshot unchanged, so an in-flight module-install proposal could survive a guardian rotation (violating the "any guardian change invalidates a pending proposal" invariant). Fixed by folding `_guardianP256X/Y{0,1,2}` into the hash. New test `test_execute_p256KeyRotation_invalidatesProposal`.
+- **[Low] Module governance is ECDSA-only** — documented as a known limitation (`docs/p256-guardian-spec.md` §10): guardian-consensus module-governance paths accept only 65-byte ECDSA sigs; a pure-P-256 guardian set can't authorize them (recovery / guardian add-remove / tier-limit fully support P-256; owner-only and low-threshold module paths unaffected). Mixed-sig support for module governance deferred to a follow-up issue.
+
+**841 tests, 0 failed** (with `--ffi`).
+
+### Hardening — final line-by-line Codex challenge
+
+A final pre-tag line-by-line adversarial challenge found 1 HIGH + 1 MEDIUM (both permanent on a non-upgradable wallet); fixed and proven with real-signature regression tests:
+
+- **[HIGH] Guardian-removal signatures now bind slot index + P-256 key** — P-256 guardians all share the sentinel address, so the old removal opData `(nonce, guardianToRemove)` was IDENTICAL for every P-256 slot. A signature collected to remove P-256 slot A could be replayed to remove slot B, or survive a key rotation on the same slot — defeating guardian consensus. opData is now `(nonce, index, guardianToRemove, p256X, p256Y)` on BOTH `removeGuardianWithMixedSigs` (extension) and `removeGuardian` (base). **Breaking: SDK must update the REMOVE_GUARDIAN signing payload.**
+- **[MEDIUM] `_initAccount` rejects the P-256 sentinel (0x7026) as a plain ECDSA guardian** — otherwise the slot would be marked P-256 with key (0,0), an unusable guardian that permanently breaks recovery.
+
+Regression tests use a REAL secp256r1 verifier (OZ `P256.verifySolidity`) + real ES256 signatures: `test_removeMixedSigs_realSig_crossSlotRejected` (+ positive control `_correctSlotSucceeds`) and `test_init_rejectsSentinelAsEcdsaGuardian`. The cross-slot test was confirmed to FAIL when the fix is reverted (the attack succeeds without it) — proving it genuinely catches the vulnerability, not a hollow assertion. **844 tests, 0 failed** (`--ffi`). Codex verdict: **SHIP**.
+
+### Hardening — full-release Codex review R1
+
+Holistic adversarial review of the complete v0.20 release (P-256 + recovery refactor + real-passkey tests) surfaced 2 MEDIUM + 2 LOW; all addressed:
+
+- **[Medium] WebAuthn operation-type binding** — `_verifyWebAuthnP256Sig` now requires `clientDataJSONPrefix` to be exactly `{"type":"webauthn.get","challenge":"`, closing type-confusion (replaying a `webauthn.create` assertion) and arbitrary-JSON-prefix abuse. origin/rpId remain intentionally unbound on-chain (platform RP-binding + challenge domain-separation; same stance as webauthn-sol/Coinbase). Documented in `docs/p256-guardian-spec.md` §9.5.
+- **[Medium] Init-time guardian config validation** — `_initAccount` now rejects ambiguous/malformed slots (ECDSA slot carrying P-256 coords; half-specified P-256 key where `(x==0) != (y==0)`) instead of silently mis-installing or dropping a guardian.
+- **[Low] `FACTORY_VERSION`** bumped 0.19.0 → 0.20.0 (matched to `ACCOUNT_VERSION`).
+- **[Low] NatSpec** for the mixed-sig guardian methods corrected: P-256 sig is the ABI-encoded WebAuthn assertion blob, not 64-byte r||s.
+
+New test `test_proposeRecoveryWithSig_rejectsNonGetType` proves the type binding. **840 tests, 0 failed** (with `--ffi`).
+
+### Recovery refactor — #120 review follow-ups
+
+Refactor PR stacked on #120. **835 unit tests, 0 failed.** EIP-170 headroom for the main account jumps from **11 bytes → 1,258 bytes** (V7 24,565 → 23,318 B); extension 19,745 B (4,831 B headroom). Codex adversarial review: APPROVED (0 CRITICAL/HIGH/MEDIUM/LOW).
+
+### What changed
+
+- **Social recovery relocated to `AirAccountExtension` (diamond-lite)**
+  - The 4 ECDSA recovery externals (`proposeRecovery` / `approveRecovery` / `executeRecovery` / `cancelRecovery`) moved out of `AAStarAirAccountBase` into the extension, reached via the V7 `fallback`→`delegatecall` boundary. This frees main-account runtime bytecode that was 11 bytes from the EIP-170 limit.
+  - ECDSA and P-256 recovery paths now share private core helpers (`_validateNewOwner` / `_commitProposal` / `_commitApproval` / `_commitCancelVote`) — single implementation, no path drift. Behavior is identical to the previous inline functions (delegatecall preserves `msg.sender` / storage).
+  - **ABI note:** these 4 selectors are no longer on the V7 ABI surface; integrators call them against the account address (selector + semantics unchanged, runtime-routed through the extension).
+- **[#120 review Medium] Event attribution** — `RecoveryProposed` / `RecoveryApproved` / `RecoveryCancelVoted` gain a `uint8 guardianIdx` field naming the actual authorizing guardian slot. On P-256 (relayer-submitted) paths `msg.sender` is the relayer, not the guardian; `guardianIdx` lets off-chain forensics answer "which guardian acted". **Event topic0 changes — indexers must update.**
+- **[#120 review Low] Dedup consistency** — `_initAccount` P-256 guardian dedup now compares BOTH coordinates (`ex == px && ey == py`), matching `_addP256GuardianInternal` (was x-only).
+
+---
+
+### Initial feature — P-256 / WebAuthn guardian support
+
+v0.20 feature release. **828 unit tests, 0 failed.** EIP-170 headroom: 206 bytes (main), ~7,862 bytes (extension).
+
+### What changed
+
+- **[#119](https://github.com/AAStarCommunity/airaccount-contract/issues/119) P-256 (WebAuthn passkey) guardian support**
+  - Guardian slots now support two types: ECDSA EOA (existing) and P-256 passkey (new)
+  - P-256 guardian is marked via sentinel `address(0x7026)` in the guardian address slot; public key (x, y) stored in parallel storage slots 30-35
+  - `_recoveryNonce` (slot 36) added: monotonic counter incremented on `executeRecovery`/`cancelRecovery` to prevent P-256 sig replay across recovery rounds
+  - `InitConfig` extended with `guardianP256X[3]` / `guardianP256Y[3]` — accounts can be deployed with passkey guardians in a single transaction
+  - **`addP256Guardian(bytes32 x, bytes32 y)`** — owner adds a P-256 guardian (extension)
+  - **`getGuardianP256Key(uint8 index)`** — view P-256 public key for any slot (extension)
+  - **`proposeRecoveryWithSig(address, uint8, bytes)`** — relayer-submittable recovery proposal from P-256 guardian (extension)
+  - **`approveRecoveryWithSig(uint8, bytes)`** — P-256 guardian approval (extension)
+  - **`cancelRecoveryWithSig(uint8, bytes)`** — P-256 guardian cancel vote (extension)
+  - **`removeGuardianWithMixedSigs(uint8, uint8[], bytes[])`** — remove guardian using mixed ECDSA + P-256 sigs (extension)
+  - **`modifyTierLimitsWithMixedGuardians(uint256, uint256, uint256, uint8[], bytes[])`** — modify tier limits with mixed guardian types (extension)
+  - **`getRecoveryNonce()`** — public view for current recovery nonce
+  - Hash format: P-256 sigs use `sha256(keccak256(...))` to match WebAuthn's internal SHA-256 (subtle.crypto.sign ECDSA-SHA-256); ECDSA guardian path unchanged (eth-signed keccak)
+  - Key storage uses `AAStarAgentStorageLayout` slots 30-36 (appended, never reordered)
+  - 23 new tests in `test/P256Guardian.t.sol`
+
+### Upgrade notes for SDK
+
+- `InitConfig` has 2 new array fields (`guardianP256X`, `guardianP256Y`). Old constructors without these fields will fail to compile — add `[bytes32(0), bytes32(0), bytes32(0)]` for accounts without P-256 guardians.
+- New extension functions are available via the existing fallback→delegatecall path (no ABI changes to main contract calls).
+- See `docs/p256-guardian-spec.md` for complete hash format and SDK integration guide.
+
+---
+
 ## [v0.19.0-beta.2] - 2026-06-16 (Safe guardian E2E + KMS contract-side verification)
 
 v0.19 milestone release. **805 unit tests (cancun) + 805 under EIP-2537/prague (full suite), 0 failed.** EIP-170 headroom: 1,104 bytes.

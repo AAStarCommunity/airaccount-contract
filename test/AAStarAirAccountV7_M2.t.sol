@@ -67,6 +67,8 @@ contract AAStarAirAccountV7_M2Test is Test {
         uint8[] memory noAlgs = new uint8[](0);
         return AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,

@@ -169,6 +169,8 @@ contract ERC8004IntegrationTest is Test {
 
         account.initialize(makeAddr("ep"), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [noGuardians[0], noGuardians[1], noGuardians[2]],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0,
             approvedAlgIds: algs,
             minDailyLimit: 0,

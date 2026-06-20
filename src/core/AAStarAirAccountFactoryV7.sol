@@ -19,7 +19,7 @@ contract AAStarAirAccountFactoryV7 {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this factory deployment. Used by SDKs for programmatic version detection.
-    string public constant FACTORY_VERSION = "0.19.0";
+    string public constant FACTORY_VERSION = "0.20.0";
 
     /// @dev Shared implementation contract — all user accounts are clones of this address.
     ///      INJECTED as a constructor parameter (deployer must deploy AAStarAirAccountV7 first and
@@ -436,6 +436,8 @@ contract AAStarAirAccountFactoryV7 {
 
         return AAStarAirAccountBase.InitConfig({
             guardians: [guardian1, guardian2, defaultCommunityGuardian],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: dailyLimit,
             approvedAlgIds: algIds,
             minDailyLimit: minLimit,
@@ -452,6 +454,8 @@ contract AAStarAirAccountFactoryV7 {
     function _getConfigHash(AAStarAirAccountBase.InitConfig memory config) internal pure returns (bytes32) {
         return keccak256(abi.encode(
             config.guardians,
+            config.guardianP256X,
+            config.guardianP256Y,
             config.dailyLimit,
             config.approvedAlgIds,
             config.minDailyLimit,
