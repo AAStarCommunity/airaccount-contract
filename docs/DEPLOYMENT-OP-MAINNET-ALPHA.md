@@ -206,8 +206,13 @@ cast call $AIRACCOUNT_OP_ALPHA_VALIDATOR_ROUTER "algorithms(uint8)(address)" 8 -
 cast call $AIRACCOUNT_OP_ALPHA_FACTORY "factoryAdmin()(address)" --rpc-url $OP_MAINNET_RPC_URL
 
 # 5. 验证 EIP-7212 P256 precompile 可用
-cast code 0x0000000000000000000000000000000000000100 --rpc-url $OP_MAINNET_RPC_URL
-# 应返回非 0x 的 bytecode
+# 注意：precompile 地址的 bytecode 永远是 0x（这是正常的，不代表不可用）
+# 通过实际调用来验证：有效的 precompile 会返回 32 字节（即使输入无效也返回 0x00..00）
+# 不存在的 precompile 调用则返回空或 revert
+cast call 0x0000000000000000000000000000000000000100 \
+  0x$(python3 -c 'print("00"*160)') \
+  --rpc-url $OP_MAINNET_RPC_URL
+# 应返回 32 字节（0x000...000），代表 precompile 存在且可调用（全零输入验签失败是预期的）
 
 # 6. 创建一个测试账户验证全链路
 pnpm tsx scripts/e2e-create-test-account.ts  # （需适配 OP mainnet 地址）

@@ -253,13 +253,18 @@ async function main() {
   }
 
   // ─── Verify EIP-7212 precompile ───────────────────────────────────
+  // Precompiles always return 0x for getCode — probe by calling with dummy input instead.
+  // An absent precompile returns empty data; a present one returns 32 bytes (even on bad input).
   console.log("Checking EIP-7212 P256 precompile availability...");
   try {
-    const precompileCode = await publicClient.getCode({ address: "0x0000000000000000000000000000000000000100" });
-    if (precompileCode && precompileCode !== "0x") {
-      console.log("  ✓ EIP-7212 P256 precompile available at 0x100");
+    const result = await publicClient.call({
+      to: "0x0000000000000000000000000000000000000100",
+      data: `0x${"00".repeat(160)}` as `0x${string}`,
+    });
+    if (result.data && result.data.length >= 66) {
+      console.log("  ✓ EIP-7212 P256 precompile available at 0x100 (returned 32 bytes)");
     } else {
-      console.warn("  ⚠ EIP-7212 precompile not detected. P256/WebAuthn transactions will fail.");
+      console.warn("  ⚠ EIP-7212 precompile not detected (call returned no data). P256/WebAuthn transactions will fail.");
       console.warn("    OP Mainnet supports P256 since Fjord upgrade (Jun 2024). Check your RPC.");
     }
   } catch {
