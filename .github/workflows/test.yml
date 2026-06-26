@@ -18,7 +18,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: nightly
+          version: stable
 
       - name: Run tests
         run: forge test --summary
@@ -76,7 +76,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: nightly
+          version: stable
 
       - name: Run full suite under Prague (golden-vector + single-op replay + batch aggregator + all units)
         run: forge test --evm-version prague -vv

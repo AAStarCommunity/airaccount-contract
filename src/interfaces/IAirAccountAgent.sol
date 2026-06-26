@@ -70,4 +70,9 @@ interface IAirAccountAgent {
     function proposeModuleInstall(uint256 moduleTypeId, address module, bytes calldata initData) external;
     function executeModuleInstall(bytes calldata moduleInitData) external;
     function cancelModuleInstall() external;
+
+    // ── Tier-limit nonce (issue #131) ──
+    /// @notice Current tier-limit modification nonce. Read this before building the guardian
+    ///         digest for modifyTierLimitsWithGuardians / modifyTierLimitsWithMixedGuardians.
+    function tierLimitNonce() external view returns (uint256);
 }

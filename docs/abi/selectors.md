@@ -298,6 +298,8 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xb5cb7bb8` | `activeRecovery()` | AirAccountExtension |
 | `0xb60295e1` | `cancelModuleInstall()` | AirAccountExtension |
 | `0xb60295e1` | `cancelModuleInstall()` | IAirAccountAgent |
+| `0xb6135596` | `tierLimitNonce()` | AirAccountExtension |
+| `0xb6135596` | `tierLimitNonce()` | IAirAccountAgent |
 | `0xb61d27f6` | `execute(address,uint256,bytes)` | AAStarAirAccountBase |
 | `0xb61d27f6` | `execute(address,uint256,bytes)` | AAStarAirAccountV7 |
 | `0xb61d27f6` | `execute(address,uint256,bytes)` | AirAccountDelegate |

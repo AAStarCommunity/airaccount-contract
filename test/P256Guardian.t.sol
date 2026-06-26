@@ -750,6 +750,43 @@ contract P256GuardianTest is Test {
         assertEq(y, bytes32(0));
     }
 
+    // ── tierLimitNonce() — issue #131 ────────────────────────────────────────
+
+    function test_tierLimitNonce_initiallyZero() public {
+        _deployWithP256Init(P256_X0, P256_Y0, P256_X1, P256_Y1);
+        (bool ok, bytes memory d) = address(account).call(
+            abi.encodeWithSignature("tierLimitNonce()")
+        );
+        assertTrue(ok, "tierLimitNonce() call failed");
+        assertEq(abi.decode(d, (uint256)), 0, "fresh account nonce should be 0");
+    }
+
+    function test_tierLimitNonce_incrementsAfterMixedModify() public {
+        _deployWithP256Init(P256_X0, P256_Y0, P256_X1, P256_Y1);
+        vm.etch(P256_PRECOMPILE, address(new MockP256Valid()).code);
+
+        // nonce before: 0
+        (, bytes memory d0) = address(account).call(abi.encodeWithSignature("tierLimitNonce()"));
+        assertEq(abi.decode(d0, (uint256)), 0);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        uint8[] memory signerIdxs = new uint8[](2);
+        signerIdxs[0] = 0; signerIdxs[1] = 1;
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _mockP256Sig(); sigs[1] = _mockP256Sig();
+
+        vm.prank(owner);
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "modifyTierLimitsWithMixedGuardians(uint256,uint256,uint256,uint8[],bytes[])",
+            uint256(1 ether), uint256(10 ether), deadline, signerIdxs, sigs
+        ));
+        assertTrue(ok, "modifyTierLimitsWithMixedGuardians failed");
+
+        // nonce after: 1
+        (, bytes memory d1) = address(account).call(abi.encodeWithSignature("tierLimitNonce()"));
+        assertEq(abi.decode(d1, (uint256)), 1, "nonce should be 1 after first modify");
+    }
+
     // ── Utility ───────────────────────────────────────────────────────────────
 
     function _popcount(uint256 x) internal pure returns (uint256 c) {
