@@ -214,7 +214,7 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_ACCOUNT_VERSION_constant() public view {
-        assertEq(account.ACCOUNT_VERSION(), "0.20.0");
+        assertEq(account.ACCOUNT_VERSION(), "0.20.1");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────

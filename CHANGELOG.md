@@ -8,6 +8,32 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.20.1] - 2026-06-26 (tierLimitNonce getter — patch)
+
+Additive patch: exposes `_tierLimitNonce` through a view getter in `AirAccountExtension` so the
+SDK can build the guardian digest for `modifyTierLimitsWithGuardians` offline (issue #131).
+
+### Added
+- `AirAccountExtension.tierLimitNonce() external view returns (uint256)` — reads `_tierLimitNonce`
+  (slot 16) from the account's storage via fallback → delegatecall. Selector: `0xb6135596`.
+- `IAirAccountAgent` interface declaration (enables build-full-abi.mjs merge).
+- Two new Foundry tests: `test_tierLimitNonce_initiallyZero`, `test_tierLimitNonce_incrementsAfterMixedModify`.
+- CI: foundry pinned to `stable` (both jobs) — nightly was flapping on tier-enforcement tests.
+
+### No breaking changes
+- `AAStarAirAccountV7` runtime unchanged at **23,409 B** (margin 1,167 B).
+- `AirAccountExtension` +45 B → **20,024 B** (margin 4,552 B).
+- Full ABI: **68 functions** (was 67), no selector collisions.
+
+### Test counts
+- `forge test` (cancun): **840 passed, 0 failed**
+- `forge test --evm-version prague`: **840 passed, 0 failed**
+
+### Deployed (Sepolia)
+<!-- filled after deploy -->
+
+---
+
 ## [v0.20.0] - 2026-06-20 (P-256 / WebAuthn guardian — release)
 
 First-class **passkey (P-256 / WebAuthn) guardian** support for social recovery (#119), plus a

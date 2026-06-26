@@ -2445,7 +2445,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AirAccountExtension
 
 - **Source:** `src/core/AirAccountExtension.sol`
-- **Functions:** 42 · **Events:** 25 · **Errors:** 56
+- **Functions:** 43 · **Events:** 25 · **Errors:** 56
 - **Title:** AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 - Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase         to keep the account under EIP-170's 24,576-byte runtime limit:           - ERC-8004 agent identity / reputation / wallet binding           - weighted-signature config governance (setWeightConfig + change proposal flow)         Deployed once (singleton) per implementation; the account reaches it via fallback +         delegatecall, so all logic runs in the ACCOUNT's storage/context: msg.sender,         address(this), owner, guardians, events and reverts are exactly as if inline.
 
@@ -2493,6 +2493,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x6e795333` | `submitAgentReputation(address,uint256,int128,uint8,string,string,string,string,bytes32)` | nonpayable | onlyOwner, nonReentrant | Submit reputation feedback for an agent interaction via the official registry. |
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
 | `0xdbaf0cc3` | `tier2Limit()` | view | — | Tier2 max (dual factor); above this requires multi-sig (BLS triple) |
+| `0xb6135596` | `tierLimitNonce()` | view | — | Current tier-limit modification nonce.         Increments after each successful modifyTierLimitsWithGuardians /         modifyTierLimitsWithMixedGuardians call. SDK reads this offline         to build the guardian digest before requesting signatures. |
 | `0x3a5381b5` | `validator()` | view | — | Optional validator router for external algorithms (BLS, PQ, etc.) |
 | `0x085aa197` | `weightConfig()` | view | — | Current weight config. tier1Threshold == 0 means uninitialised → ALG_WEIGHTED fails. |
 
@@ -2942,6 +2943,18 @@ Authoritative, auto-generated reference for every external/public function, even
 `0xdbaf0cc3` · view · access: —
 
 > Tier2 max (dual factor); above this requires multi-sig (BLS triple)
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `tierLimitNonce()`
+
+`0xb6135596` · view · access: —
+
+> Current tier-limit modification nonce.         Increments after each successful modifyTierLimitsWithGuardians /         modifyTierLimitsWithMixedGuardians call. SDK reads this offline         to build the guardian digest before requesting signatures.
+
+*@dev* Reached via account.fallback() → delegatecall(agentExtension).      Reads _tierLimitNonce from the ACCOUNT's storage (slot 16), not the extension's.
 
 | returns | type | description |
 |---|---|---|
@@ -3535,7 +3548,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## IAirAccountAgent
 
 - **Source:** `src/interfaces/IAirAccountAgent.sol`
-- **Functions:** 16 · **Events:** 0 · **Errors:** 0
+- **Functions:** 17 · **Events:** 0 · **Errors:** 0
 - **Title:** IAirAccountAgent
 - ABI surface for the cold functions that AAStarAirAccountV7 routes to the singleton         AirAccountExtension via fallback + delegatecall (diamond-lite): ERC-8004 agent         identity/reputation and weighted-signature config governance.
 
@@ -3559,6 +3572,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xa5b915b5` | `setModuleInstallTimelock(uint256,bytes)` | nonpayable | — |  |
 | `0x10d47802` | `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | — |  |
 | `0x6e795333` | `submitAgentReputation(address,uint256,int128,uint8,string,string,string,string,bytes32)` | nonpayable | — |  |
+| `0xb6135596` | `tierLimitNonce()` | view | — | Current tier-limit modification nonce. Read this before building the guardian         digest for modifyTierLimitsWithGuardians / modifyTierLimitsWithMixedGuardians. |
 
 ### Functions
 
@@ -3710,6 +3724,16 @@ Authoritative, auto-generated reference for every external/public function, even
 | `endpoint` | `string` |  |
 | `feedbackURI` | `string` |  |
 | `feedbackHash` | `bytes32` |  |
+
+#### `tierLimitNonce()`
+
+`0xb6135596` · view · access: —
+
+> Current tier-limit modification nonce. Read this before building the guardian         digest for modifyTierLimitsWithGuardians / modifyTierLimitsWithMixedGuardians.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
 
 ## ICalldataParser
 
