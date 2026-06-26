@@ -1032,6 +1032,16 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         emit GuardianRemoved(index, guardianToRemove);
     }
 
+    /// @notice Current tier-limit modification nonce.
+    ///         Increments after each successful modifyTierLimitsWithGuardians /
+    ///         modifyTierLimitsWithMixedGuardians call. SDK reads this offline
+    ///         to build the guardian digest before requesting signatures.
+    /// @dev Reached via account.fallback() → delegatecall(agentExtension).
+    ///      Reads _tierLimitNonce from the ACCOUNT's storage (slot 16), not the extension's.
+    function tierLimitNonce() external view returns (uint256) {
+        return _tierLimitNonce;
+    }
+
     /// @notice Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).
     ///         Required when at least one guardian is a P-256 type.
     /// @param signerIdxs Guardian slot indices corresponding to each signature
