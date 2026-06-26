@@ -30,7 +30,15 @@ SDK can build the guardian digest for `modifyTierLimitsWithGuardians` offline (i
 - `forge test --evm-version prague`: **840 passed, 0 failed**
 
 ### Deployed (Sepolia)
-<!-- filled after deploy -->
+
+| Contract | Address |
+|----------|---------|
+| AAStarAirAccountV7 (impl) | `0xf4a534deCcB1652a28e4b4d388b518008F23f3f3` |
+| AirAccountExtension | `0xBE1aBaae2c678959Be4E0708568dDf0Fc8765cb8` |
+| AAStarAirAccountFactoryV7 | `0x4f7BBb00c1086f5c0EBdDBDb4BC39cF348EfB2C3` |
+| AgentRegistry | `0xdE603987C184d25f37f612B9E84481E92719B08B` |
+| (reused) BLS Algorithm | `0xAF525A161CB17e0A1b6254ef0B8d8473bdA05174` |
+| (reused) Validator Router | `0xfcDfd17a373E037c3F9C8ffE2c781915E7Ae6e11` |
 
 ---
 
