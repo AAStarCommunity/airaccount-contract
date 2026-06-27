@@ -53,6 +53,7 @@ interface IModuleTimelock {
     function proposeModuleInstall(uint256 moduleTypeId, address module, bytes calldata initData) external;
     function executeModuleInstall(bytes calldata moduleInitData) external;
     function cancelModuleInstall() external;
+    function installModule(uint256 moduleTypeId, address module, bytes calldata initData) external;
 }
 
 /// @title ModuleInstallTimelockTest — KI-6 / issue #58
@@ -122,11 +123,18 @@ contract ModuleInstallTimelockTest is Test {
         return raw.toEthSignedMessageHash();
     }
 
+    /// @dev Returns ABI-encoded initData (signerIdxs, sigs, moduleInitData) for 1 guardian.
     function _installSig(Vm.Wallet memory w, uint256 typeId, address module, bytes memory moduleInitData)
         internal view returns (bytes memory)
     {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(w.privateKey, _installDigest(typeId, module, moduleInitData));
-        return abi.encodePacked(r, s, v);
+        bytes memory rawSig = abi.encodePacked(r, s, v);
+        uint8 gIdx = w.addr == g0Wallet.addr ? 0 : (w.addr == g1Wallet.addr ? 1 : 2);
+        uint8[] memory signerIdxs = new uint8[](1);
+        bytes[] memory sigs = new bytes[](1);
+        signerIdxs[0] = gIdx;
+        sigs[0] = rawSig;
+        return abi.encode(signerIdxs, sigs, moduleInitData);
     }
 
     function _timelockDigest(uint256 newTimelock) internal view returns (bytes32) {
@@ -138,11 +146,17 @@ contract ModuleInstallTimelockTest is Test {
         return raw.toEthSignedMessageHash();
     }
 
+    /// @dev Returns ABI-encoded (signerIdxs, sigs) for 2 guardians (g0 + g1).
     function _timelockSig2(uint256 newTimelock) internal view returns (bytes memory) {
         bytes32 d = _timelockDigest(newTimelock);
         (uint8 v0, bytes32 r0, bytes32 s0) = vm.sign(g0Wallet.privateKey, d);
         (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(g1Wallet.privateKey, d);
-        return abi.encodePacked(r0, s0, v0, r1, s1, v1);
+        uint8[] memory signerIdxs = new uint8[](2);
+        bytes[] memory sigs = new bytes[](2);
+        signerIdxs[0] = 0; signerIdxs[1] = 1;
+        sigs[0] = abi.encodePacked(r0, s0, v0);
+        sigs[1] = abi.encodePacked(r1, s1, v1);
+        return abi.encode(signerIdxs, sigs);
     }
 
     function _enableTimelock(uint256 t) internal {
@@ -186,7 +200,7 @@ contract ModuleInstallTimelockTest is Test {
         assertEq(ext.moduleInstallTimelock(), 0);
         bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), "");
         vm.prank(ownerWallet.addr);
-        account.installModule(VALIDATOR, address(mod), sig);
+        ext.installModule(VALIDATOR, address(mod), sig);
         assertTrue(account.isModuleInstalled(VALIDATOR, address(mod), ""));
         assertEq(mod.installCount(), 1);
     }
@@ -206,8 +220,7 @@ contract ModuleInstallTimelockTest is Test {
         _enableTimelock(TIMELOCK);
 
         bytes memory moduleInitData = hex"1234";
-        bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), moduleInitData);
-        bytes memory initData = abi.encodePacked(sig, moduleInitData);
+        bytes memory initData = _installSig(g0Wallet, VALIDATOR, address(mod), moduleInitData);
 
         vm.expectEmit(true, true, false, true, address(account));
         emit ModuleInstallProposed(VALIDATOR, address(mod), block.timestamp + TIMELOCK);
@@ -253,9 +266,9 @@ contract ModuleInstallTimelockTest is Test {
     function test_execute_dataMismatch_reverts() public {
         _enableTimelock(TIMELOCK);
         bytes memory moduleInitData = hex"aabbcc";
-        bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), moduleInitData);
+        bytes memory initData = _installSig(g0Wallet, VALIDATOR, address(mod), moduleInitData);
         vm.prank(ownerWallet.addr);
-        ext.proposeModuleInstall(VALIDATOR, address(mod), abi.encodePacked(sig, moduleInitData));
+        ext.proposeModuleInstall(VALIDATOR, address(mod), initData);
 
         vm.warp(block.timestamp + TIMELOCK + 1);
         vm.expectRevert(); // ModuleInstallDataMismatch
@@ -324,12 +337,19 @@ contract ModuleInstallTimelockTest is Test {
 
     function test_bypass_ownerPlus2Guardians_immediateInstall() public {
         _enableTimelock(TIMELOCK);
-        bytes memory s0 = _installSig(g0Wallet, VALIDATOR, address(mod), "");
-        bytes memory s1 = _installSig(g1Wallet, VALIDATOR, address(mod), "");
-        bytes memory sigs = abi.encodePacked(s0, s1);
+
+        bytes32 d2 = _installDigest(VALIDATOR, address(mod), "");
+        (uint8 v0b, bytes32 r0b, bytes32 s0b) = vm.sign(g0Wallet.privateKey, d2);
+        (uint8 v1b, bytes32 r1b, bytes32 s1b) = vm.sign(g1Wallet.privateKey, d2);
+        uint8[] memory sidxs2 = new uint8[](2);
+        bytes[] memory ss2 = new bytes[](2);
+        sidxs2[0] = 0; sidxs2[1] = 1;
+        ss2[0] = abi.encodePacked(r0b, s0b, v0b);
+        ss2[1] = abi.encodePacked(r1b, s1b, v1b);
+        bytes memory sigs = abi.encode(sidxs2, ss2, bytes(""));
 
         vm.prank(ownerWallet.addr);
-        account.installModule(VALIDATOR, address(mod), sigs);
+        ext.installModule(VALIDATOR, address(mod), sigs);
         assertTrue(account.isModuleInstalled(VALIDATOR, address(mod), ""));
         assertEq(mod.installCount(), 1);
     }
@@ -340,18 +360,24 @@ contract ModuleInstallTimelockTest is Test {
         bytes memory s0 = _installSig(g0Wallet, VALIDATOR, address(mod), "");
         vm.prank(ownerWallet.addr);
         vm.expectRevert(); // InstallModuleUnauthorized
-        account.installModule(VALIDATOR, address(mod), s0);
+        ext.installModule(VALIDATOR, address(mod), s0);
         assertFalse(account.isModuleInstalled(VALIDATOR, address(mod), ""));
     }
 
     function test_bypass_twoSameGuardianSigs_reverts() public {
         _enableTimelock(TIMELOCK);
         // two sigs from the SAME guardian must fail the distinct-guardian check
-        bytes memory s0 = _installSig(g0Wallet, VALIDATOR, address(mod), "");
-        bytes memory sigs = abi.encodePacked(s0, s0);
+        bytes32 ddup = _installDigest(VALIDATOR, address(mod), "");
+        (uint8 vdup, bytes32 rdup, bytes32 sdup) = vm.sign(g0Wallet.privateKey, ddup);
+        bytes memory rawDup = abi.encodePacked(rdup, sdup, vdup);
+        uint8[] memory sidxsDup = new uint8[](2);
+        bytes[] memory ssDup = new bytes[](2);
+        sidxsDup[0] = 0; sidxsDup[1] = 0;
+        ssDup[0] = rawDup; ssDup[1] = rawDup;
+        bytes memory dupSigs = abi.encode(sidxsDup, ssDup, bytes(""));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(); // InstallModuleUnauthorized (duplicate guardian)
-        account.installModule(VALIDATOR, address(mod), sigs);
+        ext.installModule(VALIDATOR, address(mod), dupSigs);
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -539,7 +565,7 @@ contract ModuleInstallTimelockTest is Test {
         // back to immediate single-guardian install
         bytes memory sig = _installSig(g0Wallet, VALIDATOR, address(mod), "");
         vm.prank(ownerWallet.addr);
-        account.installModule(VALIDATOR, address(mod), sig);
+        ext.installModule(VALIDATOR, address(mod), sig);
         assertTrue(account.isModuleInstalled(VALIDATOR, address(mod), ""));
     }
 

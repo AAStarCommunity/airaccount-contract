@@ -39,7 +39,8 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     uint256 internal constant MODULE_TYPE_HOOK      = 4;
 
     // ERC-7579 onInstall(bytes) lifecycle selector (mirror AAStarAirAccountV7).
-    bytes4 private constant SEL_ON_INSTALL = 0x6d61fe70;
+    bytes4 private constant SEL_ON_INSTALL   = 0x6d61fe70;
+    bytes4 private constant SEL_ON_UNINSTALL = 0x8a91b0e3;
 
     /// @dev KI-6 (#58): distinct guardian sigs (alongside owner) for the immediate-install bypass and
     ///      for weakening the timelock — owner+2 strictly exceeds the owner+1 default install threshold.
@@ -77,6 +78,7 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     error ModuleAlreadyInstalled();
     error InstallModuleUnauthorized();
     error ModuleInstallCallbackFailed(uint256 moduleTypeId, address module);
+    error ModuleNotInstalled();
     // ── KI-6 (#58) module-install timelock ──
     error ModuleInstallTimelockDisabled();
     error ModuleInstallTimelockTooLong();
@@ -100,6 +102,7 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     // ModuleInstalled mirrors AAStarAirAccountBase so tooling sees a consistent topic0 whether a
     // module was installed immediately or via the timelock flow.
     event ModuleInstalled(uint256 indexed moduleTypeId, address indexed module);
+    event ModuleUninstalled(uint256 indexed moduleTypeId, address indexed module);
     // KI-6 (#58) module-install timelock lifecycle.
     event ModuleInstallProposed(uint256 indexed moduleTypeId, address indexed module, uint256 executeAfter);
     event ModuleInstallExecuted(uint256 indexed moduleTypeId, address indexed module);
@@ -169,18 +172,35 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         )).toEthSignedMessageHash();
     }
 
-    /// @dev Verify `count` sequential 65-byte ECDSA sigs from distinct guardians
-    ///      (mirror AAStarAirAccountV7._checkGuardianSigs).
-    function _checkGuardianSigs(bytes32 hash, bytes calldata sigs, uint8 count) private view {
+    /// @dev Verify guardian signatures (ECDSA 65-byte or P-256 WebAuthn blobs) by slot index.
+    ///      signerIdxs[i] = guardian slot (0–2); sigs[i] = sig blob for that guardian.
+    ///      At least `count` distinct approvals are required.
+    ///      Uses _verifyGuardianSigByIdx which dispatches by slot type (ECDSA vs P-256).
+    function _checkGuardianSigsMixed(
+        string memory opLabel,
+        bytes memory opData,
+        uint8[] memory signerIdxs,
+        bytes[] memory sigs,
+        uint8 count
+    ) private view {
+        if (signerIdxs.length != sigs.length) revert InstallModuleUnauthorized();
+        if (signerIdxs.length < count) revert InstallModuleUnauthorized();
         uint256 bitmap;
-        for (uint8 i; i < count; ++i) {
-            uint256 end = uint256(i + 1) * 65;
-            if (sigs.length < end) revert InstallModuleUnauthorized();
-            address recovered = hash.recover(sigs[end - 65 : end]);
-            uint256 bit = uint256(1) << _guardianIndex(recovered);
+        for (uint256 i = 0; i < signerIdxs.length; i++) {
+            uint8 gIdx = signerIdxs[i];
+            if (gIdx >= _guardianCount) revert InstallModuleUnauthorized();
+            uint256 bit = uint256(1) << gIdx;
             if (bitmap & bit != 0) revert InstallModuleUnauthorized();
             bitmap |= bit;
+            _verifyGuardianSigByIdx(gIdx, sigs[i], opLabel, opData);
         }
+    }
+
+    /// @dev Best-effort lifecycle call (onInstall/onUninstall). Return value intentionally ignored.
+    function _callLifecycle(bytes4 sel, address module) private {
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool _ok,) = module.call(abi.encodeWithSelector(sel, new bytes(0)));
+        _ok;
     }
 
     // ─── Module Install Timelock (KI-6 / issue #58) ──────────────────────
@@ -229,8 +249,8 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     ///      so the timelock can never become permanently un-removable.
     /// @param newTimelock  New timelock in seconds (0 disables). Capped at MAX_MODULE_INSTALL_TIMELOCK
     ///        (30 days); larger values revert ModuleInstallTimelockTooLong.
-    /// @param guardianSigs Concatenated 65-byte guardian sigs over
-    ///        _guardianOpHash("SET_MODULE_TIMELOCK", abi.encode(newTimelock, moduleManagementNonce)).
+    /// @param guardianSigs abi.encode(uint8[] signerIdxs, bytes[] sigs) over
+    ///        ("SET_MODULE_TIMELOCK", abi.encode(newTimelock, moduleManagementNonce)).
     ///        Ignored (may be empty) when strengthening.
     function setModuleInstallTimelock(uint256 newTimelock, bytes calldata guardianSigs)
         external
@@ -241,10 +261,11 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         if (newTimelock < current) {
             uint8 sigsRequired =
                 _guardianCount < MODULE_INSTALL_BYPASS_SIGS ? _guardianCount : MODULE_INSTALL_BYPASS_SIGS;
-            _checkGuardianSigs(
-                _guardianOpHash("SET_MODULE_TIMELOCK", abi.encode(newTimelock, _moduleManagementNonce)),
-                guardianSigs,
-                sigsRequired
+            (uint8[] memory signerIdxs, bytes[] memory sigs) = abi.decode(guardianSigs, (uint8[], bytes[]));
+            _checkGuardianSigsMixed(
+                "SET_MODULE_TIMELOCK",
+                abi.encode(newTimelock, _moduleManagementNonce),
+                signerIdxs, sigs, sigsRequired
             );
             // Consume the guardian signatures so they cannot be replayed (shared monotonic nonce, #75).
             unchecked { _moduleManagementNonce++; }
@@ -260,8 +281,9 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     ///      elapses anyone may call executeModuleInstall; meanwhile owner or any guardian may cancel.
     /// @param moduleTypeId 1=validator, 2=executor, 4=hook.
     /// @param module       Module contract address (must be deployed).
-    /// @param initData     Layout: guardian sig(s) prepended (per configured threshold), then module init data.
-    ///        Sig hash: _guardianOpHash("INSTALL_MODULE", abi.encode(moduleTypeId, module, keccak256(moduleInitData), moduleManagementNonce)).
+    /// @param initData     When sigsRequired > 0: abi.encode(signerIdxs, sigs, moduleInitData).
+    ///        When sigsRequired == 0: raw module init data.
+    ///        Op: "INSTALL_MODULE", opData: abi.encode(moduleTypeId, module, keccak256(moduleInitData), nonce).
     function proposeModuleInstall(
         uint256 moduleTypeId,
         address module,
@@ -286,19 +308,16 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         uint8 threshold = _installModuleThreshold == 0 ? 70 : _installModuleThreshold;
         uint8 sigsRequired = threshold >= 100 ? 2 : (threshold >= 70 ? 1 : 0);
 
-        bytes calldata moduleInitData;
+        bytes memory moduleInitData;
         if (sigsRequired > 0) {
-            uint256 sigEnd = uint256(sigsRequired) * 65;
-            if (initData.length < sigEnd) revert InstallModuleUnauthorized();
-            moduleInitData = initData[sigEnd:];
-            _checkGuardianSigs(
-                _guardianOpHash(
-                    "INSTALL_MODULE",
-                    abi.encode(moduleTypeId, module, keccak256(moduleInitData), _moduleManagementNonce)
-                ),
-                initData,
-                sigsRequired
+            (uint8[] memory signerIdxs, bytes[] memory sigs, bytes memory _mInitData) =
+                abi.decode(initData, (uint8[], bytes[], bytes));
+            _checkGuardianSigsMixed(
+                "INSTALL_MODULE",
+                abi.encode(moduleTypeId, module, keccak256(_mInitData), _moduleManagementNonce),
+                signerIdxs, sigs, sigsRequired
             );
+            moduleInitData = _mInitData;
         } else {
             moduleInitData = initData;
         }
@@ -386,6 +405,115 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         }
         delete _pendingModuleInstall;
         emit ModuleInstallCancelled(p.moduleTypeId, p.module, msg.sender);
+    }
+
+    // ─── ERC-7579 Module Management (install / uninstall) ────────────────
+
+    /// @notice ERC-7579: Install a module. Supports both ECDSA and P-256 guardian multi-sig.
+    /// @param moduleTypeId 1=Validator, 2=Executor, 4=Hook.
+    /// @param module Module contract address (must be deployed).
+    /// @param initData When sigsRequired > 0: abi.encode(uint8[] signerIdxs, bytes[] sigs, bytes moduleInitData).
+    ///   When sigsRequired == 0: raw module init data.
+    ///   Op: "INSTALL_MODULE", opData: abi.encode(moduleTypeId, module, keccak256(moduleInitData), nonce).
+    function installModule(
+        uint256 moduleTypeId,
+        address module,
+        bytes calldata initData
+    ) external onlyOwnerOrEntryPoint {
+        if (module == address(0) || module.code.length == 0) revert ModuleInvalid();
+        if (moduleTypeId != MODULE_TYPE_VALIDATOR
+            && moduleTypeId != MODULE_TYPE_EXECUTOR
+            && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
+
+        uint8 threshold = _installModuleThreshold == 0 ? 70 : _installModuleThreshold;
+        uint8 sigsRequired = threshold >= 100 ? 2 : (threshold >= 70 ? 1 : 0);
+
+        // KI-6 (#58): when the optional install timelock is enabled, the immediate-install path
+        // demands the elevated owner+2-guardian bypass authorization.
+        if (_moduleInstallTimelock != 0 && sigsRequired < MODULE_INSTALL_BYPASS_SIGS) {
+            sigsRequired = MODULE_INSTALL_BYPASS_SIGS;
+        }
+
+        bytes memory moduleInitData;
+        if (sigsRequired > 0) {
+            (uint8[] memory signerIdxs, bytes[] memory sigs, bytes memory _mInitData) =
+                abi.decode(initData, (uint8[], bytes[], bytes));
+            _checkGuardianSigsMixed(
+                "INSTALL_MODULE",
+                abi.encode(moduleTypeId, module, keccak256(_mInitData), _moduleManagementNonce),
+                signerIdxs, sigs, sigsRequired
+            );
+            moduleInitData = _mInitData;
+        } else {
+            moduleInitData = initData;
+        }
+
+        if (_installedModules[moduleTypeId][module]) revert ModuleAlreadyInstalled();
+        if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook != address(0)) revert ModuleAlreadyInstalled();
+
+        // MEDIUM-2: Only call onInstall on the first installation of this module address.
+        bool alreadyLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
+                        || _installedModules[MODULE_TYPE_EXECUTOR][module]
+                        || _installedModules[MODULE_TYPE_HOOK][module];
+
+        _installedModules[moduleTypeId][module] = true;
+        if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
+
+        if (!alreadyLive) {
+            // MEDIUM-1: Hard-revert if onInstall fails.
+            (bool _ok,) = module.call(abi.encodeWithSelector(SEL_ON_INSTALL, moduleInitData));
+            if (!_ok) revert ModuleInstallCallbackFailed(moduleTypeId, module);
+        }
+
+        // #75: advance the nonce so this guardian signature cannot be replayed after uninstall.
+        unchecked { _moduleManagementNonce++; }
+
+        emit ModuleInstalled(moduleTypeId, module);
+    }
+
+    /// @notice ERC-7579: Uninstall a module. Supports both ECDSA and P-256 guardian multi-sig.
+    /// @dev Requires min(guardianCount, 2) guardian sigs.
+    ///      deInitData: abi.encode(uint8[] signerIdxs, bytes[] sigs).
+    ///      Op: "UNINSTALL_MODULE", opData: abi.encode(moduleTypeId, module, nonce).
+    /// @dev **0-guardian accounts**: when guardianCount == 0, sigsRequired degrades to 0 and the
+    ///      owner/EntryPoint can uninstall without any guardian signatures. This is intentional —
+    ///      a module installed on a 0-guardian account is protected only by the owner key, which is
+    ///      the same security model as every other operation on such an account. Accounts that require
+    ///      guardian-gated module removal must configure at least one guardian.
+    function uninstallModule(
+        uint256 moduleTypeId,
+        address module,
+        bytes calldata deInitData
+    ) external onlyOwnerOrEntryPoint {
+        if (moduleTypeId != MODULE_TYPE_VALIDATOR
+            && moduleTypeId != MODULE_TYPE_EXECUTOR
+            && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
+
+        uint8 sigsRequired = _guardianCount < 2 ? _guardianCount : 2;
+
+        (uint8[] memory signerIdxs, bytes[] memory sigs) = abi.decode(deInitData, (uint8[], bytes[]));
+        _checkGuardianSigsMixed(
+            "UNINSTALL_MODULE",
+            abi.encode(moduleTypeId, module, _moduleManagementNonce),
+            signerIdxs, sigs, sigsRequired
+        );
+
+        if (!_installedModules[moduleTypeId][module]) revert ModuleNotInstalled();
+        _installedModules[moduleTypeId][module] = false;
+        if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook == module) _activeHook = address(0);
+
+        // MEDIUM-2: Only call onUninstall when this is the last active installation.
+        bool stillLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
+                      || _installedModules[MODULE_TYPE_EXECUTOR][module]
+                      || _installedModules[MODULE_TYPE_HOOK][module];
+        if (!stillLive) {
+            _callLifecycle(SEL_ON_UNINSTALL, module);
+        }
+
+        // #75: advance the nonce so this guardian signature cannot be replayed on reinstall.
+        unchecked { _moduleManagementNonce++; }
+
+        emit ModuleUninstalled(moduleTypeId, module);
     }
 
     // ─── ERC-8004 Agent Identity Binding (M7.16) ─────────────────────────

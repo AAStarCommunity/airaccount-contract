@@ -10,6 +10,11 @@ import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 
+interface IModuleMgmt {
+    function installModule(uint256 moduleTypeId, address module, bytes calldata initData) external;
+    function uninstallModule(uint256 moduleTypeId, address module, bytes calldata deInitData) external;
+}
+
 // ─── Minimal mock EntryPoint ─────────────────────────────────────────────────
 
 contract MockEP {
@@ -204,9 +209,75 @@ contract AAStarAirAccountV7_M7Test is Test {
 
     /// @dev Install module in `account` with default threshold (70 → 1 guardian sig)
     function _installWithG0(uint256 typeId, address module) internal {
-        bytes memory sig = _installSig(g0Wallet, address(account), typeId, module);
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), typeId, module);
         vm.prank(ownerWallet.addr);
-        account.installModule(typeId, module, sig);
+        IModuleMgmt(address(account)).installModule(typeId, module, initData);
+    }
+
+    // Build installModule initData for 1 ECDSA guardian (threshold=70)
+    function _installInitData1(Vm.Wallet memory w, uint8 gIdx, address acct, uint256 typeId, address module)
+        internal view returns (bytes memory)
+    {
+        bytes memory rawSig = _installSig(w, acct, typeId, module);
+        uint8[] memory signerIdxs = new uint8[](1);
+        bytes[] memory sigs = new bytes[](1);
+        signerIdxs[0] = gIdx;
+        sigs[0] = rawSig;
+        return abi.encode(signerIdxs, sigs, bytes(""));
+    }
+
+    // Build installModule initData for 1 ECDSA guardian with custom module init data
+    function _installInitData1WithData(Vm.Wallet memory w, uint8 gIdx, address acct, uint256 typeId, address module, bytes memory moduleInitData)
+        internal view returns (bytes memory)
+    {
+        bytes memory rawSig = _installSigWithData(w, acct, typeId, module, moduleInitData);
+        uint8[] memory signerIdxs = new uint8[](1);
+        bytes[] memory sigs = new bytes[](1);
+        signerIdxs[0] = gIdx;
+        sigs[0] = rawSig;
+        return abi.encode(signerIdxs, sigs, moduleInitData);
+    }
+
+    // Build installModule initData for 2 ECDSA guardians (threshold=100)
+    function _installInitData2(
+        Vm.Wallet memory w0, uint8 gIdx0,
+        Vm.Wallet memory w1, uint8 gIdx1,
+        address acct, uint256 typeId, address module
+    ) internal view returns (bytes memory) {
+        bytes memory sig0 = _installSig(w0, acct, typeId, module);
+        bytes memory sig1 = _installSig(w1, acct, typeId, module);
+        uint8[] memory signerIdxs = new uint8[](2);
+        bytes[] memory sigs = new bytes[](2);
+        signerIdxs[0] = gIdx0; signerIdxs[1] = gIdx1;
+        sigs[0] = sig0; sigs[1] = sig1;
+        return abi.encode(signerIdxs, sigs, bytes(""));
+    }
+
+    // Build uninstallModule deInitData for 2 ECDSA guardians
+    function _uninstallInitData(
+        Vm.Wallet memory w0, uint8 gIdx0,
+        Vm.Wallet memory w1, uint8 gIdx1,
+        address acct, uint256 typeId, address module
+    ) internal view returns (bytes memory) {
+        bytes memory sig0 = _uninstallSig(w0, acct, typeId, module);
+        bytes memory sig1 = _uninstallSig(w1, acct, typeId, module);
+        uint8[] memory signerIdxs = new uint8[](2);
+        bytes[] memory sigs = new bytes[](2);
+        signerIdxs[0] = gIdx0; signerIdxs[1] = gIdx1;
+        sigs[0] = sig0; sigs[1] = sig1;
+        return abi.encode(signerIdxs, sigs);
+    }
+
+    // Build uninstallModule deInitData for 1 ECDSA guardian
+    function _uninstallInitData1(Vm.Wallet memory w, uint8 gIdx, address acct, uint256 typeId, address module)
+        internal view returns (bytes memory)
+    {
+        bytes memory sig = _uninstallSig(w, acct, typeId, module);
+        uint8[] memory signerIdxs = new uint8[](1);
+        bytes[] memory sigs = new bytes[](1);
+        signerIdxs[0] = gIdx;
+        sigs[0] = sig;
+        return abi.encode(signerIdxs, sigs);
     }
 
     function test_accountId_is_0_18_0() public view {
@@ -214,7 +285,7 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_ACCOUNT_VERSION_constant() public view {
-        assertEq(account.ACCOUNT_VERSION(), "0.20.1");
+        assertEq(account.ACCOUNT_VERSION(), "0.20.2");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────
@@ -244,82 +315,82 @@ contract AAStarAirAccountV7_M7Test is Test {
     // ─── installModule: default threshold (70) — needs 1 guardian sig ─────────
 
     function test_installModule_validator_withGuardianSig_succeeds() public {
-        bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.installModule(1, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), initData);
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
     }
 
     function test_installModule_executor_withGuardianSig_succeeds() public {
-        bytes memory sig = _installSig(g0Wallet, address(account), 2, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 2, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.installModule(2, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(2, address(mockModule), initData);
         assertTrue(account.isModuleInstalled(2, address(mockModule), ""));
     }
 
     function test_installModule_hook_withGuardianSig_succeeds() public {
-        bytes memory sig = _installSig(g0Wallet, address(account), 4, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 4, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.installModule(4, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(4, address(mockModule), initData);
         assertTrue(account.isModuleInstalled(4, address(mockModule), ""));
     }
 
     function test_installModule_emitsModuleInstalled_event() public {
-        bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectEmit(true, true, false, false);
         emit AAStarAirAccountBase.ModuleInstalled(1, address(mockModule));
-        account.installModule(1, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), initData);
     }
 
     function test_installModule_notOwner_reverts() public {
-        bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(randomWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.NotOwnerOrEntryPoint.selector);
-        account.installModule(1, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), initData);
     }
 
     function test_installModule_zeroAddress_reverts() public {
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.ModuleInvalid.selector);
-        account.installModule(1, address(0), "");
+        IModuleMgmt(address(account)).installModule(1, address(0), "");
     }
 
     function test_installModule_noCode_reverts() public {
         // address(0xDEAD) is an EOA with no code; reverts ModuleInvalid() before guardian gate.
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.ModuleInvalid.selector);
-        account.installModule(1, address(0xDEAD), "");
+        IModuleMgmt(address(account)).installModule(1, address(0xDEAD), "");
     }
 
     function test_installModule_invalidType0_reverts() public {
-        bytes memory sig = _installSig(g0Wallet, address(account), 0, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 0, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InvalidModuleType.selector);
-        account.installModule(0, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(0, address(mockModule), initData);
     }
 
     function test_installModule_invalidType3_fallback_reverts() public {
         // ERC-7579 type 3 is fallback handler — not supported by this account.
-        bytes memory sig = _installSig(g0Wallet, address(account), 3, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 3, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InvalidModuleType.selector);
-        account.installModule(3, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(3, address(mockModule), initData);
     }
 
     function test_installModule_invalidType5_reverts() public {
-        bytes memory sig = _installSig(g0Wallet, address(account), 5, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 5, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InvalidModuleType.selector);
-        account.installModule(5, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(5, address(mockModule), initData);
     }
 
     function test_installModule_alreadyInstalled_reverts() public {
         _installWithG0(1, address(mockModule));
-        bytes memory sig2 = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory initData2 = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.ModuleAlreadyInstalled.selector);
-        account.installModule(1, address(mockModule), sig2);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), initData2);
     }
 
     function test_installModule_secondHook_reverts() public {
@@ -327,39 +398,36 @@ contract AAStarAirAccountV7_M7Test is Test {
         _installWithG0(4, address(mockModule));
         // deploy a second distinct mock module
         MockModule mockModule2 = new MockModule();
-        bytes memory sig2 = _installSig(g0Wallet, address(account), 4, address(mockModule2));
+        bytes memory initData2 = _installInitData1(g0Wallet, 0, address(account), 4, address(mockModule2));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.ModuleAlreadyInstalled.selector);
-        account.installModule(4, address(mockModule2), sig2);
+        IModuleMgmt(address(account)).installModule(4, address(mockModule2), initData2);
     }
 
     function test_installModule_hookAfterUninstall_succeeds() public {
         // After uninstalling the first hook, a new hook can be installed
         _installWithG0(4, address(mockModule));
         // uninstall requires 2 guardian sigs
-        bytes memory unSig = abi.encodePacked(
-            _uninstallSig(g0Wallet, address(account), 4, address(mockModule)),
-            _uninstallSig(g1Wallet, address(account), 4, address(mockModule))
-        );
+        bytes memory unData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 4, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(4, address(mockModule), unSig);
+        IModuleMgmt(address(account)).uninstallModule(4, address(mockModule), unData);
         // now install a second hook — should succeed
         MockModule mockModule2 = new MockModule();
-        bytes memory sig2 = _installSig(g0Wallet, address(account), 4, address(mockModule2));
+        bytes memory initData2 = _installInitData1(g0Wallet, 0, address(account), 4, address(mockModule2));
         vm.prank(ownerWallet.addr);
-        account.installModule(4, address(mockModule2), sig2);
+        IModuleMgmt(address(account)).installModule(4, address(mockModule2), initData2);
         assertTrue(account.isModuleInstalled(4, address(mockModule2), ""));
     }
 
     /// @notice Default threshold is 70 → 1 guardian sig required. No sig → should revert.
     function test_installModule_defaultThreshold_noGuardianSig_reverts() public {
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
-        account.installModule(1, address(mockModule), ""); // empty initData — no guardian sig
+        vm.expectRevert(); // abi.decode of "" panics
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), ""); // empty initData — no guardian sig
     }
 
     /// @notice Account with zero guardians: even with threshold=70 (1 sig required),
-    ///         any provided sig recovers to an address not in the guardian list → NotGuardian.
+    ///         any provided sig recovers to an address not in the guardian list → InvalidGuardianSignature.
     ///         The factory enforces >=2 guardians; this test bypasses the factory to document
     ///         the account-level behavior when initialize is called with all-zero guardian slots.
     function test_installModule_zeroGuardianAccount_reverts() public {
@@ -376,19 +444,20 @@ contract AAStarAirAccountV7_M7Test is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         }));
 
-        // threshold=0 → defaults to 70 → sigsRequired=1; but no guardian exists → NotGuardian
-        bytes memory anySig = _installSig(g0Wallet, address(noGuardAccount), 1, address(mockModule));
+        // threshold=0 → defaults to 70 → sigsRequired=1; guardian[0]=address(0), slot is empty →
+        // contract treats address(0) slot as invalid → InstallModuleUnauthorized
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(noGuardAccount), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
-        noGuardAccount.installModule(1, address(mockModule), anySig);
+        vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
+        IModuleMgmt(address(noGuardAccount)).installModule(1, address(mockModule), initData);
     }
 
     function test_installModule_wrongGuardianSig_reverts() public {
-        // Sign with non-guardian (randomWallet)
-        bytes memory badSig = _installSig(randomWallet, address(account), 1, address(mockModule));
+        // Sign with non-guardian (randomWallet) at gIdx=0 → recovered addr ≠ stored guardian[0]
+        bytes memory initData = _installInitData1(randomWallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
-        account.installModule(1, address(mockModule), badSig);
+        vm.expectRevert(AAStarAirAccountBase.InvalidGuardianSignature.selector);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), initData);
     }
 
     function test_installModule_duplicateGuardianSig_reverts() public {
@@ -397,9 +466,14 @@ contract AAStarAirAccountV7_M7Test is Test {
         // Use new sig format: binds keccak256(moduleInitData) = keccak256("") for no initData
         bytes memory dupSig = _installSigWithData(g0Wallet, address(acc100), 1, address(mockModule), "");
 
+        uint8[] memory sidxs = new uint8[](2);
+        bytes[] memory ss = new bytes[](2);
+        sidxs[0] = 0; sidxs[1] = 0;
+        ss[0] = dupSig; ss[1] = dupSig;
+
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
-        acc100.installModule(1, address(mockModule), abi.encodePacked(dupSig, dupSig));
+        IModuleMgmt(address(acc100)).installModule(1, address(mockModule), abi.encode(sidxs, ss, bytes("")));
     }
 
     // ─── installModule: threshold=100 (2 guardian sigs required) ────────────
@@ -407,32 +481,36 @@ contract AAStarAirAccountV7_M7Test is Test {
     function test_installModule_threshold100_withTwoGuardianSigs_succeeds() public {
         AAStarAirAccountV7 acc100 = _deployAccountWithThreshold(100);
 
-        bytes memory sig0 = _installSigWithData(g0Wallet, address(acc100), 1, address(mockModule), "");
-        bytes memory sig1 = _installSigWithData(g1Wallet, address(acc100), 1, address(mockModule), "");
+        bytes memory initData = _installInitData2(g0Wallet, 0, g1Wallet, 1, address(acc100), 1, address(mockModule));
 
         vm.prank(ownerWallet.addr);
-        acc100.installModule(1, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(acc100)).installModule(1, address(mockModule), initData);
         assertTrue(acc100.isModuleInstalled(1, address(mockModule), ""));
     }
 
     function test_installModule_threshold100_onlyOneSig_reverts() public {
         AAStarAirAccountV7 acc100 = _deployAccountWithThreshold(100);
 
-        bytes memory oneSig = _installSigWithData(g0Wallet, address(acc100), 1, address(mockModule), "");
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(acc100), 1, address(mockModule));
 
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
-        acc100.installModule(1, address(mockModule), oneSig);
+        IModuleMgmt(address(acc100)).installModule(1, address(mockModule), initData);
     }
 
     function test_installModule_sigBindsInitData_wrongInitData_reverts() public {
         // v3-MEDIUM: sig signed over empty initData; providing non-empty initData must revert
-        bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory wrongInitData = abi.encodePacked(sig, bytes32(uint256(0xdeadbeef)));
+        bytes memory rawSig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        // Wrap sig in struct claiming moduleInitData=hex"deadbeef" — but rawSig covers keccak256("") not keccak256(deadbeef)
+        uint8[] memory sidxs = new uint8[](1);
+        bytes[] memory ss = new bytes[](1);
+        sidxs[0] = 0;
+        ss[0] = rawSig;
+        bytes memory wrongInitData = abi.encode(sidxs, ss, hex"deadbeef");
 
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
-        account.installModule(1, address(mockModule), wrongInitData);
+        vm.expectRevert(AAStarAirAccountBase.InvalidGuardianSignature.selector);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), wrongInitData);
     }
 
     // ─── installModule: threshold=40 (owner-only, 0 guardian sigs) ───────────
@@ -441,7 +519,7 @@ contract AAStarAirAccountV7_M7Test is Test {
         AAStarAirAccountV7 acc40 = _deployAccountWithThreshold(40);
 
         vm.prank(ownerWallet.addr);
-        acc40.installModule(1, address(mockModule), ""); // no guardian sig needed
+        IModuleMgmt(address(acc40)).installModule(1, address(mockModule), ""); // no guardian sig needed
         assertTrue(acc40.isModuleInstalled(1, address(mockModule), ""));
     }
 
@@ -451,67 +529,62 @@ contract AAStarAirAccountV7_M7Test is Test {
         _installWithG0(1, address(mockModule));
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
 
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 1, address(mockModule));
+        bytes memory deInitData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(1, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), deInitData);
 
         assertFalse(account.isModuleInstalled(1, address(mockModule), ""));
     }
 
     function test_uninstallModule_executor_withTwoGuardianSigs_succeeds() public {
         _installWithG0(2, address(mockModule));
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 2, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 2, address(mockModule));
+        bytes memory deInitData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 2, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(2, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(account)).uninstallModule(2, address(mockModule), deInitData);
         assertFalse(account.isModuleInstalled(2, address(mockModule), ""));
     }
 
     function test_uninstallModule_hook_withTwoGuardianSigs_succeeds() public {
         _installWithG0(4, address(mockModule));
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 4, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 4, address(mockModule));
+        bytes memory deInitData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 4, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(4, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(account)).uninstallModule(4, address(mockModule), deInitData);
         assertFalse(account.isModuleInstalled(4, address(mockModule), ""));
     }
 
     function test_uninstallModule_emitsModuleUninstalled_event() public {
         _installWithG0(1, address(mockModule));
 
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 1, address(mockModule));
+        bytes memory deInitData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 1, address(mockModule));
 
         vm.expectEmit(true, true, false, false);
         emit AAStarAirAccountBase.ModuleUninstalled(1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(1, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), deInitData);
     }
 
     function test_uninstallModule_oneSig_reverts() public {
         _installWithG0(1, address(mockModule));
 
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory deInitData = _uninstallInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
-        account.uninstallModule(1, address(mockModule), sig0); // only 65 bytes
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), deInitData);
     }
 
     function test_uninstallModule_noSig_reverts() public {
         _installWithG0(1, address(mockModule));
 
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
-        account.uninstallModule(1, address(mockModule), "");
+        vm.expectRevert(); // abi.decode of "" panics
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), "");
     }
 
     function test_uninstallModule_notInstalled_reverts() public {
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 1, address(mockModule));
+        bytes memory deInitData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.ModuleNotInstalled.selector);
-        account.uninstallModule(1, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), deInitData);
     }
 
     function test_uninstallModule_duplicateSig_reverts() public {
@@ -519,38 +592,44 @@ contract AAStarAirAccountV7_M7Test is Test {
 
         // Same guardian signs twice → double-voting should be rejected
         bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
+        uint8[] memory sidxs = new uint8[](2);
+        bytes[] memory ss = new bytes[](2);
+        sidxs[0] = 0; sidxs[1] = 0;
+        ss[0] = sig0; ss[1] = sig0;
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InstallModuleUnauthorized.selector);
-        account.uninstallModule(1, address(mockModule), abi.encodePacked(sig0, sig0));
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), abi.encode(sidxs, ss));
     }
 
     function test_uninstallModule_nonGuardianSig_reverts() public {
         _installWithG0(1, address(mockModule));
 
         bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory badSig = _uninstallSig(randomWallet, address(account), 1, address(mockModule));
+        bytes memory randomSig = _uninstallSig(randomWallet, address(account), 1, address(mockModule));
+        uint8[] memory sidxs = new uint8[](2);
+        bytes[] memory ss = new bytes[](2);
+        sidxs[0] = 0; sidxs[1] = 1;
+        ss[0] = sig0; ss[1] = randomSig;
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
-        account.uninstallModule(1, address(mockModule), abi.encodePacked(sig0, badSig));
+        vm.expectRevert(AAStarAirAccountBase.InvalidGuardianSignature.selector);
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), abi.encode(sidxs, ss));
     }
 
     function test_uninstallModule_invalidType0_reverts() public {
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 0, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 0, address(mockModule));
+        bytes memory deInitData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 0, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.InvalidModuleType.selector);
-        account.uninstallModule(0, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(account)).uninstallModule(0, address(mockModule), deInitData);
     }
 
     function test_uninstallModule_nonOwner_reverts() public {
         _installWithG0(1, address(mockModule));
 
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 1, address(mockModule));
+        bytes memory deInitData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 1, address(mockModule));
         // Non-owner (even with valid guardian sigs) cannot uninstall a module
         vm.prank(address(0xbad));
         vm.expectRevert(AAStarAirAccountBase.NotOwnerOrEntryPoint.selector);
-        account.uninstallModule(1, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), deInitData);
     }
 
     // ─── executeFromExecutor ──────────────────────────────────────────────────
@@ -650,9 +729,9 @@ contract AAStarAirAccountV7_M7Test is Test {
         }), address(guard));
         vm.deal(address(gacct), 10 ether);
 
-        bytes memory sig = _installSig(g0Wallet, address(gacct), 2, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(gacct), 2, address(mockModule));
         vm.prank(ownerWallet.addr);
-        gacct.installModule(2, address(mockModule), sig);
+        IModuleMgmt(address(gacct)).installModule(2, address(mockModule), initData);
 
         address recipient = makeAddr("c4_recipient2");
         // 1 ether: no tier limits set, within 2 ether daily limit → succeeds (no tier check)
@@ -724,9 +803,9 @@ contract AAStarAirAccountV7_M7Test is Test {
         ReentrantExecutor reentrant = new ReentrantExecutor();
         reentrant.setAccount(address(account));
 
-        bytes memory sig = _installSig(g0Wallet, address(account), 2, address(reentrant));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 2, address(reentrant));
         vm.prank(ownerWallet.addr);
-        account.installModule(2, address(reentrant), sig);
+        IModuleMgmt(address(account)).installModule(2, address(reentrant), initData);
 
         // Call executeFromExecutor with calldata that triggers reentrant.attemptReentry()
         // attemptReentry() calls back into account.executeFromExecutor — the nonReentrant guard must block it
@@ -952,10 +1031,9 @@ contract AAStarAirAccountV7_M7Test is Test {
         _installWithG0(1, address(mockModule));
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
 
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 1, address(mockModule));
+        bytes memory deInitData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(1, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), deInitData);
 
         assertFalse(account.isModuleInstalled(1, address(mockModule), ""));
     }
@@ -1029,16 +1107,15 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
 
         // Uninstall
-        bytes memory sig0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory sig1 = _uninstallSig(g1Wallet, address(account), 1, address(mockModule));
+        bytes memory deInitData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(1, address(mockModule), abi.encodePacked(sig0, sig1));
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), deInitData);
         assertFalse(account.isModuleInstalled(1, address(mockModule), ""));
 
         // Reinstall — should succeed since registry is cleared
-        bytes memory sig2 = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory initData2 = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.installModule(1, address(mockModule), sig2);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), initData2);
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
     }
 
@@ -1049,29 +1126,28 @@ contract AAStarAirAccountV7_M7Test is Test {
     ///         nonce advances on every install AND uninstall, so the captured sig no longer
     ///         recovers to a guardian against the new hash.
     function test_installModule_replayAfterReinstall_reverts() public {
-        // Capture the guardian sig while nonce == 0, then perform the first install (nonce 0 -> 1).
+        // Capture the guardian initData while nonce == 0, then perform the first install (nonce 0 -> 1).
         assertEq(account.moduleManagementNonce(), 0);
-        bytes memory capturedSig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory capturedInitData = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.installModule(1, address(mockModule), capturedSig);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), capturedInitData);
         assertEq(account.moduleManagementNonce(), 1);
 
         // Uninstall (nonce 1 -> 2).
-        bytes memory u0 = _uninstallSig(g0Wallet, address(account), 1, address(mockModule));
-        bytes memory u1 = _uninstallSig(g1Wallet, address(account), 1, address(mockModule));
+        bytes memory unData = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(1, address(mockModule), abi.encodePacked(u0, u1));
+        IModuleMgmt(address(account)).uninstallModule(1, address(mockModule), unData);
         assertEq(account.moduleManagementNonce(), 2);
 
-        // Replay the original (nonce-0) sig — recovered address is no longer a guardian → revert.
+        // Replay the original (nonce-0) initData — recovered address is no longer a guardian → revert.
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
-        account.installModule(1, address(mockModule), capturedSig);
+        vm.expectRevert(AAStarAirAccountBase.InvalidGuardianSignature.selector);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), capturedInitData);
 
-        // A fresh sig (built at the current nonce) still works.
-        bytes memory freshSig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        // A fresh initData (built at the current nonce) still works.
+        bytes memory freshInitData = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.installModule(1, address(mockModule), freshSig);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), freshInitData);
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
     }
 
@@ -1091,14 +1167,18 @@ contract AAStarAirAccountV7_M7Test is Test {
         ));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(g0Wallet.privateKey, raw.toEthSignedMessageHash());
         bytes memory wrongVerSig = abi.encodePacked(r, s, v);
+        uint8[] memory sidxs = new uint8[](1);
+        bytes[] memory ss = new bytes[](1);
+        sidxs[0] = 0;
+        ss[0] = wrongVerSig;
         vm.prank(ownerWallet.addr);
-        vm.expectRevert(AAStarAirAccountBase.NotGuardian.selector);
-        account.installModule(1, address(mockModule), wrongVerSig);
+        vm.expectRevert(AAStarAirAccountBase.InvalidGuardianSignature.selector);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), abi.encode(sidxs, ss, bytes("")));
 
         // Positive control: identical op with the CORRECT version (same nonce — the revert didn't bump it).
-        bytes memory goodSig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory goodInitData = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.installModule(1, address(mockModule), goodSig);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), goodInitData);
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""), "correct-version install must succeed");
     }
 
@@ -1131,21 +1211,21 @@ contract AAStarAirAccountV7_M7Test is Test {
     function test_installModule_onInstallReverts_reverts() public {
         // MEDIUM-1 fix: onInstall failure now hard-reverts; module is NOT marked installed
         RevertingModule badModule = new RevertingModule();
-        bytes memory sig = _installSigWithData(g0Wallet, address(account), 1, address(badModule), "");
+        bytes memory initData = _installInitData1WithData(g0Wallet, 0, address(account), 1, address(badModule), "");
         vm.prank(ownerWallet.addr);
         vm.expectRevert(
             abi.encodeWithSelector(AAStarAirAccountBase.ModuleInstallCallbackFailed.selector, 1, address(badModule))
         );
-        account.installModule(1, address(badModule), sig);
+        IModuleMgmt(address(account)).installModule(1, address(badModule), initData);
         // Module must NOT be marked installed after revert
         assertFalse(account.isModuleInstalled(1, address(badModule), ""));
     }
 
     function test_installModule_onInstallSucceeds_noRevert() public {
         // Normal module install should succeed without revert
-        bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
-        account.installModule(1, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), initData);
         assertTrue(account.isModuleInstalled(1, address(mockModule), ""));
     }
 
@@ -1158,34 +1238,32 @@ contract AAStarAirAccountV7_M7Test is Test {
         TrackingModule tracker = new TrackingModule();
 
         // Step 1: install as executor (typeId=2) — onInstall should be called once
-        bytes memory sig2 = _installSig(g0Wallet, address(account), 2, address(tracker));
+        bytes memory initData2 = _installInitData1(g0Wallet, 0, address(account), 2, address(tracker));
         vm.prank(ownerWallet.addr);
-        account.installModule(2, address(tracker), sig2);
+        IModuleMgmt(address(account)).installModule(2, address(tracker), initData2);
         assertTrue(account.isModuleInstalled(2, address(tracker), ""));
         assertEq(tracker.installCount(), 1, "onInstall must be called on first install");
 
         // Step 2: install same module as validator (typeId=1) — onInstall must NOT be called again
-        bytes memory sig1 = _installSig(g0Wallet, address(account), 1, address(tracker));
+        bytes memory initData1 = _installInitData1(g0Wallet, 0, address(account), 1, address(tracker));
         vm.prank(ownerWallet.addr);
-        account.installModule(1, address(tracker), sig1);
+        IModuleMgmt(address(account)).installModule(1, address(tracker), initData1);
         assertTrue(account.isModuleInstalled(1, address(tracker), ""));
         assertTrue(account.isModuleInstalled(2, address(tracker), ""));
         assertEq(tracker.installCount(), 1, "onInstall must NOT be called again on second typeId");
 
         // Step 3: uninstall as validator (typeId=1) — onUninstall must NOT be called yet (still live as executor)
-        bytes memory usig0 = _uninstallSig(g0Wallet, address(account), 1, address(tracker));
-        bytes memory usig1 = _uninstallSig(g1Wallet, address(account), 1, address(tracker));
+        bytes memory unData1 = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 1, address(tracker));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(1, address(tracker), abi.encodePacked(usig0, usig1));
+        IModuleMgmt(address(account)).uninstallModule(1, address(tracker), unData1);
         assertFalse(account.isModuleInstalled(1, address(tracker), ""));
         assertTrue(account.isModuleInstalled(2, address(tracker), ""), "executor role must still be active");
         assertEq(tracker.uninstallCount(), 0, "onUninstall must NOT be called while another typeId is still active");
 
         // Step 4: uninstall as executor (typeId=2) — now onUninstall must be called once
-        bytes memory usig2 = _uninstallSig(g0Wallet, address(account), 2, address(tracker));
-        bytes memory usig3 = _uninstallSig(g1Wallet, address(account), 2, address(tracker));
+        bytes memory unData2 = _uninstallInitData(g0Wallet, 0, g1Wallet, 1, address(account), 2, address(tracker));
         vm.prank(ownerWallet.addr);
-        account.uninstallModule(2, address(tracker), abi.encodePacked(usig2, usig3));
+        IModuleMgmt(address(account)).uninstallModule(2, address(tracker), unData2);
         assertFalse(account.isModuleInstalled(2, address(tracker), ""));
         assertEq(tracker.uninstallCount(), 1, "onUninstall must be called exactly once after last typeId removed");
     }
@@ -1193,10 +1271,10 @@ contract AAStarAirAccountV7_M7Test is Test {
     /// @notice MEDIUM-2: installing same module twice under the same typeId must still revert.
     function test_crossTypeId_sameTypeId_reverts() public {
         _installWithG0(1, address(mockModule));
-        bytes memory sig = _installSig(g0Wallet, address(account), 1, address(mockModule));
+        bytes memory initData = _installInitData1(g0Wallet, 0, address(account), 1, address(mockModule));
         vm.prank(ownerWallet.addr);
         vm.expectRevert(AAStarAirAccountBase.ModuleAlreadyInstalled.selector);
-        account.installModule(1, address(mockModule), sig);
+        IModuleMgmt(address(account)).installModule(1, address(mockModule), initData);
     }
 
     // v0.17.2-beta.4: removed test_bundle_identicalCallData_secondValidateOverwritesFirst.
