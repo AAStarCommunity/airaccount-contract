@@ -34,7 +34,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this contract deployment. Used by SDKs for programmatic version detection.
-    string public constant ACCOUNT_VERSION = "0.20.1";
+    string public constant ACCOUNT_VERSION = "0.20.2";
 
     /// @dev Implementation constructor. Does NOT disable initializers so that direct `new` in tests works.
     ///      The factory deploys one shared implementation and uses Clones for user accounts.
@@ -85,16 +85,6 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     uint256 internal constant MODULE_TYPE_VALIDATOR = 1;
     uint256 internal constant MODULE_TYPE_EXECUTOR  = 2;
     uint256 internal constant MODULE_TYPE_HOOK      = 4;
-
-    /// @dev KI-6 (#58): number of distinct guardian signatures (alongside owner) required for the
-    ///      immediate-install bypass when the optional module-install timelock is enabled. 2 distinct
-    ///      guardians (owner+2) strictly exceeds the default owner+1-guardian install threshold it
-    ///      bypasses — the higher-authorization path costs MORE consensus than the thing it skips.
-    uint8 internal constant MODULE_INSTALL_BYPASS_SIGS = 2;
-
-    // ERC-7579 module lifecycle selectors
-    bytes4 private constant SEL_ON_INSTALL   = 0x6d61fe70; // onInstall(bytes)
-    bytes4 private constant SEL_ON_UNINSTALL = 0x8a91b0e3; // onUninstall(bytes)
 
     /// @notice ERC-7579 account identity string.
     ///         Format: "vendor.name.version" — enables tooling to identify this account type.
@@ -338,152 +328,10 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     }
 
     // ─── ERC-7579 Module Management (M7.2) ────────────────────────────
-
-    /// @dev Best-effort lifecycle call (onUninstall) with empty bytes data.
-    ///      Uses abi.encodeWithSelector to avoid clobbering Solidity's scratch space (0x00–0x3f)
-    ///      and free-memory pointer (0x40). Return value intentionally ignored.
-    function _callLifecycle(bytes4 sel, address module) private {
-        // solhint-disable-next-line avoid-low-level-calls
-        (bool _ok,) = module.call(abi.encodeWithSelector(sel, new bytes(0)));
-        _ok; // silence unused-variable warning — best-effort, failure is intentionally ignored
-    }
-
-    /// @dev Verify `count` sequential 65-byte ECDSA sigs from distinct guardians.
-    ///      Reverts InstallModuleUnauthorized on any failure (too few bytes, non-guardian, double-vote).
-    function _checkGuardianSigs(bytes32 hash, bytes calldata sigs, uint8 count) private {
-        uint256 bitmap;
-        for (uint8 i; i < count; ++i) {
-            uint256 end = uint256(i + 1) * 65;
-            if (sigs.length < end) revert InstallModuleUnauthorized();
-            address recovered = hash.recover(sigs[end - 65 : end]);
-            uint256 bit = uint256(1) << _guardianIndex(recovered);
-            if (bitmap & bit != 0) revert InstallModuleUnauthorized();
-            bitmap |= bit;
-        }
-    }
-
-    /// @notice ERC-7579: Install a module.
-    /// @param moduleTypeId 1=Validator, 2=Executor, 3=Hook
-    /// @param module Module contract address (must be deployed)
-    /// @param initData Layout: guardian sig(s) prepended, then module init data.
-    ///   Guardian sig count: 0 if threshold<=40, 1 if threshold<=70, 2 if threshold=100.
-    ///   Sig hash: _guardianOpHash("INSTALL_MODULE", abi.encode(moduleTypeId, module, moduleInitDataHash, moduleManagementNonce))
-    ///   = keccak256(abi.encode(GUARDIAN_SIG_VERSION, chainId, account, "INSTALL_MODULE", opData)).toEthSignedMessageHash()
-    ///   Bytes after the sig(s) are passed as initData to onInstall(bytes).
-    function installModule(
-        uint256 moduleTypeId,
-        address module,
-        bytes calldata initData
-    ) external onlyOwnerOrEntryPoint {
-        if (module == address(0) || module.code.length == 0) revert ModuleInvalid();
-        if (moduleTypeId != MODULE_TYPE_VALIDATOR
-            && moduleTypeId != MODULE_TYPE_EXECUTOR
-            && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
-
-        uint8 threshold = _installModuleThreshold == 0 ? 70 : _installModuleThreshold;
-        uint8 sigsRequired = threshold >= 100 ? 2 : (threshold >= 70 ? 1 : 0);
-
-        // KI-6 (#58): when the optional install timelock is enabled, this immediate-install path
-        // demands the elevated owner+2-guardian bypass authorization. The default owner+1-guardian
-        // path must instead route through proposeModuleInstall → (wait timelock) → executeModuleInstall
-        // (on AirAccountExtension), giving other guardians/owner a window to cancel a dual-key compromise.
-        if (_moduleInstallTimelock != 0 && sigsRequired < MODULE_INSTALL_BYPASS_SIGS) {
-            sigsRequired = MODULE_INSTALL_BYPASS_SIGS;
-        }
-
-        if (sigsRequired > 0) {
-            uint256 sigEnd = uint256(sigsRequired) * 65;
-            // Explicit length guard before slice — prevents panic and gives readable revert.
-            if (initData.length < sigEnd) revert InstallModuleUnauthorized();
-            // v3-MEDIUM fix: sig binds keccak256(moduleInitData) to prevent config-swap attacks.
-            // Guardian signs over both the module identity AND the module init configuration.
-            bytes32 moduleInitDataHash = keccak256(initData[sigEnd:]);
-            // #84: version-bound domain. #75: _moduleManagementNonce defeats replay after reinstall.
-            _checkGuardianSigs(
-                _guardianOpHash(
-                    "INSTALL_MODULE",
-                    abi.encode(moduleTypeId, module, moduleInitDataHash, _moduleManagementNonce)
-                ),
-                initData, sigsRequired
-            );
-        }
-
-        bytes calldata moduleInitData = initData[uint256(sigsRequired) * 65:];
-
-        if (_installedModules[moduleTypeId][module]) revert ModuleAlreadyInstalled();
-        // LOW-1: Reject second hook install — silent overwrite would deactivate TierGuardHook without warning.
-        // Caller must explicitly uninstallModule the existing hook before installing a new one.
-        if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook != address(0)) revert ModuleAlreadyInstalled();
-
-        // MEDIUM-2: Only call onInstall on the first installation of this module address.
-        // A module may legitimately implement multiple roles (e.g. validator + executor).
-        // Calling onInstall again on secondary typeId would double-initialize shared state
-        // (e.g. _initialized in AgentSessionKeyValidator) and silently discard initData.
-        bool alreadyLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
-                        || _installedModules[MODULE_TYPE_EXECUTOR][module]
-                        || _installedModules[MODULE_TYPE_HOOK][module];
-
-        _installedModules[moduleTypeId][module] = true;
-        if (moduleTypeId == MODULE_TYPE_HOOK) _activeHook = module;
-
-        if (!alreadyLive) {
-            // MEDIUM-1: Hard-revert if onInstall fails — leaving module marked installed but
-            // uninitialized creates a stuck state where validateUserOp returns 1 forever.
-            // Revert rolls back _installedModules and _activeHook atomically.
-            (bool _ok,) = module.call(abi.encodeWithSelector(SEL_ON_INSTALL, moduleInitData));
-            if (!_ok) revert ModuleInstallCallbackFailed(moduleTypeId, module);
-        }
-
-        // #75: advance the nonce so this guardian signature cannot be replayed after uninstall.
-        unchecked { _moduleManagementNonce++; }
-
-        emit ModuleInstalled(moduleTypeId, module);
-    }
-
-    /// @notice ERC-7579: Uninstall a module.
-    /// @dev Requires min(guardianCount, 2) guardian sigs.
-    ///      Accounts with fewer than 2 real guardians use all available guardian sigs
-    ///      so that modules are never permanently locked even on minimal-guardian accounts.
-    ///      Sig hash: _guardianOpHash("UNINSTALL_MODULE", abi.encode(moduleTypeId, module, moduleManagementNonce))
-    ///      = keccak256(abi.encode(GUARDIAN_SIG_VERSION, chainId, account, "UNINSTALL_MODULE", opData)).toEthSignedMessageHash()
-    function uninstallModule(
-        uint256 moduleTypeId,
-        address module,
-        bytes calldata deInitData
-    ) external onlyOwnerOrEntryPoint {
-        if (moduleTypeId != MODULE_TYPE_VALIDATOR
-            && moduleTypeId != MODULE_TYPE_EXECUTOR
-            && moduleTypeId != MODULE_TYPE_HOOK) revert InvalidModuleType();
-
-        uint8 sigsRequired = _guardianCount < 2 ? _guardianCount : 2;
-        // #84: version-bound domain. #75: _moduleManagementNonce defeats replay after reinstall.
-        _checkGuardianSigs(
-            _guardianOpHash(
-                "UNINSTALL_MODULE",
-                abi.encode(moduleTypeId, module, _moduleManagementNonce)
-            ),
-            deInitData, sigsRequired
-        );
-
-        if (!_installedModules[moduleTypeId][module]) revert ModuleNotInstalled();
-        _installedModules[moduleTypeId][module] = false;
-        if (moduleTypeId == MODULE_TYPE_HOOK && _activeHook == module) _activeHook = address(0);
-
-        // MEDIUM-2: Only call onUninstall when this is the last active installation of the module.
-        // If the module is still installed under another typeId, calling onUninstall would clear
-        // shared state (e.g. _initialized) and break the remaining role.
-        bool stillLive = _installedModules[MODULE_TYPE_VALIDATOR][module]
-                      || _installedModules[MODULE_TYPE_EXECUTOR][module]
-                      || _installedModules[MODULE_TYPE_HOOK][module];
-        if (!stillLive) {
-            _callLifecycle(SEL_ON_UNINSTALL, module); // best-effort
-        }
-
-        // #75: advance the nonce so this guardian signature cannot be replayed on reinstall.
-        unchecked { _moduleManagementNonce++; }
-
-        emit ModuleUninstalled(moduleTypeId, module);
-    }
+    //
+    // installModule() and uninstallModule() are implemented in AirAccountExtension.
+    // They are reached via the account's fallback() → delegatecall(agentExtension) path.
+    // The function selectors are identical; the extension runs in account storage context.
 
     /// @notice ERC-7579: Execute a single call on behalf of this account, called by an installed executor module.
     ///         Executor modules are installed via guardians (installModule requires guardian sig), providing

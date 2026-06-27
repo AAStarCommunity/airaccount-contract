@@ -255,7 +255,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x94ddedee` | `parseTokenTransfer(bytes)` | ICalldataParser |
 | `0x94ddedee` | `parseTokenTransfer(bytes)` | RailgunParser |
 | `0x94ddedee` | `parseTokenTransfer(bytes)` | UniswapV3Parser |
-| `0x9517e29f` | `installModule(uint256,address,bytes)` | AAStarAirAccountV7 |
+| `0x9517e29f` | `installModule(uint256,address,bytes)` | AirAccountExtension |
 | `0x97003203` | `validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)` | IERC7579Validator |
 | `0x980e65ca` | `buildP256GrantHash(address,bytes32,bytes32,(uint48,address,bytes4,bool,uint16,uint32,address[],bytes4[]))` | SessionKeyValidator |
 | `0x990bb980` | `getChainQualifiedAddress(address)` | AAStarAirAccountFactoryV7 |
@@ -275,7 +275,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xa5b915b5` | `setModuleInstallTimelock(uint256,bytes)` | AirAccountExtension |
 | `0xa5b915b5` | `setModuleInstallTimelock(uint256,bytes)` | IAirAccountAgent |
 | `0xa61c521f` | `getP256Session(address,bytes32)` | SessionKeyValidator |
-| `0xa71763a8` | `uninstallModule(uint256,address,bytes)` | AAStarAirAccountV7 |
+| `0xa71763a8` | `uninstallModule(uint256,address,bytes)` | AirAccountExtension |
 | `0xa8c59169` | `revokePublicKey(bytes32)` | AAStarBLSAlgorithm |
 | `0xaaf400c4` | `validationRequest(address,uint256,string,bytes32)` | IERC8004ValidationRegistry |
 | `0xacfff8f6` | `getAlgorithm(uint8)` | IAAStarValidator |
