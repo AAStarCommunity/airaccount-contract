@@ -1163,7 +1163,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 51 · **Events:** 27 · **Errors:** 59
+- **Functions:** 49 · **Events:** 27 · **Errors:** 59
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1196,7 +1196,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x1ab193d8` | `initialize(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit. |
 | `0x3cb406a8` | `initialize(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization. |
 | `0xe2a30d26` | `initializeAgentAccount(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize an autonomous-agent account. |
-| `0x9517e29f` | `installModule(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | ERC-7579: Install a module. |
 | `0x112d3a7d` | `isModuleInstalled(uint256,address,bytes)` | view | — | ERC-7579: check whether a module is installed.         Checks the unified module registry for supported types (1,2,4).         Note: the built-in ECDSA validator is registered at initialize time. |
 | `0x1626ba7e` | `isValidSignature(bytes32,bytes)` | view | — | ERC-1271: on-chain signature validation used by ERC-7579 tooling and DeFi protocols.         Validates that the ECDSA signature was produced by this account's owner. |
 | `0x3fe81b6a` | `modifyTierLimitsWithGuardians(uint256,uint256,uint256,bytes[])` | nonpayable | — | Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.         Security principle: the authorization level to change a spending guard must match         the tier level being guarded (spending at T2 requires a guardian; modifying T2 does too). |
@@ -1217,7 +1216,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xf2dc691d` | `supportsModule(uint256)` | pure | — | ERC-7579: declare which module types this account supports.         Declares validator(1), executor(2), and hook(4). Fallback(3) is not supported. |
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
 | `0xdbaf0cc3` | `tier2Limit()` | view | — | Tier2 max (dual factor); above this requires multi-sig (BLS triple) |
-| `0xa71763a8` | `uninstallModule(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | ERC-7579: Uninstall a module. |
 | `0x19822f7c` | `validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32,uint256)` | nonpayable | onlyEntryPoint | Validate user's signature and nonce the entryPoint will make the call to the recipient only if this validation call returns successfully. signature failure should be reported by returning SIG_VALIDATION_FAILED (1). This allows making a "simulation call" without a valid signature Other failures (e.g. nonce mismatch, or invalid signature format) should still revert to signal failure. |
 | `0x3a5381b5` | `validator()` | view | — | Optional validator router for external algorithms (BLS, PQ, etc.) |
 | `0x085aa197` | `weightConfig()` | view | — | Current weight config. tier1Threshold == 0 means uninitialised → ALG_WEIGHTED fails. |
@@ -1502,18 +1500,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
 | `_guardAddr` | `address` |  |
 
-#### `installModule(uint256 moduleTypeId, address module, bytes initData)`
-
-`0x9517e29f` · nonpayable · access: onlyOwnerOrEntryPoint
-
-> ERC-7579: Install a module.
-
-| param | type | description |
-|---|---|---|
-| `moduleTypeId` | `uint256` | 1=Validator, 2=Executor, 3=Hook |
-| `module` | `address` | Module contract address (must be deployed) |
-| `initData` | `bytes` | Layout: guardian sig(s) prepended, then module init data.   Guardian sig count: 0 if threshold<=40, 1 if threshold<=70, 2 if threshold=100.   Sig hash: _guardianOpHash("INSTALL_MODULE", abi.encode(moduleTypeId, module, moduleInitDataHash, moduleManagementNonce))   = keccak256(abi.encode(GUARDIAN_SIG_VERSION, chainId, account, "INSTALL_MODULE", opData)).toEthSignedMessageHash()   Bytes after the sig(s) are passed as initData to onInstall(bytes). |
-
 #### `isModuleInstalled(uint256 moduleTypeId, address module, bytes arg2)`
 
 `0x112d3a7d` · view · access: —
@@ -1751,20 +1737,6 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `uint256` |  |
-
-#### `uninstallModule(uint256 moduleTypeId, address module, bytes deInitData)`
-
-`0xa71763a8` · nonpayable · access: onlyOwnerOrEntryPoint
-
-> ERC-7579: Uninstall a module.
-
-*@dev* Requires min(guardianCount, 2) guardian sigs.      Accounts with fewer than 2 real guardians use all available guardian sigs      so that modules are never permanently locked even on minimal-guardian accounts.      Sig hash: _guardianOpHash("UNINSTALL_MODULE", abi.encode(moduleTypeId, module, moduleManagementNonce))      = keccak256(abi.encode(GUARDIAN_SIG_VERSION, chainId, account, "UNINSTALL_MODULE", opData)).toEthSignedMessageHash()
-
-| param | type | description |
-|---|---|---|
-| `moduleTypeId` | `uint256` |  |
-| `module` | `address` |  |
-| `deInitData` | `bytes` |  |
 
 #### `validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes) userOp, bytes32 userOpHash, uint256 missingAccountFunds)`
 
@@ -2445,7 +2417,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AirAccountExtension
 
 - **Source:** `src/core/AirAccountExtension.sol`
-- **Functions:** 43 · **Events:** 25 · **Errors:** 56
+- **Functions:** 45 · **Events:** 26 · **Errors:** 57
 - **Title:** AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 - Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase         to keep the account under EIP-170's 24,576-byte runtime limit:           - ERC-8004 agent identity / reputation / wallet binding           - weighted-signature config governance (setWeightConfig + change proposal flow)         Deployed once (singleton) per implementation; the account reaches it via fallback +         delegatecall, so all logic runs in the ACCOUNT's storage/context: msg.sender,         address(this), owner, guardians, events and reverts are exactly as if inline.
 
@@ -2472,6 +2444,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x35905bb0` | `executeWeightChange()` | nonpayable | — | Execute an approved weight-change after timelock and threshold are met. |
 | `0x43538f9c` | `getGuardianP256Key(uint8)` | view | — | Get the P-256 public key stored for a guardian slot (returns (0,0) if not a P-256 slot). |
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
+| `0x9517e29f` | `installModule(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | ERC-7579: Install a module. Supports both ECDSA and P-256 guardian multi-sig. |
 | `0x353f0860` | `mintAgentIdentity(address,string)` | nonpayable | onlyOwner, nonReentrant | Mint an ERC-8004 agent identity NFT to this AirAccount via the official registry. |
 | `0x642c7989` | `modifyTierLimitsWithMixedGuardians(uint256,uint256,uint256,uint8[],bytes[])` | nonpayable | onlyOwner | Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type. |
 | `0xc8175b3f` | `moduleInstallTimelock()` | view | — | Read the active module-install timelock (seconds). 0 = disabled (immediate installs). |
@@ -2494,6 +2467,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
 | `0xdbaf0cc3` | `tier2Limit()` | view | — | Tier2 max (dual factor); above this requires multi-sig (BLS triple) |
 | `0xb6135596` | `tierLimitNonce()` | view | — | Current tier-limit modification nonce.         Increments after each successful modifyTierLimitsWithGuardians /         modifyTierLimitsWithMixedGuardians call. SDK reads this offline         to build the guardian digest before requesting signatures. |
+| `0xa71763a8` | `uninstallModule(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | ERC-7579: Uninstall a module. Supports both ECDSA and P-256 guardian multi-sig. |
 | `0x3a5381b5` | `validator()` | view | — | Optional validator router for external algorithms (BLS, PQ, etc.) |
 | `0x085aa197` | `weightConfig()` | view | — | Current weight config. tier1Threshold == 0 means uninitialised → ALG_WEIGHTED fails. |
 
@@ -2691,6 +2665,18 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
+#### `installModule(uint256 moduleTypeId, address module, bytes initData)`
+
+`0x9517e29f` · nonpayable · access: onlyOwnerOrEntryPoint
+
+> ERC-7579: Install a module. Supports both ECDSA and P-256 guardian multi-sig.
+
+| param | type | description |
+|---|---|---|
+| `moduleTypeId` | `uint256` | 1=Validator, 2=Executor, 4=Hook. |
+| `module` | `address` | Module contract address (must be deployed). |
+| `initData` | `bytes` | When sigsRequired > 0: abi.encode(uint8[] signerIdxs, bytes[] sigs, bytes moduleInitData).   When sigsRequired == 0: raw module init data.   Op: "INSTALL_MODULE", opData: abi.encode(moduleTypeId, module, keccak256(moduleInitData), nonce). |
+
 #### `mintAgentIdentity(address identityRegistry, string agentURI)`
 
 `0x353f0860` · nonpayable · access: onlyOwner, nonReentrant
@@ -2808,7 +2794,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `moduleTypeId` | `uint256` | 1=validator, 2=executor, 4=hook. |
 | `module` | `address` | Module contract address (must be deployed). |
-| `initData` | `bytes` | Layout: guardian sig(s) prepended (per configured threshold), then module init data.        Sig hash: _guardianOpHash("INSTALL_MODULE", abi.encode(moduleTypeId, module, keccak256(moduleInitData), moduleManagementNonce)). |
+| `initData` | `bytes` | When sigsRequired > 0: abi.encode(signerIdxs, sigs, moduleInitData).        When sigsRequired == 0: raw module init data.        Op: "INSTALL_MODULE", opData: abi.encode(moduleTypeId, module, keccak256(moduleInitData), nonce). |
 
 #### `proposeRecovery(address newOwner)`
 
@@ -2898,7 +2884,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | param | type | description |
 |---|---|---|
 | `newTimelock` | `uint256` | New timelock in seconds (0 disables). Capped at MAX_MODULE_INSTALL_TIMELOCK        (30 days); larger values revert ModuleInstallTimelockTooLong. |
-| `guardianSigs` | `bytes` | Concatenated 65-byte guardian sigs over        _guardianOpHash("SET_MODULE_TIMELOCK", abi.encode(newTimelock, moduleManagementNonce)).        Ignored (may be empty) when strengthening. |
+| `guardianSigs` | `bytes` | abi.encode(uint8[] signerIdxs, bytes[] sigs) over        ("SET_MODULE_TIMELOCK", abi.encode(newTimelock, moduleManagementNonce)).        Ignored (may be empty) when strengthening. |
 
 #### `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8) config)`
 
@@ -2960,6 +2946,20 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `uint256` |  |
 
+#### `uninstallModule(uint256 moduleTypeId, address module, bytes deInitData)`
+
+`0xa71763a8` · nonpayable · access: onlyOwnerOrEntryPoint
+
+> ERC-7579: Uninstall a module. Supports both ECDSA and P-256 guardian multi-sig.
+
+*@dev* Requires min(guardianCount, 2) guardian sigs.      deInitData: abi.encode(uint8[] signerIdxs, bytes[] sigs).      Op: "UNINSTALL_MODULE", opData: abi.encode(moduleTypeId, module, nonce).**0-guardian accounts**: when guardianCount == 0, sigsRequired degrades to 0 and the      owner/EntryPoint can uninstall without any guardian signatures. This is intentional —      a module installed on a 0-guardian account is protected only by the owner key, which is      the same security model as every other operation on such an account. Accounts that require      guardian-gated module removal must configure at least one guardian.
+
+| param | type | description |
+|---|---|---|
+| `moduleTypeId` | `uint256` |  |
+| `module` | `address` |  |
+| `deInitData` | `bytes` |  |
+
 #### `validator()`
 
 `0x3a5381b5` · view · access: —
@@ -3005,6 +3005,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xcb23826c065976de3d72ab586bb16e6910ad23028abf0885a015fa54face86b3` | `ModuleInstallExecuted(uint256,address)` |
 | `0x961131cbbaf1bc03ad2365a2fb7e266c712005e704c38832cfb7a3014a3580fb` | `ModuleInstallProposed(uint256,address,uint256)` |
 | `0x27db7bd98a100c6f2a3ebfce33cb9dd05ee5a152452bd211e8535ac2becb861a` | `ModuleInstallTimelockChanged(uint256,uint256)` |
+| `0x341347516a9de374859dfda710fa4828b2d48cb57d4fbe4c1149612b8e02276e` | `ModuleUninstalled(uint256,address)` |
 | `0xb532073b38c83145e3e5135377a08bf9aab55bc0fd7c1179cd4fb995d2a5159c` | `OwnerChanged(address,address)` |
 | `0x2ab721df8af22606080fcc695d2c255bf7bfb356dbe68e84057a3e29678de3ec` | `P256GuardianAdded(uint8,bytes32,bytes32)` |
 | `0x3e6e8da9cdbaf0d18a1123306c76e088d32bb5e76edabe32eaaa4ba7a50adb37` | `RecoveryApproved(address,address,uint256,uint8)` |
@@ -3058,6 +3059,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xce1d6b48` | `ModuleInstallTimelockNotExpired()` |
 | `0xfb3e466e` | `ModuleInstallTimelockTooLong()` |
 | `0x74be437f` | `ModuleInvalid()` |
+| `0x2a6f7929` | `ModuleNotInstalled()` |
 | `0x8267d100` | `NoActiveRecovery()` |
 | `0x69cc141f` | `NoModuleInstallProposal()` |
 | `0xef6d0f02` | `NotGuardian()` |

@@ -688,29 +688,6 @@
     },
     {
       "type": "function",
-      "name": "installModule",
-      "inputs": [
-        {
-          "name": "moduleTypeId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "module",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "initData",
-          "type": "bytes",
-          "internalType": "bytes"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "isModuleInstalled",
       "inputs": [
         {
@@ -1126,29 +1103,6 @@
         }
       ],
       "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "uninstallModule",
-      "inputs": [
-        {
-          "name": "moduleTypeId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "module",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "deInitData",
-          "type": "bytes",
-          "internalType": "bytes"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
     },
     {
       "type": "function",
