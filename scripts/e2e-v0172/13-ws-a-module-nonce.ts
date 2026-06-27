@@ -31,12 +31,12 @@
  */
 
 import {
-  keccak256, encodePacked, encodeFunctionData,
+  keccak256, encodePacked, encodeFunctionData, encodeAbiParameters, parseAbiParameters,
   type Hash, type Address,
 } from "viem";
 import {
   publicClient, wAnnie, annie, jason, bob,
-  loadAbi, runTests, type TestCase,
+  loadAbi, loadMergedAbi, runTests, type TestCase,
   expectRawCallRevert,
 } from "./common.js";
 import {
@@ -44,10 +44,12 @@ import {
 } from "./common-v018.js";
 
 const PHASE = "13-ws-a-module-nonce";
-const A = requireV018(PHASE); // SKIPs (exit 0) if v0.18 not deployed.
+const A = requireV018(PHASE); // SKIPs (exit 0) if v0.18/v0.20.x not deployed.
 
 const factoryAbi = loadAbi("AAStarAirAccountFactoryV7");
-const v7Abi      = loadAbi("AAStarAirAccountV7");
+// v0.20.2: installModule/uninstallModule moved to Extension (fallback-routed).
+// Use the merged full ABI so viem can encode the call correctly.
+const v7Abi      = loadMergedAbi();
 
 const MODULE_TYPE_EXECUTOR = 2n;
 const SALT        = BigInt(Math.floor(Date.now() / 1000)) + 130_000n;
@@ -73,14 +75,21 @@ async function acceptGuardianSig(
   return signer.signMessage({ message: { raw } });
 }
 
-async function installSig(signer: typeof jason | typeof bob, nonce: bigint): Promise<`0x${string}`> {
+// v0.20.2 encoding: installModule initData = abi.encode(uint8[] signerIdxs, bytes[] sigs, bytes moduleInitData)
+// Guardian 0 = jason, guardian 1 = bob (order matches createAccountWithDefaults args).
+async function installSig(signer: typeof jason | typeof bob, nonce: bigint, guardianIdx: number = 0): Promise<`0x${string}`> {
   const raw = guardianOpHashRaw(
     account, "INSTALL_MODULE",
     installOpData(MODULE_TYPE_EXECUTOR, A.forceExitModule, EMPTY_INIT_HASH, nonce),
   );
-  return signer.signMessage({ message: { raw } });
+  const sig = await signer.signMessage({ message: { raw } });
+  return encodeAbiParameters(
+    parseAbiParameters("uint8[], bytes[], bytes"),
+    [[guardianIdx], [sig], "0x"],
+  );
 }
 
+// v0.20.2 encoding: uninstallModule deInitData = abi.encode(uint8[] signerIdxs, bytes[] sigs)
 async function uninstallSigs(nonce: bigint): Promise<`0x${string}`> {
   const raw = guardianOpHashRaw(
     account, "UNINSTALL_MODULE",
@@ -88,7 +97,10 @@ async function uninstallSigs(nonce: bigint): Promise<`0x${string}`> {
   );
   const s1 = await jason.signMessage({ message: { raw } });
   const s2 = await bob.signMessage({ message: { raw } });
-  return (s1 + s2.slice(2)) as `0x${string}`;
+  return encodeAbiParameters(
+    parseAbiParameters("uint8[], bytes[]"),
+    [[0, 1], [s1, s2]],
+  );
 }
 
 async function readNonce(): Promise<bigint> {
@@ -179,10 +191,9 @@ const tests: TestCase[] = [
         throw new Error("expected ForceExitModule uninstalled before replay test, but it is still installed");
       }
 
-      // The live nonce is 2; sig0 was signed against nonce 0. installModule recomputes the
-      // guardian op hash with the CURRENT nonce, so the stale sig recovers a NON-guardian
-      // address and `_guardianIndex` reverts the EXACT error NotGuardian()
-      // (AAStarAirAccountBase.sol:167). Any other revert reason is a test failure.
+      // The live nonce is 2; sig0 was encoded with nonce 0. installModule recomputes the
+      // guardian op hash with the CURRENT nonce, so the stale sig fails _verifyGuardianSigByIdx
+      // and reverts with InstallModuleUnauthorized() (v0.20.2: _checkGuardianSigsMixed path).
       await expectRawCallRevert(
         {
           to: account,
@@ -192,9 +203,9 @@ const tests: TestCase[] = [
           }),
           from: annie.address, // owner — passes onlyOwnerOrEntryPoint so we reach the sig check
         },
-        "NotGuardian()",
+        "InvalidGuardianSignature()",
       );
-      return { notes: "stale-nonce install rejected with exact NotGuardian() ✓ (replay defeated)" };
+      return { notes: "stale-nonce install rejected with InvalidGuardianSignature() ✓ (replay defeated)" };
     },
   },
   {

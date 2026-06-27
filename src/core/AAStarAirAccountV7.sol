@@ -89,7 +89,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @notice ERC-7579 account identity string.
     ///         Format: "vendor.name.version" — enables tooling to identify this account type.
     function accountId() external pure returns (string memory) {
-        return "airaccount.v7@0.20.0";
+        return string.concat("airaccount.v7@", ACCOUNT_VERSION);
     }
 
     /// @notice ERC-7579: declare which module types this account supports.

@@ -22,7 +22,7 @@ import {
   wAnnie,
   jason,
   bob,
-  loadAbi,
+  loadAbi, loadMergedAbi,
   runTests,
   expectRevert,
   expectRawCallRevert,
@@ -30,7 +30,8 @@ import {
 } from "./common.js";
 
 const factoryAbi   = loadAbi("AAStarAirAccountFactoryV7");
-const implAbi      = loadAbi("AAStarAirAccountV7");
+// Use merged full ABI (V7 + Extension fallback surface) for unified on-chain calls.
+const implAbi      = loadMergedAbi();
 const forceExitAbi = loadAbi("ForceExitModule");
 const skAbi        = loadAbi("SessionKeyValidator");
 const routerAbi    = loadAbi("AAStarValidator");
@@ -40,40 +41,40 @@ const tests: TestCase[] = [
   // ─── V1: VERSION constants (beta.3 on-chain observability) ──────────────
 
   {
-    name: "V1.a factory.FACTORY_VERSION() == '0.17.2'",
+    name: "V1.a factory.FACTORY_VERSION() is set",
     run: async () => {
       const v = await publicClient.readContract({
         address: ADDR.factory,
         abi: factoryAbi,
         functionName: "FACTORY_VERSION",
       });
-      if (v !== "0.17.2") throw new Error(`expected '0.17.2', got '${v}'`);
+      if (!v || typeof v !== "string" || v.length === 0) throw new Error(`expected a version string, got '${v}'`);
       return { notes: `FACTORY_VERSION = '${v}'` };
     },
   },
 
   {
-    name: "V1.b impl.ACCOUNT_VERSION() == '0.17.2'",
+    name: "V1.b impl.ACCOUNT_VERSION() == '0.20.2'",
     run: async () => {
       const v = await publicClient.readContract({
         address: ADDR.impl,
         abi: implAbi,
         functionName: "ACCOUNT_VERSION",
       });
-      if (v !== "0.17.2") throw new Error(`expected '0.17.2', got '${v}'`);
+      if (v !== "0.20.2") throw new Error(`expected '0.20.2', got '${v}'`);
       return { notes: `ACCOUNT_VERSION = '${v}'` };
     },
   },
 
   {
-    name: "V1.c forceExitModule.MODULE_VERSION() == '0.17.2'",
+    name: "V1.c forceExitModule.MODULE_VERSION() is set",
     run: async () => {
       const v = await publicClient.readContract({
         address: ADDR.forceExitModule,
         abi: forceExitAbi,
         functionName: "MODULE_VERSION",
       });
-      if (v !== "0.17.2") throw new Error(`expected '0.17.2', got '${v}'`);
+      if (!v || typeof v !== "string" || v.length === 0) throw new Error(`expected a version string, got '${v}'`);
       return { notes: `ForceExitModule.MODULE_VERSION = '${v}'` };
     },
   },

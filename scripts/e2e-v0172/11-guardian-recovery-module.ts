@@ -24,16 +24,18 @@
  */
 
 import {
-  keccak256, encodePacked, encodeAbiParameters, encodeFunctionData, type Hash, type Address,
+  keccak256, encodePacked, encodeAbiParameters, parseAbiParameters, encodeFunctionData, type Hash, type Address,
 } from "viem";
 import {
   ADDR, publicClient, wAnnie, wJason, wBob, annie, jason, bob,
-  loadAbi, runTests, type TestCase,
+  loadAbi, loadMergedAbi, runTests, type TestCase,
 } from "./common.js";
 
 const factoryAbi = loadAbi("AAStarAirAccountFactoryV7");
 const baseAbi    = loadAbi("AAStarAirAccountBase");
-const v7Abi      = loadAbi("AAStarAirAccountV7");
+// v0.20.2: Extension-routed functions (proposeRecovery, installModule, etc.) are not in V7 ABI.
+// Use the merged full ABI (V7 + Extension fallback surface) for all account interactions.
+const v7Abi      = loadMergedAbi();
 
 const SALT        = BigInt(Math.floor(Date.now() / 1000)) + 11_000n;
 const DAILY_LIMIT = 10_000_000_000_000_000n; // 0.01 ETH
@@ -100,9 +102,9 @@ function buildGuardianOpHash(acct: Address, opLabel: string, opData: `0x${string
   ));
 }
 
-// Guardian sig for installModule.
-// opData = abi.encode(moduleTypeId, module, keccak256(moduleInitData), moduleManagementNonce)
-// nonce must be read from the account before signing (increments after each install/uninstall).
+// v0.20.2 encoding for installModule initData:
+//   abi.encode(uint8[] signerIdxs, bytes[] sigs, bytes moduleInitData)
+// signer at guardianIdx signs INSTALL_MODULE guardian op hash.
 async function buildInstallModuleSig(
   signer: typeof jason | typeof bob,
   acct: Address,
@@ -110,6 +112,7 @@ async function buildInstallModuleSig(
   module: Address,
   moduleInitData: `0x${string}`,
   nonce: bigint,
+  guardianIdx: number = 0,
 ): Promise<`0x${string}`> {
   const moduleInitDataHash = keccak256(moduleInitData === "0x" ? "0x" : moduleInitData);
   const opData = encodeAbiParameters(
@@ -117,12 +120,16 @@ async function buildInstallModuleSig(
     [moduleTypeId, module, moduleInitDataHash, nonce],
   );
   const raw = buildGuardianOpHash(acct, "INSTALL_MODULE", opData);
-  return signer.signMessage({ message: { raw } });
+  const sig = await signer.signMessage({ message: { raw } });
+  return encodeAbiParameters(
+    parseAbiParameters("uint8[], bytes[], bytes"),
+    [[guardianIdx], [sig], moduleInitData],
+  );
 }
 
-// Guardian sigs for uninstallModule — min(guardianCount, 2) sigs concatenated.
-// opData = abi.encode(moduleTypeId, module, moduleManagementNonce)
-// nonce must be read from the account before signing.
+// v0.20.2 encoding for uninstallModule deInitData:
+//   abi.encode(uint8[] signerIdxs, bytes[] sigs)
+// Uses guardian[0]=jason and guardian[1]=bob.
 async function buildUninstallModuleSigs(
   acct: Address,
   moduleTypeId: bigint,
@@ -136,7 +143,10 @@ async function buildUninstallModuleSigs(
   const raw = buildGuardianOpHash(acct, "UNINSTALL_MODULE", opData);
   const sig1 = await jason.signMessage({ message: { raw } }); // guardian[0]
   const sig2 = await bob.signMessage({ message: { raw } });   // guardian[1]
-  return (sig1 + sig2.slice(2)) as `0x${string}`;
+  return encodeAbiParameters(
+    parseAbiParameters("uint8[], bytes[]"),
+    [[0, 1], [sig1, sig2]],
+  );
 }
 
 function popcount(n: bigint): number {
@@ -193,7 +203,7 @@ const tests: TestCase[] = [
     run: async () => {
       const hash = await wJason.writeContract({
         address: account,
-        abi: baseAbi,
+        abi: v7Abi,
         functionName: "proposeRecovery",
         args: [DUMMY_NEW_OWNER],
         chain: null,
@@ -218,7 +228,7 @@ const tests: TestCase[] = [
     run: async () => {
       const hash = await wBob.writeContract({
         address: account,
-        abi: baseAbi,
+        abi: v7Abi,
         functionName: "approveRecovery",
         args: [],
         chain: null,
@@ -242,7 +252,7 @@ const tests: TestCase[] = [
     run: async () => {
       // Use sendTransaction + explicit gas to bypass viem's simulateContract pre-flight,
       // which can emit "Missing or invalid parameters" on some RPC nodes for this function.
-      const hash = await sendTxDirect(wJason, jason, baseAbi, "cancelRecovery");
+      const hash = await sendTxDirect(wJason, jason, v7Abi, "cancelRecovery");
       const { gasUsed } = await waitTx(hash);
       return { txHash: hash, gas: gasUsed, notes: `Jason cancel-voted (1/3)` };
     },
@@ -250,7 +260,7 @@ const tests: TestCase[] = [
   {
     name: "GR.7 cancelRecovery() — Bob votes cancel → 2/3, recovery cancelled",
     run: async () => {
-      const hash = await sendTxDirect(wBob, bob, baseAbi, "cancelRecovery");
+      const hash = await sendTxDirect(wBob, bob, v7Abi, "cancelRecovery");
       const { gasUsed } = await waitTx(hash);
       return { txHash: hash, gas: gasUsed, notes: `Bob cancel-voted (2/3) → recovery cancelled` };
     },
@@ -275,12 +285,10 @@ const tests: TestCase[] = [
       const nonce = await publicClient.readContract({
         address: account, abi: v7Abi, functionName: "moduleManagementNonce",
       }) as bigint;
-      const guardSig = await buildInstallModuleSig(
-        jason, account, MODULE_TYPE_EXECUTOR, ADDR.forceExitModule, moduleInitData, nonce,
+      // v0.20.2: buildInstallModuleSig returns the full abi.encode(signerIdxs, sigs, moduleInitData)
+      const initData = await buildInstallModuleSig(
+        jason, account, MODULE_TYPE_EXECUTOR, ADDR.forceExitModule, moduleInitData, nonce, 0,
       );
-      // initData layout: [sig (65 bytes)] [moduleInitData (empty)]
-      const initData = guardSig;
-
       const hash = await wAnnie.writeContract({
         address: account,
         abi: v7Abi,

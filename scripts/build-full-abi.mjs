@@ -24,7 +24,9 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
 const ACCOUNT = "out/AAStarAirAccountV7.sol/AAStarAirAccountV7.json";
-const ROUTED  = "out/IAirAccountAgent.sol/IAirAccountAgent.json";
+// Use the concrete Extension artifact (not just IAirAccountAgent) so the merged ABI covers
+// the FULL on-chain callable surface: V7 native + every Extension-only fallback-routed function.
+const ROUTED  = "out/AirAccountExtension.sol/AirAccountExtension.json";
 const OUT     = "abi/AAStarAirAccountV7.full.json";
 
 function loadArtifact(p) {

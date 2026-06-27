@@ -60,6 +60,14 @@ interface IAirAccountAgent {
     function executeWeightChange() external;
     function cancelWeightChange() external;
 
+    // ── ERC-7579 module management (v0.20.2 / issue #127) ──
+    // installModule and uninstallModule were moved from AAStarAirAccountV7 to
+    // AirAccountExtension (fallback-routed) to add P-256 mixed guardian sig support
+    // without exceeding EIP-170. Both functions use the new abi.encode(signerIdxs, sigs, …)
+    // encoding and must appear here so the merged ABI includes them.
+    function installModule(uint256 moduleTypeId, address module, bytes calldata initData) external;
+    function uninstallModule(uint256 moduleTypeId, address module, bytes calldata deInitData) external;
+
     // ── Optional module-install timelock (KI-6 / issue #58) ──
     function moduleInstallTimelock() external view returns (uint256);
     function pendingModuleInstall()

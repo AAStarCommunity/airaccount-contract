@@ -42,7 +42,7 @@ import {
 } from "viem";
 import {
   publicClient, wAnnie, annie, jason, bob,
-  loadAbi, runTests, type TestCase,
+  loadAbi, loadMergedAbi, runTests, type TestCase,
   expectRawCallRevert,
 } from "./common.js";
 import {
@@ -53,7 +53,8 @@ const PHASE = "14-ws-b-forceexit-toctou";
 const A = requireV018(PHASE); // SKIPs (exit 0) if v0.18 not deployed.
 
 const factoryAbi = loadAbi("AAStarAirAccountFactoryV7");
-const v7Abi      = loadAbi("AAStarAirAccountV7");
+// v0.20.2: installModule moved to Extension (fallback-routed) — use merged full ABI.
+const v7Abi      = loadMergedAbi();
 const femAbi     = loadAbi("ForceExitModule");
 
 const MODULE_TYPE_EXECUTOR = 2n;
@@ -132,8 +133,12 @@ const tests: TestCase[] = [
         installOpData(MODULE_TYPE_EXECUTOR, A.forceExitModule, MODULE_INIT_HASH, nonce),
       );
       const sig = await jason.signMessage({ message: { raw } });
-      // initData = guardian sig (65 bytes) ‖ moduleInitData (abi.encode(uint8 l2Type=Optimism))
-      const initData = (sig + MODULE_INIT_DATA.slice(2)) as `0x${string}`;
+      // v0.20.2 encoding: abi.encode(uint8[] signerIdxs, bytes[] sigs, bytes moduleInitData)
+      // Guardian 0 = jason (order matches createAccountWithDefaults args).
+      const initData = encodeAbiParameters(
+        parseAbiParameters("uint8[], bytes[], bytes"),
+        [[0], [sig], MODULE_INIT_DATA],
+      );
       const hash = await wAnnie.writeContract({
         address: account, abi: v7Abi, functionName: "installModule",
         args: [MODULE_TYPE_EXECUTOR, A.forceExitModule, initData],
@@ -195,9 +200,16 @@ const tests: TestCase[] = [
   {
     name: "WSB.6 removeGuardian(index=0 = jason) — jason leaves the set",
     run: async () => {
+      // removeGuardian opData (AAStarAirAccountBase.sol:1518):
+      //   abi.encode(_guardianRemovalNonce, index, guardianToRemove, remX, remY)
+      // Jason is ECDSA → _getP256Key returns (0, 0). Index 0 maps to jason.
+      const ZERO_B32 = "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
       const raw = guardianOpHashRaw(
         account, "REMOVE_GUARDIAN",
-        encodeAbiParameters(parseAbiParameters("uint256, address"), [REMOVAL_NONCE, jason.address]),
+        encodeAbiParameters(
+          parseAbiParameters("uint256, uint8, address, bytes32, bytes32"),
+          [REMOVAL_NONCE, 0, jason.address, ZERO_B32, ZERO_B32],
+        ),
       );
       // Two distinct current guardians sign the removal (jason may sign his own removal).
       const sig1 = await jason.signMessage({ message: { raw } });

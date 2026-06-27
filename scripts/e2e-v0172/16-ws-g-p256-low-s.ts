@@ -38,7 +38,7 @@ import {
 import { p256 } from "@noble/curves/p256";
 import {
   publicClient, wAnnie, annie, jason, bob,
-  loadAbi, runTests, type TestCase, ADDR,
+  loadAbi, loadMergedAbi, runTests, type TestCase, ADDR,
 } from "./common.js";
 import { v018Addr, printPendingBanner, SECP256R1_N_OVER_2 } from "./common-v018.js";
 
@@ -49,7 +49,8 @@ const PHASE = "16-ws-g-p256-low-s";
 const A = v018Addr(); // may be null until v0.18 is deployed
 
 const factoryAbi = loadAbi("AAStarAirAccountFactoryV7");
-const v7Abi      = loadAbi("AAStarAirAccountV7");
+// Use merged full ABI (V7 + Extension fallback surface) for unified on-chain calls.
+const v7Abi      = loadMergedAbi();
 
 const SALT        = BigInt(Math.floor(Date.now() / 1000)) + 160_000n;
 const DAILY_LIMIT = 10_000_000_000_000_000n;
