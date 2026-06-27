@@ -24,7 +24,7 @@
  */
 
 import {
-  keccak256, encodePacked, encodeFunctionData, type Hash, type Address,
+  keccak256, encodePacked, encodeAbiParameters, encodeFunctionData, type Hash, type Address,
 } from "viem";
 import {
   ADDR, publicClient, wAnnie, wJason, wBob, annie, jason, bob,
@@ -85,39 +85,57 @@ async function guardianAcceptSig(
   return signer.signMessage({ message: { raw } });
 }
 
+// GUARDIAN_SIG_VERSION must match the contract constant (AAStarAirAccountBase.sol line 84).
+// The contract uses abi.encode (not encodePacked) for the outer hash — see _guardianOpHash().
+const GUARDIAN_SIG_VERSION = 4;
+const CHAIN_ID = BigInt(11155111);
+
+// Build the guardian op hash exactly as the contract does:
+//   keccak256(abi.encode(GUARDIAN_SIG_VERSION, chainId, account, opLabel, opData))
+// then signMessage adds the EIP-191 prefix, matching .toEthSignedMessageHash().
+function buildGuardianOpHash(acct: Address, opLabel: string, opData: `0x${string}`): `0x${string}` {
+  return keccak256(encodeAbiParameters(
+    [{ type: "uint8" }, { type: "uint256" }, { type: "address" }, { type: "string" }, { type: "bytes" }],
+    [GUARDIAN_SIG_VERSION, CHAIN_ID, acct, opLabel, opData],
+  ));
+}
+
 // Guardian sig for installModule.
-// Domain: keccak256(abi.encodePacked("INSTALL_MODULE", chainId, account, typeId, module, keccak256(moduleInitData)))
-// Contract applies .toEthSignedMessageHash() so signMessage (EIP-191) matches.
+// opData = abi.encode(moduleTypeId, module, keccak256(moduleInitData), moduleManagementNonce)
+// nonce must be read from the account before signing (increments after each install/uninstall).
 async function buildInstallModuleSig(
   signer: typeof jason | typeof bob,
   acct: Address,
   moduleTypeId: bigint,
   module: Address,
   moduleInitData: `0x${string}`,
+  nonce: bigint,
 ): Promise<`0x${string}`> {
-  const moduleInitDataHash = keccak256(moduleInitData === "0x" ? new Uint8Array(0) : moduleInitData);
-  const raw = keccak256(encodePacked(
-    ["string", "uint256", "address", "uint256", "address", "bytes32"],
-    ["INSTALL_MODULE", BigInt(11155111), acct, moduleTypeId, module, moduleInitDataHash],
-  ));
+  const moduleInitDataHash = keccak256(moduleInitData === "0x" ? "0x" : moduleInitData);
+  const opData = encodeAbiParameters(
+    [{ type: "uint256" }, { type: "address" }, { type: "bytes32" }, { type: "uint256" }],
+    [moduleTypeId, module, moduleInitDataHash, nonce],
+  );
+  const raw = buildGuardianOpHash(acct, "INSTALL_MODULE", opData);
   return signer.signMessage({ message: { raw } });
 }
 
-// uninstallModule requires min(guardianCount, 2) guardian sigs concatenated.
-// Domain: keccak256("UNINSTALL_MODULE" || chainId || account || typeId || module)
-// Contract applies .toEthSignedMessageHash() before verify, so use signMessage (EIP-191).
+// Guardian sigs for uninstallModule — min(guardianCount, 2) sigs concatenated.
+// opData = abi.encode(moduleTypeId, module, moduleManagementNonce)
+// nonce must be read from the account before signing.
 async function buildUninstallModuleSigs(
   acct: Address,
   moduleTypeId: bigint,
   module: Address,
+  nonce: bigint,
 ): Promise<`0x${string}`> {
-  const raw = keccak256(encodePacked(
-    ["string", "uint256", "address", "uint256", "address"],
-    ["UNINSTALL_MODULE", BigInt(11155111), acct, moduleTypeId, module],
-  ));
+  const opData = encodeAbiParameters(
+    [{ type: "uint256" }, { type: "address" }, { type: "uint256" }],
+    [moduleTypeId, module, nonce],
+  );
+  const raw = buildGuardianOpHash(acct, "UNINSTALL_MODULE", opData);
   const sig1 = await jason.signMessage({ message: { raw } }); // guardian[0]
   const sig2 = await bob.signMessage({ message: { raw } });   // guardian[1]
-  // Concatenate 2 × 65-byte signatures
   return (sig1 + sig2.slice(2)) as `0x${string}`;
 }
 
@@ -253,10 +271,14 @@ const tests: TestCase[] = [
     name: "GR.9 installModule(EXECUTOR=2, ForceExitModule, guardianSig+emptyInitData)",
     run: async () => {
       const moduleInitData: `0x${string}` = "0x";
+      // Read current nonce from account before signing — it increments after each install/uninstall.
+      const nonce = await publicClient.readContract({
+        address: account, abi: v7Abi, functionName: "moduleManagementNonce",
+      }) as bigint;
       const guardSig = await buildInstallModuleSig(
-        jason, account, MODULE_TYPE_EXECUTOR, ADDR.forceExitModule, moduleInitData,
+        jason, account, MODULE_TYPE_EXECUTOR, ADDR.forceExitModule, moduleInitData, nonce,
       );
-      // initData = guardian sig (moduleInitData is empty so hash of empty bytes)
+      // initData layout: [sig (65 bytes)] [moduleInitData (empty)]
       const initData = guardSig;
 
       const hash = await wAnnie.writeContract({
@@ -268,7 +290,7 @@ const tests: TestCase[] = [
         account: annie,
       });
       const { gasUsed } = await waitTx(hash);
-      return { txHash: hash, gas: gasUsed, notes: `ForceExitModule installed (typeId=2)` };
+      return { txHash: hash, gas: gasUsed, notes: `ForceExitModule installed (typeId=2), nonce was ${nonce}` };
     },
   },
   {
@@ -288,7 +310,11 @@ const tests: TestCase[] = [
     run: async () => {
       // uninstallModule requires min(guardianCount, 2) guardian sigs concatenated in deInitData.
       // With guardianCount=2: need sig[0] || sig[1] (130 bytes total).
-      const deInitData = await buildUninstallModuleSigs(account, MODULE_TYPE_EXECUTOR, ADDR.forceExitModule);
+      // Read nonce AFTER the installModule in GR.9 (nonce was incremented by that tx).
+      const nonce = await publicClient.readContract({
+        address: account, abi: v7Abi, functionName: "moduleManagementNonce",
+      }) as bigint;
+      const deInitData = await buildUninstallModuleSigs(account, MODULE_TYPE_EXECUTOR, ADDR.forceExitModule, nonce);
 
       const hash = await wAnnie.writeContract({
         address: account,
@@ -299,7 +325,7 @@ const tests: TestCase[] = [
         account: annie,
       });
       const { gasUsed } = await waitTx(hash);
-      return { txHash: hash, gas: gasUsed, notes: `ForceExitModule uninstalled (deInitData = 2 guardian sigs)` };
+      return { txHash: hash, gas: gasUsed, notes: `ForceExitModule uninstalled, nonce was ${nonce}` };
     },
   },
   {
