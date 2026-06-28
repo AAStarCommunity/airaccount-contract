@@ -108,11 +108,15 @@ async function main() {
     gas: 3_000_000n,
   });
   const receipt = await waitTx(createHash, "createAccount");
-  // Parse AccountCreated(address indexed account, address indexed owner, uint256 salt)
-  const accountCreatedTopic = "0x7b0e5c4af94eb5eb2e9b5ed9e46e5dfb1a8e0c8e7f16f2f9e56c1c0c4c6e4a3";
-  const createdLog = receipt.logs.find(l => l.address.toLowerCase() === FACTORY.toLowerCase());
+  // AccountCreated(address indexed account, address indexed owner, uint256 salt)
+  // keccak256("AccountCreated(address,address,uint256)") — verified via cast sig-event
+  const ACCOUNT_CREATED_TOPIC = "0x33310a89c32d8cc00057ad6ef6274d2f8fe22389a992cf89983e09fc84f6cfff" as Hex;
+  const createdLog = receipt.logs.find(
+    l => l.address.toLowerCase() === FACTORY.toLowerCase() && l.topics[0] === ACCOUNT_CREATED_TOPIC
+  );
+  if (!createdLog) throw new Error("AccountCreated event not found in receipt");
   // topic[1] is indexed `account`
-  const account = getAddress("0x" + createdLog!.topics[1]!.slice(26)) as Address;
+  const account = getAddress("0x" + createdLog.topics[1]!.slice(26)) as Address;
   console.log(`  Account: ${account}`);
 
   // T2: Verify ACCOUNT_VERSION
@@ -159,8 +163,13 @@ async function main() {
     });
     throw new Error("Expected revert — latch not working!");
   } catch (e: any) {
-    if (String(e).includes("Expected revert")) throw e;
-    console.log("  ✓ Second setTierLimits reverts (latch preserved)");
+    const msg = String(e);
+    if (msg.includes("Expected revert")) throw e;
+    // Must be CannotIncreaseTierLimit (selector 0x9f081f40) — not just any revert
+    if (!msg.includes("CannotIncreaseTierLimit") && !msg.includes("0x9f081f40")) {
+      throw new Error(`T5: unexpected revert reason (want CannotIncreaseTierLimit): ${msg.slice(0, 200)}`);
+    }
+    console.log("  ✓ Second setTierLimits reverts with CannotIncreaseTierLimit (latch preserved)");
   }
 
   console.log("\n=== v0.20.3 E2E PASSED ===");
