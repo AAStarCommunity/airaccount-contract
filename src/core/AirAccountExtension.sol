@@ -116,6 +116,13 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         _;
     }
 
+    /// @dev Allows the owner EOA or the account itself (self-call via execute) so that
+    ///      config changes can be submitted as gasless UserOps through SuperPaymaster.
+    modifier onlyOwnerOrSelf() {
+        if (msg.sender != owner && msg.sender != address(this)) revert NotOwner();
+        _;
+    }
+
     modifier onlyOwnerOrEntryPoint() {
         if (msg.sender != owner && msg.sender != entryPoint) revert NotOwnerOrEntryPoint();
         _;
@@ -606,7 +613,7 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
 
     /// @notice Set the weight configuration for algId 0x07. First-time: direct owner call.
     ///         Subsequent weakening changes require the guardian proposal flow (M6.2).
-    function setWeightConfig(WeightConfig calldata config) external onlyOwner {
+    function setWeightConfig(WeightConfig calldata config) external onlyOwnerOrSelf {
         _validateWeightConfig(config);
 
         WeightConfig memory current = weightConfig;
@@ -1181,7 +1188,7 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         uint256 deadline,
         uint8[] calldata signerIdxs,
         bytes[] calldata sigs
-    ) external onlyOwner {
+    ) external onlyOwnerOrSelf {
         if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
         if (block.timestamp > deadline) revert TierLimitSigExpired();
         if (signerIdxs.length != sigs.length) revert InsufficientGuardianApprovals();

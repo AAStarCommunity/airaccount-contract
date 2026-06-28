@@ -224,6 +224,18 @@ contract WeightedSignatureTest is Test {
         IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
     }
 
+    /// @notice issue-140: setWeightConfig succeeds when called via self-call (msg.sender == account).
+    ///         Models the gasless UserOp path: execute(account, 0, <setWeightConfigCalldata>).
+    function test_setWeightConfig_selfCall_succeeds() public {
+        vm.prank(address(account));
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
+
+        (uint8 pk, uint8 ec,,,,,,uint8 t1,,) = account.weightConfig();
+        assertEq(pk, 2);
+        assertEq(ec, 2);
+        assertEq(t1, 3);
+    }
+
     // ─── 2. validateUserOp with ALG_WEIGHTED ─────────────────────────────────
 
     function test_weighted_p256AndECDSA_returns0() public {
