@@ -737,6 +737,28 @@ contract P256GuardianTest is Test {
         assertFalse(ok);
     }
 
+    /// @notice issue-140 Low: modifyTierLimitsWithMixedGuardians succeeds when called via
+    ///         self-call (msg.sender == account), covering the gasless UserOp path.
+    function test_modifyTierLimitsWithMixedGuardians_selfCall_succeeds() public {
+        _deployWithP256Init(P256_X0, P256_Y0, P256_X1, P256_Y1);
+        vm.etch(P256_PRECOMPILE, address(new MockP256Valid()).code);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        uint8[] memory signerIdxs = new uint8[](2);
+        signerIdxs[0] = 0; signerIdxs[1] = 1;
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _mockP256Sig(); sigs[1] = _mockP256Sig();
+
+        vm.prank(address(account));
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "modifyTierLimitsWithMixedGuardians(uint256,uint256,uint256,uint8[],bytes[])",
+            uint256(1 ether), uint256(10 ether), deadline, signerIdxs, sigs
+        ));
+        assertTrue(ok);
+        assertEq(account.tier1Limit(), 1 ether);
+        assertEq(account.tier2Limit(), 10 ether);
+    }
+
     // ── getGuardianP256Key view ────────────────────────────────────────────────
 
     function test_getGuardianP256Key_ecdsaSlot_returnsZero() public {
