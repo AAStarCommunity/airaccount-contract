@@ -150,11 +150,14 @@ const tests: TestCase[] = [
   {
     name: "EX.6 account.addDeposit{value: 0.003 ETH} — deposit to EntryPoint",
     run: async () => {
-      const hash = await wAnnie.writeContract({
-        address: account,
-        abi: baseAbi,
-        functionName: "addDeposit",
+      // Use sendTransaction + explicit gas to bypass viem's simulateContract pre-flight,
+      // which fails for payable functions on some RPC nodes even when the tx succeeds on-chain.
+      const callData = encodeFunctionData({ abi: baseAbi, functionName: "addDeposit", args: [] });
+      const hash = await wAnnie.sendTransaction({
+        to: account,
+        data: callData,
         value: parseEther("0.003"),
+        gas: 80_000n,
         chain: null,
         account: annie,
       });

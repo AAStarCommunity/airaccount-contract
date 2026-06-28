@@ -47,12 +47,18 @@ export interface V018Addr {
  * Resolve the v0.18 deployed addresses, or `null` if not yet deployed.
  * Returning null (rather than throwing) lets the caller SKIP cleanly.
  */
+// Priority chain: v0.20.2 > v0.20.1 > v0.20 > v0.19 > v0.18
+function pickEnv(...keys: string[]): string | undefined {
+  for (const k of keys) { const v = process.env[k]; if (v) return v; }
+  return undefined;
+}
+
 export function v018Addr(): V018Addr | null {
-  const factory = process.env.AIRACCOUNT_V018_FACTORY;
-  const impl = process.env.AIRACCOUNT_V018_IMPL;
-  const skv = process.env.AIRACCOUNT_V018_SESSION_KEY_VALIDATOR;
-  const fem = process.env.AIRACCOUNT_V018_FORCE_EXIT_MODULE;
-  const router = process.env.AIRACCOUNT_V018_VALIDATOR_ROUTER;
+  const factory = pickEnv("AIRACCOUNT_V0202_FACTORY", "AIRACCOUNT_V0201_FACTORY", "AIRACCOUNT_V020_FACTORY", "AIRACCOUNT_V019_FACTORY", "AIRACCOUNT_V018_FACTORY");
+  const impl    = pickEnv("AIRACCOUNT_V0202_IMPL",    "AIRACCOUNT_V0201_IMPL",    "AIRACCOUNT_V020_IMPL",    "AIRACCOUNT_V019_IMPL",    "AIRACCOUNT_V018_IMPL");
+  const skv     = pickEnv("AIRACCOUNT_V0202_SESSION_KEY_VALIDATOR", "AIRACCOUNT_V0201_SESSION_KEY_VALIDATOR", "AIRACCOUNT_V020_SESSION_KEY_VALIDATOR", "AIRACCOUNT_V019_SESSION_KEY_VALIDATOR", "AIRACCOUNT_V018_SESSION_KEY_VALIDATOR");
+  const fem     = pickEnv("AIRACCOUNT_V0202_FORCE_EXIT_MODULE",    "AIRACCOUNT_V0201_FORCE_EXIT_MODULE",    "AIRACCOUNT_V020_FORCE_EXIT_MODULE",    "AIRACCOUNT_V019_FORCE_EXIT_MODULE",    "AIRACCOUNT_V018_FORCE_EXIT_MODULE");
+  const router  = pickEnv("AIRACCOUNT_V0202_VALIDATOR_ROUTER",     "AIRACCOUNT_V0201_VALIDATOR_ROUTER",     "AIRACCOUNT_V020_VALIDATOR_ROUTER",     "AIRACCOUNT_V019_VALIDATOR_ROUTER",     "AIRACCOUNT_V018_VALIDATOR_ROUTER");
   if (!factory || !impl || !skv || !fem || !router) return null;
   return {
     factory: factory as Address,

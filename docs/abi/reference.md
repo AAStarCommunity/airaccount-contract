@@ -3550,7 +3550,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## IAirAccountAgent
 
 - **Source:** `src/interfaces/IAirAccountAgent.sol`
-- **Functions:** 17 · **Events:** 0 · **Errors:** 0
+- **Functions:** 19 · **Events:** 0 · **Errors:** 0
 - **Title:** IAirAccountAgent
 - ABI surface for the cold functions that AAStarAirAccountV7 routes to the singleton         AirAccountExtension via fallback + delegatecall (diamond-lite): ERC-8004 agent         identity/reputation and weighted-signature config governance.
 
@@ -3564,6 +3564,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x5f9613dd` | `cancelWeightChange()` | nonpayable | — |  |
 | `0x4bc15d2b` | `executeModuleInstall(bytes)` | nonpayable | — |  |
 | `0x35905bb0` | `executeWeightChange()` | nonpayable | — |  |
+| `0x9517e29f` | `installModule(uint256,address,bytes)` | nonpayable | — |  |
 | `0x353f0860` | `mintAgentIdentity(address,string)` | nonpayable | — |  |
 | `0xc8175b3f` | `moduleInstallTimelock()` | view | — |  |
 | `0x8dbbce84` | `pendingModuleInstall()` | view | — |  |
@@ -3575,6 +3576,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x10d47802` | `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | — |  |
 | `0x6e795333` | `submitAgentReputation(address,uint256,int128,uint8,string,string,string,string,bytes32)` | nonpayable | — |  |
 | `0xb6135596` | `tierLimitNonce()` | view | — | Current tier-limit modification nonce. Read this before building the guardian         digest for modifyTierLimitsWithGuardians / modifyTierLimitsWithMixedGuardians. |
+| `0xa71763a8` | `uninstallModule(uint256,address,bytes)` | nonpayable | — |  |
 
 ### Functions
 
@@ -3613,6 +3615,16 @@ Authoritative, auto-generated reference for every external/public function, even
 #### `executeWeightChange()`
 
 `0x35905bb0` · nonpayable · access: —
+
+#### `installModule(uint256 moduleTypeId, address module, bytes initData)`
+
+`0x9517e29f` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `moduleTypeId` | `uint256` |  |
+| `module` | `address` |  |
+| `initData` | `bytes` |  |
 
 #### `mintAgentIdentity(address identityRegistry, string agentURI)`
 
@@ -3736,6 +3748,16 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `uint256` |  |
+
+#### `uninstallModule(uint256 moduleTypeId, address module, bytes deInitData)`
+
+`0xa71763a8` · nonpayable · access: —
+
+| param | type | description |
+|---|---|---|
+| `moduleTypeId` | `uint256` |  |
+| `module` | `address` |  |
+| `deInitData` | `bytes` |  |
 
 ## ICalldataParser
 

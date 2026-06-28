@@ -19,13 +19,14 @@
 import { encodeAbiParameters, keccak256, type Hash, type Address } from "viem";
 import {
   ADDR, publicClient, wAnnie, annie, jason, bob,
-  loadAbi, runTests,
+  loadAbi, loadMergedAbi, runTests,
   type TestCase,
 } from "./common.js";
 
 const factoryAbi = loadAbi("AAStarAirAccountFactoryV7");
 const baseAbi    = loadAbi("AAStarAirAccountBase");
-const v7Abi      = loadAbi("AAStarAirAccountV7");
+// Use merged full ABI (V7 + Extension fallback surface) for unified on-chain calls.
+const v7Abi      = loadMergedAbi();
 const regAbi     = loadAbi("AgentRegistry");
 
 // Unique salt per run — use timestamp so we never collide on existing account
@@ -155,13 +156,13 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "AL.7 account.accountId() == 'airaccount.v7@0.17.2'",
+    name: "AL.7 account.accountId() starts with 'airaccount.v7@'",
     run: async () => {
       const id = await publicClient.readContract({
         address: predicted, abi: v7Abi,
         functionName: "accountId",
       }) as string;
-      if (!id.includes("0.17.2")) throw new Error(`expected version 0.17.2 in accountId, got "${id}"`);
+      if (!id.startsWith("airaccount.v7@")) throw new Error(`expected accountId starting with 'airaccount.v7@', got "${id}"`);
       return { notes: `accountId = "${id}"` };
     },
   },

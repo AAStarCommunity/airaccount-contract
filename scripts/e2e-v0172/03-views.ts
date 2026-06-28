@@ -275,8 +275,11 @@ const tests: TestCase[] = [
     run: async () => {
       const salt = 99n;
       const noAlgs: number[] = [];
+      const ZERO_B32 = "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
       const cfg = {
         guardians: [ZERO, ZERO, ZERO] as readonly [`0x${string}`, `0x${string}`, `0x${string}`],
+        guardianP256X: [ZERO_B32, ZERO_B32, ZERO_B32] as readonly [`0x${string}`, `0x${string}`, `0x${string}`],
+        guardianP256Y: [ZERO_B32, ZERO_B32, ZERO_B32] as readonly [`0x${string}`, `0x${string}`, `0x${string}`],
         dailyLimit: 0n,
         approvedAlgIds: noAlgs,
         minDailyLimit: 0n,

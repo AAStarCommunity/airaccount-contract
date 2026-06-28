@@ -8,6 +8,95 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.20.2] - 2026-06-27 (P-256 mixed-sig module governance — patch)
+
+P-256 / WebAuthn passkey guardian support for the four module-governance functions
+(`installModule`, `uninstallModule`, `setModuleInstallTimelock`, `proposeModuleInstall`),
+which previously accepted only 65-byte ECDSA guardian signatures (issue #127).
+Closes the "known LOW limitation" noted in the v0.20.0 release notes.
+
+### Changed
+- **`installModule` / `uninstallModule` moved to `AirAccountExtension`** (routed via
+  `fallback() → delegatecall`; function selectors and external calling semantics unchanged).
+- **`_checkGuardianSigsMixed`** replaces ECDSA-only `_checkGuardianSigs`; dispatches each
+  guardian sig to the existing `_verifyGuardianSigByIdx`, which handles 65-byte ECDSA blobs
+  and WebAuthn P-256 blobs by guardian slot type. Bitmap dedup prevents double-voting.
+- **New encoding** (when `sigsRequired > 0`):
+  - `installModule` initData: `abi.encode(uint8[] signerIdxs, bytes[] sigs, bytes moduleInitData)`
+  - `uninstallModule` deInitData: `abi.encode(uint8[] signerIdxs, bytes[] sigs)`
+  - `setModuleInstallTimelock` guardianSigs (weakening): `abi.encode(uint8[] signerIdxs, bytes[] sigs)`
+  - `proposeModuleInstall` initData: `abi.encode(uint8[] signerIdxs, bytes[] sigs, bytes moduleInitData)`
+  - Zero-sig path passes raw bytes unchanged (backward compat).
+- `ACCOUNT_VERSION` bumped to `"0.20.2"`.
+
+### Size (EIP-170)
+| Contract | Before | After | Δ | Headroom |
+|---|---|---|---|---|
+| `AAStarAirAccountV7` | 23,410 B | **21,455 B** | −1,955 B | **3,121 B** |
+| `AirAccountExtension` | 20,025 B | **21,960 B** | +1,935 B | 2,616 B |
+
+### NatSpec — 0-guardian accounts
+`uninstallModule` with `guardianCount == 0` degrades to owner-only (`sigsRequired = 0`). Intentional:
+a 0-guardian account is already owner-key-only for all operations. Accounts requiring guardian-gated
+module removal must configure at least one guardian.
+
+### Test counts
+- `forge test` (cancun): **840 passed, 0 failed**
+- `forge test --evm-version prague` (EIP-2537): **840 passed, 0 failed**
+
+### Security review
+Four-round adversarial review (Codex + Opus): no CRITICAL / HIGH. MEDIUM-9 (0-guardian uninstall
+degradation) addressed with NatSpec. `forge inspect storageLayout` confirmed 36-slot inheritance
+chain identical across V7 and Extension — delegatecall shared storage safe. Full report: PR #139.
+
+### SDK impact
+`abi/AAStarAirAccountV7.full.json` updated to **66 functions** (installModule/uninstallModule now
+appear as fallback-routed, no selector collisions). SDK must update encoding helpers for the four
+module-governance functions when `sigsRequired > 0`. See `docs/abi/reference.md`.
+
+### Deployed (Sepolia)
+
+| Contract | Address |
+|----------|---------|
+| AAStarAirAccountV7 (impl) | [`0xf36c81110Dd30D3052285EFc507E1BCE6875987C`](https://sepolia.etherscan.io/address/0xf36c81110Dd30D3052285EFc507E1BCE6875987C) |
+| AirAccountExtension | [`0xFe0B7f7C4D3551931ec6d5457a293bA1C12418b0`](https://sepolia.etherscan.io/address/0xFe0B7f7C4D3551931ec6d5457a293bA1C12418b0) |
+| AAStarAirAccountFactoryV7 | [`0xe9ea2D29F2De1be80BEdb8A284ad4f98e6dAb6a1`](https://sepolia.etherscan.io/address/0xe9ea2D29F2De1be80BEdb8A284ad4f98e6dAb6a1) |
+| AgentRegistry | [`0xFc9e7e35eC82978EFAD1B5f9D472018FA42B1fFe`](https://sepolia.etherscan.io/address/0xFc9e7e35eC82978EFAD1B5f9D472018FA42B1fFe) |
+| (reused) BLS Algorithm | `0xAF525A161CB17e0A1b6254ef0B8d8473bdA05174` |
+| (reused) Validator Router | `0xfcDfd17a373E037c3F9C8ffE2c781915E7Ae6e11` |
+| (reused) SessionKeyValidator | `0x6810CfB7c72D16e044a17694fAa8076e517264D0` |
+| (reused) ForceExitModule | `0x3fDe77868b74a7979A40a2293a1CD265fbe66EEc` |
+
+### E2E test results (Sepolia, 2026-06-27)
+
+Full 166-scenario on-chain E2E suite — all phases green.
+
+| Phase | Tests | Result |
+|-------|-------|--------|
+| 01 smoke | 13 | ✅ |
+| 02 security | 8 | ✅ |
+| 03 views | 27 | ✅ |
+| 04 admin | 4 | ✅ |
+| 05 lifecycle | 8 | ✅ |
+| 06 negative | 19 | ✅ |
+| 07 beta3-features | 13 | ✅ |
+| 08 multi-account-types | 8 | ✅ |
+| 09 execute-transactions | 10 | ✅ |
+| 10 session-key-txns | 11 | ✅ |
+| 11 guardian-recovery-module | 12 | ✅ |
+| 12 userop-bundler | 4 | ✅ |
+| 13 ws-a module-nonce | 8 | ✅ |
+| 14 ws-b forceexit-toctou | 7 | ✅ |
+| 15 ws-c sessionkey-cap-velocity | 4 | ✅ |
+| 16 ws-g p256-low-s | 6 | ✅ |
+| **Total** | **166** | **✅** |
+
+ValidatorRouter `finalizeSetup()` called — `setupComplete = true` (tx: [`0x562a1e1a...`](https://sepolia.etherscan.io/tx/0x562a1e1a64b343a9d7caa579f8ae6c01b5c15364bad6417f305bdecf7780d33f)).
+
+Full results: `docs/e2e/E2E_RESULTS_v0.20.2.md`.
+
+---
+
 ## [v0.20.1] - 2026-06-26 (tierLimitNonce getter — patch)
 
 Additive patch: exposes `_tierLimitNonce` through a view getter in `AirAccountExtension` so the

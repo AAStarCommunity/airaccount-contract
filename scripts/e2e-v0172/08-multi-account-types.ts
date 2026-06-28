@@ -22,12 +22,13 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import {
   ADDR, publicClient, wAnnie, annie, jason, bob,
-  loadAbi, runTests, type TestCase,
+  loadAbi, loadMergedAbi, runTests, type TestCase,
 } from "./common.js";
 
 const factoryAbi = loadAbi("AAStarAirAccountFactoryV7");
 const baseAbi    = loadAbi("AAStarAirAccountBase");
-const v7Abi      = loadAbi("AAStarAirAccountV7");
+// Use merged full ABI (V7 + Extension fallback surface) for unified on-chain calls.
+const v7Abi      = loadMergedAbi();
 const regAbi     = loadAbi("AgentRegistry");
 
 // Unique salt for this run
@@ -86,13 +87,17 @@ const tests: TestCase[] = [
   {
     name: "AC.1 createAccount with InitConfig (no guard, dailyLimit=0, 2 guardians)",
     run: async () => {
+      const ZERO_B32 = "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
       const config = {
         guardians: [jason.address, bob.address, "0x0000000000000000000000000000000000000000"] as [Address, Address, Address],
+        // v0.20.2: guardianP256X/Y for P-256 guardian slots. ECDSA guardians use zeros.
+        guardianP256X: [ZERO_B32, ZERO_B32, ZERO_B32] as [typeof ZERO_B32, typeof ZERO_B32, typeof ZERO_B32],
+        guardianP256Y: [ZERO_B32, ZERO_B32, ZERO_B32] as [typeof ZERO_B32, typeof ZERO_B32, typeof ZERO_B32],
         dailyLimit: 0n,
-        approvedAlgIds: [],
+        approvedAlgIds: [] as number[],
         minDailyLimit: 0n,
-        initialTokens: [],
-        initialTokenConfigs: [],
+        initialTokens: [] as Address[],
+        initialTokenConfigs: [] as { tier1Limit: bigint; tier2Limit: bigint; dailyLimit: bigint }[],
       };
 
       // Predict address
