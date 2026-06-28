@@ -368,7 +368,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x54387ad7` | `guardianCount()` | view | — | Returns number of active guardians. |
 | `0xf560c734` | `guardians(uint256)` | view | — | Returns guardian address at index (0-2). Returns address(0) for empty slots. |
 | `0x253e659b` | `guardSetStrictMode(bool)` | nonpayable | onlyOwner | #22: toggle the guard's strict mode (block unconfigured tokens). Default OFF. |
-| `0x3fe81b6a` | `modifyTierLimitsWithGuardians(uint256,uint256,uint256,bytes[])` | nonpayable | — | Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.         Security principle: the authorization level to change a spending guard must match         the tier level being guarded (spending at T2 requires a guardian; modifying T2 does too). |
+| `0x3fe81b6a` | `modifyTierLimitsWithGuardians(uint256,uint256,uint256,bytes[])` | nonpayable | onlyOwnerOrSelf | Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.         Security principle: the authorization level to change a spending guard must match         the tier level being guarded (spending at T2 requires a guardian; modifying T2 does too). |
 | `0x8da5cb5b` | `owner()` | view | — | Account owner and ECDSA signer (mutable for social recovery) |
 | `0x863ee512` | `p256KeyX()` | view | — | P256 public key x-coordinate |
 | `0xc4bb0566` | `p256KeyY()` | view | — | P256 public key y-coordinate |
@@ -378,7 +378,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xd0771689` | `requiredTier(uint256)` | view | — |  |
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | nonpayable | onlyOwner |  |
 | `0x148d13d1` | `setParserRegistry(address)` | nonpayable | onlyOwner | Set the calldata parser registry for DeFi protocol support.         Can be updated by owner (unlike guard which is immutable).         Set to address(0) to disable parser support. |
-| `0x7b471153` | `setTierLimits(uint256,uint256)` | nonpayable | — | Set tier thresholds — INITIAL SETUP ONLY.         Callable exactly once, ever. After the first configuration (here or via         modifyTierLimitsWithGuardians), this function is permanently locked.         Any subsequent modification (increase, decrease, or disable) must go through         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current         limit values closes the bypass where a guardian reset to (0,0) would otherwise         re-open owner-only configuration. |
+| `0x7b471153` | `setTierLimits(uint256,uint256)` | nonpayable | onlyOwnerOrSelf | Set tier thresholds — INITIAL SETUP ONLY.         Callable exactly once, ever. After the first configuration (here or via         modifyTierLimitsWithGuardians), this function is permanently locked.         Any subsequent modification (increase, decrease, or disable) must go through         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current         limit values closes the bypass where a guardian reset to (0,0) would otherwise         re-open owner-only configuration. |
 | `0x1327d3d8` | `setValidator(address)` | nonpayable | onlyOwner | Set the validator router — SET-ONCE (issue #45, Codex CRITICAL). The router resolves         the BLS/DVT algorithm AND the protocol aggregator (`blsAlgorithm.aggregator()`), so if         the owner could SWAP it, a compromised owner would point at a malicious router whose         `getAlgorithm(ALG_BLS)` returns a fake BLS algorithm (no-op `validate()` / attacker         `aggregator()`) and nullify the BLS/DVT factor on BOTH the single-op and batch paths.         The router is a protocol singleton (only-add registry + 7-day timelock for new         algorithms), so an account never needs to change it after the initial wiring. Once set         to a non-zero router it can never be changed — the DVT factor's algorithm source is         thereafter immutable from the (possibly compromised) owner's perspective. |
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
 | `0xdbaf0cc3` | `tier2Limit()` | view | — | Tier2 max (dual factor); above this requires multi-sig (BLS triple) |
@@ -581,7 +581,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 #### `modifyTierLimitsWithGuardians(uint256 _tier1, uint256 _tier2, uint256 deadline, bytes[] guardianSigs)`
 
-`0x3fe81b6a` · nonpayable · access: —
+`0x3fe81b6a` · nonpayable · access: onlyOwnerOrSelf
 
 > Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.         Security principle: the authorization level to change a spending guard must match         the tier level being guarded (spending at T2 requires a guardian; modifying T2 does too).
 
@@ -690,7 +690,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 #### `setTierLimits(uint256 _tier1, uint256 _tier2)`
 
-`0x7b471153` · nonpayable · access: —
+`0x7b471153` · nonpayable · access: onlyOwnerOrSelf
 
 > Set tier thresholds — INITIAL SETUP ONLY.         Callable exactly once, ever. After the first configuration (here or via         modifyTierLimitsWithGuardians), this function is permanently locked.         Any subsequent modification (increase, decrease, or disable) must go through         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current         limit values closes the bypass where a guardian reset to (0,0) would otherwise         re-open owner-only configuration.
 
@@ -2446,7 +2446,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
 | `0x9517e29f` | `installModule(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | ERC-7579: Install a module. Supports both ECDSA and P-256 guardian multi-sig. |
 | `0x353f0860` | `mintAgentIdentity(address,string)` | nonpayable | onlyOwner, nonReentrant | Mint an ERC-8004 agent identity NFT to this AirAccount via the official registry. |
-| `0x642c7989` | `modifyTierLimitsWithMixedGuardians(uint256,uint256,uint256,uint8[],bytes[])` | nonpayable | — | Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type. |
+| `0x642c7989` | `modifyTierLimitsWithMixedGuardians(uint256,uint256,uint256,uint8[],bytes[])` | nonpayable | onlyOwnerOrSelf | Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type. |
 | `0xc8175b3f` | `moduleInstallTimelock()` | view | — | Read the active module-install timelock (seconds). 0 = disabled (immediate installs). |
 | `0x8da5cb5b` | `owner()` | view | — | Account owner and ECDSA signer (mutable for social recovery) |
 | `0x863ee512` | `p256KeyX()` | view | — | P256 public key x-coordinate |
@@ -2462,7 +2462,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8abb1c2a` | `removeGuardianWithMixedSigs(uint8,uint8[],bytes[])` | nonpayable | onlyOwner | Remove a guardian by index using mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type (which can't use the ECDSA-only path). |
 | `0x293e07f2` | `setAgentWallet(uint256,address,address,bytes)` | nonpayable | onlyOwner | Link an agent wallet to this AirAccount by registering it in AgentRegistry. |
 | `0xa5b915b5` | `setModuleInstallTimelock(uint256,bytes)` | nonpayable | onlyOwnerOrEntryPoint | Configure the optional module-install timelock (issue #58 / KI-6). |
-| `0x10d47802` | `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | — | Set the weight configuration for algId 0x07. First-time: direct owner call.         Subsequent weakening changes require the guardian proposal flow (M6.2). |
+| `0x10d47802` | `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | onlyOwnerOrSelf | Set the weight configuration for algId 0x07. First-time: direct owner call.         Subsequent weakening changes require the guardian proposal flow (M6.2). |
 | `0x6e795333` | `submitAgentReputation(address,uint256,int128,uint8,string,string,string,string,bytes32)` | nonpayable | onlyOwner, nonReentrant | Submit reputation feedback for an agent interaction via the official registry. |
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
 | `0xdbaf0cc3` | `tier2Limit()` | view | — | Tier2 max (dual factor); above this requires multi-sig (BLS triple) |
@@ -2694,7 +2694,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 #### `modifyTierLimitsWithMixedGuardians(uint256 _tier1, uint256 _tier2, uint256 deadline, uint8[] signerIdxs, bytes[] sigs)`
 
-`0x642c7989` · nonpayable · access: —
+`0x642c7989` · nonpayable · access: onlyOwnerOrSelf
 
 > Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type.
 
@@ -2888,7 +2888,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 #### `setWeightConfig((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8) config)`
 
-`0x10d47802` · nonpayable · access: —
+`0x10d47802` · nonpayable · access: onlyOwnerOrSelf
 
 > Set the weight configuration for algId 0x07. First-time: direct owner call.         Subsequent weakening changes require the guardian proposal flow (M6.2).
 
