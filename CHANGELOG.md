@@ -8,6 +8,60 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.20.3] - 2026-06-28 (gasless self-call for tier/weight config — patch)
+
+Allows tier and weight config functions to be called via `execute()` self-call
+(`msg.sender == address(this)`), enabling these configurations to be submitted as
+gasless UserOps through SuperPaymaster. Closes #140.
+
+### Changed
+- **`onlyOwnerOrSelf` modifier** added to `AAStarAirAccountBase` and `AirAccountExtension`.
+  Replaces `onlyOwner` on the four config functions below, so they accept both the owner EOA
+  and the account itself (via `execute()` inner call).
+- **`setTierLimits(uint256,uint256)`** — `AAStarAirAccountBase`: initial tier setup can now
+  be submitted as a gasless UserOp. All existing invariants preserved (`_tierLimitsInitialized`
+  latch, one-time-only constraint).
+- **`modifyTierLimitsWithGuardians(uint256,uint256,uint256,bytes[])`** — `AAStarAirAccountBase`:
+  post-init tier modification still requires `RECOVERY_THRESHOLD` guardian signatures; self-call
+  path adds no new privilege.
+- **`setWeightConfig(WeightConfig)`** — `AirAccountExtension`: weight configuration for algId
+  `0x07`; weakening protection (`_isWeakening` / `WeakeningRequiresProposal`) unchanged.
+- **`modifyTierLimitsWithMixedGuardians(uint256,uint256,uint256,uint8[],bytes[])`** —
+  `AirAccountExtension`: mixed ECDSA/P-256 variant of the above.
+- **`ACCOUNT_VERSION`** bumped to `"0.20.3"`.
+- **`FACTORY_VERSION`** bumped to `"0.20.2"`.
+
+### Added
+- 5 new unit tests covering self-call paths and non-owner rejection:
+  `test_setTierLimits_selfCall_succeeds`, `test_setTierLimits_nonOwnerNonSelf_reverts`,
+  `test_modifyTierLimitsWithGuardians_selfCall_succeeds`,
+  `test_modifyTierLimitsWithMixedGuardians_selfCall_succeeds`,
+  `test_setWeightConfig_selfCall_succeeds`.
+- `onlyOwnerOrSelf` added to `KNOWN_MODIFIERS` in `scripts/gen-abi-docs.mjs` so ABI
+  reference correctly reflects access control.
+
+### Security
+10-vector Codex audit performed before merge (reentrancy, ERC-7562 validation phase,
+guardian-sig bypass, latch bypass, flash-loan atomic, weakening guard, batch execute,
+entrypoint path, delegatecall address(this), ERC-1271). All SAFE.
+
+### SDK impact
+No changes needed. Use existing `execute(account, 0, <configCalldata>)` UserOp path;
+SuperPaymaster sponsor covers gas.
+
+### Deployment addresses (Sepolia)
+
+| Contract | Address |
+|---|---|
+| AAStarAirAccountV7 (impl) | `0x91Ee5a7ec57A82f3FcEe991bDc75d918266edcb8` |
+| AirAccountExtension | `0xC3F4Ff562b8cB806bc3207cFD2d4621994599880` |
+| AAStarAirAccountFactoryV7 | `0x78775786dc6B1CD2f6631Ab59C2BE86B1a1e585e` |
+| AgentRegistry | `0x33B3287Ef08219E84fEEF8BF3BE787347A3Df064` |
+
+Reused from v0.20.2: BLSAlgorithm, ValidatorRouter, BLSAggregator, SessionKeyValidator, ForceExitModule, Delegate, ParserRegistry.
+
+---
+
 ## [v0.20.2] - 2026-06-27 (P-256 mixed-sig module governance — patch)
 
 P-256 / WebAuthn passkey guardian support for the four module-governance functions
