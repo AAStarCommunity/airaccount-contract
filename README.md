@@ -3,9 +3,24 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-## Status: v0.20.0 — 2026-06-20
+## Status: v0.20.3 — 2026-06-28 (patch)
 
-Latest: **v0.20.0** — P-256 / WebAuthn (passkey) guardian support. Closes **#119**: guardian slots
+Latest: **v0.20.3** — gasless self-call for tier/weight config. `setTierLimits`, `setWeightConfig`,
+`modifyTierLimitsWithGuardians`, `modifyTierLimitsWithMixedGuardians` now accept `msg.sender == address(this)`,
+enabling these config functions to be submitted as gasless UserOps via SuperPaymaster (no ETH in owner wallet required).
+SDK impact: zero — existing `execute(account, 0, calldata)` path works directly. Closes **#140**.
+Factory (Sepolia): `0x78775786dc6B1CD2f6631Ab59C2BE86B1a1e585e`. Forge test **845/845** (cancun + prague).
+
+<details><summary>v0.20.2 (2026-06-27) — P-256 mixed-sig module governance</summary>
+
+**v0.20.2** — P-256 / WebAuthn passkey guardian support for `installModule` / `uninstallModule` /
+`setModuleInstallTimelock` / `proposeModuleInstall`. Factory: `0xe9ea2D29F2De1be80BEdb8A284ad4f98e6dAb6a1`.
+
+</details>
+
+<details><summary>v0.20.0 (2026-06-20) — P-256/WebAuthn guardian support</summary>
+
+**v0.20.0** — P-256 / WebAuthn (passkey) guardian support. Closes **#119**: guardian slots
 now accept passkeys (Touch ID / Face ID) alongside ECDSA EOAs, with full social recovery
 (propose / approve / execute / cancel) via real WebAuthn assertions verified through the EIP-7212
 precompile. Also relocates the cold recovery path into `AirAccountExtension` (frees V7 runtime from
@@ -16,6 +31,8 @@ R1 2M+2L → R2 1M+1L → R3 1L → final 1H+1M → **SHIP**) plus an independen
 Forge test **844/0/0** with `--ffi` (incl. 4 real-passkey E2E tests using OpenZeppelin
 `P256.verifySolidity` — genuine secp256r1, no mock). See [`CHANGELOG.md`](CHANGELOG.md),
 [`RELEASE.md`](RELEASE.md), and [`docs/p256-guardian-spec.md`](docs/p256-guardian-spec.md).
+
+</details>
 
 > **Integrator note (breaking):** the 4 ECDSA recovery selectors (`proposeRecovery`/`approveRecovery`/
 > `executeRecovery`/`cancelRecovery`) are no longer on the V7 ABI surface — call them against the
