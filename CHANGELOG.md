@@ -50,7 +50,15 @@ No changes needed. Use existing `execute(account, 0, <configCalldata>)` UserOp p
 SuperPaymaster sponsor covers gas.
 
 ### Deployment addresses (Sepolia)
-_Populated after deploy — see below._
+
+| Contract | Address |
+|---|---|
+| AAStarAirAccountV7 (impl) | `0x91Ee5a7ec57A82f3FcEe991bDc75d918266edcb8` |
+| AirAccountExtension | `0xC3F4Ff562b8cB806bc3207cFD2d4621994599880` |
+| AAStarAirAccountFactoryV7 | `0x78775786dc6B1CD2f6631Ab59C2BE86B1a1e585e` |
+| AgentRegistry | `0x33B3287Ef08219E84fEEF8BF3BE787347A3Df064` |
+
+Reused from v0.20.2: BLSAlgorithm, ValidatorRouter, BLSAggregator, SessionKeyValidator, ForceExitModule, Delegate, ParserRegistry.
 
 ---
 
