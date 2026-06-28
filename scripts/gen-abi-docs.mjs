@@ -130,6 +130,7 @@ const KNOWN_MODIFIERS = [
   "onlyOwnerOrEntryPoint",
   "onlyEntryPointOrOwner",
   "onlyEntryPoint",
+  "onlyOwnerOrSelf",
   "onlyOwner",
   "onlyGuardian",
   "onlySelf",

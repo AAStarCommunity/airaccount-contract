@@ -1361,6 +1361,43 @@ contract AAStarAirAccountV7_M7Test is Test {
         account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
     }
 
+    // ─── issue-140: onlyOwnerOrSelf — gasless self-call path ─────────────────
+
+    /// @notice setTierLimits succeeds when called via self-call (msg.sender == account).
+    ///         This covers the gasless UserOp path: execute(account, 0, <setTierLimitsCalldata>).
+    function test_setTierLimits_selfCall_succeeds() public {
+        vm.prank(address(account));
+        account.setTierLimits(0.1 ether, 1 ether);
+        assertEq(account.tier1Limit(), 0.1 ether);
+        assertEq(account.tier2Limit(), 1 ether);
+    }
+
+    /// @notice A third party (not owner, not self) calling setTierLimits must still revert.
+    function test_setTierLimits_nonOwnerNonSelf_reverts() public {
+        vm.prank(randomWallet.addr);
+        vm.expectRevert(AAStarAirAccountBase.NotOwner.selector);
+        account.setTierLimits(0.1 ether, 1 ether);
+    }
+
+    /// @notice modifyTierLimitsWithGuardians succeeds when called via self-call.
+    function test_modifyTierLimitsWithGuardians_selfCall_succeeds() public {
+        uint256 tier1 = 0.5 ether;
+        uint256 tier2 = 5 ether;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        bytes memory sig0 = _modifyTierSig(g0Wallet, tier1, tier2, deadline);
+        bytes memory sig1 = _modifyTierSig(g1Wallet, tier1, tier2, deadline);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = sig0;
+        sigs[1] = sig1;
+
+        vm.prank(address(account));
+        account.modifyTierLimitsWithGuardians(tier1, tier2, deadline, sigs);
+
+        assertEq(account.tier1Limit(), tier1);
+        assertEq(account.tier2Limit(), tier2);
+    }
+
     // ─── Gnosis Safe multisig guardian (issue #42) ────────────────────────────
     //
     // TODO: Add full social recovery test where the community guardian is a Gnosis Safe

@@ -284,6 +284,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         _;
     }
 
+    /// @dev Allows the owner EOA or the account itself (self-call via execute) so that
+    ///      config changes can be submitted as gasless UserOps through SuperPaymaster.
+    modifier onlyOwnerOrSelf() {
+        if (msg.sender != owner && msg.sender != address(this)) revert NotOwner();
+        _;
+    }
+
     /// @dev Reentrancy guard using transient storage (EIP-1153, ~200 gas vs ~7100 for SSTORE)
     modifier nonReentrant() {
         assembly {
@@ -455,7 +462,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///         modifyTierLimitsWithGuardians(). Gating on a latch rather than on the current
     ///         limit values closes the bypass where a guardian reset to (0,0) would otherwise
     ///         re-open owner-only configuration.
-    function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwner {
+    function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwnerOrSelf {
         if (_tierLimitsInitialized) revert CannotIncreaseTierLimit();
         if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
         _tierLimitsInitialized = true;
@@ -495,7 +502,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         uint256 _tier2,
         uint256 deadline,
         bytes[] calldata guardianSigs
-    ) external onlyOwner {
+    ) external onlyOwnerOrSelf {
         if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
         if (block.timestamp > deadline) revert TierLimitSigExpired();
         if (guardianSigs.length < RECOVERY_THRESHOLD) revert InsufficientGuardianApprovals();
