@@ -109,8 +109,8 @@ async function main() {
   });
   const receipt = await waitTx(createHash, "createAccount");
   // AccountCreated(address indexed account, address indexed owner, uint256 salt)
-  // keccak256("AccountCreated(address,address,uint256)")
-  const ACCOUNT_CREATED_TOPIC = "0x7b0e5c4af94eb5eb2e9b5ed9e46e5dfb1a8e0c8e7f16f2f9e56c1c0c4c6e4a3" as Hex;
+  // keccak256("AccountCreated(address,address,uint256)") — verified via cast sig-event
+  const ACCOUNT_CREATED_TOPIC = "0x33310a89c32d8cc00057ad6ef6274d2f8fe22389a992cf89983e09fc84f6cfff" as Hex;
   const createdLog = receipt.logs.find(
     l => l.address.toLowerCase() === FACTORY.toLowerCase() && l.topics[0] === ACCOUNT_CREATED_TOPIC
   );
@@ -165,7 +165,7 @@ async function main() {
   } catch (e: any) {
     const msg = String(e);
     if (msg.includes("Expected revert")) throw e;
-    // Must be CannotIncreaseTierLimit (selector 0x7b8a4f0b) — not just any revert
+    // Must be CannotIncreaseTierLimit (selector 0x9f081f40) — not just any revert
     if (!msg.includes("CannotIncreaseTierLimit") && !msg.includes("0x9f081f40")) {
       throw new Error(`T5: unexpected revert reason (want CannotIncreaseTierLimit): ${msg.slice(0, 200)}`);
     }
