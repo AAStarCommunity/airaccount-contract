@@ -49,6 +49,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     uint8 internal constant ALG_COMBINED_T1 = 0x06;   // P256 AND ECDSA simultaneously (zero-trust Tier 1)
     uint8 internal constant ALG_SESSION_KEY = 0x08;   // Time-limited session key (ephemeral ECDSA, Tier 1)
     uint8 internal constant ALG_WEIGHTED    = 0x07;   // Weighted multi-signature (configurable per-source weights)
+    uint8 internal constant ALG_CUMULATIVE_T2_WA = 0x09; // WebAuthn passkey + BLS DVT (Tier 2)
+    uint8 internal constant ALG_CUMULATIVE_T3_WA = 0x0a; // WebAuthn passkey + BLS DVT + Guardian ECDSA (Tier 3)
     // algId 0x10: Reserved for post-quantum signature scheme (ML-DSA/Dilithium).
     // Requires EVM precompile (EIP-TBD). Implementation deferred until precompile availability (~2027-2029).
 
@@ -623,6 +625,16 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             return _validateCumulativeTier3(userOpHash, signature[1:]);
         }
 
+        if (firstByte == ALG_CUMULATIVE_T2_WA) {
+            _storeValidatedAlgId(ALG_CUMULATIVE_T2_WA);
+            return _validateCumulativeTier2WA(userOpHash, signature[1:]);
+        }
+
+        if (firstByte == ALG_CUMULATIVE_T3_WA) {
+            _storeValidatedAlgId(ALG_CUMULATIVE_T3_WA);
+            return _validateCumulativeTier3WA(userOpHash, signature[1:]);
+        }
+
         if (firstByte == ALG_ECDSA) {
             if (signature.length == 66) {
                 _storeValidatedAlgId(ALG_ECDSA);
@@ -711,7 +723,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (firstByte == ALG_P256 && signature.length == 65) { _storeValidatedAlgId(ALG_P256); return; }
         if (firstByte == ALG_ECDSA && signature.length == 66) { _storeValidatedAlgId(ALG_ECDSA); return; }
         if (firstByte == ALG_COMBINED_T1 && signature.length == 130) { _storeValidatedAlgId(ALG_COMBINED_T1); return; }
-        if (firstByte == ALG_BLS || firstByte == ALG_CUMULATIVE_T2 || firstByte == ALG_CUMULATIVE_T3) {
+        if (firstByte == ALG_BLS || firstByte == ALG_CUMULATIVE_T2 || firstByte == ALG_CUMULATIVE_T3
+            || firstByte == ALG_CUMULATIVE_T2_WA || firstByte == ALG_CUMULATIVE_T3_WA) {
             _storeValidatedAlgId(firstByte);
             return;
         }
@@ -789,6 +802,31 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         (bool success, bytes memory result) = P256_VERIFIER.staticcall(callData);
         if (!success || result.length < 32) return 1;
         return abi.decode(result, (uint256)) == 1 ? 0 : 1;
+    }
+
+    /// @dev Base64url-encode a bytes32 value into 43 URL-safe characters (no padding).
+    ///      Used by _verifyWebAuthnOwnerSig to reconstruct clientDataJSON from the challenge.
+    ///      Mirrors AirAccountExtension._base64UrlEncode32 (private there, internal here).
+    function _base64UrlEncode32(bytes32 input) internal pure returns (bytes memory result) {
+        result = new bytes(43);
+        bytes memory data = abi.encodePacked(input);
+        bytes memory t = bytes("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_");
+        uint256 j = 0;
+        for (uint256 i = 0; i < 30; i += 3) {
+            uint256 b0 = uint8(data[i]);
+            uint256 b1 = uint8(data[i + 1]);
+            uint256 b2 = uint8(data[i + 2]);
+            result[j++] = t[b0 >> 2];
+            result[j++] = t[((b0 & 0x03) << 4) | (b1 >> 4)];
+            result[j++] = t[((b1 & 0x0F) << 2) | (b2 >> 6)];
+            result[j++] = t[b2 & 0x3F];
+        }
+        // Final 2 bytes (indices 30, 31) -> 3 base64url chars (no padding)
+        uint256 b30 = uint8(data[30]);
+        uint256 b31 = uint8(data[31]);
+        result[j++] = t[b30 >> 2];
+        result[j++] = t[((b30 & 0x03) << 4) | (b31 >> 4)];
+        result[j]   = t[(b31 & 0x0F) << 2];
     }
 
     /**
@@ -1115,6 +1153,131 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
         // LAYER 2: BLS aggregate + owner messagePoint binding (bytes between P256 and guardian sig)
         return _blsPayloadValid(userOpHash, sigData[64:sigData.length - 65]) ? 0 : 1;
+    }
+
+    /**
+     * @dev Validate cumulative tier 2 with WebAuthn passkey: WebAuthn P256 + BLS DVT.
+     *
+     * Drops the raw-P256 restriction of ALG_CUMULATIVE_T2 (0x04) so the device's native
+     * WebAuthn ceremony (navigator.credentials.get) can be used without any out-of-band
+     * key extraction.  All other layers (BLS aggregate) are identical to 0x04.
+     *
+     * Signature format (after algId byte stripped):
+     *   [uint32 waBlobLen][waBlob][blsPayload]
+     *
+     *   waBlob  = abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s)
+     *             challenge bound into clientDataJSON = base64url(userOpHash)
+     *   blsPayload = [nodeIdsLen(32)][nodeIds(N*32)][blsSig(256)]  (same as ALG_CUMULATIVE_T2)
+     */
+    function _validateCumulativeTier2WA(
+        bytes32 userOpHash,
+        bytes calldata sigData
+    ) internal view returns (uint256) {
+        if (address(validator) == address(0)) return 1;
+
+        // Need at least 4 bytes for waBlobLen
+        if (sigData.length < 4) return 1;
+        uint32 waBlobLen = uint32(bytes4(sigData[0:4]));
+        if (sigData.length < uint256(4) + waBlobLen) return 1;
+
+        // LAYER 1: WebAuthn P256 passkey (owner key, challenge = userOpHash)
+        bytes memory waBlob = sigData[4:4 + waBlobLen];
+        if (!_verifyWebAuthnOwnerSig(userOpHash, waBlob)) return 1;
+
+        // LAYER 2+3: BLS aggregate + owner messagePoint binding
+        return _blsPayloadValid(userOpHash, sigData[4 + waBlobLen:]) ? 0 : 1;
+    }
+
+    /**
+     * @dev Validate cumulative tier 3 with WebAuthn passkey: WebAuthn P256 + BLS DVT + Guardian ECDSA.
+     *
+     * Signature format (after algId byte stripped):
+     *   [uint32 waBlobLen][waBlob][blsPayload][guardianECDSA(65)]
+     *
+     *   waBlob     = abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s)
+     *   blsPayload = [nodeIdsLen(32)][nodeIds(N*32)][blsSig(256)]
+     *   guardianECDSA = last 65 bytes (same as ALG_CUMULATIVE_T3)
+     */
+    function _validateCumulativeTier3WA(
+        bytes32 userOpHash,
+        bytes calldata sigData
+    ) internal view returns (uint256) {
+        if (address(validator) == address(0)) return 1;
+
+        if (sigData.length < 4) return 1;
+        uint32 waBlobLen = uint32(bytes4(sigData[0:4]));
+        // Minimum: 4 (len) + waBlobLen + 65 (guardian)
+        if (sigData.length < uint256(4) + waBlobLen + 65) return 1;
+
+        // LAYER 1: WebAuthn P256 passkey (owner key, challenge = userOpHash)
+        bytes memory waBlob = sigData[4:4 + waBlobLen];
+        if (!_verifyWebAuthnOwnerSig(userOpHash, waBlob)) return 1;
+
+        // LAYER 3: Guardian ECDSA co-sign (last 65 bytes)
+        bytes calldata guardianSig = sigData[sigData.length - 65:];
+        bytes32 guardianHash = userOpHash.toEthSignedMessageHash();
+        address guardianRecovered = guardianHash.recover(guardianSig);
+
+        bool isGuardian = false;
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_getGuardian(i) == guardianRecovered) {
+                isGuardian = true;
+                break;
+            }
+        }
+        if (!isGuardian) return 1;
+
+        // LAYER 2: BLS aggregate (bytes between waBlob and guardian sig)
+        uint256 blsStart = 4 + waBlobLen;
+        uint256 blsEnd   = sigData.length - 65;
+        return _blsPayloadValid(userOpHash, sigData[blsStart:blsEnd]) ? 0 : 1;
+    }
+
+    /**
+     * @dev Verify a WebAuthn assertion against the OWNER's P256 key (p256KeyX / p256KeyY).
+     *      challenge = the raw bytes32 value passed in (userOpHash for UserOp flows).
+     *      sig encoding: abi.encode(bytes authenticatorData, bytes clientDataJSONPrefix,
+     *                               bytes clientDataJSONSuffix, bytes32 r, bytes32 s)
+     *      Identical verification logic to AirAccountExtension._verifyWebAuthnP256Sig but
+     *      uses the account owner key instead of a guardian slot key, and returns bool
+     *      instead of reverting (to fit the 0/1 return convention of the validator layer).
+     */
+    function _verifyWebAuthnOwnerSig(bytes32 challenge, bytes memory sig) internal view returns (bool) {
+        if (p256KeyX == bytes32(0) && p256KeyY == bytes32(0)) return false;
+        // Minimum ABI-encoded size: 5*32 (head) + 3*(32 min content) = 256 bytes
+        if (sig.length < 256) return false;
+
+        (
+            bytes memory authenticatorData,
+            bytes memory clientDataJSONPrefix,
+            bytes memory clientDataJSONSuffix,
+            bytes32 r,
+            bytes32 s
+        ) = abi.decode(sig, (bytes, bytes, bytes, bytes32, bytes32));
+
+        // Minimum authenticatorData: rpIdHash(32) + flags(1) + signCount(4) = 37 bytes
+        if (authenticatorData.length < 37) return false;
+        // UP (User Present) flag must be set (bit 0 of flags byte at index 32)
+        if (uint8(authenticatorData[32]) & 0x01 == 0) return false;
+
+        // Bind operation type: clientDataJSONPrefix must be the standard assertion preamble.
+        // Prevents replay of webauthn.create (registration) assertions through this path.
+        if (keccak256(clientDataJSONPrefix) != keccak256(bytes('{"type":"webauthn.get","challenge":"'))) {
+            return false;
+        }
+
+        bytes memory clientDataJSON = abi.encodePacked(
+            clientDataJSONPrefix,
+            _base64UrlEncode32(challenge),
+            clientDataJSONSuffix
+        );
+
+        bytes32 clientDataHash = sha256(clientDataJSON);
+        bytes32 payloadHash    = sha256(abi.encodePacked(authenticatorData, clientDataHash));
+
+        if (uint256(s) > SECP256R1_N_OVER_2) return false;
+        (bool ok, bytes memory result) = P256_VERIFIER.staticcall(abi.encode(payloadHash, r, s, p256KeyX, p256KeyY));
+        return ok && result.length >= 32 && abi.decode(result, (uint256)) == 1;
     }
 
     // ─── Tiered Routing (F21) ────────────────────────────────────────
