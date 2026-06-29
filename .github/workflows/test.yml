@@ -13,7 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize build submodules
+        run: git submodule update --init lib/account-abstraction lib/openzeppelin-contracts lib/forge-std
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -71,7 +74,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize build submodules
+        run: git submodule update --init lib/account-abstraction lib/openzeppelin-contracts lib/forge-std
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
