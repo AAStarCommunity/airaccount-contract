@@ -151,7 +151,7 @@ async function main() {
 
   // ── Deploy: impl (embeds AirAccountExtension, AAStarAirAccountBase with 0x09/0x0a) ──
   console.log("[1/3] AAStarAirAccountV7 (impl + AirAccountExtension v0.21.0)...");
-  const impl = await deploy("impl", "AAStarAirAccountV7", [], 10_000_000n);
+  const impl = await deploy("impl", "AAStarAirAccountV7", [], 15_000_000n);
   const extension = await pub(RPC_URLS[0]).readContract({
     address: impl, abi: IMPL_EXT_ABI, functionName: "agentExtension",
   }) as Address;
