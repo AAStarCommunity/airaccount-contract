@@ -621,6 +621,60 @@ contract CumulativeWebAuthnTest is Test {
         assertEq(result, 1, "Missing guardian sig should reject T3_WA");
     }
 
+    // ─── Security: malformed waBlob must return 1, never revert ──────
+
+    function test_cumulativeTier2WA_malformedWaBlob_returnsOne_notRevert() public {
+        // Construct a blob that is >= 352 bytes but has an ABI offset that claims content
+        // beyond the blob boundary. Without the pre-decode ABI validation this would cause
+        // abi.decode to revert, violating ERC-4337's requirement that validateUserOp return 1.
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        // Head: off0=0xdeadbeef (points way past data), off1=160, off2=192, r=0, s=0
+        bytes memory malformedWaBlob = abi.encodePacked(
+            uint256(0xdeadbeef),  // off0: out-of-bounds offset
+            uint256(160),         // off1
+            uint256(192),         // off2
+            bytes32(0),           // r
+            bytes32(0),           // s
+            new bytes(200)        // padding to ensure length >= 352
+        );
+        bytes memory blsPayload = _buildBlsPayload();
+        bytes memory sigData = abi.encodePacked(bytes4(uint32(malformedWaBlob.length)), malformedWaBlob, blsPayload);
+        userOp.signature = abi.encodePacked(uint8(0x09), sigData);
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "Malformed waBlob must return 1 (not revert)");
+    }
+
+    // ─── Raw-ECDSA compat: 65-byte sig starting with 0x09/0x0a falls through ──
+
+    function test_rawECDSA_firstByte0x09_fallsThrough() public {
+        // A raw 65-byte ECDSA sig (no algId prefix) whose first byte is 0x09 must NOT
+        // be misrouted to ALG_CUMULATIVE_T2_WA. It should fall through to the raw-ECDSA
+        // compat path and be validated as ECDSA against the owner key.
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        // Craft userOpHash so that the resulting ECDSA sig (r,s,v) starts with 0x09.
+        // We iterate over hashes until vm.sign produces r[0] == 0x09.
+        bytes32 userOpHash;
+        bytes memory sig;
+        for (uint256 i = 0; i < 256; i++) {
+            userOpHash = keccak256(abi.encode("ecdsa_firstbyte_0x09", i));
+            bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerWallet.privateKey, ethHash);
+            sig = abi.encodePacked(r, s, v);
+            if (uint8(sig[0]) == 0x09) break;
+        }
+        require(uint8(sig[0]) == 0x09, "Could not find sig starting with 0x09 in 256 iters");
+
+        userOp.signature = sig;
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 0, "65-byte ECDSA sig with first byte 0x09 must validate via raw-ECDSA path");
+    }
+
     // ─── populateExecAlg covers new algIds ────────────────────────────
 
     function test_populateExecAlg_T2WA_storesAlgId() public {

@@ -625,12 +625,16 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             return _validateCumulativeTier3(userOpHash, signature[1:]);
         }
 
-        if (firstByte == ALG_CUMULATIVE_T2_WA) {
+        // T2_WA / T3_WA minimum sig: 1(algId)+4(len)+256(min_waBlob)+320(min_bls) = 581 bytes.
+        // Guard signature.length != 65 to preserve the raw-ECDSA M1 compat fallback: a raw
+        // 65-byte ECDSA sig whose first byte happens to equal 0x09 or 0x0a must still fall
+        // through to the raw-ECDSA path rather than being misrouted here.
+        if (firstByte == ALG_CUMULATIVE_T2_WA && signature.length != 65) {
             _storeValidatedAlgId(ALG_CUMULATIVE_T2_WA);
             return _validateCumulativeTier2WA(userOpHash, signature[1:]);
         }
 
-        if (firstByte == ALG_CUMULATIVE_T3_WA) {
+        if (firstByte == ALG_CUMULATIVE_T3_WA && signature.length != 65) {
             _storeValidatedAlgId(ALG_CUMULATIVE_T3_WA);
             return _validateCumulativeTier3WA(userOpHash, signature[1:]);
         }
@@ -1244,8 +1248,40 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
      */
     function _verifyWebAuthnOwnerSig(bytes32 challenge, bytes memory sig) internal view returns (bool) {
         if (p256KeyX == bytes32(0) && p256KeyY == bytes32(0)) return false;
-        // Minimum ABI-encoded size: 5*32 (head) + 3*(32 min content) = 256 bytes
-        if (sig.length < 256) return false;
+        // ABI(bytes,bytes,bytes,bytes32,bytes32) head: 5*32 = 160 bytes; each dynamic bytes
+        // needs at least 32 (length word) + 32 (one padded word) = 64 bytes.
+        // Absolute minimum = 160 + 3*64 = 352 bytes. Use 352 matching Extension's guard.
+        if (sig.length < 352) return false;
+
+        // Pre-validate ABI structure to prevent abi.decode from reverting on malformed input.
+        // A revert inside validateUserOp violates ERC-4337 (bundlers expect return 1, not revert).
+        // Layout: [off0(32)][off1(32)][off2(32)][r(32)][s(32)] then dynamic data.
+        // All offsets must be >= 160 (past the fixed head) and their content must fit in sig.
+        {
+            uint256 off0; uint256 off1; uint256 off2;
+            uint256 len0; uint256 len1; uint256 len2;
+            assembly {
+                let base := add(sig, 32) // skip bytes memory length slot
+                off0 := mload(base)
+                off1 := mload(add(base, 32))
+                off2 := mload(add(base, 64))
+            }
+            uint256 dataLen = sig.length;
+            // Each offset must be within [160, dataLen-32] so there is room for a length word.
+            if (off0 < 160 || off0 + 32 > dataLen) return false;
+            if (off1 < 160 || off1 + 32 > dataLen) return false;
+            if (off2 < 160 || off2 + 32 > dataLen) return false;
+            assembly {
+                let base := add(sig, 32)
+                len0 := mload(add(base, off0))
+                len1 := mload(add(base, off1))
+                len2 := mload(add(base, off2))
+            }
+            // Each array's content (length word + padded data) must not exceed sig.
+            if (off0 + 32 + len0 > dataLen) return false;
+            if (off1 + 32 + len1 > dataLen) return false;
+            if (off2 + 32 + len2 > dataLen) return false;
+        }
 
         (
             bytes memory authenticatorData,
