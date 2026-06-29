@@ -2,13 +2,20 @@
  * e2e-v0.21.0.ts — v0.21.0 E2E: verify WebAuthn-native cumulative algIds (0x09/0x0a) on Sepolia.
  *
  * Tests:
- *   T1. Create a fresh account from v0.21.0 factory
- *   T2. ACCOUNT_VERSION on impl == "0.21.0"
- *   T3. clone ACCOUNT_VERSION == "0.21.0"
- *   T4. accountId == "airaccount.v7@0.21.0"
- *   T5. algId 0x09 (ALG_CUMULATIVE_T2_WA) approved ✓
- *   T6. algId 0x0a (ALG_CUMULATIVE_T3_WA) approved ✓
- *   T7–T11. Legacy algIds 0x01–0x05 still approved (no regression)
+ *   T1.  ACCOUNT_VERSION on impl == "0.21.0"
+ *   T2.  Create a fresh account from v0.21.0 factory
+ *   T3.  clone ACCOUNT_VERSION == "0.21.0"
+ *   T4.  accountId == "airaccount.v7@0.21.0"
+ *   T5.  algId 0x09 (ALG_CUMULATIVE_T2_WA) approved ✓
+ *   T6.  algId 0x0a (ALG_CUMULATIVE_T3_WA) approved ✓
+ *   T7.  algId 0x04 (ALG_CUMULATIVE_T2) approved ✓
+ *   T8.  algId 0x05 (ALG_CUMULATIVE_T3) approved ✓
+ *   T9.  algId 0x02 (ALG_ECDSA) approved ✓
+ *   T10. algId 0x01 (ALG_BLS) approved ✓
+ *   T11. algId 0x03 (ALG_P256) approved ✓
+ *   T12. algId 0x06 (ALG_COMBINED_T1) approved ✓
+ *   T13. algId 0x07 (ALG_WEIGHTED) approved ✓
+ *   T14. algId 0x08 (ALG_SESSION_KEY) approved ✓
  *
  * Run: pnpm tsx scripts/e2e-v0.21.0.ts
  */
@@ -81,13 +88,13 @@ async function main() {
   console.log(`Factory: ${FACTORY}`);
   console.log(`Impl:    ${IMPL}\n`);
 
-  // T2: ACCOUNT_VERSION on impl
-  console.log("[T2] ACCOUNT_VERSION on impl...");
+  // T1: ACCOUNT_VERSION on impl
+  console.log("[T1] ACCOUNT_VERSION on impl...");
   const ver = await pub.readContract({ address: IMPL, abi: ACCOUNT_ABI, functionName: "ACCOUNT_VERSION" }) as string;
   if (ver === "0.21.0") ok(`ACCOUNT_VERSION = "${ver}"`); else fail("ACCOUNT_VERSION", `got "${ver}"`);
 
-  // T1: Create account
-  console.log("\n[T1] Create account from v0.21.0 factory...");
+  // T2: Create account
+  console.log("\n[T2] Create account from v0.21.0 factory...");
   const salt = BigInt(Date.now());
   const initConfig = {
     guardians:      [anni.address, bob.address, charlie.address] as [Address, Address, Address],
@@ -127,8 +134,8 @@ async function main() {
   const id = await pub.readContract({ address: account, abi: ACCOUNT_ABI, functionName: "accountId" }) as string;
   if (id === "airaccount.v7@0.21.0") ok(`accountId = "${id}"`); else fail("accountId", `got "${id}"`);
 
-  // T5-T11: algId whitelist
-  console.log("\n[T5-T11] algId whitelist checks...");
+  // T5-T14: algId whitelist — all 10 approved algIds
+  console.log("\n[T5-T14] algId whitelist checks...");
   const algChecks = [
     { id: 0x09, label: "ALG_CUMULATIVE_T2_WA (new)" },
     { id: 0x0a, label: "ALG_CUMULATIVE_T3_WA (new)" },
@@ -137,6 +144,9 @@ async function main() {
     { id: 0x02, label: "ALG_ECDSA" },
     { id: 0x01, label: "ALG_BLS" },
     { id: 0x03, label: "ALG_P256" },
+    { id: 0x06, label: "ALG_COMBINED_T1" },
+    { id: 0x07, label: "ALG_WEIGHTED" },
+    { id: 0x08, label: "ALG_SESSION_KEY" },
   ];
   for (const { id, label } of algChecks) {
     const hex = `0x${id.toString(16).padStart(2, "0")}`;
@@ -148,7 +158,7 @@ async function main() {
     } catch (e: any) { fail(`${hex} check`, e.shortMessage ?? e.message?.slice(0, 60)); }
   }
 
-  console.log(`\n=== E2E Results: ${passed} passed, ${failed} failed ===`);
+  console.log(`\n=== E2E Results: ${passed} passed, ${failed} failed (14 total) ===`);
   console.log(`Account: https://sepolia.etherscan.io/address/${account}`);
   if (failed > 0) { console.error("FAILED — do not release."); process.exit(1); }
   console.log("All tests PASSED — ready for release.");
