@@ -31,16 +31,22 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     }
 
     struct WeightConfig {
-        uint8 passkeyWeight;   // P256 passkey signature weight (default: 3)
-        uint8 ecdsaWeight;     // Owner ECDSA signature weight  (default: 2)
-        uint8 blsWeight;       // DVT BLS aggregate weight      (default: 2)
-        uint8 guardian0Weight; // Guardian[0] ECDSA weight      (default: 1)
-        uint8 guardian1Weight; // Guardian[1] ECDSA weight      (default: 1)
-        uint8 guardian2Weight; // Guardian[2] ECDSA weight      (default: 1)
+        // Each individual factor weight MUST be strictly less than tier1Threshold
+        // (_validateWeightConfig enforces this). This ensures no single factor can
+        // reach T1 alone — T1 always requires at least two factors (e.g. passkey +
+        // KMS ECDSA). From the user's perspective T1 is "single passkey" because the
+        // KMS TEE transparently co-signs with the stored EOA key; the contract sees
+        // both P256 (bit 0) and ECDSA (bit 1) in the bitmap.
+        uint8 passkeyWeight;   // P256 passkey signature weight  (recommended: 2; must be < tier1Threshold)
+        uint8 ecdsaWeight;     // Owner ECDSA signature weight   (recommended: 2; must be < tier1Threshold)
+        uint8 blsWeight;       // DVT BLS aggregate weight       (recommended: 2; must be < tier1Threshold)
+        uint8 guardian0Weight; // Guardian[0] ECDSA weight       (recommended: 1; must be < tier1Threshold)
+        uint8 guardian1Weight; // Guardian[1] ECDSA weight       (recommended: 1; must be < tier1Threshold)
+        uint8 guardian2Weight; // Guardian[2] ECDSA weight       (recommended: 1; must be < tier1Threshold)
         uint8 _padding;        // Reserved for future weight source
-        uint8 tier1Threshold;  // Min weight for Tier 1 ops (default: 3; 0 = config uninitialized)
-        uint8 tier2Threshold;  // Min weight for Tier 2 ops (default: 5)
-        uint8 tier3Threshold;  // Min weight for Tier 3 ops (default: 6)
+        uint8 tier1Threshold;  // Min accumulated weight for Tier 1 ops (recommended: 3; 0 = uninitialised)
+        uint8 tier2Threshold;  // Min accumulated weight for Tier 2 ops (recommended: 5)
+        uint8 tier3Threshold;  // Min accumulated weight for Tier 3 ops (recommended: 6)
     }
 
     struct WeightChangeProposal {
