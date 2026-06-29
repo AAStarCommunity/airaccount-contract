@@ -13,6 +13,45 @@
 [submodule "lib/account-abstraction"]
 	path = lib/account-abstraction
 	url = https://github.com/eth-infinitism/account-abstraction
+
+# ── Reference-only submodules (update = none) ───────────────────────────────
+# These are bundler / ecosystem references — not imported by any source file
+# and not compiled. CI skips them (explicit git submodule update --init only
+# inits the three above). Developers can init individually:
+#   git submodule update --init --force lib/<name>
+[submodule "lib/particle-bundler-server"]
+	path = lib/particle-bundler-server
+	url = https://github.com/Particle-Network/particle-bundler-server
+	update = none
+[submodule "lib/stackup-bundler"]
+	path = lib/stackup-bundler
+	url = https://github.com/stackup-wallet/stackup-bundler
+	update = none
+[submodule "lib/ultra-relay"]
+	path = lib/ultra-relay
+	url = https://github.com/zerodevapp/ultra-relay
+	update = none
+[submodule "lib/alto"]
+	path = lib/alto
+	url = https://github.com/pimlicolabs/alto
+	update = none
+[submodule "lib/bundler"]
+	path = lib/bundler
+	url = https://github.com/eth-infinitism/bundler
+	update = none
+[submodule "lib/kohaku"]
+	path = lib/kohaku
+	url = https://github.com/ethereum/kohaku
+	update = none
+[submodule "lib/kohaku-extension"]
+	path = lib/kohaku-extension
+	url = https://github.com/ethereum/kohaku-extension
+	update = none
+[submodule "lib/SuperPaymaster"]
+	path = lib/SuperPaymaster
+	url = https://github.com/AAStarCommunity/SuperPaymaster.git
+	update = none
+
 [submodule "lib/forge-std"]
 	path = lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
