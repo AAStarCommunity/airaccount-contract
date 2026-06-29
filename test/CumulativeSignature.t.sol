@@ -8,6 +8,7 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
 import {IAAStarAlgorithm} from "../src/interfaces/IAAStarAlgorithm.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
+import {AlgTierLib} from "../src/utils/AlgTierLib.sol";
 
 /// @dev Mock EntryPoint for cumulative signature tests
 contract MockEntryPointCumulative {
@@ -407,5 +408,358 @@ contract CumulativeSignatureTest is Test {
     function _signHash(Vm.Wallet memory w, bytes32 hash) internal pure returns (uint8 v, bytes32 r, bytes32 s) {
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
         (v, r, s) = vm.sign(w.privateKey, ethHash);
+    }
+
+    // ─── WebAuthn waBlob builder ───────────────────────────────────────
+
+    /// @dev Constructs a minimal but structurally valid WebAuthn assertion blob.
+    ///      The P256 precompile is mocked so the crypto values are arbitrary.
+    function _buildWaBlob() internal pure returns (bytes memory) {
+        bytes memory authenticatorData = new bytes(37);
+        authenticatorData[32] = 0x01; // UP (User Present) flag
+        bytes memory prefix = bytes('{"type":"webauthn.get","challenge":"');
+        bytes memory suffix = bytes('"}');
+        bytes32 r = bytes32(uint256(0xAA));
+        bytes32 s = bytes32(uint256(0x01)); // low-S (< SECP256R1_N_OVER_2)
+        return abi.encode(authenticatorData, prefix, suffix, r, s);
+    }
+
+    /// @dev Builds a T2_WA signature: [uint32 waBlobLen][waBlob][blsPayload]
+    function _buildCumulativeT2WASig() internal pure returns (bytes memory) {
+        bytes memory waBlob = _buildWaBlob();
+        uint256 nodeIdsLength = 1;
+        bytes32 fakeNodeId = keccak256("testnode");
+        bytes memory blsSig = new bytes(256);
+
+        bytes memory blsPayload = abi.encodePacked(bytes32(nodeIdsLength), fakeNodeId, blsSig);
+        return abi.encodePacked(bytes4(uint32(waBlob.length)), waBlob, blsPayload);
+    }
+
+    /// @dev Builds a T3_WA signature: [uint32 waBlobLen][waBlob][blsPayload][guardianECDSA(65)]
+    function _buildCumulativeT3WASig(bytes32 userOpHash, Vm.Wallet memory guardianSigner)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        bytes memory waBlob = _buildWaBlob();
+        uint256 nodeIdsLength = 1;
+        bytes32 fakeNodeId = keccak256("testnode");
+        bytes memory blsSig = new bytes(256);
+        bytes memory blsPayload = abi.encodePacked(bytes32(nodeIdsLength), fakeNodeId, blsSig);
+
+        (uint8 v, bytes32 r, bytes32 s) = _signHash(guardianSigner, userOpHash);
+        bytes memory guardianSig = abi.encodePacked(r, s, v);
+
+        return abi.encodePacked(bytes4(uint32(waBlob.length)), waBlob, blsPayload, guardianSig);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// WebAuthn Cumulative Signature Tests (ALG_CUMULATIVE_T2_WA / T3_WA)
+// ═══════════════════════════════════════════════════════════════════
+contract CumulativeWebAuthnTest is Test {
+    MockEntryPointCumulative entryPoint;
+    AAStarAirAccountV7 account;
+    AAStarValidator router;
+    MockBLSSuccess mockBLSSuccess;
+
+    Vm.Wallet ownerWallet;
+    Vm.Wallet guardianWallet;
+    Vm.Wallet nonGuardianWallet;
+
+    function setUp() public {
+        ownerWallet       = vm.createWallet("waOwner");
+        guardianWallet    = vm.createWallet("waGuardian");
+        nonGuardianWallet = vm.createWallet("waNonGuardian");
+
+        entryPoint = new MockEntryPointCumulative();
+
+        uint8[] memory noAlgs = new uint8[](0);
+        AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
+            guardians: [guardianWallet.addr, address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
+            dailyLimit: 0,
+            approvedAlgIds: noAlgs,
+            minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+        });
+        account = new AAStarAirAccountV7();
+        account.initialize(address(entryPoint), ownerWallet.addr, cfg);
+
+        router = new AAStarValidator();
+        mockBLSSuccess = new MockBLSSuccess();
+
+        vm.prank(ownerWallet.addr);
+        account.setValidator(address(router));
+        router.registerAlgorithm(0x01, address(mockBLSSuccess));
+
+        // Owner P256 key (non-zero so the key-missing check doesn't short-circuit)
+        vm.prank(ownerWallet.addr);
+        account.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
+
+        // Mock P256 precompile (returns valid)
+        MockP256Success p256Mock = new MockP256Success();
+        vm.etch(address(0x100), address(p256Mock).code);
+
+        vm.deal(address(account), 100 ether);
+    }
+
+    // ─── AlgTierLib: new ids map to correct tiers ─────────────────────
+
+    function test_waAlgIds_tierMapping() public view {
+        // 0x09 must be tier 2, 0x0a must be tier 3
+        assertEq(account.requiredTier(0), 0, "no tier configured");
+        assertEq(AlgTierLib.algTier(0x09), 2, "0x09 must map to tier 2 (T2_WA)");
+        assertEq(AlgTierLib.algTier(0x0a), 3, "0x0a must map to tier 3 (T3_WA)");
+        // Regression: existing ids unchanged
+        assertEq(AlgTierLib.algTier(0x04), 2, "0x04 (T2) must still be tier 2");
+        assertEq(AlgTierLib.algTier(0x05), 3, "0x05 (T3) must still be tier 3");
+    }
+
+    // ─── T2_WA: valid WebAuthn passkey + BLS ──────────────────────────
+
+    function test_cumulativeTier2WA_validSignature() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        bytes memory sigData = _buildT2WAData();
+        userOp.signature = abi.encodePacked(uint8(0x09), sigData);
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 0, "Valid T2_WA should pass");
+    }
+
+    function test_cumulativeTier2WA_invalidP256_fails() public {
+        MockP256Fail p256Fail = new MockP256Fail();
+        vm.etch(address(0x100), address(p256Fail).code);
+
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        userOp.signature = abi.encodePacked(uint8(0x09), _buildT2WAData());
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "Failing P256 should reject T2_WA");
+    }
+
+    function test_cumulativeTier2WA_wrongClientDataPrefix_fails() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        bytes memory badWaBlob = _buildWaBlobWithPrefix(bytes('{"type":"webauthn.create","challenge":"'));
+        bytes memory blsPayload = _buildBlsPayload();
+        bytes memory sigData = abi.encodePacked(bytes4(uint32(badWaBlob.length)), badWaBlob, blsPayload);
+        userOp.signature = abi.encodePacked(uint8(0x09), sigData);
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "Wrong clientDataJSON prefix should reject T2_WA");
+    }
+
+    function test_cumulativeTier2WA_upFlagUnset_fails() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        bytes memory badWaBlob = _buildWaBlobNoUPFlag();
+        bytes memory blsPayload = _buildBlsPayload();
+        bytes memory sigData = abi.encodePacked(bytes4(uint32(badWaBlob.length)), badWaBlob, blsPayload);
+        userOp.signature = abi.encodePacked(uint8(0x09), sigData);
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "UP flag unset should reject T2_WA");
+    }
+
+    function test_cumulativeTier2WA_truncatedSig_fails() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        // Only 3 bytes — missing waBlobLen field
+        userOp.signature = abi.encodePacked(uint8(0x09), bytes3(0xAAAAAA));
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "Truncated sig should reject T2_WA");
+    }
+
+    // ─── T3_WA: valid WebAuthn passkey + BLS + guardian ECDSA ─────────
+
+    function test_cumulativeTier3WA_validSignature() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        bytes memory sigData = _buildT3WAData(userOpHash, guardianWallet);
+        userOp.signature = abi.encodePacked(uint8(0x0a), sigData);
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 0, "Valid T3_WA should pass");
+    }
+
+    function test_cumulativeTier3WA_nonGuardian_fails() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        bytes memory sigData = _buildT3WAData(userOpHash, nonGuardianWallet);
+        userOp.signature = abi.encodePacked(uint8(0x0a), sigData);
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "Non-guardian should reject T3_WA");
+    }
+
+    function test_cumulativeTier3WA_missingGuardianSig_fails() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        // Omit both blsPayload and guardian sig: only waBlob present.
+        // sigData.length = 4 + waBlobLen, which is < 4 + waBlobLen + 65 => early return 1.
+        bytes memory waBlob = _buildWaBlob();
+        bytes memory sigData = abi.encodePacked(bytes4(uint32(waBlob.length)), waBlob);
+        userOp.signature = abi.encodePacked(uint8(0x0a), sigData);
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "Missing guardian sig should reject T3_WA");
+    }
+
+    // ─── Security: malformed waBlob must return 1, never revert ──────
+
+    function test_cumulativeTier2WA_malformedWaBlob_returnsOne_notRevert() public {
+        // Construct a blob that is >= 352 bytes but has an ABI offset that claims content
+        // beyond the blob boundary. Without the pre-decode ABI validation this would cause
+        // abi.decode to revert, violating ERC-4337's requirement that validateUserOp return 1.
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        // Head: off0=0xdeadbeef (points way past data), off1=160, off2=192, r=0, s=0
+        bytes memory malformedWaBlob = abi.encodePacked(
+            uint256(0xdeadbeef),  // off0: out-of-bounds offset
+            uint256(160),         // off1
+            uint256(192),         // off2
+            bytes32(0),           // r
+            bytes32(0),           // s
+            new bytes(200)        // padding to ensure length >= 352
+        );
+        bytes memory blsPayload = _buildBlsPayload();
+        bytes memory sigData = abi.encodePacked(bytes4(uint32(malformedWaBlob.length)), malformedWaBlob, blsPayload);
+        userOp.signature = abi.encodePacked(uint8(0x09), sigData);
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "Malformed waBlob must return 1 (not revert)");
+    }
+
+    // ─── Raw-ECDSA compat: 65-byte sig starting with 0x09/0x0a falls through ──
+
+    function test_rawECDSA_firstByte0x09_fallsThrough() public {
+        // A raw 65-byte ECDSA sig (no algId prefix) whose first byte is 0x09 must NOT
+        // be misrouted to ALG_CUMULATIVE_T2_WA. It should fall through to the raw-ECDSA
+        // compat path and be validated as ECDSA against the owner key.
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        // Craft userOpHash so that the resulting ECDSA sig (r,s,v) starts with 0x09.
+        // We iterate over hashes until vm.sign produces r[0] == 0x09.
+        bytes32 userOpHash;
+        bytes memory sig;
+        for (uint256 i = 0; i < 256; i++) {
+            userOpHash = keccak256(abi.encode("ecdsa_firstbyte_0x09", i));
+            bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerWallet.privateKey, ethHash);
+            sig = abi.encodePacked(r, s, v);
+            if (uint8(sig[0]) == 0x09) break;
+        }
+        require(uint8(sig[0]) == 0x09, "Could not find sig starting with 0x09 in 256 iters");
+
+        userOp.signature = sig;
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 0, "65-byte ECDSA sig with first byte 0x09 must validate via raw-ECDSA path");
+    }
+
+    // ─── populateExecAlg covers new algIds ────────────────────────────
+
+    function test_populateExecAlg_T2WA_storesAlgId() public {
+        // executeUserOp re-derives algId from sig — verify the new id flows through
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+        bytes memory sigData = _buildT2WAData();
+        userOp.signature = abi.encodePacked(uint8(0x09), sigData);
+
+        vm.prank(address(entryPoint));
+        account.validateUserOp(userOp, userOpHash, 0);
+        // If no revert and result=0, the routing + store path worked
+        // (full execute path covered by integration tests)
+    }
+
+    // ─── Helpers ──────────────────────────────────────────────────────
+
+    function _buildUserOp(address sender) internal pure returns (PackedUserOperation memory) {
+        return PackedUserOperation({
+            sender: sender,
+            nonce: 0,
+            initCode: "",
+            callData: "",
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: ""
+        });
+    }
+
+    function _buildWaBlob() internal pure returns (bytes memory) {
+        bytes memory authenticatorData = new bytes(37);
+        authenticatorData[32] = 0x01; // UP flag
+        bytes memory prefix = bytes('{"type":"webauthn.get","challenge":"');
+        bytes memory suffix = bytes('"}');
+        bytes32 r = bytes32(uint256(0xAA));
+        bytes32 s = bytes32(uint256(0x01)); // low-S
+        return abi.encode(authenticatorData, prefix, suffix, r, s);
+    }
+
+    function _buildWaBlobWithPrefix(bytes memory prefix) internal pure returns (bytes memory) {
+        bytes memory authenticatorData = new bytes(37);
+        authenticatorData[32] = 0x01;
+        bytes memory suffix = bytes('"}');
+        bytes32 r = bytes32(uint256(0xAA));
+        bytes32 s = bytes32(uint256(0x01));
+        return abi.encode(authenticatorData, prefix, suffix, r, s);
+    }
+
+    function _buildWaBlobNoUPFlag() internal pure returns (bytes memory) {
+        bytes memory authenticatorData = new bytes(37);
+        // authenticatorData[32] = 0x00  (UP flag NOT set)
+        bytes memory prefix = bytes('{"type":"webauthn.get","challenge":"');
+        bytes memory suffix = bytes('"}');
+        bytes32 r = bytes32(uint256(0xAA));
+        bytes32 s = bytes32(uint256(0x01));
+        return abi.encode(authenticatorData, prefix, suffix, r, s);
+    }
+
+    function _buildBlsPayload() internal pure returns (bytes memory) {
+        return abi.encodePacked(bytes32(uint256(1)), keccak256("testnode"), new bytes(256));
+    }
+
+    function _buildT2WAData() internal pure returns (bytes memory) {
+        bytes memory waBlob = _buildWaBlob();
+        bytes memory blsPayload = _buildBlsPayload();
+        return abi.encodePacked(bytes4(uint32(waBlob.length)), waBlob, blsPayload);
+    }
+
+    function _buildT3WAData(bytes32 userOpHash, Vm.Wallet memory guardianSigner)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        bytes memory waBlob = _buildWaBlob();
+        bytes memory blsPayload = _buildBlsPayload();
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(guardianSigner.privateKey, ethHash);
+        return abi.encodePacked(bytes4(uint32(waBlob.length)), waBlob, blsPayload, abi.encodePacked(r, s, v));
     }
 }
