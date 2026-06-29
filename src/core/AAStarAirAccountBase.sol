@@ -1268,9 +1268,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             }
             uint256 dataLen = sig.length;
             // Each offset must be within [160, dataLen-32] so there is room for a length word.
-            if (off0 < 160 || off0 + 32 > dataLen) return false;
-            if (off1 < 160 || off1 + 32 > dataLen) return false;
-            if (off2 < 160 || off2 + 32 > dataLen) return false;
+            // Use (off > dataLen - 32) instead of (off + 32 > dataLen) to avoid checked-arithmetic
+            // overflow panic when off is near MAX_UINT256 — both forms are equivalent when dataLen>=32
+            // (guaranteed by the sig.length >= 352 gate above), but only the subtraction form is safe.
+            if (off0 < 160 || off0 > dataLen - 32) return false;
+            if (off1 < 160 || off1 > dataLen - 32) return false;
+            if (off2 < 160 || off2 > dataLen - 32) return false;
             assembly {
                 let base := add(sig, 32)
                 len0 := mload(add(base, off0))
@@ -1278,9 +1281,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
                 len2 := mload(add(base, off2))
             }
             // Each array's content (length word + padded data) must not exceed sig.
-            if (off0 + 32 + len0 > dataLen) return false;
-            if (off1 + 32 + len1 > dataLen) return false;
-            if (off2 + 32 + len2 > dataLen) return false;
+            // Same pattern: use (len > dataLen - off - 32) to avoid overflow.
+            if (len0 > dataLen - off0 - 32) return false;
+            if (len1 > dataLen - off1 - 32) return false;
+            if (len2 > dataLen - off2 - 32) return false;
         }
 
         (

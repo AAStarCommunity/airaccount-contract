@@ -8,6 +8,7 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
 import {IAAStarAlgorithm} from "../src/interfaces/IAAStarAlgorithm.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
+import {AlgTierLib} from "../src/utils/AlgTierLib.sol";
 
 /// @dev Mock EntryPoint for cumulative signature tests
 contract MockEntryPointCumulative {
@@ -510,6 +511,11 @@ contract CumulativeWebAuthnTest is Test {
     function test_waAlgIds_tierMapping() public view {
         // 0x09 must be tier 2, 0x0a must be tier 3
         assertEq(account.requiredTier(0), 0, "no tier configured");
+        assertEq(AlgTierLib.algTier(0x09), 2, "0x09 must map to tier 2 (T2_WA)");
+        assertEq(AlgTierLib.algTier(0x0a), 3, "0x0a must map to tier 3 (T3_WA)");
+        // Regression: existing ids unchanged
+        assertEq(AlgTierLib.algTier(0x04), 2, "0x04 (T2) must still be tier 2");
+        assertEq(AlgTierLib.algTier(0x05), 3, "0x05 (T3) must still be tier 3");
     }
 
     // ─── T2_WA: valid WebAuthn passkey + BLS ──────────────────────────
