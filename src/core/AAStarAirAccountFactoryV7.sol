@@ -545,6 +545,9 @@ contract AAStarAirAccountFactoryV7 {
     ///         `.toEthSignedMessageHash()` before `ecrecover`), and that signature is passed as
     ///         `createAccount(..., ownerSig)` in relay mode (msg.sender != owner). Lets SDKs/relayers read
     ///         the exact digest from chain rather than reconstruct `_getConfigHash` + the preimage. #155.
+    /// @dev    deadline must be strictly greater than block.timestamp in relay mode. Passing deadline=0
+    ///         always causes createAccount to revert with SignatureExpired (block.timestamp > 0 is always
+    ///         true). deadline is ignored only in direct mode (ownerSig empty).
     function hashCreateAccount(
         address owner,
         uint256 salt,

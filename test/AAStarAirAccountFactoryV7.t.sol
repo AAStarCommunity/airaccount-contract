@@ -244,6 +244,41 @@ contract AAStarAirAccountFactoryV7Test is Test {
         assertEq(AAStarAirAccountV7(payable(deployed)).p256KeyX(), px, "passkey not injected at birth");
     }
 
+    /// getConfigHash must distinguish non-empty dynamic arrays so a field-order swap can't sneak past.
+    /// Uses distinct values in every field; an encoding bug (wrong order / wrong field) produces a
+    /// different keccak and the assertEq fails.
+    function test_getConfigHash_nonEmptyConfig_matchesManualEncoding() public {
+        address g0 = makeAddr("g0");
+        address g1 = makeAddr("g1");
+
+        uint8[] memory algIds = new uint8[](2);
+        algIds[0] = 0x01; algIds[1] = 0x04;
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = makeAddr("tok");
+
+        AAStarGlobalGuard.TokenConfig[] memory tokenCfgs = new AAStarGlobalGuard.TokenConfig[](1);
+        tokenCfgs[0] = AAStarGlobalGuard.TokenConfig({ tier1Limit: 100, tier2Limit: 500, dailyLimit: 1000 });
+
+        AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
+            guardians:           [g0, g1, address(0)],
+            guardianP256X:       [bytes32(uint256(0xA1)), bytes32(uint256(0xA2)), bytes32(0)],
+            guardianP256Y:       [bytes32(uint256(0xB1)), bytes32(uint256(0xB2)), bytes32(0)],
+            dailyLimit:          1 ether,
+            approvedAlgIds:      algIds,
+            minDailyLimit:       0.01 ether,
+            initialTokens:       tokens,
+            initialTokenConfigs: tokenCfgs
+        });
+
+        bytes32 expected = keccak256(abi.encode(
+            cfg.guardians, cfg.guardianP256X, cfg.guardianP256Y, cfg.dailyLimit,
+            cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs
+        ));
+
+        assertEq(factory.getConfigHash(cfg), expected, "getConfigHash non-empty mismatch");
+    }
+
     // ─── Different params produce different addresses ────────────────
 
     function test_differentOwners_differentAddresses() public {
