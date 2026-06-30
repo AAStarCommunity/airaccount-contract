@@ -3,13 +3,32 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-## Status: v0.20.3 — 2026-06-28 (patch)
+## Status: v0.22.0 — 2026-06-30 (Factory Passkey Bootstrap)
 
-Latest: **v0.20.3** — gasless self-call for tier/weight config. `setTierLimits`, `setWeightConfig`,
-`modifyTierLimitsWithGuardians`, `modifyTierLimitsWithMixedGuardians` now accept `msg.sender == address(this)`,
-enabling these config functions to be submitted as gasless UserOps via SuperPaymaster (no ETH in owner wallet required).
-SDK impact: zero — existing `execute(account, 0, calldata)` path works directly. Closes **#140**.
-Factory (Sepolia): `0x78775786dc6B1CD2f6631Ab59C2BE86B1a1e585e`. Forge test **845/845** (cancun + prague).
+Latest: **v0.22.0** — passkey and validator wired atomically at account birth (issue #155).
+`createAccount` now accepts `ownerP256X/Y` — the WebAuthn passkey is set at first `initialize`, not via
+a separate post-deploy call. `validatorRouter` is baked into the impl as an immutable; every clone
+auto-wires `validator` at birth — KMS accounts are immediately Tier-2/3 capable.
+Security: KMS relay sig domain now covers `_getConfigHash(config)` (full config), preventing guardian-swap attacks.
+Factory (Sepolia): `0x0eb0E7a61d5D9e03bc3578f8C1b0d9f40cc0a5B9`. Forge test **865/865** (cancun + prague). E2E **21/21**.
+
+**SDK breaking change:** `createAccount(owner, salt, config, ownerP256X, ownerP256Y, nonce, deadline, ownerSig)` (8 params).
+Pass `bytes32(0)` for `ownerP256X/Y` to skip passkey; `"0x"` for `ownerSig` for direct mode.
+
+<details><summary>v0.21.0 (2026-06-29) — WebAuthn-native cumulative algIds</summary>
+
+**v0.21.0** — adds `ALG_CUMULATIVE_T2_WA` (0x09) and `ALG_CUMULATIVE_T3_WA` (0x0a): WebAuthn P-256
+owner sig can now participate in Tier-2/3 cumulative multi-sig flows. Factory: `0x3891c6543af966B11F772448228c7eC1906EF382`. E2E **14/14**.
+
+</details>
+
+<details><summary>v0.20.3 (2026-06-28) — gasless self-call for tier/weight config</summary>
+
+**v0.20.3** — gasless self-call for tier/weight config. `setTierLimits`, `setWeightConfig`,
+`modifyTierLimitsWithGuardians`, `modifyTierLimitsWithMixedGuardians` now accept `msg.sender == address(this)`.
+Factory: `0x78775786dc6B1CD2f6631Ab59C2BE86B1a1e585e`. Forge test **845/845**.
+
+</details>
 
 <details><summary>v0.20.2 (2026-06-27) — P-256 mixed-sig module governance</summary>
 
