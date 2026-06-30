@@ -8,6 +8,78 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.22.0] - 2026-06-30 (Factory Passkey Bootstrap)
+
+Implements issue #155: passkey and validator wired atomically at account birth, ending the
+"post-deploy setup race" for KMS accounts. Security fix: KMS relay sig domain now covers
+the full config hash (not just `approvedAlgIds`), preventing guardian-swap attacks.
+
+### Added
+- **`validatorRouter` impl immutable** (`AAStarAirAccountBase`): constructor takes
+  `address _validatorRouter`; baked into impl bytecode. Every clone inherits it.
+- **`_initAccount` auto-wire**: at the end of `_initAccount`, sets
+  `validator = IAAStarValidator(validatorRouter)` if the router is non-zero — KMS accounts
+  are Tier-2/3 capable without any post-deploy owner tx.
+- **`createAccount` 8-param API** (`AAStarAirAccountFactoryV7`): adds `ownerP256X`,
+  `ownerP256Y`, `nonce`, `deadline`, `ownerSig`. Owner passkey is stored atomically.
+  - Clone salt = `_getSalt(owner, salt, keccak256(configHash, ownerP256X, ownerP256Y))` — different passkeys → different addresses (anti-front-run).
+  - KMS EIP-191 sig domain includes `_getConfigHash(config)` + `ownerP256X/Y` — prevents relayer from swapping guardians or passkey.
+- **`getAddress` 5-param API**: adds `ownerP256X`, `ownerP256Y` for counterfactual address prediction.
+- **`test/PasskeyBootstrap.t.sol`**: 15 unit tests for P1 auto-wire and P256 birth injection.
+- **`scripts/deploy-v0.22.0.ts`** and **`scripts/e2e-v0.22.0.ts`** (21 E2E tests).
+
+### Removed
+- `setValidatorWithSig` / `setP256KeyWithSig` from `AirAccountExtension` (P2 rescue path — all
+  stuck KMS accounts are test accounts; unnecessary complexity removed, -848 bytes).
+- 3-param and 4-param `initialize` overloads from `AAStarAirAccountV7` (caused independent
+  ABI decoder generation per overload, bloating bytecode by ~1 kB).
+
+### Fixed
+- **[SECURITY] KMS relay sig domain covered only `config.approvedAlgIds`** — a malicious relayer
+  could substitute guardians/limits while reusing the owner's valid sig. Fixed: sig domain uses
+  `_getConfigHash(config)` which covers guardians, guardian P256 keys, dailyLimit, minDailyLimit,
+  approvedAlgIds, and token configs.
+
+### Stats
+- **865 unit tests, 0 failed** (cancun + prague)
+- **AAStarAirAccountV7 runtime: 24,354 bytes** (222 bytes below EIP-170 limit)
+- **E2E 21/21 pass** on Sepolia
+
+### Sepolia addresses
+| Contract | Address |
+|---|---|
+| AAStarAirAccountFactoryV7 | `0x0eb0E7a61d5D9e03bc3578f8C1b0d9f40cc0a5B9` |
+| AAStarAirAccountV7 (impl) | `0x1cE314101E218D28bb6c6D16d6C259A4a1E67578` |
+| AirAccountExtension | `0xF736C229fE6f0cb9C864A4298E2755b7a0A19691` |
+| AgentRegistry | `0x19d89A661F41c353c119d90F76BB7151E03F0D91` |
+
+---
+
+## [v0.21.0] - 2026-06-29 (WebAuthn-native cumulative algIds)
+
+Adds two new WebAuthn-native cumulative signature algorithm IDs (0x09, 0x0a) so WebAuthn
+owners can participate in Tier-2/3 multi-sig flows without a separate ECDSA key.
+
+### Added
+- **`ALG_CUMULATIVE_T2_WA` (0x09)**: WebAuthn P-256 owner sig + BLS DVT node sig (Tier-2).
+- **`ALG_CUMULATIVE_T3_WA` (0x0a)**: WebAuthn P-256 owner sig + BLS DVT node sig + guardian ECDSA (Tier-3).
+- `_base64UrlEncode32()` internal pure helper (mirrors AirAccountExtension private).
+- `_verifyWebAuthnOwnerSig()` — WebAuthn assertion verification against owner P256 key.
+- `_validateCumulativeTier2WA()` / `_validateCumulativeTier3WA()`.
+- `AlgTierLib`: 0x09 → tier 2, 0x0a → tier 3.
+- Factory algIds array expanded 8→10 (added 0x09, 0x0a).
+
+### Stats
+- **14/14 E2E pass** on Sepolia
+
+### Sepolia addresses
+| Contract | Address |
+|---|---|
+| AAStarAirAccountFactoryV7 | `0x3891c6543af966B11F772448228c7eC1906EF382` |
+| AAStarAirAccountV7 (impl) | `0x55fcEdC0902f192e4118E682b4f58582eaE78A73` |
+
+---
+
 ## [v0.20.3] - 2026-06-28 (gasless self-call for tier/weight config — patch)
 
 Allows tier and weight config functions to be called via `execute()` self-call
