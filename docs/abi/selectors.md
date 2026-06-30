@@ -80,6 +80,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x293e07f2` | `setAgentWallet(uint256,address,address,bytes)` | IAirAccountAgent |
 | `0x2a88a496` | `todaySpent()` | AAStarGlobalGuard |
 | `0x2b690ea6` | `createAgentAccount(address,bytes32,address,bytes,bytes,uint48,uint256)` | AAStarAirAccountFactoryV7 |
+| `0x2b7d70a9` | `getConfigHash((address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | AAStarAirAccountFactoryV7 |
 | `0x2c364ef6` | `moduleManagementNonce()` | AAStarAirAccountV7 |
 | `0x2d1ef5ae` | `setAgentWallet(uint256,address,uint256,bytes)` | IERC8004IdentityRegistry |
 | `0x2dd81133` | `validateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],bytes)` | AAStarBLSAggregator |
@@ -361,6 +362,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xdd8d1e3a` | `createAccountWithDefaults(address,uint256,address,bytes,address,bytes,uint256)` | AAStarAirAccountFactoryV7 |
 | `0xddb79b36` | `proposeAlgorithm(uint8,address)` | AAStarValidator |
 | `0xe0034220` | `computeSetHash(bytes32[])` | AAStarBLSAlgorithm |
+| `0xe01f2bf2` | `hashCreateAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),bytes32,bytes32,uint256,uint256)` | AAStarAirAccountFactoryV7 |
 | `0xe21b38d2` | `isRegisteredAgent(address)` | AgentRegistry |
 | `0xe2a30d26` | `initializeAgentAccount(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | AAStarAirAccountV7 |
 | `0xe30c3978` | `pendingOwner()` | AAStarBLSAlgorithm |

@@ -897,7 +897,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountFactoryV7
 
 - **Source:** `src/core/AAStarAirAccountFactoryV7.sol`
-- **Functions:** 16 · **Events:** 3 · **Errors:** 32
+- **Functions:** 18 · **Events:** 3 · **Errors:** 32
 - **Title:** AAStarAirAccountFactoryV7 - EIP-1167 clone factory for V7 accounts
 - Deploys minimal proxy clones pointing to a shared implementation, then calls initialize().         This keeps factory bytecode well under EIP-170's 24,576-byte limit.         Account address = Clones.predictDeterministicAddress(implementation, keccak256(owner ++ salt))
 
@@ -919,6 +919,8 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x17253640` | `getAddressWithDefaults(address,uint256,address,address,uint256)` | view | — | Predict address for a default-config account. |
 | `0x303f69a1` | `getAgentAddress(address,address,bytes32)` | view | — | Predict the address of a future agent account. |
 | `0x990bb980` | `getChainQualifiedAddress(address)` | view | — | ERC-7828: Returns a chain-qualified address identifier.         Enables cross-chain address disambiguation for accounts deployed at the same address         on multiple L2s via CREATE2 with the same salt. |
+| `0x2b7d70a9` | `getConfigHash((address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | pure | — | Public view of the InitConfig hash the factory folds into the CREATE2 clone salt and the         relay-mode ownerSig digest. Exposes the internal `_getConfigHash` so SDKs/relayers hash the         SAME preimage on-chain instead of replicating it off-chain (one wrong byte => wrong address         / InvalidOwnerSignature). #155. |
+| `0xe01f2bf2` | `hashCreateAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),bytes32,bytes32,uint256,uint256)` | view | — | Public view of the relay-mode CREATE_ACCOUNT digest — the INNER hash, BEFORE EIP-191.         The owner signs this via personal_sign / EIP-191 (the relay branch applies         `.toEthSignedMessageHash()` before `ecrecover`), and that signature is passed as         `createAccount(..., ownerSig)` in relay mode (msg.sender != owner). Lets SDKs/relayers read         the exact digest from chain rather than reconstruct `_getConfigHash` + the preimage. #155. |
 | `0x5c60da1b` | `implementation()` | view | — |  |
 | `0x28342ecf` | `setAgentRegistry(address)` | nonpayable | — | One-time setter for the AgentRegistry whose `isValidAccount` mapping records         which accounts were created by this factory. Caller must be `factoryAdmin`         (i.e., the deployer of this factory). Set-once: cannot be re-pointed. |
 
@@ -1133,6 +1135,42 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `bytes32` | Chain-qualified address bytes32 identifier |
+
+#### `getConfigHash((address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+
+`0x2b7d70a9` · pure · access: —
+
+> Public view of the InitConfig hash the factory folds into the CREATE2 clone salt and the         relay-mode ownerSig digest. Exposes the internal `_getConfigHash` so SDKs/relayers hash the         SAME preimage on-chain instead of replicating it off-chain (one wrong byte => wrong address         / InvalidOwnerSignature). #155.
+
+| param | type | description |
+|---|---|---|
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes32` |  |
+
+#### `hashCreateAccount(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config, bytes32 ownerP256X, bytes32 ownerP256Y, uint256 nonce, uint256 deadline)`
+
+`0xe01f2bf2` · view · access: —
+
+> Public view of the relay-mode CREATE_ACCOUNT digest — the INNER hash, BEFORE EIP-191.         The owner signs this via personal_sign / EIP-191 (the relay branch applies         `.toEthSignedMessageHash()` before `ecrecover`), and that signature is passed as         `createAccount(..., ownerSig)` in relay mode (msg.sender != owner). Lets SDKs/relayers read         the exact digest from chain rather than reconstruct `_getConfigHash` + the preimage. #155.
+
+*@dev* deadline must be strictly greater than block.timestamp in relay mode. Passing deadline=0         always causes createAccount to revert with SignatureExpired (block.timestamp > 0 is always         true). deadline is ignored only in direct mode (ownerSig empty).
+
+| param | type | description |
+|---|---|---|
+| `owner` | `address` |  |
+| `salt` | `uint256` |  |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `ownerP256X` | `bytes32` |  |
+| `ownerP256Y` | `bytes32` |  |
+| `nonce` | `uint256` |  |
+| `deadline` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes32` |  |
 
 #### `implementation()`
 
