@@ -48,7 +48,7 @@ contract WeightedSignatureTest is Test {
         if (cfg.dailyLimit > 0) {
             g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
         }
-        acct.initialize(_ep, _owner, cfg, g);
+        acct.initialize(_ep, _owner, cfg, g, bytes32(0), bytes32(0));
     }
     using MessageHashUtils for bytes32;
     using ECDSA for bytes32;
@@ -90,8 +90,8 @@ contract WeightedSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
-        account.initialize(address(ep), ownerW.addr, cfg);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(address(ep), ownerW.addr, cfg, address(0), bytes32(0), bytes32(0));
 
 
         router = new AAStarValidator();
@@ -384,8 +384,8 @@ contract WeightedSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 acc1 = new AAStarAirAccountV7();
-        acc1.initialize(address(ep), ownerW.addr, cfg);
+        AAStarAirAccountV7 acc1 = new AAStarAirAccountV7(address(0));
+        acc1.initialize(address(ep), ownerW.addr, cfg, address(0), bytes32(0), bytes32(0));
 
 
         vm.startPrank(ownerW.addr);
@@ -443,7 +443,7 @@ contract WeightedSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7();
+        AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7(address(0));
         _initWithGuard(tieredAcc, address(ep), ownerW.addr, cfg);
 
         vm.deal(address(tieredAcc), 100 ether);
@@ -486,7 +486,7 @@ contract WeightedSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7();
+        AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7(address(0));
         _initWithGuard(tieredAcc, address(ep), ownerW.addr, cfg);
 
         vm.deal(address(tieredAcc), 100 ether);

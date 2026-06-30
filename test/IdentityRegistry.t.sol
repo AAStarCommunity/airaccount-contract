@@ -158,7 +158,7 @@ contract ERC8004IntegrationTest is Test {
         safeMintReg = new SafeMintMockRegistry();
 
         ownerWallet = vm.createWallet("owner");
-        account     = new AAStarAirAccountV7();
+        account     = new AAStarAirAccountV7(address(0));
 
         uint8[] memory algs = new uint8[](0);
         address[] memory noGuardians;
@@ -176,7 +176,7 @@ contract ERC8004IntegrationTest is Test {
             minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
     }
 
     // ─── ERC8004Addresses library ─────────────────────────────────────────────

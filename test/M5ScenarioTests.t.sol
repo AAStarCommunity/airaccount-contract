@@ -128,7 +128,7 @@ contract M5ScenarioTests is Test {
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
         // #82 EIP-3860 fix: deploy implementation first, inject into factory.
-        address _impl = address(new AAStarAirAccountV7());
+        address _impl = address(new AAStarAirAccountV7(address(0)));
         factory = new AAStarAirAccountFactoryV7(_impl, address(entryPoint), communityGuardian, noTokens, noConfigs);
         mockAlg = new MockAlg();
         p256Valid = new MockP256Valid();
@@ -156,9 +156,9 @@ contract M5ScenarioTests is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 _ret = new AAStarAirAccountV7();
+        AAStarAirAccountV7 _ret = new AAStarAirAccountV7(address(0));
         address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
-        _ret.initialize(address(entryPoint), owner, config, g);
+        _ret.initialize(address(entryPoint), owner, config, g, bytes32(0), bytes32(0));
         return _ret;
 
     }
@@ -193,9 +193,9 @@ contract M5ScenarioTests is Test {
             initialTokens: tokens,
             initialTokenConfigs: cfgs
         });
-        AAStarAirAccountV7 _ret = new AAStarAirAccountV7();
+        AAStarAirAccountV7 _ret = new AAStarAirAccountV7(address(0));
         address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
-        _ret.initialize(address(entryPoint), owner, config, g);
+        _ret.initialize(address(entryPoint), owner, config, g, bytes32(0), bytes32(0));
         return _ret;
 
     }
@@ -697,7 +697,8 @@ contract M5ScenarioTests is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
 
-        address account = factory.createAccount(aliceWallet.addr, 0, config);
+        vm.prank(aliceWallet.addr);
+        address account = factory.createAccount(aliceWallet.addr, 0, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
         assertTrue(account.code.length > 0, "Raw createAccount should succeed with zero limit");
     }
 
@@ -718,9 +719,9 @@ contract M5ScenarioTests is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 _ret = new AAStarAirAccountV7();
+        AAStarAirAccountV7 _ret = new AAStarAirAccountV7(address(0));
         address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
-        _ret.initialize(address(entryPoint), owner, config, g);
+        _ret.initialize(address(entryPoint), owner, config, g, bytes32(0), bytes32(0));
         return _ret;
 
     }

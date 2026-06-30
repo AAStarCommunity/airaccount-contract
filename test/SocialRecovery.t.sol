@@ -50,8 +50,8 @@ contract SocialRecoveryTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPointAddr, ownerAddr, config);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPointAddr, ownerAddr, config, address(0), bytes32(0), bytes32(0));
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ contract SocialRecoveryTest is Test {
     // Creates a fresh account with no guardians — use in tests that exercise bootstrap addGuardian.
     function _resetToEmptyAccount() internal {
         uint8[] memory noAlgs = new uint8[](0);
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPointAddr, ownerAddr, AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
@@ -70,7 +70,7 @@ contract SocialRecoveryTest is Test {
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
     }
 
     // Signs an ADD_GUARDIAN op for addGuardianWithMixedSigs.

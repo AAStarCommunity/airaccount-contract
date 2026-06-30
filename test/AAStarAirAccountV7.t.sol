@@ -49,8 +49,8 @@ contract AAStarAirAccountV7Test is Test {
         mockEntryPoint = new MockEntryPoint();
         entryPointAddr = address(mockEntryPoint);
 
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPointAddr, ownerWallet.addr, _emptyConfig());
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPointAddr, ownerWallet.addr, _emptyConfig(), address(0), bytes32(0), bytes32(0));
 
 
         // Fund the account with 10 ETH
@@ -284,7 +284,7 @@ contract AAStarAirAccountV7Test is Test {
 
     function test_erc7579_accountId() public view {
         string memory id = account.accountId();
-        assertEq(id, "airaccount.v7@0.21.0");
+        assertEq(id, "airaccount.v7@0.22.0");
     }
 
     function test_erc7579_supportsModule_validator() public view {

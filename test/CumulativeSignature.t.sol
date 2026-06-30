@@ -96,8 +96,8 @@ contract CumulativeSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPointAddr, ownerWallet.addr, config);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPointAddr, ownerWallet.addr, config, address(0), bytes32(0), bytes32(0));
 
 
         router = new AAStarValidator();
@@ -172,8 +172,8 @@ contract CumulativeSignatureTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 failAccount = new AAStarAirAccountV7();
-        failAccount.initialize(entryPointAddr, ownerWallet.addr, config);
+        AAStarAirAccountV7 failAccount = new AAStarAirAccountV7(address(0));
+        failAccount.initialize(entryPointAddr, ownerWallet.addr, config, address(0), bytes32(0), bytes32(0));
 
         vm.deal(address(failAccount), 10 ether);
 
@@ -485,8 +485,8 @@ contract CumulativeWebAuthnTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
-        account.initialize(address(entryPoint), ownerWallet.addr, cfg);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(address(entryPoint), ownerWallet.addr, cfg, address(0), bytes32(0), bytes32(0));
 
         router = new AAStarValidator();
         mockBLSSuccess = new MockBLSSuccess();

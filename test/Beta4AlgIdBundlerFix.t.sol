@@ -32,7 +32,7 @@ contract Beta4AlgIdBundlerFixTest is Test {
     /// @dev Deploy a fresh account + guard. `algs` populates the ACCOUNT whitelist (new in beta.4);
     ///      the guard no longer takes algIds. dailyLimit>0 deploys the guard.
     function _deploy(uint8[] memory algs, uint256 dailyLimit) internal {
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
@@ -47,7 +47,7 @@ contract Beta4AlgIdBundlerFixTest is Test {
         if (dailyLimit > 0) {
             g = address(new AAStarGlobalGuard(address(account), dailyLimit, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0)));
         }
-        account.initialize(entryPoint, ownerAddr, cfg, g);
+        account.initialize(entryPoint, ownerAddr, cfg, g, bytes32(0), bytes32(0));
         guard = AAStarGlobalGuard(g);
         vm.deal(address(account), 100 ether);
     }

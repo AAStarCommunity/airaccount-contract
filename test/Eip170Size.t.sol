@@ -19,7 +19,7 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 ///      factory is deployed by a normal creation transaction whose initcode = creationCode ++
 ///      abi.encode(constructor args); if that exceeds 49,152 the factory cannot be deployed on a
 ///      post-Shanghai chain. WS-E #82's uint128 TokenConfig packing pushed the factory initcode to
-///      the brink (the inline `new AAStarAirAccountV7()` embedded ~14 KB of impl creation code);
+///      the brink (the inline `new AAStarAirAccountV7(address(0))` embedded ~14 KB of impl creation code);
 ///      injecting the implementation address fixed it. This assertion locks the fix in.
 contract Eip170SizeTest is Test {
     /// @dev EIP-170 runtime code-size limit.
@@ -32,7 +32,7 @@ contract Eip170SizeTest is Test {
     }
 
     function test_AAStarAirAccountV7_under_eip170() public {
-        uint256 size = _runtimeSize(address(new AAStarAirAccountV7()));
+        uint256 size = _runtimeSize(address(new AAStarAirAccountV7(address(0))));
         emit log_named_uint("AAStarAirAccountV7 runtime size", size);
         assertLe(size, EIP170_LIMIT, "AAStarAirAccountV7 exceeds EIP-170 (undeployable on real chains)");
     }
@@ -40,7 +40,7 @@ contract Eip170SizeTest is Test {
     function test_AAStarAirAccountFactoryV7_under_eip170() public {
         // #82 EIP-3860 fix: deploy the implementation first, then inject it (factory no longer
         // deploys the impl inline).
-        address impl = address(new AAStarAirAccountV7());
+        address impl = address(new AAStarAirAccountV7(address(0)));
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
         uint256 size = _runtimeSize(address(new AAStarAirAccountFactoryV7(

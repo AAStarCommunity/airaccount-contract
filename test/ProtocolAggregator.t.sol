@@ -39,8 +39,8 @@ contract ProtocolAggregatorTest is Test {
         epMock = new MockEntryPointPA();
         entryPointAddr = address(epMock);
 
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPointAddr, ownerWallet.addr, _emptyConfig());
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPointAddr, ownerWallet.addr, _emptyConfig(), address(0), bytes32(0), bytes32(0));
 
         router = new AAStarValidator();
         mockBls = new MockBLSWithAggregator();

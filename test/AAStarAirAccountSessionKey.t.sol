@@ -114,12 +114,12 @@ contract AAStarAirAccountSessionKeyTest is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
 
-        acct = new AAStarAirAccountV7();
+        acct = new AAStarAirAccountV7(address(0));
         address g = address(new AAStarGlobalGuard(
             address(acct), 0, 0,
             new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
         ));
-        acct.initialize(address(ep), owner_, cfg, g);
+        acct.initialize(address(ep), owner_, cfg, g, bytes32(0), bytes32(0));
 
         vm.prank(owner_);
         acct.setValidator(address(validator));
@@ -332,12 +332,12 @@ contract ParserTryCatchTest is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
 
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         address g = address(new AAStarGlobalGuard(
             address(account), 1 ether, 0,
             new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
         ));
-        account.initialize(address(ep), owner_, cfg, g);
+        account.initialize(address(ep), owner_, cfg, g, bytes32(0), bytes32(0));
         vm.deal(address(account), 10 ether);
 
         // Register reverting parser for ALL destinations
@@ -440,12 +440,12 @@ contract SessionKeyBatchScopeTest is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
 
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         address g = address(new AAStarGlobalGuard(
             address(account), 0, 0,
             new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
         ));
-        account.initialize(address(ep), owner_, cfg, g);
+        account.initialize(address(ep), owner_, cfg, g, bytes32(0), bytes32(0));
         vm.prank(owner_);
         account.setValidator(address(validator));
         vm.deal(address(account), 10 ether);

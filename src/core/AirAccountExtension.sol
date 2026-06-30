@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
+import {IAAStarValidator} from "../interfaces/IAAStarValidator.sol";
 import {IAirAccountAgent} from "../interfaces/IAirAccountAgent.sol";
 import {IERC8004IdentityRegistry} from "../interfaces/IERC8004IdentityRegistry.sol";
 import {IERC8004ReputationRegistry} from "../interfaces/IERC8004ReputationRegistry.sol";
@@ -1213,4 +1214,5 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         tier2Limit = _tier2;
         emit TierLimitsSet(_tier1, _tier2);
     }
+
 }

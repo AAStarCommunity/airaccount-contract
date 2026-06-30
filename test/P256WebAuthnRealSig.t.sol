@@ -97,8 +97,8 @@ contract P256WebAuthnRealSigTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPointAddr, ownerAddr, config);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPointAddr, ownerAddr, config, address(0), bytes32(0), bytes32(0));
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -159,7 +159,7 @@ contract P256WebAuthnRealSigTest is Test {
     function test_registerPasskeyGuardian_thenRealPropose() public {
         // fresh account with only passkey#0
         uint8[] memory noAlgs = new uint8[](0);
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPointAddr, ownerAddr, AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
             guardianP256X: [PK0_X, bytes32(0), bytes32(0)],
@@ -167,7 +167,7 @@ contract P256WebAuthnRealSigTest is Test {
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
 
         // owner registers passkey#1 as guardian 1 (bootstrap: count 1 < RECOVERY_THRESHOLD)
         vm.prank(ownerAddr);
@@ -215,7 +215,7 @@ contract P256WebAuthnRealSigTest is Test {
     ///      (removeGuardianWithMixedSigs requires guardianCount > 2.)
     function _deployTwoP256OneEcdsa(address ecdsaG) internal {
         uint8[] memory noAlgs = new uint8[](0);
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPointAddr, ownerAddr, AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), ecdsaG],
             guardianP256X: [PK0_X, PK1_X, bytes32(0)],
@@ -223,7 +223,7 @@ contract P256WebAuthnRealSigTest is Test {
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
     }
 
     /// @dev ECDSA guardian signature over the REMOVE_GUARDIAN domain for the given opData.
