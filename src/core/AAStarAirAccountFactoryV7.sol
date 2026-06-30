@@ -532,6 +532,42 @@ contract AAStarAirAccountFactoryV7 {
         ));
     }
 
+    /// @notice Public view of the InitConfig hash the factory folds into the CREATE2 clone salt and the
+    ///         relay-mode ownerSig digest. Exposes the internal `_getConfigHash` so SDKs/relayers hash the
+    ///         SAME preimage on-chain instead of replicating it off-chain (one wrong byte => wrong address
+    ///         / InvalidOwnerSignature). #155.
+    function getConfigHash(AAStarAirAccountBase.InitConfig memory config) external pure returns (bytes32) {
+        return _getConfigHash(config);
+    }
+
+    /// @notice Public view of the relay-mode CREATE_ACCOUNT digest — the INNER hash, BEFORE EIP-191.
+    ///         The owner signs this via personal_sign / EIP-191 (the relay branch applies
+    ///         `.toEthSignedMessageHash()` before `ecrecover`), and that signature is passed as
+    ///         `createAccount(..., ownerSig)` in relay mode (msg.sender != owner). Lets SDKs/relayers read
+    ///         the exact digest from chain rather than reconstruct `_getConfigHash` + the preimage. #155.
+    function hashCreateAccount(
+        address owner,
+        uint256 salt,
+        AAStarAirAccountBase.InitConfig memory config,
+        bytes32 ownerP256X,
+        bytes32 ownerP256Y,
+        uint256 nonce,
+        uint256 deadline
+    ) external view returns (bytes32) {
+        return keccak256(abi.encode(
+            "CREATE_ACCOUNT",
+            block.chainid,
+            address(this),
+            owner,
+            salt,
+            ownerP256X,
+            ownerP256Y,
+            _getConfigHash(config),
+            nonce,
+            deadline
+        ));
+    }
+
     /// @dev #82 size recovery: deduplicate the three identical `new AAStarGlobalGuard(...)` sites
     ///      into ONE so the guard creation code is embedded once, not three times. The uint128
     ///      packing of TokenConfig (#82) added masking codegen that, embedded 3×, tipped this

@@ -204,6 +204,46 @@ contract AAStarAirAccountFactoryV7Test is Test {
         assertEq(predicted, actual);
     }
 
+    // ─── #155: public hashCreateAccount / getConfigHash views ───────
+
+    /// The relay branch MUST accept an ownerSig built from the PUBLIC `hashCreateAccount` view — i.e. the
+    /// view returns the exact digest the relay branch recovers against. This is what lets an SDK/relayer
+    /// read the digest on-chain instead of replicating `_getConfigHash` + the preimage off-chain.
+    function test_hashCreateAccount_relayDeploy_acceptsViewDigestSig() public {
+        (address owner, uint256 ownerPk) = makeAddrAndKey("relayOwner");
+        AAStarAirAccountBase.InitConfig memory config = _minimalConfig();
+        uint256 salt = 7;
+        bytes32 px = bytes32(uint256(0x22));
+        bytes32 py = bytes32(uint256(0x33));
+        uint256 nonce = factory.createNonces(owner);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        // getConfigHash mirrors the internal _getConfigHash encoding.
+        assertEq(
+            factory.getConfigHash(config),
+            keccak256(abi.encode(
+                config.guardians, config.guardianP256X, config.guardianP256Y, config.dailyLimit,
+                config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs
+            )),
+            "getConfigHash mismatch"
+        );
+
+        // The public view digest — what an SDK/relayer reads.
+        bytes32 digest = factory.hashCreateAccount(owner, salt, config, px, py, nonce, deadline);
+
+        // Owner EIP-191-signs the view digest; msg.sender (this test) != owner → relay mode.
+        bytes32 eip191 = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerPk, eip191);
+        bytes memory ownerSig = abi.encodePacked(r, s, v);
+
+        address predicted = factory.getAddress(owner, salt, config, px, py);
+        address deployed = factory.createAccount(owner, salt, config, px, py, nonce, deadline, ownerSig);
+
+        assertEq(deployed, predicted, "relay deploy != prediction");
+        assertEq(factory.createNonces(owner), nonce + 1, "relay nonce not consumed");
+        assertEq(AAStarAirAccountV7(payable(deployed)).p256KeyX(), px, "passkey not injected at birth");
+    }
+
     // ─── Different params produce different addresses ────────────────
 
     function test_differentOwners_differentAddresses() public {
