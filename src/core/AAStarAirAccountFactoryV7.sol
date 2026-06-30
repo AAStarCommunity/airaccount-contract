@@ -208,7 +208,7 @@ contract AAStarAirAccountFactoryV7 {
     ///        Any relayer can submit; the signature authenticates the owner.
     ///        Signature domain: EIP-191 over
     ///          keccak256(abi.encode("CREATE_ACCOUNT", chainId, address(this), owner, salt,
-    ///                               config.approvedAlgIds, nonce, deadline))
+    ///                               ownerP256X, ownerP256Y, _getConfigHash(config), nonce, deadline))
     ///        nonce must equal createNonces[owner] (incremented on success).
     ///        Validator is auto-wired from the implementation's validatorRouter immutable.
     ///        Owner passkey (p256KeyX/Y) is set atomically at account birth when ownerP256X/Y are non-zero.
@@ -245,7 +245,7 @@ contract AAStarAirAccountFactoryV7 {
                 salt,
                 ownerP256X,
                 ownerP256Y,
-                config.approvedAlgIds,
+                _getConfigHash(config),
                 nonce,
                 deadline
             )).toEthSignedMessageHash();
