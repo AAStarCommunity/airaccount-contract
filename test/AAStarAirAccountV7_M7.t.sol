@@ -150,7 +150,7 @@ contract AAStarAirAccountV7_M7Test is Test {
         mockRegistry = new MockRegistry();
 
         // Deploy account with 3 guardians and threshold=0 (defaults to 70 at runtime → 1 guardian sig required).
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         uint8[] memory algs = new uint8[](0);
         account.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
@@ -161,7 +161,7 @@ contract AAStarAirAccountV7_M7Test is Test {
             minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
 
         vm.deal(address(account), 10 ether);
     }
@@ -281,11 +281,11 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_accountId_is_0_21_0() public view {
-        assertEq(account.accountId(), "airaccount.v7@0.21.0");
+        assertEq(account.accountId(), "airaccount.v7@0.22.0");
     }
 
     function test_ACCOUNT_VERSION_constant() public view {
-        assertEq(account.ACCOUNT_VERSION(), "0.21.0");
+        assertEq(account.ACCOUNT_VERSION(), "0.22.0");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────
@@ -431,7 +431,7 @@ contract AAStarAirAccountV7_M7Test is Test {
     ///         The factory enforces >=2 guardians; this test bypasses the factory to document
     ///         the account-level behavior when initialize is called with all-zero guardian slots.
     function test_installModule_zeroGuardianAccount_reverts() public {
-        AAStarAirAccountV7 noGuardAccount = new AAStarAirAccountV7();
+        AAStarAirAccountV7 noGuardAccount = new AAStarAirAccountV7(address(0));
         uint8[] memory algs = new uint8[](0);
         noGuardAccount.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [address(0), address(0), address(0)],
@@ -442,7 +442,7 @@ contract AAStarAirAccountV7_M7Test is Test {
             minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
 
         // threshold=0 → defaults to 70 → sigsRequired=1; guardian[0]=address(0), slot is empty →
         // contract treats address(0) slot as invalid → InstallModuleUnauthorized
@@ -713,7 +713,7 @@ contract AAStarAirAccountV7_M7Test is Test {
     function test_C4_executeFromExecutor_guardedButTierDisabled_boundedByDailyLimit() public {
         uint8[] memory algs = new uint8[](1);
         algs[0] = 0x02; // ECDSA approved
-        AAStarAirAccountV7 gacct = new AAStarAirAccountV7();
+        AAStarAirAccountV7 gacct = new AAStarAirAccountV7(address(0));
         AAStarGlobalGuard guard = new AAStarGlobalGuard(
             address(gacct), 2 ether, 0, new address[](0), new AAStarGlobalGuard.TokenConfig[](0)
         );
@@ -726,7 +726,7 @@ contract AAStarAirAccountV7_M7Test is Test {
             minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }), address(guard));
+        }), address(guard), bytes32(0), bytes32(0));
         vm.deal(address(gacct), 10 ether);
 
         bytes memory initData = _installInitData1(g0Wallet, 0, address(gacct), 2, address(mockModule));
@@ -1188,7 +1188,7 @@ contract AAStarAirAccountV7_M7Test is Test {
     ///      Uses vm.store to write directly to storage slot 9 (confirmed via `forge inspect AAStarAirAccountV7 storage`):
     ///        slot 9 = _installModuleThreshold (uint8, offset 0)
     function _deployAccountWithThreshold(uint8 threshold) internal returns (AAStarAirAccountV7) {
-        AAStarAirAccountV7 acc = new AAStarAirAccountV7();
+        AAStarAirAccountV7 acc = new AAStarAirAccountV7(address(0));
         uint8[] memory algs = new uint8[](0);
         acc.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, g1Wallet.addr, g2Wallet.addr],
@@ -1199,7 +1199,7 @@ contract AAStarAirAccountV7_M7Test is Test {
             minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
 
         // Slot 7 = _installModuleThreshold (uint8) after unified _installedModules mapping at slot 6.
         vm.store(address(acc), bytes32(uint256(7)), bytes32(uint256(threshold)));
@@ -1413,7 +1413,7 @@ contract AAStarAirAccountV7_M7Test is Test {
     // ─── guardAddTokenConfig ──────────────────────────────────────────────────
 
     function _deployAccountWithGuard() internal returns (AAStarAirAccountV7 acct, AAStarGlobalGuard grd) {
-        acct = new AAStarAirAccountV7();
+        acct = new AAStarAirAccountV7(address(0));
         address predictedAddr = address(acct);
         uint8[] memory algs = new uint8[](0);
         grd = new AAStarGlobalGuard(
@@ -1432,7 +1432,7 @@ contract AAStarAirAccountV7_M7Test is Test {
             minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }), address(grd));
+        }), address(grd), bytes32(0), bytes32(0));
     }
 
     function test_guardAddTokenConfig_addsToken() public {
@@ -1470,7 +1470,7 @@ contract AAStarAirAccountV7_M7Test is Test {
     // ─── initializeAgentAccount ───────────────────────────────────────────────
 
     function test_initializeAgentAccount_setsOwnerAndGuardians() public {
-        AAStarAirAccountV7 agentAcct = new AAStarAirAccountV7();
+        AAStarAirAccountV7 agentAcct = new AAStarAirAccountV7(address(0));
         uint8[] memory algs = new uint8[](0);
         agentAcct.initializeAgentAccount(
             address(ep),
@@ -1494,7 +1494,7 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_initializeAgentAccount_cannotCallTwice() public {
-        AAStarAirAccountV7 agentAcct = new AAStarAirAccountV7();
+        AAStarAirAccountV7 agentAcct = new AAStarAirAccountV7(address(0));
         uint8[] memory algs = new uint8[](0);
         AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
             guardians: [g0Wallet.addr, address(0), address(0)],

@@ -32,7 +32,7 @@ contract AAStarAirAccountFactoryV7Test is Test {
 
         address[] memory noTokens = new address[](0);
         AAStarGlobalGuard.TokenConfig[] memory noConfigs = new AAStarGlobalGuard.TokenConfig[](0);
-        implFixture = address(new AAStarAirAccountV7());
+        implFixture = address(new AAStarAirAccountV7(address(0)));
         factory = new AAStarAirAccountFactoryV7(implFixture, entryPoint, communityGuardian, noTokens, noConfigs);
     }
 
@@ -186,7 +186,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
 
-        address account = factory.createAccount(ownerA, 0, config);
+        vm.prank(ownerA);
+        address account = factory.createAccount(ownerA, 0, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
         AAStarAirAccountV7 acc = AAStarAirAccountV7(payable(account));
 
         assertEq(acc.guardianCount(), 2);
@@ -197,8 +198,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
 
     function test_getAddress_matchesCreated() public {
         AAStarAirAccountBase.InitConfig memory config = _minimalConfig();
-        address predicted = factory.getAddress(ownerA, 123, config);
-        address actual = factory.createAccount(ownerA, 123, config);
+        address predicted = factory.getAddress(ownerA, 123, config, bytes32(0), bytes32(0));
+        vm.prank(ownerA);
+        address actual = factory.createAccount(ownerA, 123, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
         assertEq(predicted, actual);
     }
 
@@ -240,12 +242,13 @@ contract AAStarAirAccountFactoryV7Test is Test {
 
     function test_createAccount_emitsEvent() public {
         AAStarAirAccountBase.InitConfig memory config = _minimalConfig();
-        address predicted = factory.getAddress(ownerA, 99, config);
+        address predicted = factory.getAddress(ownerA, 99, config, bytes32(0), bytes32(0));
 
         vm.expectEmit(true, true, false, true);
         emit AAStarAirAccountFactoryV7.AccountCreated(predicted, ownerA, 99);
 
-        factory.createAccount(ownerA, 99, config);
+        vm.prank(ownerA);
+        factory.createAccount(ownerA, 99, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
     }
 
     // ─── Default token config (constructor injection) ────────────────
@@ -313,7 +316,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
 
-        address account = factory.createAccount(ownerA, 77, config);
+        vm.prank(ownerA);
+        address account = factory.createAccount(ownerA, 77, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
         AAStarAirAccountV7 acc = AAStarAirAccountV7(payable(account));
 
         assertEq(acc.guardianCount(), 2);
@@ -451,8 +455,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         uint256 salt = 42;
         AAStarAirAccountBase.InitConfig memory config = _minimalConfig();
 
-        (address predicted, bytes32 chainQual) = factory.getAddressWithChainId(owner, salt, config);
-        address expected = factory.getAddress(owner, salt, config);
+        (address predicted, bytes32 chainQual) = factory.getAddressWithChainId(owner, salt, config, bytes32(0), bytes32(0));
+        address expected = factory.getAddress(owner, salt, config, bytes32(0), bytes32(0));
         bytes32 expectedCq = factory.getChainQualifiedAddress(expected);
 
         assertEq(predicted, expected);
@@ -481,8 +485,10 @@ contract AAStarAirAccountFactoryV7Test is Test {
 
     /// @notice createAccount is idempotent — second call with same params returns same account without revert
     function test_factory_createAccount_idempotent() public {
-        address account1 = factory.createAccount(ownerA, 42, _minimalConfig());
-        address account2 = factory.createAccount(ownerA, 42, _minimalConfig()); // same params = same address
+        vm.prank(ownerA);
+        address account1 = factory.createAccount(ownerA, 42, _minimalConfig(), bytes32(0), bytes32(0), 0, 0, new bytes(0));
+        vm.prank(ownerA);
+        address account2 = factory.createAccount(ownerA, 42, _minimalConfig(), bytes32(0), bytes32(0), 0, 0, new bytes(0)); // same params = same address
         assertEq(account1, account2);
     }
 
@@ -491,7 +497,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
         factory.setAgentRegistry(address(unboundRegistry));
 
         vm.expectRevert(AgentRegistry.OnlyFactory.selector);
-        factory.createAccount(ownerA, 43, _minimalConfig());
+        vm.prank(ownerA);
+        factory.createAccount(ownerA, 43, _minimalConfig(), bytes32(0), bytes32(0), 0, 0, new bytes(0));
     }
 
     // ─── Review fix: createAccount guardian dedup ────────────────────
@@ -511,7 +518,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         vm.expectRevert(AAStarAirAccountFactoryV7.DuplicateGuardian.selector);
-        factory.createAccount(ownerA, 0, config);
+        vm.prank(ownerA);
+        factory.createAccount(ownerA, 0, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
     }
 
     /// @dev Duplicate guardian[0] == guardian[2] should revert
@@ -529,7 +537,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         vm.expectRevert(AAStarAirAccountFactoryV7.DuplicateGuardian.selector);
-        factory.createAccount(ownerA, 0, config);
+        vm.prank(ownerA);
+        factory.createAccount(ownerA, 0, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
     }
 
     /// @dev Duplicate guardian[1] == guardian[2] should revert
@@ -547,7 +556,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         vm.expectRevert(AAStarAirAccountFactoryV7.DuplicateGuardian.selector);
-        factory.createAccount(ownerA, 0, config);
+        vm.prank(ownerA);
+        factory.createAccount(ownerA, 0, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
     }
 
     /// @dev address(0) duplicates are allowed (unused slots)
@@ -563,7 +573,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
         // Should NOT revert — all zeros means no guardians
-        address acc = factory.createAccount(ownerA, 50, config);
+        vm.prank(ownerA);
+        address acc = factory.createAccount(ownerA, 50, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
         assertTrue(acc.code.length > 0);
     }
 
@@ -581,7 +592,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        address acc = factory.createAccount(ownerA, 51, config);
+        vm.prank(ownerA);
+        address acc = factory.createAccount(ownerA, 51, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
         assertTrue(acc.code.length > 0);
     }
 
@@ -604,19 +616,19 @@ contract AAStarAirAccountFactoryV7Test is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        address victimAddr = factory.getAddress(ownerA, 7, victimCfg);
+        address victimAddr = factory.getAddress(ownerA, 7, victimCfg, bytes32(0), bytes32(0));
 
         // Attacker keeps guardians + dailyLimit identical, but pins an irreversible minDailyLimit floor.
         AAStarAirAccountBase.InitConfig memory attackCfg = victimCfg;
         attackCfg.minDailyLimit = 1 ether;
-        address attackAddr = factory.getAddress(ownerA, 7, attackCfg);
+        address attackAddr = factory.getAddress(ownerA, 7, attackCfg, bytes32(0), bytes32(0));
 
         assertTrue(victimAddr != attackAddr, "weakened config must not collide with victim address");
 
         // And stripping the algorithm whitelist (DoS vector) also yields a different address.
         AAStarAirAccountBase.InitConfig memory emptyAlgCfg = victimCfg;
         emptyAlgCfg.approvedAlgIds = new uint8[](0);
-        assertTrue(factory.getAddress(ownerA, 7, emptyAlgCfg) != victimAddr, "empty-alg config must not collide");
+        assertTrue(factory.getAddress(ownerA, 7, emptyAlgCfg, bytes32(0), bytes32(0)) != victimAddr, "empty-alg config must not collide");
     }
 
     /// @notice C-3: guardian acceptance sig is bound to dailyLimit. Sigs collected for one

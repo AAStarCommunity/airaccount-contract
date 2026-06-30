@@ -94,7 +94,7 @@ contract ModuleInstallTimelockTest is Test {
         ep = new MockEP();
         mod = new TrackingModule();
 
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         ext = IModuleTimelock(address(account));
         uint8[] memory algs = new uint8[](0);
         account.initialize(address(ep), ownerWallet.addr, AAStarAirAccountBase.InitConfig({
@@ -106,7 +106,7 @@ contract ModuleInstallTimelockTest is Test {
             minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
         vm.deal(address(account), 10 ether);
     }
 

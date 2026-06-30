@@ -13,7 +13,7 @@ contract AAStarGlobalGuardM5Test is Test {
         if (cfg.dailyLimit > 0) {
             g = address(new AAStarGlobalGuard(address(acct), cfg.dailyLimit, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs));
         }
-        acct.initialize(ep, _owner, cfg, g);
+        acct.initialize(ep, _owner, cfg, g, bytes32(0), bytes32(0));
     }
     // ─── Constants ────────────────────────────────────────────────────
 
@@ -255,7 +255,7 @@ contract AAStarGlobalGuardM5Test is Test {
             initialTokenConfigs: cfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));
         _initWithGuard(acct, address(this), owner, config);
 
 
@@ -296,7 +296,7 @@ contract AAStarGlobalGuardM5Test is Test {
             initialTokenConfigs: cfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));
         _initWithGuard(acct, address(this), owner, config);
 
 
@@ -332,7 +332,7 @@ contract AAStarGlobalGuardM5Test is Test {
             initialTokenConfigs: cfgs
         });
 
-        AAStarAirAccountV7 acct = new AAStarAirAccountV7();
+        AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));
         _initWithGuard(acct, address(this), owner, config);
 
 

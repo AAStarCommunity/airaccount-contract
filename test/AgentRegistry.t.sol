@@ -576,7 +576,7 @@ contract AgentRegistryTest is Test {
     /// @dev Helper: deploy a V7 impl + an AgentRegistry + a V7 clone + bind & markValid.
     ///      Returns (account-clone, registry).
     function _setupV7CloneAndRegistry(address ownerAddr) internal returns (AAStarAirAccountV7, AgentRegistry) {
-        AAStarAirAccountV7 v7Impl = new AAStarAirAccountV7();
+        AAStarAirAccountV7 v7Impl = new AAStarAirAccountV7(address(0));
         AgentRegistry v7Registry = new AgentRegistry();
         // Bind THIS test contract as the registry's "factory" so we can call markValid below.
         v7Registry.bindFactory(address(this));
@@ -595,7 +595,7 @@ contract AgentRegistryTest is Test {
                 minDailyLimit: 0,
                 initialTokens: new address[](0),
                 initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-            })
+            }), address(0), bytes32(0), bytes32(0)
         );
         v7Registry.markValid(address(clone));
         return (clone, v7Registry);
@@ -629,7 +629,7 @@ contract AgentRegistryTest is Test {
 
     function test_SetAgentWalletCallsRegistry_notOwner_reverts() public {
         MockEntryPoint ep = new MockEntryPoint();
-        AAStarAirAccountV7 account = new AAStarAirAccountV7();
+        AAStarAirAccountV7 account = new AAStarAirAccountV7(address(0));
         address ownerAddr = makeAddr("accountOwner");
 
         uint8[] memory algs = new uint8[](0);
@@ -645,7 +645,7 @@ contract AgentRegistryTest is Test {
                 minDailyLimit: 0,
                 initialTokens: new address[](0),
                 initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-            })
+            }), address(0), bytes32(0), bytes32(0)
         );
 
         vm.prank(makeAddr("notOwner"));
@@ -655,7 +655,7 @@ contract AgentRegistryTest is Test {
 
     function test_SetAgentWalletCallsRegistry_failingRegistry_reverts() public {
         MockEntryPoint ep = new MockEntryPoint();
-        AAStarAirAccountV7 account = new AAStarAirAccountV7();
+        AAStarAirAccountV7 account = new AAStarAirAccountV7(address(0));
         address ownerAddr = makeAddr("accountOwner");
 
         uint8[] memory algs = new uint8[](0);
@@ -671,7 +671,7 @@ contract AgentRegistryTest is Test {
                 minDailyLimit: 0,
                 initialTokens: new address[](0),
                 initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-            })
+            }), address(0), bytes32(0), bytes32(0)
         );
 
         address noCodeAddr = makeAddr("noCodeAddr");

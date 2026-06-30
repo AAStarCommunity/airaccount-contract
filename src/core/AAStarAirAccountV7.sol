@@ -34,31 +34,35 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this contract deployment. Used by SDKs for programmatic version detection.
-    string public constant ACCOUNT_VERSION = "0.21.0";
+    string public constant ACCOUNT_VERSION = "0.22.0";
 
     /// @dev Implementation constructor. Does NOT disable initializers so that direct `new` in tests works.
     ///      The factory deploys one shared implementation and uses Clones for user accounts.
-    constructor() {}
+    /// @param _validatorRouter Canonical AAStarValidator router; address(0) for no auto-wire.
+    constructor(address _validatorRouter) AAStarAirAccountBase(_validatorRouter) {}
 
     /// @notice Initialize this account without a guard (called directly in tests or for no-guard accounts).
     ///         The `initializer` modifier from OZ Initializable prevents re-initialization.
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _owner Initial account owner (ECDSA signer)
     /// @param _config Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed)
-    function initialize(address _entryPoint, address _owner, InitConfig calldata _config) external initializer {
-        _initAccount(_entryPoint, _owner, _config.guardians, _config.guardianP256X, _config.guardianP256Y, _config.minDailyLimit, address(0), _config.approvedAlgIds);
-    }
-
-    /// @notice Initialize this account with a pre-deployed guard.
-    ///         Guard must be deployed by the caller (factory or test) before calling this.
-    ///         Keeping guard deployment outside the account removes ~4,595B of creation code
-    ///         from the account's runtime, keeping it under EIP-170's 24,576-byte limit.
+    /// @notice Initialize this account with a pre-deployed guard and owner P256 passkey.
+    ///         Called by the factory when ownerP256X/Y are passed to createAccount.
+    ///         The owner passkey is set atomically at account birth (no post-deploy tx required).
+    ///         ownerP256X/Y are NOT in InitConfig so the account address is independent of passkey
+    ///         (folded into the clone salt separately). Different passkeys → different addresses.
     /// @param _entryPoint ERC-4337 EntryPoint address
     /// @param _owner Initial account owner (ECDSA signer)
-    /// @param _config Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr)
-    /// @param _guardAddr Pre-deployed AAStarGlobalGuard address bound to this account's address
-    function initialize(address _entryPoint, address _owner, InitConfig calldata _config, address _guardAddr) external initializer {
+    /// @param _config Initialization config
+    /// @param _guardAddr Pre-deployed AAStarGlobalGuard address (or address(0) for no guard)
+    /// @param _ownerP256X Owner P256 public key x-coordinate (or bytes32(0) if not setting)
+    /// @param _ownerP256Y Owner P256 public key y-coordinate (or bytes32(0) if not setting)
+    function initialize(address _entryPoint, address _owner, InitConfig calldata _config, address _guardAddr, bytes32 _ownerP256X, bytes32 _ownerP256Y) external initializer {
         _initAccount(_entryPoint, _owner, _config.guardians, _config.guardianP256X, _config.guardianP256Y, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
+        // Set owner passkey atomically at account birth. Skipping the emit saves ~100 bytes; the
+        // factory already logs AccountCreated which anchors the on-chain record.
+        p256KeyX = _ownerP256X;
+        p256KeyY = _ownerP256Y;
     }
 
     /// @notice Initialize an autonomous-agent account.

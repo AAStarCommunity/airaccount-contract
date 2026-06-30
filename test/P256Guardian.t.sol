@@ -78,8 +78,8 @@ contract P256GuardianTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPoint, owner, cfg);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPoint, owner, cfg, address(0), bytes32(0), bytes32(0));
     }
 
     function _deployWithP256Init(bytes32 x0, bytes32 y0, bytes32 x1, bytes32 y1) internal {
@@ -94,8 +94,8 @@ contract P256GuardianTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPoint, owner, cfg);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPoint, owner, cfg, address(0), bytes32(0), bytes32(0));
     }
 
     function _deployWithThreeP256Init() internal {
@@ -110,8 +110,8 @@ contract P256GuardianTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPoint, owner, cfg);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPoint, owner, cfg, address(0), bytes32(0), bytes32(0));
     }
 
     // #120 final review [Medium] regression: the P-256 sentinel (0x7026) must be rejected as a
@@ -120,7 +120,7 @@ contract P256GuardianTest is Test {
     // on this non-upgradable account.
     function test_init_rejectsSentinelAsEcdsaGuardian() public {
         uint8[] memory noAlgs = new uint8[](0);
-        AAStarAirAccountV7 a = new AAStarAirAccountV7();
+        AAStarAirAccountV7 a = new AAStarAirAccountV7(address(0));
         vm.expectRevert(abi.encodeWithSignature("InvalidGuardian()"));
         a.initialize(entryPoint, owner, AAStarAirAccountBase.InitConfig({
             guardians: [address(0x7026), address(0), address(0)],
@@ -129,7 +129,7 @@ contract P256GuardianTest is Test {
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
     }
 
     // Deploy with 1 ECDSA + 1 P-256 guardian (mixed init)
@@ -145,8 +145,8 @@ contract P256GuardianTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPoint, owner, cfg);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPoint, owner, cfg, address(0), bytes32(0), bytes32(0));
     }
 
     function _deployEmpty() internal {
@@ -376,9 +376,9 @@ contract P256GuardianTest is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         vm.expectRevert();
-        account.initialize(entryPoint, owner, cfg);
+        account.initialize(entryPoint, owner, cfg, address(0), bytes32(0), bytes32(0));
     }
 
     // ── proposeRecoveryWithSig ─────────────────────────────────────────────────
@@ -616,7 +616,7 @@ contract P256GuardianTest is Test {
         address g3 = vm.addr(g3Key);
 
         uint8[] memory noAlgs = new uint8[](0);
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPoint, owner, AAStarAirAccountBase.InitConfig({
             guardians: [g2, address(0), g3],
             guardianP256X: [bytes32(0), P256_X0, bytes32(0)],
@@ -624,7 +624,7 @@ contract P256GuardianTest is Test {
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
         // layout: g2=idx0(ECDSA), P256=idx1(X0/Y0), g3=idx2(ECDSA)
 
         // Build ECDSA removal sigs for removing idx 0 (g2 address). #120 final review [HIGH]:
@@ -640,7 +640,7 @@ contract P256GuardianTest is Test {
         // Redeploy with 3 ECDSA guardians so legacy removeGuardian works
         uint256 g1Key = uint256(keccak256(abi.encodePacked("g1_legacy")));
         address g1a = vm.addr(g1Key);
-        account = new AAStarAirAccountV7();
+        account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPoint, owner, AAStarAirAccountBase.InitConfig({
             guardians: [g1a, address(0), g3],
             guardianP256X: [bytes32(0), P256_X0, bytes32(0)],
@@ -648,7 +648,7 @@ contract P256GuardianTest is Test {
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
-        }));
+        }), address(0), bytes32(0), bytes32(0));
         // layout: g1a=idx0(ECDSA), P256=idx1(X0/Y0), g3=idx2(ECDSA)
         h = keccak256(abi.encode(
             uint8(4), block.chainid, address(account), "REMOVE_GUARDIAN",

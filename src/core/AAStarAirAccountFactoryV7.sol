@@ -19,7 +19,7 @@ contract AAStarAirAccountFactoryV7 {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this factory deployment. Used by SDKs for programmatic version detection.
-    string public constant FACTORY_VERSION = "0.21.0";
+    string public constant FACTORY_VERSION = "0.22.0";
 
     /// @dev Shared implementation contract — all user accounts are clones of this address.
     ///      INJECTED as a constructor parameter (deployer must deploy AAStarAirAccountV7 first and
@@ -58,6 +58,9 @@ contract AAStarAirAccountFactoryV7 {
     /// @dev Deployer of the factory; the only address allowed to call `setAgentRegistry`. Set-once.
     address public immutable factoryAdmin;
 
+    /// @dev Per-owner nonce for createAccount owner signature (issue #155 P1 replay protection).
+    mapping(address => uint256) public createNonces;
+
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
     event AgentRegistrySet(address indexed agentRegistry);
 
@@ -92,6 +95,9 @@ contract AAStarAirAccountFactoryV7 {
     error DailyLimitRequired();
     error GuardianSigExpired();
     error DeadlineTooFarInFuture();
+    error SignatureExpired();
+    error NonceMismatch();
+    error InvalidOwnerSignature();
     error HumanOwnerCannotBeCommunityGuardian();
     error Guardian2CannotBeCommunityGuardian();
     error AgentKeyCannotBeCommunityGuardian();
@@ -188,11 +194,64 @@ contract AAStarAirAccountFactoryV7 {
     /// @param owner Account owner (ECDSA signer)
     /// @param salt CREATE2 salt for deterministic address
     /// @param config Full initialization config (guardians, guard, algorithms)
+    /// @notice Deploy an AirAccount clone from this factory.
+    /// @notice Deploy an AirAccount clone from this factory.
+    ///
+    ///      Two authorization modes (auto-selected by ownerSig.length):
+    ///
+    ///      Direct mode (ownerSig empty, msg.sender == owner):
+    ///        EOA owners who send the tx themselves need no extra signature — the tx is their proof.
+    ///        nonce and deadline are ignored; pass (0, 0) or any value.
+    ///
+    ///      Relayed / KMS mode (ownerSig non-empty):
+    ///        For KMS-managed accounts whose owner key lives in a TEE and cannot issue raw txs.
+    ///        Any relayer can submit; the signature authenticates the owner.
+    ///        Signature domain: EIP-191 over
+    ///          keccak256(abi.encode("CREATE_ACCOUNT", chainId, address(this), owner, salt,
+    ///                               ownerP256X, ownerP256Y, _getConfigHash(config), nonce, deadline))
+    ///        nonce must equal createNonces[owner] (incremented on success).
+    ///        Validator is auto-wired from the implementation's validatorRouter immutable.
+    ///        Owner passkey (p256KeyX/Y) is set atomically at account birth when ownerP256X/Y are non-zero.
+    ///
+    /// @param owner       Account owner (ECDSA signer / KMS-derived address)
+    /// @param salt        User-chosen CREATE2 salt (combined with owner + configHash + passkey for uniqueness)
+    /// @param config      Full init config (guardians, algIds, limits, tokens)
+    /// @param ownerP256X  Owner P256 passkey x-coordinate (bytes32(0) to skip)
+    /// @param ownerP256Y  Owner P256 passkey y-coordinate (bytes32(0) to skip)
+    /// @param nonce       Replay-prevention nonce (relayed mode only; ignored if ownerSig is empty)
+    /// @param deadline    Unix timestamp deadline (relayed mode only; ignored if ownerSig is empty)
+    /// @param ownerSig    EIP-191 owner sig (empty = direct mode where msg.sender must be owner)
     function createAccount(
         address owner,
         uint256 salt,
-        AAStarAirAccountBase.InitConfig memory config
+        AAStarAirAccountBase.InitConfig memory config,
+        bytes32 ownerP256X,
+        bytes32 ownerP256Y,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata ownerSig
     ) external returns (address account) {
+        // Owner authorization: direct tx (msg.sender proof) or KMS-relayed EIP-191 sig.
+        if (ownerSig.length == 0) {
+            if (msg.sender != owner) revert InvalidOwnerSignature();
+        } else {
+            if (block.timestamp > deadline) revert SignatureExpired();
+            if (nonce != createNonces[owner]) revert NonceMismatch();
+            bytes32 digest = keccak256(abi.encode(
+                "CREATE_ACCOUNT",
+                block.chainid,
+                address(this),
+                owner,
+                salt,
+                ownerP256X,
+                ownerP256Y,
+                _getConfigHash(config),
+                nonce,
+                deadline
+            )).toEthSignedMessageHash();
+            if (digest.recover(ownerSig) != owner) revert InvalidOwnerSignature();
+            createNonces[owner]++;
+        }
         // Validate guardians: non-zero entries must be pairwise distinct.
         // Without this, [addrA, addrA, addrB] degrades 2-of-3 social recovery to 1-of-2.
         address[3] memory g = config.guardians;
@@ -200,11 +259,10 @@ contract AAStarAirAccountFactoryV7 {
         if (g[0] != address(0) && g[2] != address(0) && g[0] == g[2]) revert DuplicateGuardian();
         if (g[1] != address(0) && g[2] != address(0) && g[1] == g[2]) revert DuplicateGuardian();
 
-        // Bind address to config: include guardians and dailyLimit in salt so that
-        // a front-runner cannot pre-deploy this address with a different (malicious) config.
-        // Without this, anyone could call createAccount(victim, salt, maliciousConfig) and
-        // seize control of the victim's counterfactual address via social recovery.
-        bytes32 cloneSalt = _getSalt(owner, salt, _getConfigHash(config));
+        // Bind address to config + passkey: ownerP256X/Y are folded into the clone salt so that
+        // (a) a front-runner cannot pre-deploy with a different config, and (b) different passkeys
+        // produce different addresses, allowing the same owner+salt to be used across devices.
+        bytes32 cloneSalt = _getSalt(owner, salt, keccak256(abi.encode(_getConfigHash(config), ownerP256X, ownerP256Y)));
         account = Clones.predictDeterministicAddress(implementation, cloneSalt);
         if (account.code.length > 0) {
             return account;
@@ -217,19 +275,24 @@ contract AAStarAirAccountFactoryV7 {
             guardAddr = _deployGuard(account, config);
         }
         account = Clones.cloneDeterministic(implementation, cloneSalt);
-        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
-        _markAccountValid(account);        emit AccountCreated(account, owner, salt);
+        // Validator is auto-wired by the implementation's validatorRouter immutable (issue #155 P1).
+        // ownerP256X/Y are set atomically at account birth if non-zero.
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr, ownerP256X, ownerP256Y);
+        _markAccountValid(account);
+        emit AccountCreated(account, owner, salt);
     }
 
     /// @notice Predict the counterfactual address for a full-config account.
-    /// @dev Address depends on owner + salt + keccak256(guardians, dailyLimit) to prevent
-    ///      front-running attacks where an attacker pre-deploys the account with malicious guardians.
+    /// @dev Address depends on owner + salt + keccak256(configHash, ownerP256X, ownerP256Y) to prevent
+    ///      front-running attacks where an attacker pre-deploys the account with malicious guardians or passkey.
     function getAddress(
         address owner,
         uint256 salt,
-        AAStarAirAccountBase.InitConfig memory config
+        AAStarAirAccountBase.InitConfig memory config,
+        bytes32 ownerP256X,
+        bytes32 ownerP256Y
     ) public view returns (address) {
-        return Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt, _getConfigHash(config)));
+        return Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt, keccak256(abi.encode(_getConfigHash(config), ownerP256X, ownerP256Y))));
     }
 
     // ─── Convenience: Default Guardian Setup ────────────────────────
@@ -285,7 +348,7 @@ contract AAStarAirAccountFactoryV7 {
         // Pre-deploy guard bound to the predicted account address before cloning.
         address guardAddr = _deployGuard(account, config);
         account = Clones.cloneDeterministic(implementation, cloneSalt);
-        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr);
+        AAStarAirAccountV7(payable(account)).initialize(entryPoint, owner, config, guardAddr, bytes32(0), bytes32(0));
         _markAccountValid(account);        emit AccountCreated(account, owner, salt);
     }
 
@@ -454,6 +517,9 @@ contract AAStarAirAccountFactoryV7 {
     ///      minDailyLimit floor, an empty approvedAlgIds whitelist, or stripped token limits)
     ///      while keeping guardians + dailyLimit identical to collide on the address.
     function _getConfigHash(AAStarAirAccountBase.InitConfig memory config) internal pure returns (bytes32) {
+        // ownerP256X/Y are NOT in InitConfig (issue #155): passkey is passed as explicit createAccount
+        // params and folded into the clone salt directly (alongside this hash) rather than here,
+        // so the InitConfig hash itself remains stable across passkey rotations.
         return keccak256(abi.encode(
             config.guardians,
             config.guardianP256X,
@@ -520,9 +586,11 @@ contract AAStarAirAccountFactoryV7 {
     function getAddressWithChainId(
         address owner,
         uint256 salt,
-        AAStarAirAccountBase.InitConfig memory config
+        AAStarAirAccountBase.InitConfig memory config,
+        bytes32 ownerP256X,
+        bytes32 ownerP256Y
     ) external view returns (address account, bytes32 chainQualified) {
-        account = Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt, _getConfigHash(config)));
+        account = Clones.predictDeterministicAddress(implementation, _getSalt(owner, salt, keccak256(abi.encode(_getConfigHash(config), ownerP256X, ownerP256Y))));
         chainQualified = keccak256(abi.encodePacked(account, block.chainid));
     }
 }

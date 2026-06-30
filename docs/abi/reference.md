@@ -342,7 +342,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountBase
 
 - **Source:** `src/core/AAStarAirAccountBase.sol`
-- **Functions:** 35 · **Events:** 27 · **Errors:** 58
+- **Functions:** 36 · **Events:** 27 · **Errors:** 58
 - **Title:** AAStarAirAccountBase
 - Non-upgradable ERC-4337 smart wallet base with algId-based signature routing,         tiered verification, P256 passkey, social recovery, and global guard.
 
@@ -383,6 +383,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8efdc881` | `tier1Limit()` | view | — | Tier1 max (ECDSA only) |
 | `0xdbaf0cc3` | `tier2Limit()` | view | — | Tier2 max (dual factor); above this requires multi-sig (BLS triple) |
 | `0x3a5381b5` | `validator()` | view | — | Optional validator router for external algorithms (BLS, PQ, etc.) |
+| `0x049e5ab2` | `validatorRouter()` | view | — | Canonical AAStarValidator router wired at every account's birth (issue #155 P1). |
 | `0x085aa197` | `weightConfig()` | view | — | Current weight config. tier1Threshold == 0 means uninitialised → ALG_WEIGHTED fails. |
 | `0x4d44560d` | `withdrawDepositTo(address,uint256)` | nonpayable | onlyOwner |  |
 
@@ -739,6 +740,16 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
+#### `validatorRouter()`
+
+`0x049e5ab2` · view · access: —
+
+> Canonical AAStarValidator router wired at every account's birth (issue #155 P1).
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
 #### `weightConfig()`
 
 `0x085aa197` · view · access: —
@@ -886,7 +897,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountFactoryV7
 
 - **Source:** `src/core/AAStarAirAccountFactoryV7.sol`
-- **Functions:** 15 · **Events:** 3 · **Errors:** 26
+- **Functions:** 16 · **Events:** 3 · **Errors:** 32
 - **Title:** AAStarAirAccountFactoryV7 - EIP-1167 clone factory for V7 accounts
 - Deploys minimal proxy clones pointing to a shared implementation, then calls initialize().         This keeps factory bytecode well under EIP-170's 24,576-byte limit.         Account address = Clones.predictDeterministicAddress(implementation, keccak256(owner ++ salt))
 
@@ -895,15 +906,16 @@ Authoritative, auto-generated reference for every external/public function, even
 | selector | function | mutability | access | notice |
 |---|---|---|---|---|
 | `0x0d1cfcae` | `agentRegistry()` | view | — |  |
-| `0x5512953b` | `createAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | — | Deploy a new account with full configuration. |
+| `0x5f6314a2` | `createAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),bytes32,bytes32,uint256,uint256,bytes)` | nonpayable | — | Deploy a new account with full configuration.Deploy an AirAccount clone from this factory.Deploy an AirAccount clone from this factory.      Two authorization modes (auto-selected by ownerSig.length):      Direct mode (ownerSig empty, msg.sender == owner):        EOA owners who send the tx themselves need no extra signature — the tx is their proof.        nonce and deadline are ignored; pass (0, 0) or any value.      Relayed / KMS mode (ownerSig non-empty):        For KMS-managed accounts whose owner key lives in a TEE and cannot issue raw txs.        Any relayer can submit; the signature authenticates the owner.        Signature domain: EIP-191 over          keccak256(abi.encode("CREATE_ACCOUNT", chainId, address(this), owner, salt,                               ownerP256X, ownerP256Y, _getConfigHash(config), nonce, deadline))        nonce must equal createNonces[owner] (incremented on success).        Validator is auto-wired from the implementation's validatorRouter immutable.        Owner passkey (p256KeyX/Y) is set atomically at account birth when ownerP256X/Y are non-zero. |
 | `0xdd8d1e3a` | `createAccountWithDefaults(address,uint256,address,bytes,address,bytes,uint256)` | nonpayable | — | Deploy account with default community guardian as third guardian. |
 | `0x2b690ea6` | `createAgentAccount(address,bytes32,address,bytes,bytes,uint48,uint256)` | nonpayable | — | Create a dedicated AirAccount for an autonomous AI agent.         The human caller (msg.sender) becomes the account OWNER (not a guardian).         Guardians are [guardian2, communityGuardian] (2-of-2); only guardian2 must sign. |
+| `0xea783a1e` | `createNonces(address)` | view | — |  |
 | `0x0753414f` | `defaultCommunityGuardian()` | view | — |  |
 | `0xb0d691fe` | `entryPoint()` | view | — |  |
 | `0xbd382b40` | `FACTORY_VERSION()` | view | — | Semantic version of this factory deployment. Used by SDKs for programmatic version detection. |
 | `0x17d8ec7f` | `factoryAdmin()` | view | — |  |
-| `0x3989c6b8` | `getAddress(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict the counterfactual address for a full-config account. |
-| `0x203df583` | `getAddressWithChainId(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | view | — | Predict account address AND its chain-qualified identifier in one call. |
+| `0xbd4bcf83` | `getAddress(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),bytes32,bytes32)` | view | — | Predict the counterfactual address for a full-config account. |
+| `0xaf799fc6` | `getAddressWithChainId(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),bytes32,bytes32)` | view | — | Predict account address AND its chain-qualified identifier in one call. |
 | `0x17253640` | `getAddressWithDefaults(address,uint256,address,address,uint256)` | view | — | Predict address for a default-config account. |
 | `0x303f69a1` | `getAgentAddress(address,address,bytes32)` | view | — | Predict the address of a future agent account. |
 | `0x990bb980` | `getChainQualifiedAddress(address)` | view | — | ERC-7828: Returns a chain-qualified address identifier.         Enables cross-chain address disambiguation for accounts deployed at the same address         on multiple L2s via CREATE2 with the same salt. |
@@ -920,17 +932,22 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `createAccount(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+#### `createAccount(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config, bytes32 ownerP256X, bytes32 ownerP256Y, uint256 nonce, uint256 deadline, bytes ownerSig)`
 
-`0x5512953b` · nonpayable · access: —
+`0x5f6314a2` · nonpayable · access: —
 
-> Deploy a new account with full configuration.
+> Deploy a new account with full configuration.Deploy an AirAccount clone from this factory.Deploy an AirAccount clone from this factory.      Two authorization modes (auto-selected by ownerSig.length):      Direct mode (ownerSig empty, msg.sender == owner):        EOA owners who send the tx themselves need no extra signature — the tx is their proof.        nonce and deadline are ignored; pass (0, 0) or any value.      Relayed / KMS mode (ownerSig non-empty):        For KMS-managed accounts whose owner key lives in a TEE and cannot issue raw txs.        Any relayer can submit; the signature authenticates the owner.        Signature domain: EIP-191 over          keccak256(abi.encode("CREATE_ACCOUNT", chainId, address(this), owner, salt,                               ownerP256X, ownerP256Y, _getConfigHash(config), nonce, deadline))        nonce must equal createNonces[owner] (incremented on success).        Validator is auto-wired from the implementation's validatorRouter immutable.        Owner passkey (p256KeyX/Y) is set atomically at account birth when ownerP256X/Y are non-zero.
 
 | param | type | description |
 |---|---|---|
-| `owner` | `address` | Account owner (ECDSA signer) |
-| `salt` | `uint256` | CREATE2 salt for deterministic address |
-| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Full initialization config (guardians, guard, algorithms) |
+| `owner` | `address` | Account owner (ECDSA signer / KMS-derived address) |
+| `salt` | `uint256` | User-chosen CREATE2 salt (combined with owner + configHash + passkey for uniqueness) |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Full init config (guardians, algIds, limits, tokens) |
+| `ownerP256X` | `bytes32` | Owner P256 passkey x-coordinate (bytes32(0) to skip) |
+| `ownerP256Y` | `bytes32` | Owner P256 passkey y-coordinate (bytes32(0) to skip) |
+| `nonce` | `uint256` | Replay-prevention nonce (relayed mode only; ignored if ownerSig is empty) |
+| `deadline` | `uint256` | Unix timestamp deadline (relayed mode only; ignored if ownerSig is empty) |
+| `ownerSig` | `bytes` | EIP-191 owner sig (empty = direct mode where msg.sender must be owner) |
 
 | returns | type | description |
 |---|---|---|
@@ -978,6 +995,18 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `account` | `address` | The deployed agent account address |
 
+#### `createNonces(address arg0)`
+
+`0xea783a1e` · view · access: —
+
+| param | type | description |
+|---|---|---|
+| `arg0` | `address` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
 #### `defaultCommunityGuardian()`
 
 `0x0753414f` · view · access: —
@@ -1012,27 +1041,29 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `getAddress(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+#### `getAddress(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config, bytes32 ownerP256X, bytes32 ownerP256Y)`
 
-`0x3989c6b8` · view · access: —
+`0xbd4bcf83` · view · access: —
 
 > Predict the counterfactual address for a full-config account.
 
-*@dev* Address depends on owner + salt + keccak256(guardians, dailyLimit) to prevent      front-running attacks where an attacker pre-deploys the account with malicious guardians.
+*@dev* Address depends on owner + salt + keccak256(configHash, ownerP256X, ownerP256Y) to prevent      front-running attacks where an attacker pre-deploys the account with malicious guardians or passkey.
 
 | param | type | description |
 |---|---|---|
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
 | `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `ownerP256X` | `bytes32` |  |
+| `ownerP256Y` | `bytes32` |  |
 
 | returns | type | description |
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `getAddressWithChainId(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+#### `getAddressWithChainId(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config, bytes32 ownerP256X, bytes32 ownerP256Y)`
 
-`0x203df583` · view · access: —
+`0xaf799fc6` · view · access: —
 
 > Predict account address AND its chain-qualified identifier in one call.
 
@@ -1043,6 +1074,8 @@ Authoritative, auto-generated reference for every external/public function, even
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
 | `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `ownerP256X` | `bytes32` |  |
+| `ownerP256Y` | `bytes32` |  |
 
 | returns | type | description |
 |---|---|---|
@@ -1146,6 +1179,9 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xadbf5bb3` | `DefaultTokenAddressZero(address)` |
 | `0xd6b1cb85` | `DuplicateDefaultToken(address)` |
 | `0x6f3bdabb` | `DuplicateGuardian()` |
+| `0xf645eedf` | `ECDSAInvalidSignature()` |
+| `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
+| `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
 | `0xb06ebf3d` | `FailedDeployment()` |
 | `0xf7909bb3` | `Guardian2CannotBeCommunityGuardian()` |
 | `0x3e6234cb` | `Guardian2Required()` |
@@ -1157,7 +1193,10 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x16ec23b0` | `ImplementationRequired()` |
 | `0xcf479181` | `InsufficientBalance(uint256,uint256)` |
 | `0xfa98b70d` | `InvalidDefaultTokenConfig(address)` |
+| `0x38a85a8d` | `InvalidOwnerSignature()` |
+| `0xe112ed91` | `NonceMismatch()` |
 | `0x9a1a53b4` | `NotFactoryAdmin()` |
+| `0x0819bdcd` | `SignatureExpired()` |
 | `0xcc9741af` | `TokenConfigLengthMismatch()` |
 
 ## AAStarAirAccountV7
@@ -1193,8 +1232,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x54387ad7` | `guardianCount()` | view | — | Returns number of active guardians. |
 | `0xf560c734` | `guardians(uint256)` | view | — | Returns guardian address at index (0-2). Returns address(0) for empty slots. |
 | `0x253e659b` | `guardSetStrictMode(bool)` | nonpayable | — | #22: toggle the guard's strict mode (block unconfigured tokens). Default OFF. |
-| `0x1ab193d8` | `initialize(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit. |
-| `0x3cb406a8` | `initialize(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization. |
+| `0xa8743d6b` | `initialize(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address,bytes32,bytes32)` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization.Initialize this account with a pre-deployed guard and owner P256 passkey.         Called by the factory when ownerP256X/Y are passed to createAccount.         The owner passkey is set atomically at account birth (no post-deploy tx required).         ownerP256X/Y are NOT in InitConfig so the account address is independent of passkey         (folded into the clone salt separately). Different passkeys → different addresses. |
 | `0xe2a30d26` | `initializeAgentAccount(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize an autonomous-agent account. |
 | `0x112d3a7d` | `isModuleInstalled(uint256,address,bytes)` | view | — | ERC-7579: check whether a module is installed.         Checks the unified module registry for supported types (1,2,4).         Note: the built-in ECDSA validator is registered at initialize time. |
 | `0x1626ba7e` | `isValidSignature(bytes32,bytes)` | view | — | ERC-1271: on-chain signature validation used by ERC-7579 tooling and DeFi protocols.         Validates that the ECDSA signature was produced by this account's owner. |
@@ -1218,6 +1256,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xdbaf0cc3` | `tier2Limit()` | view | — | Tier2 max (dual factor); above this requires multi-sig (BLS triple) |
 | `0x19822f7c` | `validateUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32,uint256)` | nonpayable | onlyEntryPoint | Validate user's signature and nonce the entryPoint will make the call to the recipient only if this validation call returns successfully. signature failure should be reported by returning SIG_VALIDATION_FAILED (1). This allows making a "simulation call" without a valid signature Other failures (e.g. nonce mismatch, or invalid signature format) should still revert to signal failure. |
 | `0x3a5381b5` | `validator()` | view | — | Optional validator router for external algorithms (BLS, PQ, etc.) |
+| `0x049e5ab2` | `validatorRouter()` | view | — | Canonical AAStarValidator router wired at every account's birth (issue #155 P1). |
 | `0x085aa197` | `weightConfig()` | view | — | Current weight config. tier1Threshold == 0 means uninitialised → ALG_WEIGHTED fails. |
 | `0x4d44560d` | `withdrawDepositTo(address,uint256)` | nonpayable | — |  |
 
@@ -1460,30 +1499,20 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `enabled` | `bool` |  |
 
-#### `initialize(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
+#### `initialize(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr, bytes32 _ownerP256X, bytes32 _ownerP256Y)`
 
-`0x1ab193d8` · nonpayable · access: initializer
+`0xa8743d6b` · nonpayable · access: initializer
 
-> Initialize this account with a pre-deployed guard.         Guard must be deployed by the caller (factory or test) before calling this.         Keeping guard deployment outside the account removes ~4,595B of creation code         from the account's runtime, keeping it under EIP-170's 24,576-byte limit.
-
-| param | type | description |
-|---|---|---|
-| `_entryPoint` | `address` | ERC-4337 EntryPoint address |
-| `_owner` | `address` | Initial account owner (ECDSA signer) |
-| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config: guardians (dailyLimit/algIds used to deploy _guardAddr) |
-| `_guardAddr` | `address` | Pre-deployed AAStarGlobalGuard address bound to this account's address |
-
-#### `initialize(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config)`
-
-`0x3cb406a8` · nonpayable · access: initializer
-
-> Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization.
+> Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization.Initialize this account with a pre-deployed guard and owner P256 passkey.         Called by the factory when ownerP256X/Y are passed to createAccount.         The owner passkey is set atomically at account birth (no post-deploy tx required).         ownerP256X/Y are NOT in InitConfig so the account address is independent of passkey         (folded into the clone salt separately). Different passkeys → different addresses.
 
 | param | type | description |
 |---|---|---|
 | `_entryPoint` | `address` | ERC-4337 EntryPoint address |
 | `_owner` | `address` | Initial account owner (ECDSA signer) |
-| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config: guardians and algorithm list (dailyLimit ignored — no guard deployed) |
+| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config |
+| `_guardAddr` | `address` | Pre-deployed AAStarGlobalGuard address (or address(0) for no guard) |
+| `_ownerP256X` | `bytes32` | Owner P256 public key x-coordinate (or bytes32(0) if not setting) |
+| `_ownerP256Y` | `bytes32` | Owner P256 public key y-coordinate (or bytes32(0) if not setting) |
 
 #### `initializeAgentAccount(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
 
@@ -1761,6 +1790,16 @@ Authoritative, auto-generated reference for every external/public function, even
 `0x3a5381b5` · view · access: —
 
 > Optional validator router for external algorithms (BLS, PQ, etc.)
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `address` |  |
+
+#### `validatorRouter()`
+
+`0x049e5ab2` · view · access: —
+
+> Canonical AAStarValidator router wired at every account's birth (issue #155 P1).
 
 | returns | type | description |
 |---|---|---|

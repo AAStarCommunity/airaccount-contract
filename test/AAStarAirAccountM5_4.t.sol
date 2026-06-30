@@ -64,8 +64,8 @@ contract AAStarAirAccountM5_4Test is Test {
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
 
-        account = new AAStarAirAccountV7();
-        account.initialize(entryPoint, owner, config);
+        account = new AAStarAirAccountV7(address(0));
+        account.initialize(entryPoint, owner, config, address(0), bytes32(0), bytes32(0));
 
 
         mockValid = new MockP256Valid();
@@ -168,8 +168,8 @@ contract AAStarAirAccountM5_4Test is Test {
             initialTokens: new address[](0),
             initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
         });
-        AAStarAirAccountV7 accountNoKey = new AAStarAirAccountV7();
-        accountNoKey.initialize(entryPoint, owner, config);
+        AAStarAirAccountV7 accountNoKey = new AAStarAirAccountV7(address(0));
+        accountNoKey.initialize(entryPoint, owner, config, address(0), bytes32(0), bytes32(0));
 
         // No setP256Key call — key remains (0,0)
 

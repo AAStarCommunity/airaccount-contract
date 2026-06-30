@@ -96,6 +96,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      Splitting agent code out keeps the account runtime under EIP-170's 24,576-byte limit.
     address public immutable agentExtension;
 
+    /// @notice Canonical AAStarValidator router wired at every account's birth (issue #155 P1).
+    /// @dev Injected once into the implementation's constructor; all clones auto-wire the validator
+    ///      without any post-deploy owner tx. address(0) = no auto-wire (testnet / legacy installs).
+    address public immutable validatorRouter;
+
 
     // ── algId Pass-Through (validation → execution) ──
     // Uses transient storage (EIP-1153) to avoid cross-UserOp contamination.
@@ -314,8 +319,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      IMPLEMENTATION's constructor (creation code only — not part of EIP-170 runtime size),
     ///      so the ~2KB of agent logic leaves the account's runtime bytecode while every clone of
     ///      this implementation still resolves to one shared extension instance.
-    constructor() {
+    /// @param _validatorRouter Canonical AAStarValidator router; address(0) for no auto-wire.
+    constructor(address _validatorRouter) {
         agentExtension = address(new AirAccountExtension());
+        validatorRouter = _validatorRouter;
     }
 
     /// @dev Routes any selector not defined on the account to the AgentExtension via delegatecall,
@@ -418,6 +425,15 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             guard = AAStarGlobalGuard(_guardAddr);
             emit GuardInitialized(_guardAddr, guard.dailyLimit());
         }
+
+        // Issue #155 P1: auto-wire the canonical validator router at account birth if the
+        // implementation was deployed with one. All clones of this implementation get the router
+        // for free — zero post-deploy owner txs required for KMS-managed accounts.
+        if (validatorRouter != address(0)) {
+            validator = IAAStarValidator(validatorRouter);
+            emit ValidatorSet(validatorRouter);
+        }
+
     }
 
     // ─── Configuration (owner only) ─────────────────────────────────
