@@ -860,6 +860,82 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         }
     }
 
+    /// @dev Verify a WebAuthn assertion against the OWNER passkey (p256KeyX / p256KeyY), returning bool.
+    ///      Powers isValidOwnerAuth's WebAuthn branch (issue #159). MUST stay byte-for-byte identical to
+    ///      AAStarAirAccountBase._verifyWebAuthnOwnerSig (the on-chain UserOp owner-WebAuthn path) so an
+    ///      off-chain eth_call to isValidOwnerAuth and the on-chain validateUserOp path never diverge —
+    ///      that non-divergence is the whole point of exposing this view (single source of truth).
+    ///      Fail-closed: returns false (never reverts) on malformed input, so the caller gets 0xffffffff.
+    ///      sig encoding: abi.encode(bytes authenticatorData, bytes clientDataJSONPrefix,
+    ///                               bytes clientDataJSONSuffix, bytes32 r, bytes32 s)
+    function _verifyOwnerWebAuthn(bytes32 challenge, bytes memory sig) private view returns (bool) {
+        if (p256KeyX == bytes32(0) && p256KeyY == bytes32(0)) return false;
+        // ABI(bytes,bytes,bytes,bytes32,bytes32) head: 5*32 = 160; each dynamic bytes needs >= 64.
+        // Absolute minimum = 160 + 3*64 = 352 bytes (matches the guardian guard above).
+        if (sig.length < 352) return false;
+
+        // Pre-validate ABI structure so abi.decode cannot revert on malformed input (a revert would
+        // turn fail-closed into a hard error; DVT should get 0xffffffff, not a bubbling revert).
+        {
+            uint256 off0; uint256 off1; uint256 off2;
+            uint256 len0; uint256 len1; uint256 len2;
+            assembly {
+                let base := add(sig, 32) // skip bytes memory length slot
+                off0 := mload(base)
+                off1 := mload(add(base, 32))
+                off2 := mload(add(base, 64))
+            }
+            uint256 dataLen = sig.length;
+            // Each offset must be within [160, dataLen-32] so there is room for a length word.
+            // Subtraction form (off > dataLen - 32) avoids checked-arith overflow when off is huge.
+            if (off0 < 160 || off0 > dataLen - 32) return false;
+            if (off1 < 160 || off1 > dataLen - 32) return false;
+            if (off2 < 160 || off2 > dataLen - 32) return false;
+            assembly {
+                let base := add(sig, 32)
+                len0 := mload(add(base, off0))
+                len1 := mload(add(base, off1))
+                len2 := mload(add(base, off2))
+            }
+            // Each array's content (length word + padded data) must not exceed sig.
+            if (len0 > dataLen - off0 - 32) return false;
+            if (len1 > dataLen - off1 - 32) return false;
+            if (len2 > dataLen - off2 - 32) return false;
+        }
+
+        (
+            bytes memory authenticatorData,
+            bytes memory clientDataJSONPrefix,
+            bytes memory clientDataJSONSuffix,
+            bytes32 r,
+            bytes32 s
+        ) = abi.decode(sig, (bytes, bytes, bytes, bytes32, bytes32));
+
+        // Minimum authenticatorData: rpIdHash(32) + flags(1) + signCount(4) = 37 bytes
+        if (authenticatorData.length < 37) return false;
+        // UP (User Present) flag must be set (bit 0 of flags byte at index 32)
+        if (uint8(authenticatorData[32]) & 0x01 == 0) return false;
+
+        // Bind operation type: prevents replay of a webauthn.create assertion through this path.
+        if (keccak256(clientDataJSONPrefix) != keccak256(bytes('{"type":"webauthn.get","challenge":"'))) {
+            return false;
+        }
+
+        bytes memory clientDataJSON = abi.encodePacked(
+            clientDataJSONPrefix,
+            _base64UrlEncode32(challenge),
+            clientDataJSONSuffix
+        );
+
+        bytes32 clientDataHash = sha256(clientDataJSON);
+        bytes32 payloadHash    = sha256(abi.encodePacked(authenticatorData, clientDataHash));
+
+        if (uint256(s) > SECP256R1_N_OVER_2) return false;
+        (bool ok, bytes memory result) =
+            P256_VERIFIER.staticcall(abi.encode(payloadHash, r, s, p256KeyX, p256KeyY));
+        return ok && result.length >= 32 && abi.decode(result, (uint256)) == 1;
+    }
+
     /// @dev Dispatch guardian signature verification by slot type.
     ///      P-256 guardian: full WebAuthn Assertion (authenticatorData + clientDataJSON parts + r,s).
     ///      ECDSA guardian: 65-byte eth-signed keccak hash (existing format, no domain tag).
@@ -882,6 +958,76 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     }
 
     // ── Public functions ──────────────────────────────────────────────────
+
+    /// @dev isValidOwnerAuth success magic = its own selector (issue #159). Deliberately NOT the
+    ///      ERC-1271 magic 0x1626ba7e: this is a distinct owner-authorization primitive, and reusing
+    ///      the ERC-1271 value would let a generic ERC-1271 caller mistake it for isValidSignature.
+    bytes4  private constant OWNER_AUTH_MAGIC        = 0xa0cf00cf; // isValidOwnerAuth(bytes32,bytes)
+    /// @dev ownerAuth type tags (issue #159): explicit 1-byte tag, never length-based discrimination.
+    uint8   private constant OWNER_AUTH_TAG_ECDSA    = 0x01;
+    uint8   private constant OWNER_AUTH_TAG_WEBAUTHN = 0x02;
+
+    /// @notice ERC-1271-style owner-authorization check for a userOp, callable off-chain via eth_call.
+    ///         Single source of truth for "did the account OWNER authorize this userOpHash", so a DVT
+    ///         co-signer (or any relayer) can validate owner authorization WITHOUT re-implementing
+    ///         ECDSA / WebAuthn verification off-chain (which would inevitably drift from this contract).
+    ///         Issue #159; unblocks device-passkey Tier-3 DVT authorization.
+    ///
+    ///         ownerAuth = [tag(1 byte)] || payload:
+    ///           tag 0x01 → payload = 65-byte ECDSA over EIP-191 personal_sign(userOpHash), recover==owner.
+    ///                      NOTE the EIP-191 prefix matches the UserOp owner path (_validateECDSA), NOT the
+    ///                      raw-hash ERC-1271 isValidSignature path — callers MUST personal_sign, not raw-sign.
+    ///           tag 0x02 → payload = abi.encode(authenticatorData, clientDataJSONPrefix,
+    ///                      clientDataJSONSuffix, bytes32 r, bytes32 s): a WebAuthn assertion over the owner
+    ///                      device passkey (p256KeyX / p256KeyY), with challenge = userOpHash.
+    ///
+    /// @dev    SINGLE-FACTOR owner authorization: returns the magic if EITHER the owner ECDSA key OR the
+    ///         owner device passkey validates. This is NOT tier-N cumulative authorization — a DVT MUST
+    ///         layer its own tier policy on top and must not treat the magic as full tiered approval.
+    /// @dev    Pure view (no state) for eth_call; fail-closed — any empty / short / malformed / unknown-tag
+    ///         input returns 0xffffffff (never reverts), so a DVT treats non-magic uniformly as "deny".
+    /// @dev    Non-upgradable account: only accounts deployed from an implementation carrying this facet
+    ///         expose isValidOwnerAuth; pre-existing accounts must migrate to gain it.
+    /// @param  userOpHash The exact 32-byte hash the owner authorized. The DVT MUST derive this itself and
+    ///                    never trust a caller-supplied hash.
+    /// @param  ownerAuth  Tagged owner-authorization blob (see above).
+    /// @return 0xa0cf00cf (isValidOwnerAuth.selector) on success, 0xffffffff otherwise.
+    function isValidOwnerAuth(bytes32 userOpHash, bytes calldata ownerAuth) external view returns (bytes4) {
+        if (ownerAuth.length == 0) return 0xffffffff;
+        uint8 tag = uint8(ownerAuth[0]);
+
+        if (tag == OWNER_AUTH_TAG_ECDSA) {
+            // 1 tag byte + 65-byte ECDSA signature.
+            if (ownerAuth.length != 66) return 0xffffffff;
+            address o = owner;
+            if (o == address(0)) return 0xffffffff;
+            // Mirror AAStarAirAccountBase._validateECDSA EXACTLY (the on-chain UserOp owner path),
+            // including v=0/1 → 27/28 normalization, so eth_call and validateUserOp never diverge on
+            // the same owner signature. tryRecover(hash, sig) alone would reject a v=0/1 encoding that
+            // validateUserOp accepts. OZ tryRecover also enforces EIP-2 low-S (same bound as _validateECDSA).
+            bytes calldata sig = ownerAuth[1:];
+            bytes32 r; bytes32 s; uint8 v;
+            assembly {
+                r := calldataload(sig.offset)
+                s := calldataload(add(sig.offset, 32))
+                v := byte(0, calldataload(add(sig.offset, 64)))
+            }
+            if (v < 27) v += 27;
+            (address recovered, ECDSA.RecoverError err, ) =
+                ECDSA.tryRecover(userOpHash.toEthSignedMessageHash(), v, r, s);
+            if (err == ECDSA.RecoverError.NoError && recovered != address(0) && recovered == o) {
+                return OWNER_AUTH_MAGIC;
+            }
+            return 0xffffffff;
+        }
+
+        if (tag == OWNER_AUTH_TAG_WEBAUTHN) {
+            if (_verifyOwnerWebAuthn(userOpHash, ownerAuth[1:])) return OWNER_AUTH_MAGIC;
+            return 0xffffffff;
+        }
+
+        return 0xffffffff;
+    }
 
     /// @notice Add a P-256 (passkey) guardian — owner-only while fewer than RECOVERY_THRESHOLD
     ///         guardians exist (pre-consensus bootstrap; a single guardian cannot form a quorum).

@@ -2547,6 +2547,30 @@
     },
     {
       "type": "function",
+      "name": "isValidOwnerAuth",
+      "inputs": [
+        {
+          "name": "userOpHash",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "ownerAuth",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "mintAgentIdentity",
       "inputs": [
         {
