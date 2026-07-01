@@ -8,6 +8,53 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.23.0] - 2026-07-01 (isValidOwnerAuth — owner-authorization single source of truth)
+
+Implements issue #159: exposes an ERC-1271-style view the DVT (YetAnotherAA-Validator#140) and
+any relayer `eth_call` to decide "did the account owner authorize this userOpHash", instead of
+re-implementing ECDSA/WebAuthn verification off-chain (which would drift from the contract).
+Unblocks device-passkey Tier-3 gasless: the DVT can verify owner authorization for accounts whose
+owner is a KMS ECDSA key + a device passkey, without a KMS ceremony producing an owner ECDSA sig.
+
+### Added
+- **`isValidOwnerAuth(bytes32 userOpHash, bytes calldata ownerAuth) external view returns (bytes4)`**
+  in `AirAccountExtension` (reached via the account's `fallback → delegatecall`, runs in account
+  storage context). `ownerAuth = [tag(1 byte)] || payload`:
+  - `tag 0x01` → 65-byte ECDSA over EIP-191 `personal_sign(userOpHash)`, recover `== owner`
+    (mirrors the UserOp owner path `_validateECDSA` exactly, incl. `v=0/1 → 27/28` normalization
+    and EIP-2 low-S rejection — the two paths never diverge).
+  - `tag 0x02` → `abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s)`
+    WebAuthn assertion over the owner passkey (`p256KeyX/Y`), challenge `= userOpHash`.
+  - Success magic `0xa0cf00cf` (`isValidOwnerAuth.selector`), deliberately **not** ERC-1271's
+    `0x1626ba7e`. Pure view, fail-closed: empty/short/malformed/unknown-tag → `0xffffffff`, never reverts.
+  - Single-factor owner authorization (ECDSA **or** passkey) — **not** tier-N cumulative; a DVT
+    must layer its own tier policy on top.
+- **`test/IsValidOwnerAuth.t.sol`**: 17 tests incl. EIP-191 prefix convention lock, `v=0/1`
+  normalization, high-S rejection, and 3 fail-closed fuzz tests (10k runs, no revert).
+- **`scripts/deploy-v0.23.0.ts`** and **`scripts/e2e-isvalidownerauth-v0.23.0.ts`** (4 on-chain E2E).
+
+### Design
+- **Hosted in `AirAccountExtension`, not the main account**: the main account had only 222 B of
+  EIP-170 headroom; a new external view + `bytes` decoder would overflow. The Extension already
+  carries the WebAuthn/ECDSA/base64url primitives. `eth_call account.isValidOwnerAuth(...)` hits it
+  transparently through fallback.
+
+### Security
+- Codex adversarial review: **Medium fixed** (ECDSA `v=0/1` parity with `_validateECDSA`);
+  **High not reproducible** (suspected WebAuthn `abi.decode` revert — 10k fuzz runs show the ABI
+  bounds pre-check holds; every input returns magic or `0xffffffff`, never reverts).
+
+### Notes
+- Non-upgradable: only accounts deployed from the v0.23.0 implementation expose the view.
+- `ACCOUNT_VERSION` / `FACTORY_VERSION` → `0.23.0`. No factory/account API change vs v0.22.0.
+
+### Deployed (Sepolia, 2026-07-01)
+- Impl `0xB54C490Ac28e4367BE5605Ca28Ff1Ea9736eB1fd`, Extension `0x9af60b5F19Ed099f9c709B74EADe0b65aBf7993C`
+- Factory `0x61B573D785dFd6DECAc7BB8a67F862E2B7a3792e`, AgentRegistry `0x99edDdEbeA2032781790ea47F3911C1ba0F43b2D`
+- On-chain E2E account `0x04332bdb1Bdfb6a51DafE85388121AB09D89afD1`, 4/4 pass (owner ECDSA → magic; wrong-signer/unknown-tag/empty → fail).
+
+---
+
 ## [v0.22.0] - 2026-06-30 (Factory Passkey Bootstrap)
 
 Implements issue #155: passkey and validator wired atomically at account birth, ending the

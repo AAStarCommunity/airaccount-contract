@@ -3,17 +3,30 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
-## Status: v0.22.0 — 2026-06-30 (Factory Passkey Bootstrap)
+## Status: v0.23.0 — 2026-07-01 (isValidOwnerAuth — owner-auth single source of truth)
 
-Latest: **v0.22.0** — passkey and validator wired atomically at account birth (issue #155).
+Latest: **v0.23.0** — adds `isValidOwnerAuth(bytes32 userOpHash, bytes calldata ownerAuth)` (issue #159):
+an ERC-1271-style view the DVT and any relayer `eth_call` to verify "did the owner authorize this userOp",
+so owner authorization is never re-implemented off-chain (no drift). `ownerAuth = [tag] || payload` — tag
+`0x01` = ECDSA `personal_sign(userOpHash)`, tag `0x02` = WebAuthn assertion over the owner passkey; success
+magic `0xa0cf00cf`, fail-closed. Unblocks device-passkey Tier-3 gasless DVT authorization. Hosted in
+`AirAccountExtension` (main account had only 222 B EIP-170 headroom), reached via fallback.
+Factory (Sepolia): `0x61B573D785dFd6DECAc7BB8a67F862E2B7a3792e`. Forge test **882** pass. On-chain E2E **4/4**.
+No factory/account API change vs v0.22.0.
+
+<details><summary>v0.22.0 (2026-06-30) — Factory Passkey Bootstrap</summary>
+
+**v0.22.0** — passkey and validator wired atomically at account birth (issue #155).
 `createAccount` now accepts `ownerP256X/Y` — the WebAuthn passkey is set at first `initialize`, not via
 a separate post-deploy call. `validatorRouter` is baked into the impl as an immutable; every clone
 auto-wires `validator` at birth — KMS accounts are immediately Tier-2/3 capable.
 Security: KMS relay sig domain now covers `_getConfigHash(config)` (full config), preventing guardian-swap attacks.
 Factory (Sepolia): `0x0eb0E7a61d5D9e03bc3578f8C1b0d9f40cc0a5B9`. Forge test **865/865** (cancun + prague). E2E **21/21**.
 
-**SDK breaking change:** `createAccount(owner, salt, config, ownerP256X, ownerP256Y, nonce, deadline, ownerSig)` (8 params).
+**SDK breaking change (v0.22.0):** `createAccount(owner, salt, config, ownerP256X, ownerP256Y, nonce, deadline, ownerSig)` (8 params).
 Pass `bytes32(0)` for `ownerP256X/Y` to skip passkey; `"0x"` for `ownerSig` for direct mode.
+
+</details>
 
 <details><summary>v0.21.0 (2026-06-29) — WebAuthn-native cumulative algIds</summary>
 
