@@ -107,6 +107,29 @@ contract IsValidOwnerAuthTest is Test {
         assertEq(authView.isValidOwnerAuth(userOpHash, ownerAuth), FAIL, "wrong ECDSA length must fail, not revert");
     }
 
+    /// @dev Codex Medium (PR #160): the on-chain UserOp path (_validateECDSA) normalizes v=0/1 -> 27/28
+    ///      and accepts. The view MUST do the same, else an owner sig with v=0/1 passes validateUserOp
+    ///      but the DVT's eth_call rejects it — a divergence between the two paths meant to be equivalent.
+    function test_ecdsa_vZeroOne_normalizedAndAccepted() public view {
+        bytes32 userOpHash = keccak256("op-v01");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerWallet.privateKey, userOpHash.toEthSignedMessageHash());
+        uint8 vRaw = v - 27; // 0 or 1 — the non-normalized recovery id
+        bytes memory ownerAuth = abi.encodePacked(TAG_ECDSA, r, s, vRaw);
+        assertEq(authView.isValidOwnerAuth(userOpHash, ownerAuth), MAGIC, "v=0/1 owner sig must be accepted (matches _validateECDSA)");
+    }
+
+    /// @dev High-S signatures are malleable; both _validateECDSA and this view must reject them.
+    function test_ecdsa_highS_returnsFailure() public view {
+        bytes32 userOpHash = keccak256("op-highs");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerWallet.privateKey, userOpHash.toEthSignedMessageHash());
+        // Flip s to its high-S complement: s' = n - s, v' = v ^ 1 (still a valid sig, but non-canonical).
+        uint256 n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
+        bytes32 highS = bytes32(n - uint256(s));
+        uint8 vFlip = v == 27 ? 28 : 27;
+        bytes memory ownerAuth = abi.encodePacked(TAG_ECDSA, r, highS, vFlip);
+        assertEq(authView.isValidOwnerAuth(userOpHash, ownerAuth), FAIL, "high-S must be rejected (EIP-2)");
+    }
+
     // ─── WebAuthn branch (tag 0x02) ───────────────────────────────────
 
     /// @dev Minimal structurally-valid WebAuthn assertion. Challenge is NOT in the blob — the contract
@@ -186,6 +209,39 @@ contract IsValidOwnerAuthTest is Test {
 
     function test_emptyOwnerAuth_returnsFailure() public view {
         assertEq(authView.isValidOwnerAuth(keccak256("op-6"), ""), FAIL, "empty ownerAuth must fail");
+    }
+
+    // ─── Fail-closed fuzz (Codex High was a false positive — lock it in) ──
+
+    /// @dev No tag-0x02 WebAuthn payload may EVER revert — it must always return magic or 0xffffffff,
+    ///      so a DVT's eth_call cannot be griefed into a revert. Codex flagged a suspected abi.decode
+    ///      revert (adversarial offsets/lengths); 10k fuzz runs show the ABI bounds pre-check holds.
+    function testFuzz_webauthn_neverReverts(bytes calldata rawBlob) public view {
+        bytes memory ownerAuth = abi.encodePacked(TAG_WEBAUTHN, rawBlob);
+        bytes4 out = authView.isValidOwnerAuth(keccak256("fuzz-wa"), ownerAuth);
+        assertTrue(out == FAIL || out == MAGIC, "WebAuthn branch must be fail-closed, never revert");
+    }
+
+    /// @dev Directly hammer the three ABI offset words that drive abi.decode bounds.
+    function testFuzz_webauthn_adversarialOffsets(uint256 o0, uint256 o1, uint256 o2, uint16 extra) public view {
+        uint256 dataLen = 352 + (uint256(extra) % 256);
+        bytes memory blob = new bytes(dataLen);
+        o0 %= (dataLen + 64); o1 %= (dataLen + 64); o2 %= (dataLen + 64);
+        assembly {
+            let base := add(blob, 32)
+            mstore(base, o0)
+            mstore(add(base, 32), o1)
+            mstore(add(base, 64), o2)
+        }
+        bytes memory ownerAuth = abi.encodePacked(TAG_WEBAUTHN, blob);
+        bytes4 out = authView.isValidOwnerAuth(keccak256("fuzz-off"), ownerAuth);
+        assertTrue(out == FAIL || out == MAGIC, "adversarial offsets must not revert");
+    }
+
+    function testFuzz_ecdsa_neverReverts(bytes calldata rawSig) public view {
+        bytes memory ownerAuth = abi.encodePacked(TAG_ECDSA, rawSig);
+        bytes4 out = authView.isValidOwnerAuth(keccak256("fuzz-ec"), ownerAuth);
+        assertTrue(out == FAIL || out == MAGIC, "ECDSA branch must be fail-closed, never revert");
     }
 
     // ─── Magic value semantics ────────────────────────────────────────

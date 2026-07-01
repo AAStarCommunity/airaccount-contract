@@ -1001,8 +1001,20 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
             if (ownerAuth.length != 66) return 0xffffffff;
             address o = owner;
             if (o == address(0)) return 0xffffffff;
+            // Mirror AAStarAirAccountBase._validateECDSA EXACTLY (the on-chain UserOp owner path),
+            // including v=0/1 → 27/28 normalization, so eth_call and validateUserOp never diverge on
+            // the same owner signature. tryRecover(hash, sig) alone would reject a v=0/1 encoding that
+            // validateUserOp accepts. OZ tryRecover also enforces EIP-2 low-S (same bound as _validateECDSA).
+            bytes calldata sig = ownerAuth[1:];
+            bytes32 r; bytes32 s; uint8 v;
+            assembly {
+                r := calldataload(sig.offset)
+                s := calldataload(add(sig.offset, 32))
+                v := byte(0, calldataload(add(sig.offset, 64)))
+            }
+            if (v < 27) v += 27;
             (address recovered, ECDSA.RecoverError err, ) =
-                ECDSA.tryRecover(userOpHash.toEthSignedMessageHash(), ownerAuth[1:]);
+                ECDSA.tryRecover(userOpHash.toEthSignedMessageHash(), v, r, s);
             if (err == ECDSA.RecoverError.NoError && recovered != address(0) && recovered == o) {
                 return OWNER_AUTH_MAGIC;
             }
