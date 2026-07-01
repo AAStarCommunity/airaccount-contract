@@ -1,6 +1,6 @@
 # Deployment — v0.23.0 (Sepolia)
 
-**Network:** Sepolia (chainId 11155111) · **Date:** 2026-07-01 · **Blocks:** 11178605–11178609
+**Network:** Sepolia (chainId 11155111) · **Date:** 2026-07-01 · **Blocks:** 11178704–11178708
 **Deployer:** `0xEcAACb915f7D92e9916f449F7ad42BD0408733c9`
 **EntryPoint:** `0x0000000071727De22E5E9d8BAf0edAc6f37da032` (v0.7)
 **Community guardian:** `0x51eDf11fDb0A4F66220eFb8efA54Eca77232E114`
@@ -15,15 +15,18 @@
 > (main account had only 222 B EIP-170 headroom), reached via the account's
 > fallback → delegatecall. Magic `0xa0cf00cf`; fail-closed. No factory/account
 > API change vs v0.22.0.
+>
+> Branch rebased onto `main` (PR #158) before deploy, so this factory retains the
+> `getConfigHash` / `hashCreateAccount` relay-mode helper views.
 
 ## Core addresses
 
 | Contract | Address |
 |---|---|
-| **AAStarAirAccountFactoryV7** | [`0x61B573D785dFd6DECAc7BB8a67F862E2B7a3792e`](https://sepolia.etherscan.io/address/0x61B573D785dFd6DECAc7BB8a67F862E2B7a3792e) |
-| AAStarAirAccountV7 (impl) | [`0xB54C490Ac28e4367BE5605Ca28Ff1Ea9736eB1fd`](https://sepolia.etherscan.io/address/0xB54C490Ac28e4367BE5605Ca28Ff1Ea9736eB1fd) |
-| AirAccountExtension (facet) | [`0x9af60b5F19Ed099f9c709B74EADe0b65aBf7993C`](https://sepolia.etherscan.io/address/0x9af60b5F19Ed099f9c709B74EADe0b65aBf7993C) |
-| AgentRegistry | [`0x99edDdEbeA2032781790ea47F3911C1ba0F43b2D`](https://sepolia.etherscan.io/address/0x99edDdEbeA2032781790ea47F3911C1ba0F43b2D) |
+| **AAStarAirAccountFactoryV7** | [`0xc5095E3B3b248007ef69E09F81F75612fBE629ce`](https://sepolia.etherscan.io/address/0xc5095E3B3b248007ef69E09F81F75612fBE629ce) |
+| AAStarAirAccountV7 (impl) | [`0xc8D9803ebde03706926181b540220C5E58306Ef8`](https://sepolia.etherscan.io/address/0xc8D9803ebde03706926181b540220C5E58306Ef8) |
+| AirAccountExtension (facet) | [`0x3Cb68b0c573608b4f9FF4b51ab33DB88ac495b17`](https://sepolia.etherscan.io/address/0x3Cb68b0c573608b4f9FF4b51ab33DB88ac495b17) |
+| AgentRegistry | [`0xF21F9F50d72e2cb0D196AE92CF17F4A79d9b29a1`](https://sepolia.etherscan.io/address/0xF21F9F50d72e2cb0D196AE92CF17F4A79d9b29a1) |
 
 ## Reused v0.22.0 singletons (unchanged bytecode)
 
@@ -41,21 +44,24 @@
 
 | Step | Tx | Gas |
 |---|---|---|
-| impl | [`0x1b69ca46…eeacb4`](https://sepolia.etherscan.io/tx/0x1b69ca460516e6fb89f85dc3b88761f48f3b0659e5f070b0a0a8c5749eeeacb4) | 10,369,599 |
-| factory | [`0x54b23750…5b4d81`](https://sepolia.etherscan.io/tx/0x54b237501dbd311c2c0ae1804b37a4b72e177d8d6e0eb09d74081783535b4d81) | 3,038,556 |
-| agentRegistry | [`0x5bef9a52…f9ba68`](https://sepolia.etherscan.io/tx/0x5bef9a52773a6471b44df99dc587bcba241304cd6188fb665146d6685fb9ba68) | 808,200 |
-| bindFactory | [`0xc5475e1f…d697d26`](https://sepolia.etherscan.io/tx/0xc5475e1f29814bf3c85288fbf62039dcfa3f12dfdc0ca3adc42071b46d697d26) | 48,000 |
-| setAgentRegistry | [`0xe16e5b30…4b295a6`](https://sepolia.etherscan.io/tx/0xe16e5b30e1c33e2068c1d299aa6faafdcbbd7314ef2af38c259f106c44b295a6) | 47,839 |
+| factory | [`0x38d7913a…67c0b`](https://sepolia.etherscan.io/tx/0x38d7913acf27f1f3b997213b0ff8b73833c430dbe0bce0e72e7d8e179b167c0b) | 3,080,376 |
+| agentRegistry | [`0x33a637f2…c9d392`](https://sepolia.etherscan.io/tx/0x33a637f2c7927425151636c41395ee9b0040f3b82702b42a5a11cd7fabc9d392) | 808,200 |
+| bindFactory | [`0xa9a69735…718a6d`](https://sepolia.etherscan.io/tx/0xa9a69735f1ad922f73badd91fa87d85c0e99c21150d5bf74a07b5d20e1718a6d) | 48,000 |
+| setAgentRegistry | [`0x237701b7…4330f1a`](https://sepolia.etherscan.io/tx/0x237701b76c990693c1edc15ac0b2584d30131331f618b5daece6fd3514330f1a) | 47,839 |
+
+(impl deployed in block 11178704.)
 
 ## On-chain verification
 
 - `impl.ACCOUNT_VERSION()` → `"0.23.0"` ✓
 - `impl.validatorRouter()` → `0xfcDfd17a373E037c3F9C8ffE2c781915E7Ae6e11` ✓
+- `factory.FACTORY_VERSION()` → `"0.23.0"` ✓
+- `factory.getConfigHash(...)` returns a hash (PR #158 relay-mode views present) ✓
 
 ## On-chain E2E — isValidOwnerAuth (`scripts/e2e-isvalidownerauth-v0.23.0.ts`)
 
-Test account `0x04332bdb1Bdfb6a51DafE85388121AB09D89afD1` (salt 230001, direct mode),
-createAccount tx [`0x01310de0…a07ecb`](https://sepolia.etherscan.io/tx/0x01310de0ebb34dc30014d32f6118f473820f1f2fd67bed8526d6aa2078a07ecb).
+Test account `0xDF8b5aEc09b3EfF9942d3A698BfCA5F0aa665513` (salt 230001, direct mode),
+createAccount tx [`0xfda38d54…df89f0`](https://sepolia.etherscan.io/tx/0xfda38d543d0ab48ac4c379b9702172755c4b57f40cf54475a51cd23c0fdf89f0).
 
 | Case | ownerAuth | Result |
 |---|---|---|

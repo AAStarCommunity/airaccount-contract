@@ -11,7 +11,7 @@ so owner authorization is never re-implemented off-chain (no drift). `ownerAuth 
 `0x01` = ECDSA `personal_sign(userOpHash)`, tag `0x02` = WebAuthn assertion over the owner passkey; success
 magic `0xa0cf00cf`, fail-closed. Unblocks device-passkey Tier-3 gasless DVT authorization. Hosted in
 `AirAccountExtension` (main account had only 222 B EIP-170 headroom), reached via fallback.
-Factory (Sepolia): `0x61B573D785dFd6DECAc7BB8a67F862E2B7a3792e`. Forge test **882** pass. On-chain E2E **4/4**.
+Factory (Sepolia): `0xc5095E3B3b248007ef69E09F81F75612fBE629ce`. Forge test **882** pass. On-chain E2E **4/4**.
 No factory/account API change vs v0.22.0.
 
 <details><summary>v0.22.0 (2026-06-30) — Factory Passkey Bootstrap</summary>

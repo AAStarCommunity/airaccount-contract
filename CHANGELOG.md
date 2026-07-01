@@ -49,9 +49,10 @@ owner is a KMS ECDSA key + a device passkey, without a KMS ceremony producing an
 - `ACCOUNT_VERSION` / `FACTORY_VERSION` → `0.23.0`. No factory/account API change vs v0.22.0.
 
 ### Deployed (Sepolia, 2026-07-01)
-- Impl `0xB54C490Ac28e4367BE5605Ca28Ff1Ea9736eB1fd`, Extension `0x9af60b5F19Ed099f9c709B74EADe0b65aBf7993C`
-- Factory `0x61B573D785dFd6DECAc7BB8a67F862E2B7a3792e`, AgentRegistry `0x99edDdEbeA2032781790ea47F3911C1ba0F43b2D`
-- On-chain E2E account `0x04332bdb1Bdfb6a51DafE85388121AB09D89afD1`, 4/4 pass (owner ECDSA → magic; wrong-signer/unknown-tag/empty → fail).
+- Impl `0xc8D9803ebde03706926181b540220C5E58306Ef8`, Extension `0x3Cb68b0c573608b4f9FF4b51ab33DB88ac495b17`
+- Factory `0xc5095E3B3b248007ef69E09F81F75612fBE629ce`, AgentRegistry `0xF21F9F50d72e2cb0D196AE92CF17F4A79d9b29a1`
+- On-chain E2E account `0xDF8b5aEc09b3EfF9942d3A698BfCA5F0aa665513`, 4/4 pass (owner ECDSA → magic; wrong-signer/unknown-tag/empty → fail).
+- Rebased onto `main` (PR #158 `getConfigHash`/`hashCreateAccount` factory views) before deploy, so the v0.23.0 factory retains those relay-mode helpers.
 
 ---
 
