@@ -265,6 +265,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x9c95759d` | `pendingExit(address)` | ForceExitModule |
 | `0x9cfd7cff` | `accountId()` | AAStarAirAccountV7 |
 | `0x9dc6e6b3` | `announceForStealth(address,address,bytes,bytes)` | AirAccountDelegate |
+| `0xa0cf00cf` | `isValidOwnerAuth(bytes32,bytes)` | AirAccountExtension |
 | `0xa16a4fa2` | `registerParser(address,address)` | CalldataParserRegistry |
 | `0xa22cb465` | `setApprovalForAll(address,bool)` | IERC8004IdentityRegistry |
 | `0xa314d1c5` | `guardApproveAlgorithm(uint8)` | AAStarAirAccountBase |

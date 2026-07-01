@@ -2494,7 +2494,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AirAccountExtension
 
 - **Source:** `src/core/AirAccountExtension.sol`
-- **Functions:** 45 · **Events:** 26 · **Errors:** 57
+- **Functions:** 46 · **Events:** 26 · **Errors:** 57
 - **Title:** AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 - Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase         to keep the account under EIP-170's 24,576-byte runtime limit:           - ERC-8004 agent identity / reputation / wallet binding           - weighted-signature config governance (setWeightConfig + change proposal flow)         Deployed once (singleton) per implementation; the account reaches it via fallback +         delegatecall, so all logic runs in the ACCOUNT's storage/context: msg.sender,         address(this), owner, guardians, events and reverts are exactly as if inline.
 
@@ -2522,6 +2522,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x43538f9c` | `getGuardianP256Key(uint8)` | view | — | Get the P-256 public key stored for a guardian slot (returns (0,0) if not a P-256 slot). |
 | `0x7ceab3b1` | `guard()` | view | — | Global guard for spending limits (set at construction, cannot be removed) |
 | `0x9517e29f` | `installModule(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | ERC-7579: Install a module. Supports both ECDSA and P-256 guardian multi-sig. |
+| `0xa0cf00cf` | `isValidOwnerAuth(bytes32,bytes)` | view | — | ERC-1271-style owner-authorization check for a userOp, callable off-chain via eth_call.         Single source of truth for "did the account OWNER authorize this userOpHash", so a DVT         co-signer (or any relayer) can validate owner authorization WITHOUT re-implementing         ECDSA / WebAuthn verification off-chain (which would inevitably drift from this contract).         Issue #159; unblocks device-passkey Tier-3 DVT authorization.         ownerAuth = [tag(1 byte)] \|\| payload:           tag 0x01 → payload = 65-byte ECDSA over EIP-191 personal_sign(userOpHash), recover==owner.                      NOTE the EIP-191 prefix matches the UserOp owner path (_validateECDSA), NOT the                      raw-hash ERC-1271 isValidSignature path — callers MUST personal_sign, not raw-sign.           tag 0x02 → payload = abi.encode(authenticatorData, clientDataJSONPrefix,                      clientDataJSONSuffix, bytes32 r, bytes32 s): a WebAuthn assertion over the owner                      device passkey (p256KeyX / p256KeyY), with challenge = userOpHash. |
 | `0x353f0860` | `mintAgentIdentity(address,string)` | nonpayable | onlyOwner, nonReentrant | Mint an ERC-8004 agent identity NFT to this AirAccount via the official registry. |
 | `0x642c7989` | `modifyTierLimitsWithMixedGuardians(uint256,uint256,uint256,uint8[],bytes[])` | nonpayable | onlyOwnerOrSelf | Modify tier limits with mixed-type guardian signatures (ECDSA or P-256).         Required when at least one guardian is a P-256 type. |
 | `0xc8175b3f` | `moduleInstallTimelock()` | view | — | Read the active module-install timelock (seconds). 0 = disabled (immediate installs). |
@@ -2753,6 +2754,23 @@ Authoritative, auto-generated reference for every external/public function, even
 | `moduleTypeId` | `uint256` | 1=Validator, 2=Executor, 4=Hook. |
 | `module` | `address` | Module contract address (must be deployed). |
 | `initData` | `bytes` | When sigsRequired > 0: abi.encode(uint8[] signerIdxs, bytes[] sigs, bytes moduleInitData).   When sigsRequired == 0: raw module init data.   Op: "INSTALL_MODULE", opData: abi.encode(moduleTypeId, module, keccak256(moduleInitData), nonce). |
+
+#### `isValidOwnerAuth(bytes32 userOpHash, bytes ownerAuth)`
+
+`0xa0cf00cf` · view · access: —
+
+> ERC-1271-style owner-authorization check for a userOp, callable off-chain via eth_call.         Single source of truth for "did the account OWNER authorize this userOpHash", so a DVT         co-signer (or any relayer) can validate owner authorization WITHOUT re-implementing         ECDSA / WebAuthn verification off-chain (which would inevitably drift from this contract).         Issue #159; unblocks device-passkey Tier-3 DVT authorization.         ownerAuth = [tag(1 byte)] \|\| payload:           tag 0x01 → payload = 65-byte ECDSA over EIP-191 personal_sign(userOpHash), recover==owner.                      NOTE the EIP-191 prefix matches the UserOp owner path (_validateECDSA), NOT the                      raw-hash ERC-1271 isValidSignature path — callers MUST personal_sign, not raw-sign.           tag 0x02 → payload = abi.encode(authenticatorData, clientDataJSONPrefix,                      clientDataJSONSuffix, bytes32 r, bytes32 s): a WebAuthn assertion over the owner                      device passkey (p256KeyX / p256KeyY), with challenge = userOpHash.
+
+*@dev* SINGLE-FACTOR owner authorization: returns the magic if EITHER the owner ECDSA key OR the         owner device passkey validates. This is NOT tier-N cumulative authorization — a DVT MUST         layer its own tier policy on top and must not treat the magic as full tiered approval.Pure view (no state) for eth_call; fail-closed — any empty / short / malformed / unknown-tag         input returns 0xffffffff (never reverts), so a DVT treats non-magic uniformly as "deny".Non-upgradable account: only accounts deployed from an implementation carrying this facet         expose isValidOwnerAuth; pre-existing accounts must migrate to gain it.
+
+| param | type | description |
+|---|---|---|
+| `userOpHash` | `bytes32` | The exact 32-byte hash the owner authorized. The DVT MUST derive this itself and                    never trust a caller-supplied hash. |
+| `ownerAuth` | `bytes` | Tagged owner-authorization blob (see above). |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bytes4` | 0xa0cf00cf (isValidOwnerAuth.selector) on success, 0xffffffff otherwise. |
 
 #### `mintAgentIdentity(address identityRegistry, string agentURI)`
 
