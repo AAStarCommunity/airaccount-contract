@@ -75,3 +75,19 @@ Account2 (P256) `0x368B027323aBD7A1Fd8bf206894A8cc9cae731e5`.
 - **T29 (fix d):** `account.validator` == new router, `router[0x08]` == new SessionKeyValidator ✓.
 
 Unit tests: **893 pass** (cancun + prague). EIP-170: impl 24,443 B (133 B headroom).
+
+## Codex challenge (release-gate §5)
+
+Adversarial verification via `/codex:rescue`. Codex's sandbox could not reach Sepolia RPC (same
+limitation as prior releases), so it performed evidence-consistency verification and found **no internal
+contradictions** (versions, router 0x01/0x08 wiring, `setupComplete`, reverted-vs-live SessionKeyValidator
+addresses all consistent). It correctly flagged that the evidence omitted the crux field
+`impl.validatorRouter()`. That crux was then confirmed by this session via **live viem RPC**:
+
+- `impl.validatorRouter()` → `0x10fAfB964a6bb88552a588Ed652257EE4E90Eb87` (**== new router** ✓) — so new
+  accounts auto-wire `validator` to the new router and resolve the FIXED `SessionKeyValidator` at 0x08.
+- The OOG-reverted first session-validator address (`0x6cee7fcb…`) has **empty bytecode** (nothing
+  deployed there) ✓; the live `SessionKeyValidator` (`0x6b044fB2…`) has 11,341 B runtime ✓.
+
+Combined with the deploy script's own on-chain version/router assertions and the E2E T29 live check
+(`account.validator == new router`), every recorded fact is **REAL + FEATURE-MET**.
