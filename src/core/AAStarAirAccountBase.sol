@@ -1000,9 +1000,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         bytes32 hash = userOpHash.toEthSignedMessageHash();
         // Security fix "M-C": use tryRecover (never reverts) inside validateUserOp — OZ .recover reverts
         // on high-S / bad-v, violating the ERC-4337/7562 return-1-not-revert rule. tryRecover yields
-        // address(0) on any malformed sig, and owner is never address(0), so `!= owner` fails safely.
+        // address(0) on any malformed sig. The explicit `== address(0)` guard (mirroring _validateECDSA
+        // and isValidOwnerAuth) is REQUIRED: an account created with owner == address(0) (the factory
+        // convenience path does not reject it) would otherwise let a malformed owner sig 0-match owner=0
+        // and pass the owner factor. The guardian sites below need no such guard — a guardian slot < count
+        // is never address(0) (a real address or the 0x7026 P256 sentinel).
         (address recovered,,) = hash.tryRecover(aaSignature);
-        if (recovered != owner) return 1;
+        if (recovered == address(0) || recovered != owner) return 1;
 
         // If the PROTOCOL-level aggregator is configured (single value on AAStarBLSAlgorithm, set
         // only by the protocol Safe), defer BLS verification to the EntryPoint's batch
