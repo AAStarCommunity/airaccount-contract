@@ -998,8 +998,15 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
         // SECURITY 1: AA signature must validate userOpHash (owner authorization)
         bytes32 hash = userOpHash.toEthSignedMessageHash();
-        address recovered = hash.recover(aaSignature);
-        if (recovered != owner) return 1;
+        // Security fix "M-C": use tryRecover (never reverts) inside validateUserOp — OZ .recover reverts
+        // on high-S / bad-v, violating the ERC-4337/7562 return-1-not-revert rule. tryRecover yields
+        // address(0) on any malformed sig. The explicit `== address(0)` guard (mirroring _validateECDSA
+        // and isValidOwnerAuth) is REQUIRED: an account created with owner == address(0) (the factory
+        // convenience path does not reject it) would otherwise let a malformed owner sig 0-match owner=0
+        // and pass the owner factor. The guardian sites below need no such guard — a guardian slot < count
+        // is never address(0) (a real address or the 0x7026 P256 sentinel).
+        (address recovered,,) = hash.tryRecover(aaSignature);
+        if (recovered == address(0) || recovered != owner) return 1;
 
         // If the PROTOCOL-level aggregator is configured (single value on AAStarBLSAlgorithm, set
         // only by the protocol Safe), defer BLS verification to the EntryPoint's batch
@@ -1087,7 +1094,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             if (bitmap & (uint8(1) << (3 + gi)) != 0) {
                 if (gi >= _guardianCount) return 1;
                 if (sigData.length < cursor + 65) return 1;
-                address recovered = guardianHash.recover(sigData[cursor:cursor + 65]);
+                // M-C: tryRecover (revert-free); 0 on bad sig, guardian slot < count is never 0.
+                (address recovered,,) = guardianHash.tryRecover(sigData[cursor:cursor + 65]);
                 if (recovered != _getGuardian(gi)) return 1;
                 if (gi == 0) accumulated += wc.guardian0Weight;
                 else if (gi == 1) accumulated += wc.guardian1Weight;
@@ -1160,7 +1168,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         bytes calldata guardianSig = sigData[sigData.length - 65:];
 
         bytes32 guardianHash = userOpHash.toEthSignedMessageHash();
-        address guardianRecovered = guardianHash.recover(guardianSig);
+        // M-C: tryRecover (revert-free in validateUserOp); 0 on bad sig never matches a real guardian.
+        (address guardianRecovered,,) = guardianHash.tryRecover(guardianSig);
 
         bool isGuardian = false;
         for (uint8 i = 0; i < _guardianCount; i++) {
@@ -1236,7 +1245,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // LAYER 3: Guardian ECDSA co-sign (last 65 bytes)
         bytes calldata guardianSig = sigData[sigData.length - 65:];
         bytes32 guardianHash = userOpHash.toEthSignedMessageHash();
-        address guardianRecovered = guardianHash.recover(guardianSig);
+        // M-C: tryRecover (revert-free in validateUserOp); 0 on bad sig never matches a real guardian.
+        (address guardianRecovered,,) = guardianHash.tryRecover(guardianSig);
 
         bool isGuardian = false;
         for (uint8 i = 0; i < _guardianCount; i++) {

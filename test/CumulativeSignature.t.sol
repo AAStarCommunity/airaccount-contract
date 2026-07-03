@@ -241,6 +241,36 @@ contract CumulativeSignatureTest is Test {
         assertEq(result, 1, "Non-guardian signer should fail cumulative T3");
     }
 
+    /// @notice Security fix "M-C": a high-S guardian signature must make validateUserOp RETURN 1
+    ///         (SIG_VALIDATION_FAILED), not REVERT. OZ `.recover` reverts on high-S, violating the
+    ///         ERC-4337/7562 revert-free rule; `tryRecover` yields address(0), which never matches a
+    ///         guardian, so the op fails closed. Before the fix, validateUserOp would revert here.
+    function test_cumulativeTier3_highSGuardianSig_returns1_notRevert() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        // Valid guardian sig, flipped to its high-S malleable complement (s' = n - s, v ^= 1).
+        (uint8 v, bytes32 r, bytes32 s) = _signHash(guardianWallet1, userOpHash);
+        uint256 n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
+        bytes32 highS = bytes32(n - uint256(s));
+        uint8 vFlip = v == 27 ? 28 : 27;
+
+        bytes memory blsSig = new bytes(256);
+        bytes memory sig = abi.encodePacked(
+            bytes32(uint256(0xAA)),          // P256 r (mocked)
+            bytes32(uint256(0xBB)),          // P256 s (mocked)
+            bytes32(uint256(1)),             // nodeIdsLength
+            keccak256("testnode"),           // nodeId
+            blsSig,                          // BLS sig
+            abi.encodePacked(r, highS, vFlip) // guardian ECDSA — HIGH-S (would revert OZ .recover)
+        );
+        userOp.signature = abi.encodePacked(uint8(0x05), sig);
+
+        vm.prank(entryPointAddr);
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0); // must NOT revert
+        assertEq(result, 1, "high-S guardian sig must fail closed (return 1), not revert");
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // F32: _algTier mapping tests
     // ═══════════════════════════════════════════════════════════════════

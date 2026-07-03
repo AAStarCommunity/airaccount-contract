@@ -145,6 +145,34 @@ contract AAStarAirAccountV7_M2Test is Test {
         assertEq(result, 0, "ECDSA with algId prefix should pass");
     }
 
+    /// @dev Security fix "M-C" zero-recover guard: an account created with owner == address(0)
+    ///      (the factory convenience path does not reject it) must NOT let a malformed owner ECDSA
+    ///      (which tryRecover resolves to address(0)) 0-match owner==0 and pass the owner factor.
+    ///      Without the `recovered == address(0)` guard, a valid BLS payload would then validate the
+    ///      op with no genuine owner signature. Uses the BLS-triple path (algId 0x01, site
+    ///      _validateTripleSignature) whose owner check is site 1005.
+    function test_MC_ownerZero_malformedOwnerSig_notFalseMatch() public {
+        AAStarAirAccountV7 zeroOwner = new AAStarAirAccountV7(address(0));
+        zeroOwner.initialize(entryPointAddr, address(0), _emptyConfig(), address(0), bytes32(0), bytes32(0));
+        vm.deal(address(zeroOwner), 1 ether);
+        vm.prank(address(0));
+        zeroOwner.setValidator(address(router));
+        router.registerAlgorithm(0x01, address(mockAlg)); // BLS mock → success
+
+        PackedUserOperation memory userOp = _buildUserOp(address(zeroOwner));
+        bytes32 userOpHash = keccak256(abi.encode(userOp));
+
+        // BLS-triple sig: [nodeIdsLen=1][nodeId(32)][blsSig(256)][ownerECDSA(65) = zeros → recovers to 0]
+        bytes memory blsSig = new bytes(256);
+        bytes memory ownerGarbage = new bytes(65);
+        bytes memory sigData = abi.encodePacked(bytes32(uint256(1)), keccak256("node"), blsSig, ownerGarbage);
+        userOp.signature = abi.encodePacked(uint8(0x01), sigData);
+
+        vm.prank(entryPointAddr);
+        uint256 result = zeroOwner.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "owner==0 must not be satisfiable by a malformed (0-recovering) owner sig");
+    }
+
     // ─── Invalid ECDSA ───────────────────────────────────────────────
 
     function test_invalidEcdsaSig() public {
