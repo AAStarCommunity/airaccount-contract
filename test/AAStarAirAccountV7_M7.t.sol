@@ -668,6 +668,24 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertEq(mockTarget.value(), 99);
     }
 
+    /// @dev Security fix "d": an installed executor must NOT be able to make the account call itself
+    ///      (which would reach onlyOwnerOrSelf config functions and let a Tier-1 executor raise the
+    ///      limits meant to bound it). target == address(account) is rejected outright.
+    function test_executeFromExecutor_selfCall_reverts() public {
+        _installWithG0(2, address(mockModule));
+
+        bytes32 mode = bytes32(0);
+        bytes memory calldata_ = abi.encodePacked(
+            address(account), // target = the account ITSELF
+            uint256(0),
+            abi.encodeWithSignature("setTierLimits(uint256,uint256)", uint256(1 ether), uint256(2 ether))
+        );
+
+        vm.prank(address(mockModule));
+        vm.expectRevert(AAStarAirAccountV7.SelfCallForbidden.selector);
+        account.executeFromExecutor(mode, calldata_);
+    }
+
     /// @notice C-4: an executor runs at Tier 1 and cannot supply higher-tier sigs, so an ETH
     ///         transfer above tier1Limit must revert InsufficientTier. The owner defines "small"
     ///         via tier1Limit.

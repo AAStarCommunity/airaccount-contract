@@ -118,6 +118,22 @@ contract SessionKeyValidatorTest is Test {
         validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 2 hours), address(0), bytes4(0)));
     }
 
+    /// @dev Security fix "d": even a fully-UNSCOPED session must not be able to target the account
+    ///      itself (which would let a Tier-1 session self-call onlyOwnerOrSelf config functions and
+    ///      raise its own limits). External targets still pass.
+    function test_checkSessionScope_selfCall_reverts() public {
+        vm.prank(owner);
+        validator.grantSessionDirect(account, sessionKey, _sessionLegacy(uint48(block.timestamp + 1 hours), address(0), bytes4(0)));
+
+        bytes32 keyId = bytes32(uint256(uint160(sessionKey)));
+        // Targeting the account itself is rejected regardless of (unscoped) scope.
+        vm.expectRevert(abi.encodeWithSelector(SessionKeyValidator.CallTargetForbidden.selector, account));
+        validator.checkSessionScope(account, keyId, 0x01 /* SESSION_TYPE_ECDSA */, account, bytes4(0x12345678));
+
+        // A normal external target still passes for the unscoped session.
+        validator.checkSessionScope(account, keyId, 0x01, other, bytes4(0x12345678));
+    }
+
     function test_grantSessionDirect_afterExpiry_canRegrant() public {
         // t=1_000_000: grant session expiring at t=1_003_600 (+1h, within 24h limit)
         vm.warp(1_000_000);

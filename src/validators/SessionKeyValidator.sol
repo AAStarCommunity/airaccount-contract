@@ -339,6 +339,14 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         if (s.revoked) revert SessionRevoked_();
         if (block.timestamp >= s.expiry) revert SessionExpired();
 
+        // Security fix "d": a session key must never make the account call ITSELF. A self-targeted
+        // execute() would reach the account's onlyOwnerOrSelf config functions (setTierLimits /
+        // setWeightConfig …) with msg.sender == address(this), letting a Tier-1 session raise the very
+        // limits meant to bound it. Config is an owner-only privilege; the owner's own gasless
+        // self-config is authorized directly (not via this session path), so this is safe to block for
+        // ALL sessions regardless of scope (including fully-unscoped grants).
+        if (dest == account) revert CallTargetForbidden(dest);
+
         // Target scope: callTargets array takes priority over contractScope.
         if (s.callTargets.length > 0) {
             if (!_containsAddr(s.callTargets, dest)) revert CallTargetForbidden(dest);
