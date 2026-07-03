@@ -6,6 +6,11 @@ script = "script"
 out = "out"
 libs = ["lib"]
 
+# Always emit storageLayout so `forge inspect <C> storage-layout` (used by the account≡Extension
+# storage-parity CI gate, scripts/check-storage-parity.mjs) reads it straight from the artifact and
+# never hits the "storage layout missing from artifact" caching quirk after a partial/prior build.
+extra_output = ["storageLayout"]
+
 solc_version = "0.8.33"
 evm_version = "cancun"
 via_ir = true

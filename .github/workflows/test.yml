@@ -35,6 +35,16 @@ jobs:
         run: node scripts/build-full-abi.mjs --check
         working-directory: .
 
+      # ── Diamond-lite storage-boundary gate (security hardening) ────────────
+      # AAStarAirAccountV7 (account) and AirAccountExtension (fallback-routed facet)
+      # share storage via delegatecall, so they MUST agree on every slot. This was
+      # convention-only; the check makes it machine-enforced so a future state-var
+      # added to either side (instead of AAStarAgentStorageLayout) fails the build
+      # instead of silently corrupting storage across the boundary.
+      - name: Verify account ≡ Extension storage-layout parity
+        run: node scripts/check-storage-parity.mjs
+        working-directory: .
+
       # ── ABI documentation drift gate (v0.17.2-beta.4) ──────────────────────
       # gen-abi-docs.mjs regenerates docs/abi/{reference,selectors}.md from the
       # out/ artifacts forge test wrote. It uses viem (keccak for event/error
