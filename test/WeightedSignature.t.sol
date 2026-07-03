@@ -220,21 +220,38 @@ contract WeightedSignatureTest is Test {
         IAirAccountAgent(address(account)).setWeightConfig(weaker);
     }
 
-    /// @dev The combined exploit (raise a threshold to make room, then raise weights so an owner-only
-    ///      subset crosses a higher tier) must also be rejected, even in a single call.
-    function test_setWeightConfig_raiseThresholdAndWeight_reverts() public {
+    /// @dev The combined exploit (raise thresholds to make room, then raise the owner-controllable
+    ///      weights so passkey+ecdsa alone reach Tier-3) is rejected at VALIDATION by the subset
+    ///      invariant (fix "b" / Codex) — before it can even reach the _isWeakening gate.
+    function test_setWeightConfig_ownerSubsetReachesT3_reverts() public {
         vm.prank(ownerW.addr);
         IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
         AAStarAgentStorageLayout.WeightConfig memory weaker = safeConfig;
-        weaker.tier1Threshold = 10; // raise (strengthening on its own)
+        weaker.tier1Threshold = 10;
         weaker.tier2Threshold = 12;
         weaker.tier3Threshold = 15;
-        weaker.passkeyWeight = 9;   // but raising weights is the weakening → must be caught
+        weaker.passkeyWeight = 9;   // passkey+ecdsa = 18 >= tier3Threshold(15) → owner-alone reaches T3
         weaker.ecdsaWeight = 9;
         vm.prank(ownerW.addr);
-        vm.expectRevert(AAStarAirAccountBase.WeakeningRequiresProposal.selector);
+        vm.expectRevert(AAStarAirAccountBase.InsecureWeightConfig.selector);
         IAirAccountAgent(address(account)).setWeightConfig(weaker);
+    }
+
+    /// @dev Codex (fix "b"): the FIRST-TIME setWeightConfig bypasses the _isWeakening guardian gate
+    ///      (`current.tier1Threshold != 0` is false). The subset invariant must still reject a fresh
+    ///      config where the owner-alone subset (passkey+ecdsa) reaches Tier-3 — otherwise a compromised
+    ///      owner sets it directly with no guardian consent.
+    function test_setWeightConfig_firstTime_ownerSubsetReachesT3_reverts() public {
+        // Fresh account (weightConfig uninitialised): passkey+ecdsa = 4 >= tier3Threshold(4).
+        AAStarAgentStorageLayout.WeightConfig memory evil = AAStarAgentStorageLayout.WeightConfig({
+            passkeyWeight: 2, ecdsaWeight: 2, blsWeight: 0,
+            guardian0Weight: 0, guardian1Weight: 0, guardian2Weight: 0, _padding: 0,
+            tier1Threshold: 3, tier2Threshold: 4, tier3Threshold: 4
+        });
+        vm.prank(ownerW.addr);
+        vm.expectRevert(AAStarAirAccountBase.InsecureWeightConfig.selector);
+        IAirAccountAgent(address(account)).setWeightConfig(evil);
     }
 
     /// @dev LOWERING a weight is a strengthening (that factor contributes less) → allowed directly.

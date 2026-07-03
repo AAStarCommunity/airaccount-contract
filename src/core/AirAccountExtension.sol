@@ -693,6 +693,17 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         if (config.tier2Threshold != 0 && config.tier2Threshold < config.tier1Threshold) revert InsecureWeightConfig();
         if (config.tier3Threshold != 0 && config.tier3Threshold < config.tier2Threshold) revert InsecureWeightConfig();
         if (config.tier3Threshold != 0 && config.tier2Threshold == 0) revert InsecureWeightConfig();
+        // Security fix "b" (Codex): the owner controls BOTH the device passkey (P256) and the KMS ECDSA
+        // key in the TEE model, so {passkey, ecdsa} is the OWNER-ALONE signer subset. It may satisfy the
+        // lower tiers, but MUST NOT reach Tier-3 (the highest-value, multi-sig tier), which is meant to
+        // require an EXTERNAL factor (DVT BLS and/or a guardian). Without this, a compromised owner could
+        // set a config — including a FIRST-TIME config, which bypasses the _isWeakening guardian gate —
+        // where passkey+ecdsa alone accumulate into Tier-3. Enforced in _validateWeightConfig so it holds
+        // for both setWeightConfig and proposeWeightChange. Sum in uint16 (max 2*255) to avoid overflow.
+        if (config.tier3Threshold != 0 &&
+            uint16(config.passkeyWeight) + uint16(config.ecdsaWeight) >= config.tier3Threshold) {
+            revert InsecureWeightConfig();
+        }
     }
 
     /// @dev Returns true if proposed config is a weakening of current config.
