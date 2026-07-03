@@ -116,6 +116,42 @@ contract AAStarAirAccountFactoryV7Test is Test {
         assertEq(predicted, actual);
     }
 
+    /// @dev Security fix "c": guardian identities are folded into the CREATE2 address, so a mempool
+    ///      front-runner using their OWN guardians resolves to a DIFFERENT address and can no longer
+    ///      land on the victim's (pre-funded) counterfactual address. Regression for the guardian-
+    ///      substitution takeover on the convenience path.
+    function test_createWithDefaults_guardianFrontRun_prevented() public {
+        // Victim's counterfactual address for THEIR chosen guardians (what an SDK funds pre-deploy).
+        address victimAddr = factory.getAddressWithDefaults(ownerA, 42, g1Wallet.addr, g2Wallet.addr, TEST_DAILY_LIMIT);
+
+        // Attacker front-runs with the SAME (owner, salt) but their OWN guardians, self-signing acceptance.
+        Vm.Wallet memory atk1 = vm.createWallet("atkGuardian1");
+        Vm.Wallet memory atk2 = vm.createWallet("atkGuardian2");
+        bytes memory as1 = _guardianSig(atk1, ownerA, 42);
+        bytes memory as2 = _guardianSig(atk2, ownerA, 42);
+        address attackerAddr =
+            factory.createAccountWithDefaults(ownerA, 42, atk1.addr, as1, atk2.addr, as2, TEST_DAILY_LIMIT);
+
+        // Attacker's account lands at a DIFFERENT address — NOT the victim's pre-funded one.
+        assertTrue(attackerAddr != victimAddr, "attacker must not reach victim's counterfactual address");
+
+        // The victim still deploys deterministically at their own predicted address with their guardians.
+        bytes memory vs1 = _guardianSig(g1Wallet, ownerA, 42);
+        bytes memory vs2 = _guardianSig(g2Wallet, ownerA, 42);
+        address deployedVictim =
+            factory.createAccountWithDefaults(ownerA, 42, g1Wallet.addr, vs1, g2Wallet.addr, vs2, TEST_DAILY_LIMIT);
+        assertEq(deployedVictim, victimAddr, "victim deploys at their predicted address");
+        assertEq(AAStarAirAccountV7(payable(deployedVictim)).guardians(0), g1Wallet.addr);
+    }
+
+    /// @dev Different guardian sets under the same (owner, salt) must yield different addresses.
+    function test_getAddressWithDefaults_guardiansAffectAddress() public {
+        address a = factory.getAddressWithDefaults(ownerA, 7, g1Wallet.addr, g2Wallet.addr, TEST_DAILY_LIMIT);
+        address b = factory.getAddressWithDefaults(ownerA, 7, g2Wallet.addr, g1Wallet.addr, TEST_DAILY_LIMIT); // swapped
+        address c = factory.getAddressWithDefaults(ownerA, 7, makeAddr("x"), makeAddr("y"), TEST_DAILY_LIMIT);
+        assertTrue(a != b && a != c && b != c, "guardian set must change the counterfactual address");
+    }
+
     function test_createAccountWithDefaults_differentLimits() public {
         bytes memory sig1a = _guardianSig(g1Wallet, ownerA, 0, 0.1 ether);
         bytes memory sig2a = _guardianSig(g2Wallet, ownerA, 0, 0.1 ether);

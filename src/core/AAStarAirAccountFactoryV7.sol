@@ -336,7 +336,7 @@ contract AAStarAirAccountFactoryV7 {
         (address recovered2,,) = acceptHash.tryRecover(guardian2Sig);
         if (recovered2 != guardian2) revert GuardianDidNotAccept(guardian2);
 
-        bytes32 cloneSalt = _getDefaultSalt(owner, salt);
+        bytes32 cloneSalt = _getDefaultSalt(owner, salt, guardian1, guardian2);
         account = Clones.predictDeterministicAddress(implementation, cloneSalt);
         if (account.code.length > 0) {
             return account;
@@ -460,11 +460,15 @@ contract AAStarAirAccountFactoryV7 {
     function getAddressWithDefaults(
         address owner,
         uint256 salt,
-        address /* guardian1 */,
-        address /* guardian2 */,
+        address guardian1,
+        address guardian2,
         uint256 /* dailyLimit */
     ) public view returns (address) {
-        return Clones.predictDeterministicAddress(implementation, _getDefaultSalt(owner, salt));
+        // Security fix "c": the guardian identities (already in this view's signature) are now folded
+        // into the salt, so the predicted address matches createAccountWithDefaults for the SAME
+        // guardian set and differs for any other set. SDKs that call this view already pass guardians,
+        // so they need no change; only an SDK that replicates the CREATE2 salt off-chain must add them.
+        return Clones.predictDeterministicAddress(implementation, _getDefaultSalt(owner, salt, guardian1, guardian2));
     }
 
     // ─── Internal ───────────────────────────────────────────────────
@@ -594,10 +598,24 @@ contract AAStarAirAccountFactoryV7 {
         return keccak256(abi.encodePacked(owner, salt, configHash));
     }
 
-    /// @dev Internal salt for createAccountWithDefaults/getAddressWithDefaults: binds to owner + salt only
-    ///      (guardian acceptance signatures already prevent front-running for this path).
-    function _getDefaultSalt(address owner, uint256 salt) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(owner, salt));
+    /// @dev Internal salt for createAccountWithDefaults/getAddressWithDefaults. Binds owner + salt +
+    ///      BOTH guardian identities into the CREATE2 address (security fix "c").
+    ///
+    ///      Why guardians MUST be in the address: the ACCEPT_GUARDIAN acceptance digest proves the
+    ///      guardians consented, but it does NOT bind them to the OWNER's choice — nothing in the old
+    ///      (owner, salt)-only salt or the digest committed the owner to a specific guardian set. A
+    ///      mempool front-runner could therefore call createAccountWithDefaults with the victim's
+    ///      (owner, salt) but the ATTACKER's own guardians (self-signing the acceptance digest, which
+    ///      omitted guardian identities), deploy at the victim's counterfactual address, and then seize
+    ///      the account via 2-of-3 social recovery. Folding guardian1+guardian2 into the salt makes any
+    ///      different guardian set resolve to a DIFFERENT address, so an attacker can no longer land on
+    ///      the victim's (pre-funded) address without the victim's guardians' acceptance signatures.
+    function _getDefaultSalt(address owner, uint256 salt, address guardian1, address guardian2)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encodePacked(owner, salt, guardian1, guardian2));
     }
 
     /// @dev Agent account salt: namespaced with "AASTAR_AGENT_V1" to prevent cross-namespace
