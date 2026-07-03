@@ -1084,7 +1084,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `account` | `address` |  |
 | `chainQualified` | `bytes32` |  |
 
-#### `getAddressWithDefaults(address owner, uint256 salt, address arg2, address arg3, uint256 arg4)`
+#### `getAddressWithDefaults(address owner, uint256 salt, address guardian1, address guardian2, uint256 arg4)`
 
 `0x17253640` · view · access: —
 
@@ -1096,8 +1096,8 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
-| `arg2` | `address` |  |
-| `arg3` | `address` |  |
+| `guardian1` | `address` |  |
+| `guardian2` | `address` |  |
 | `arg4` | `uint256` |  |
 
 | returns | type | description |
