@@ -2240,6 +2240,11 @@
     },
     {
       "type": "error",
+      "name": "SelfCallForbidden",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "SessionScopeViolation",
       "inputs": []
     },

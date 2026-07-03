@@ -1240,7 +1240,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 49 · **Events:** 27 · **Errors:** 59
+- **Functions:** 49 · **Events:** 27 · **Errors:** 60
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1954,6 +1954,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xaa40cfc6` | `RecoveryTimelockNotExpired()` |
 | `0xab143c06` | `Reentrancy()` |
 | `0xbc5e8e59` | `ReputationRegistryFailed()` |
+| `0x30044a2f` | `SelfCallForbidden()` |
 | `0x3f041335` | `SessionScopeViolation()` |
 | `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |

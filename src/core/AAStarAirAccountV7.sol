@@ -275,6 +275,13 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @dev Reverts when executeUserOp's inner calldata is not execute()/executeBatch().
     error UnsupportedInnerSelector();
 
+    /// @dev Security fix "d": an installed executor module must not be able to make the account call
+    ///      ITSELF. A self-call would land in an `onlyOwnerOrSelf` config function (setTierLimits /
+    ///      setWeightConfig / modifyTierLimits…) with `msg.sender == address(this)`, letting a
+    ///      Tier-1-bounded executor raise the very limits meant to bound it. Executors only ever need
+    ///      to call EXTERNAL targets, so `target == address(this)` is rejected outright.
+    error SelfCallForbidden();
+
     function executeUserOp(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash
@@ -362,6 +369,9 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         if (executionCalldata.length < 52) revert ArrayLengthMismatch();
 
         address target = address(bytes20(executionCalldata[0:20]));
+        // Security fix "d": executors never need to call the account itself; blocking it prevents a
+        // self-call into onlyOwnerOrSelf config functions (executor authority-expansion).
+        if (target == address(this)) revert SelfCallForbidden();
         uint256 value  = uint256(bytes32(executionCalldata[20:52]));
         bytes calldata data = executionCalldata[52:];
 

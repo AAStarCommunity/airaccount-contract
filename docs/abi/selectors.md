@@ -436,6 +436,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` | AAStarAirAccountBase |
 | `0x2e14ce87` | `InvalidP256Key()` | AAStarAirAccountBase |
 | `0x2f681d07` | `RescueAlreadyPending()` | AirAccountDelegate |
+| `0x30044a2f` | `SelfCallForbidden()` | AAStarAirAccountV7 |
 | `0x30cd7471` | `NotOwner()` | AAStarAirAccountBase |
 | `0x311d795a` | `InvalidAgentSignature()` | AgentRegistry |
 | `0x33afc34b` | `ModuleInstallProposalExpired()` | AirAccountExtension |
