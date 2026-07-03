@@ -159,12 +159,12 @@ async function main() {
 
   // ── [1] SessionKeyValidator (fix d) ─────────────────────────────────────────
   console.log("[1/5] SessionKeyValidator (fix d — dest==account rejected)...");
-  const sessionKeyValidator = await deploy("sessionKeyValidator", "SessionKeyValidator", [], 2_500_000n);
+  const sessionKeyValidator = await deploy("sessionKeyValidator", "SessionKeyValidator", [], 4_000_000n);
   console.log(`  SessionKeyValidator: ${sessionKeyValidator}`);
 
   // ── [2] AAStarValidator router (new — 0x08 set-once forces a fresh router) ───
   console.log("\n[2/5] AAStarValidator router (fresh)...");
-  const router = await deploy("router", "AAStarValidator", [], 1_500_000n);
+  const router = await deploy("router", "AAStarValidator", [], 2_000_000n);
   console.log(`  Router: ${router}`);
   console.log("  register 0x01 → reused BLS algorithm...");
   await call("register-0x01", router, ROUTER_ABI as unknown[], "registerAlgorithm", [0x01, blsAlgorithm], 150_000n);
@@ -196,7 +196,7 @@ async function main() {
 
   // ── [5] AgentRegistry (fresh — bindFactory is set-once) ─────────────────────
   console.log("\n[5/5] AgentRegistry (fresh)...");
-  const agentRegistry = await deploy("agentRegistry", "AgentRegistry", [], 1_500_000n);
+  const agentRegistry = await deploy("agentRegistry", "AgentRegistry", [], 2_000_000n);
   console.log(`  AgentRegistry: ${agentRegistry}`);
 
   // ── Wiring ────────────────────────────────────────────────────────────────────
