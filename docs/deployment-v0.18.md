@@ -11,20 +11,44 @@ Addresses are also recorded in `.env.sepolia` as `AIRACCOUNT_V018_*`.
 
 ## Sepolia addresses (v0.18)
 
+> **Note**: Two deployments exist. **beta.2** is the canonical live deployment (full redeploy on
+> 2026-06-15 after the BLS-nonce fix). All E2E tests, SDK, and `.env.sepolia` `AIRACCOUNT_V018_*`
+> keys reference beta.2. beta.1 addresses are archived below for history only. (Fixes issue #118.)
+
+### beta.2 (canonical — 2026-06-15)
+
 | Contract | Address |
 |----------|---------|
 | EntryPoint v0.7 | [`0x0000000071727De22E5E9d8BAf0edAc6f37da032`](https://sepolia.etherscan.io/address/0x0000000071727De22E5E9d8BAf0edAc6f37da032) (canonical) |
-| Factory (`AAStarAirAccountFactoryV7`) | [`0xB14a870e4f63CA21a7EB753588CC4eBFb429E163`](https://sepolia.etherscan.io/address/0xB14a870e4f63CA21a7EB753588CC4eBFb429E163) |
-| Implementation (`AAStarAirAccountV7`) | [`0x1Bc1119e3Ce4B6D158a6eadb31A06FdcE51992cF`](https://sepolia.etherscan.io/address/0x1Bc1119e3Ce4B6D158a6eadb31A06FdcE51992cF) |
-| Extension (`AirAccountExtension`) | [`0xB1B3acd47DB89806F8431da3452769f1243b4d56`](https://sepolia.etherscan.io/address/0xB1B3acd47DB89806F8431da3452769f1243b4d56) |
-| BLSAlgorithm (`AAStarBLSAlgorithm`) | [`0x2869EEb04218ca666c6373c0DC5aCDa04F00adFA`](https://sepolia.etherscan.io/address/0x2869EEb04218ca666c6373c0DC5aCDa04F00adFA) |
-| BLSAggregator (`AAStarBLSAggregator`) | [`0x9AD55930B77C002dF884F4dac846D2077CDA7C8b`](https://sepolia.etherscan.io/address/0x9AD55930B77C002dF884F4dac846D2077CDA7C8b) |
-| ValidatorRouter (`AAStarValidator`) | [`0xe785AF830aD33F3E550FfdC0fEB81D42507DA39D`](https://sepolia.etherscan.io/address/0xe785AF830aD33F3E550FfdC0fEB81D42507DA39D) |
-| SessionKeyValidator | [`0x82f16163D0fb9c4dd7507b9999B79527a795291C`](https://sepolia.etherscan.io/address/0x82f16163D0fb9c4dd7507b9999B79527a795291C) |
-| ForceExitModule | [`0x0F6960526acf4cF9123e0aBc82d7a59fA0B6C934`](https://sepolia.etherscan.io/address/0x0F6960526acf4cF9123e0aBc82d7a59fA0B6C934) |
-| AirAccountDelegate (EIP-7702) | [`0x70A8E31c425Ef3F23a2F9E05C48Bd998Aa29085b`](https://sepolia.etherscan.io/address/0x70A8E31c425Ef3F23a2F9E05C48Bd998Aa29085b) |
-| AgentRegistry | [`0x118eD73f22e41cb69282c78b216426D2d98A3935`](https://sepolia.etherscan.io/address/0x118eD73f22e41cb69282c78b216426D2d98A3935) |
-| CalldataParserRegistry | [`0x5dEE2c5279eFfC7c7FE711233bE42726EE0d4166`](https://sepolia.etherscan.io/address/0x5dEE2c5279eFfC7c7FE711233bE42726EE0d4166) |
+| Factory (`AAStarAirAccountFactoryV7`) | [`0x1b694Aa55fBe2953e724037d2449905d531C1e65`](https://sepolia.etherscan.io/address/0x1b694Aa55fBe2953e724037d2449905d531C1e65) |
+| Implementation (`AAStarAirAccountV7`) | [`0x9Bf4d9FeFaA1e7358e58583294569adf730A97b0`](https://sepolia.etherscan.io/address/0x9Bf4d9FeFaA1e7358e58583294569adf730A97b0) |
+| Extension (`AirAccountExtension`) | [`0x008B136106e98384B640bD5F0D0fb6012542F24D`](https://sepolia.etherscan.io/address/0x008B136106e98384B640bD5F0D0fb6012542F24D) |
+| BLSAlgorithm (`AAStarBLSAlgorithm`) | [`0xA9EE4f8A59fCE1B56f9da8e153c3f5F38D3C59ED`](https://sepolia.etherscan.io/address/0xA9EE4f8A59fCE1B56f9da8e153c3f5F38D3C59ED) |
+| BLSAggregator (`AAStarBLSAggregator`) | [`0x321D68F5eD927B59E1A953Fd97972FbCB21f7601`](https://sepolia.etherscan.io/address/0x321D68F5eD927B59E1A953Fd97972FbCB21f7601) |
+| ValidatorRouter (`AAStarValidator`) | [`0xe8e5a8c5eeDfb75adb7FbA2BCCD3A6b1B766d6f0`](https://sepolia.etherscan.io/address/0xe8e5a8c5eeDfb75adb7FbA2BCCD3A6b1B766d6f0) |
+| SessionKeyValidator | [`0xBB79BF812aE239443fF48323dD24860F9bFb2874`](https://sepolia.etherscan.io/address/0xBB79BF812aE239443fF48323dD24860F9bFb2874) |
+| ForceExitModule | [`0xEaDb9EEDD1aF021AEC687C18C3491337a481e4Ed`](https://sepolia.etherscan.io/address/0xEaDb9EEDD1aF021AEC687C18C3491337a481e4Ed) |
+| AirAccountDelegate (EIP-7702) | [`0x6b60897172B7CA2fa3986d19a55B25d968988c22`](https://sepolia.etherscan.io/address/0x6b60897172B7CA2fa3986d19a55B25d968988c22) |
+| AgentRegistry | [`0x00D7045617b9807cE36db9591a63b5af66036192`](https://sepolia.etherscan.io/address/0x00D7045617b9807cE36db9591a63b5af66036192) |
+| CalldataParserRegistry | [`0xD6A16905C25F1D928e2fF5204f1385379e84D3Ff`](https://sepolia.etherscan.io/address/0xD6A16905C25F1D928e2fF5204f1385379e84D3Ff) |
+
+Source of truth: `docs/e2e/E2E_TESTDATA_v0.18.0-beta.2.md` and `.env.sepolia` `AIRACCOUNT_V018_*` keys.
+
+### beta.1 (archived — superseded 2026-06-15)
+
+| Contract | Address |
+|----------|---------|
+| Factory | `0xB14a870e4f63CA21a7EB753588CC4eBFb429E163` |
+| Implementation | `0x1Bc1119e3Ce4B6D158a6eadb31A06FdcE51992cF` |
+| Extension | `0xB1B3acd47DB89806F8431da3452769f1243b4d56` |
+| BLSAlgorithm | `0x2869EEb04218ca666c6373c0DC5aCDa04F00adFA` |
+| BLSAggregator | `0x9AD55930B77C002dF884F4dac846D2077CDA7C8b` |
+| ValidatorRouter | `0xe785AF830aD33F3E550FfdC0fEB81D42507DA39D` |
+| SessionKeyValidator | `0x82f16163D0fb9c4dd7507b9999B79527a795291C` |
+| ForceExitModule | `0x0F6960526acf4cF9123e0aBc82d7a59fA0B6C934` |
+| AirAccountDelegate | `0x70A8E31c425Ef3F23a2F9E05C48Bd998Aa29085b` |
+| AgentRegistry | `0x118eD73f22e41cb69282c78b216426D2d98A3935` |
+| CalldataParserRegistry | `0x5dEE2c5279eFfC7c7FE711233bE42726EE0d4166` |
 
 ## Deploy method
 
