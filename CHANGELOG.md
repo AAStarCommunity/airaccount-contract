@@ -8,6 +8,49 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.24.0] - 2026-07-03 (Security hardening — global architecture review)
+
+A batch of five hardening fixes from a global security-architecture review (adversarially
+verified per fix via Codex). Focus: close the gaps where a compromised owner key, a mempool
+front-runner, or a scoped delegation could exceed its intended authority.
+
+### Fixed (security)
+- **[c] `createAccountWithDefaults` guardian front-run** (PR #162): the convenience-path CREATE2
+  address was derived from `(owner, salt)` only, and the ACCEPT_GUARDIAN digest omitted guardian
+  identities — a front-runner could deploy at a victim's counterfactual address with the ATTACKER's
+  guardians and seize it via 2-of-3 social recovery. Guardian1+guardian2 are now folded into the
+  clone salt. **BREAKING for `createAccountWithDefaults` address derivation** (SDK aastar-sdk#269
+  aligns `getAddressWithDefaults` to pass the real guardians — SDKs calling that view need no change).
+- **[b] Weighted-config owner escalation** (PR #163): `_isWeakening` flagged weight DECREASES
+  (backwards) and `_validateWeightConfig` never bounded the owner-controllable subset sum, so a
+  compromised owner could — including via a first-time config that bypasses the guardian gate — make
+  passkey+ecdsa alone reach Tier-3. Now: weight INCREASES are weakenings (guardian-gated), and
+  `passkey + ecdsa < tier3Threshold` is enforced (Tier-3 always needs an external DVT/guardian factor).
+- **[d] Self-call authority escalation** (PR #164): an installed executor (`executeFromExecutor`) or an
+  unscoped session key could make the account call ITSELF into `onlyOwnerOrSelf` config functions and
+  raise its own limits. Now `executeFromExecutor` rejects `target == address(this)` (new
+  `SelfCallForbidden` error) and `checkSessionScope` rejects `dest == account`.
+- **[M-C] `validateUserOp` revert-free compliance** (PR #165): four validation-phase ECDSA recoveries
+  used OZ `.recover` (reverts on high-S / bad-v, violating ERC-4337's return-1 rule) → switched to
+  `tryRecover`, with an explicit `recovered == address(0)` guard at the owner site (an owner==0 account
+  must not be satisfiable by a malformed 0-recovering signature).
+
+### Added
+- **CI storage-layout parity gate** (PR #167): `scripts/check-storage-parity.mjs` fails the build if
+  `AAStarAirAccountV7` and `AirAccountExtension` diverge on any storage slot (the delegatecall boundary
+  was convention-only). `foundry.toml` now emits `storageLayout` so the gate is reliable.
+- **`docs/security/SECURITY_HARDENING_v0.23.0.md`** (PR #166): the global review — trust model, ranked
+  findings, systemic risks, cost/benefit roadmap, residual-risk statement.
+
+### Notes
+- `ACCOUNT_VERSION` / `FACTORY_VERSION` → `0.24.0`. New ABI item: `SelfCallForbidden` error.
+- EIP-170: main account 24,443 B (133 B headroom, cumulative across all five fixes); Extension 23,297 B.
+- 893 forge tests (cancun + prague). Not affected by this release: `isValidSignature` ERC-1271 remains a
+  documented owner-authorization channel outside the tier system (per product decision — not for
+  Permit2/DeFi open-approval flows); guard universality (`dailyLimit==0` → no guard) is a product decision.
+
+---
+
 ## [v0.23.0] - 2026-07-01 (isValidOwnerAuth — owner-authorization single source of truth)
 
 Implements issue #159: exposes an ERC-1271-style view the DVT (YetAnotherAA-Validator#140) and
