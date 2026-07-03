@@ -693,16 +693,37 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         if (config.tier2Threshold != 0 && config.tier2Threshold < config.tier1Threshold) revert InsecureWeightConfig();
         if (config.tier3Threshold != 0 && config.tier3Threshold < config.tier2Threshold) revert InsecureWeightConfig();
         if (config.tier3Threshold != 0 && config.tier2Threshold == 0) revert InsecureWeightConfig();
+        // Security fix "b" (Codex): the owner controls BOTH the device passkey (P256) and the KMS ECDSA
+        // key in the TEE model, so {passkey, ecdsa} is the OWNER-ALONE signer subset. It may satisfy the
+        // lower tiers, but MUST NOT reach Tier-3 (the highest-value, multi-sig tier), which is meant to
+        // require an EXTERNAL factor (DVT BLS and/or a guardian). Without this, a compromised owner could
+        // set a config — including a FIRST-TIME config, which bypasses the _isWeakening guardian gate —
+        // where passkey+ecdsa alone accumulate into Tier-3. Enforced in _validateWeightConfig so it holds
+        // for both setWeightConfig and proposeWeightChange. Sum in uint16 (max 2*255) to avoid overflow.
+        if (config.tier3Threshold != 0 &&
+            uint16(config.passkeyWeight) + uint16(config.ecdsaWeight) >= config.tier3Threshold) {
+            revert InsecureWeightConfig();
+        }
     }
 
     /// @dev Returns true if proposed config is a weakening of current config.
+    /// @dev A change is "weakening" (→ requires the guardian proposal flow) when it makes a tier EASIER
+    ///      to reach for a given signer subset. Two directions do that:
+    ///        - RAISING any factor weight  → that factor contributes more → threshold reached sooner.
+    ///        - LOWERING any tier threshold → less accumulated weight needed.
+    ///      Security fix "b": the weight checks previously used `<` (flagging DECREASES), which is
+    ///      backwards — lowering a weight is a STRENGTHENING. A compromised owner could therefore RAISE
+    ///      passkey/ecdsa weights (each still `< tier1Threshold`, so `_validateWeightConfig` passes) via
+    ///      the direct `onlyOwnerOrSelf` `setWeightConfig`, with NO guardian consent, and make an
+    ///      owner-only signer subset accumulate into Tier-3. Flagging weight INCREASES closes that.
+    ///      (Lowering a weight or raising a threshold is a strengthening → allowed directly.)
     function _isWeakening(WeightConfig memory current, WeightConfig memory proposed) private pure returns (bool) {
-        if (proposed.passkeyWeight   < current.passkeyWeight)   return true;
-        if (proposed.ecdsaWeight     < current.ecdsaWeight)     return true;
-        if (proposed.blsWeight       < current.blsWeight)       return true;
-        if (proposed.guardian0Weight < current.guardian0Weight) return true;
-        if (proposed.guardian1Weight < current.guardian1Weight) return true;
-        if (proposed.guardian2Weight < current.guardian2Weight) return true;
+        if (proposed.passkeyWeight   > current.passkeyWeight)   return true;
+        if (proposed.ecdsaWeight     > current.ecdsaWeight)     return true;
+        if (proposed.blsWeight       > current.blsWeight)       return true;
+        if (proposed.guardian0Weight > current.guardian0Weight) return true;
+        if (proposed.guardian1Weight > current.guardian1Weight) return true;
+        if (proposed.guardian2Weight > current.guardian2Weight) return true;
         if (proposed.tier1Threshold  < current.tier1Threshold)  return true;
         if (proposed.tier2Threshold  < current.tier2Threshold)  return true;
         if (proposed.tier3Threshold  < current.tier3Threshold)  return true;
