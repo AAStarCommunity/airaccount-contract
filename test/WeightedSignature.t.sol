@@ -206,16 +206,49 @@ contract WeightedSignatureTest is Test {
         IAirAccountAgent(address(account)).setWeightConfig(weaker);
     }
 
-    function test_setWeightConfig_weakenWeight_reverts() public {
+    /// @dev Security fix "b": RAISING a factor weight makes a tier easier to reach (weakening) and must
+    ///      go through the guardian proposal flow — a compromised owner must not raise it directly.
+    function test_setWeightConfig_raiseWeight_reverts() public {
         vm.prank(ownerW.addr);
         IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
 
-        // Decrease passkeyWeight → weakening
+        // Increase guardian0Weight 1 → 2 (still < tier1Threshold=3, so _validateWeightConfig passes).
         AAStarAgentStorageLayout.WeightConfig memory weaker = safeConfig;
-        weaker.passkeyWeight = 1;
+        weaker.guardian0Weight = 2;
         vm.prank(ownerW.addr);
         vm.expectRevert(AAStarAirAccountBase.WeakeningRequiresProposal.selector);
         IAirAccountAgent(address(account)).setWeightConfig(weaker);
+    }
+
+    /// @dev The combined exploit (raise a threshold to make room, then raise weights so an owner-only
+    ///      subset crosses a higher tier) must also be rejected, even in a single call.
+    function test_setWeightConfig_raiseThresholdAndWeight_reverts() public {
+        vm.prank(ownerW.addr);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
+
+        AAStarAgentStorageLayout.WeightConfig memory weaker = safeConfig;
+        weaker.tier1Threshold = 10; // raise (strengthening on its own)
+        weaker.tier2Threshold = 12;
+        weaker.tier3Threshold = 15;
+        weaker.passkeyWeight = 9;   // but raising weights is the weakening → must be caught
+        weaker.ecdsaWeight = 9;
+        vm.prank(ownerW.addr);
+        vm.expectRevert(AAStarAirAccountBase.WeakeningRequiresProposal.selector);
+        IAirAccountAgent(address(account)).setWeightConfig(weaker);
+    }
+
+    /// @dev LOWERING a weight is a strengthening (that factor contributes less) → allowed directly.
+    function test_setWeightConfig_lowerWeight_allowsDirect() public {
+        vm.prank(ownerW.addr);
+        IAirAccountAgent(address(account)).setWeightConfig(safeConfig);
+
+        AAStarAgentStorageLayout.WeightConfig memory stronger = safeConfig;
+        stronger.passkeyWeight = 1; // decrease → harder to reach a tier → strengthening
+        vm.prank(ownerW.addr);
+        IAirAccountAgent(address(account)).setWeightConfig(stronger);
+
+        (uint8 pk,,,,,,,,,) = account.weightConfig();
+        assertEq(pk, 1);
     }
 
     function test_setWeightConfig_byNonOwner_reverts() public {

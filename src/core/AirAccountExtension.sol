@@ -696,13 +696,23 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     }
 
     /// @dev Returns true if proposed config is a weakening of current config.
+    /// @dev A change is "weakening" (→ requires the guardian proposal flow) when it makes a tier EASIER
+    ///      to reach for a given signer subset. Two directions do that:
+    ///        - RAISING any factor weight  → that factor contributes more → threshold reached sooner.
+    ///        - LOWERING any tier threshold → less accumulated weight needed.
+    ///      Security fix "b": the weight checks previously used `<` (flagging DECREASES), which is
+    ///      backwards — lowering a weight is a STRENGTHENING. A compromised owner could therefore RAISE
+    ///      passkey/ecdsa weights (each still `< tier1Threshold`, so `_validateWeightConfig` passes) via
+    ///      the direct `onlyOwnerOrSelf` `setWeightConfig`, with NO guardian consent, and make an
+    ///      owner-only signer subset accumulate into Tier-3. Flagging weight INCREASES closes that.
+    ///      (Lowering a weight or raising a threshold is a strengthening → allowed directly.)
     function _isWeakening(WeightConfig memory current, WeightConfig memory proposed) private pure returns (bool) {
-        if (proposed.passkeyWeight   < current.passkeyWeight)   return true;
-        if (proposed.ecdsaWeight     < current.ecdsaWeight)     return true;
-        if (proposed.blsWeight       < current.blsWeight)       return true;
-        if (proposed.guardian0Weight < current.guardian0Weight) return true;
-        if (proposed.guardian1Weight < current.guardian1Weight) return true;
-        if (proposed.guardian2Weight < current.guardian2Weight) return true;
+        if (proposed.passkeyWeight   > current.passkeyWeight)   return true;
+        if (proposed.ecdsaWeight     > current.ecdsaWeight)     return true;
+        if (proposed.blsWeight       > current.blsWeight)       return true;
+        if (proposed.guardian0Weight > current.guardian0Weight) return true;
+        if (proposed.guardian1Weight > current.guardian1Weight) return true;
+        if (proposed.guardian2Weight > current.guardian2Weight) return true;
         if (proposed.tier1Threshold  < current.tier1Threshold)  return true;
         if (proposed.tier2Threshold  < current.tier2Threshold)  return true;
         if (proposed.tier3Threshold  < current.tier3Threshold)  return true;
