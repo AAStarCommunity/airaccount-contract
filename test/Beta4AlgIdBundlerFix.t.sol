@@ -57,11 +57,12 @@ contract Beta4AlgIdBundlerFixTest is Test {
         out[0] = a;
     }
 
-    /// @dev Raw 65-byte owner ECDSA over the EIP-191 prefixed userOpHash (matches _validateECDSA).
+    /// @dev Explicit ALG_ECDSA (0x02) owner sig over the EIP-191 prefixed userOpHash (66 bytes).
+    ///      The M1 raw-65 fallback was removed (CRITICAL-1) — every tier is now explicit in the prefix.
     function _signEcdsa(bytes32 userOpHash) internal view returns (bytes memory) {
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerKey, ethHash);
-        return abi.encodePacked(r, s, v);
+        return abi.encodePacked(bytes1(0x02), r, s, v);
     }
 
     function _emptyUserOp() internal view returns (PackedUserOperation memory op) {

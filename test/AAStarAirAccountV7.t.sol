@@ -90,7 +90,8 @@ contract AAStarAirAccountV7Test is Test {
     function _signUserOp(bytes32 userOpHash, uint256 privateKey) internal pure returns (bytes memory) {
         bytes32 ethSignedHash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, ethSignedHash);
-        return abi.encodePacked(r, s, v);
+        // Explicit ALG_ECDSA prefix (66 bytes). The M1 raw-65 fallback was removed (CRITICAL-1).
+        return abi.encodePacked(bytes1(0x02), r, s, v);
     }
 
     // ─── Signature Validation Tests ─────────────────────────────────────

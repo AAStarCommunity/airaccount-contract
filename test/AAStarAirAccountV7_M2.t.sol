@@ -109,7 +109,11 @@ contract AAStarAirAccountV7_M2Test is Test {
 
     // ─── ECDSA Backwards Compatibility (65-byte sig, no algId) ────────
 
-    function test_ecdsaBackwardsCompat() public {
+    /// @dev CRITICAL-1: the M1 raw-65 (no algId prefix) fallback was REMOVED. A 65-byte owner ECDSA
+    ///      signature must now be rejected — plain ECDSA is the explicit 66-byte [0x02][r][s][v] form.
+    ///      This closes the validation/execution tier desync where a 65-byte sig starting with 0x09/0x0a
+    ///      validated as Tier-1 ECDSA but executed at Tier-2/3.
+    function test_rawECDSA_noPrefix_rejected() public {
         PackedUserOperation memory userOp = _buildUserOp(address(account));
 
         bytes32 userOpHash = keccak256(abi.encode(userOp));
@@ -121,10 +125,10 @@ contract AAStarAirAccountV7_M2Test is Test {
         );
         userOp.signature = abi.encodePacked(r, s, v);
 
-        // Validate via EntryPoint
+        // Validate via EntryPoint — raw-65 no longer accepted.
         vm.prank(entryPointAddr);
         uint256 result = account.validateUserOp(userOp, userOpHash, 0);
-        assertEq(result, 0, "ECDSA backwards compat should pass");
+        assertEq(result, 1, "raw-65 ECDSA (no algId prefix) must be rejected");
     }
 
     // ─── Explicit ECDSA with algId=0x02 prefix ───────────────────────
