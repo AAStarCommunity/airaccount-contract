@@ -642,9 +642,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         }
 
         // T2_WA / T3_WA minimum sig: 1(algId)+4(len)+256(min_waBlob)+320(min_bls) = 581 bytes.
-        // Guard signature.length != 65 to preserve the raw-ECDSA M1 compat fallback: a raw
-        // 65-byte ECDSA sig whose first byte happens to equal 0x09 or 0x0a must still fall
-        // through to the raw-ECDSA path rather than being misrouted here.
+        // Guard signature.length != 65 so a 65-byte payload whose first byte happens to equal 0x09/0x0a
+        // is NOT routed into the WebAuthn-cumulative validators. Such a sig instead falls through to the
+        // 65-byte rejection guard below (the M1 raw-ECDSA fallback was removed — see CRITICAL-1), so it
+        // can never be validated as Tier-1 ECDSA while executing at Tier-2/3.
         if (firstByte == ALG_CUMULATIVE_T2_WA && signature.length != 65) {
             _storeValidatedAlgId(ALG_CUMULATIVE_T2_WA);
             return _validateCumulativeTier2WA(userOpHash, signature[1:]);
@@ -716,7 +717,14 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
                 _storeSessionKey(bytes32(uint256(0x02) << 248 | (uint256(p256Hash) & type(uint248).max)));
             }
         }
-        return validator.validateSignature(userOpHash, signature);
+        // Revert-free (M-C principle): an unregistered or misbehaving router algId must return
+        // SIG_VALIDATION_FAILED, never revert — a validation-phase revert griefs the bundler and is a
+        // worse failure mode than a clean rejection (ERC-7562). Codex 2026-07-04.
+        try validator.validateSignature(userOpHash, signature) returns (uint256 vd) {
+            return vd;
+        } catch {
+            return 1;
+        }
     }
 
     /// @dev v0.17.2-beta.4: re-derive and store the validated algId (+ weight / session key) for the
@@ -763,11 +771,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      CRITICAL fix: previously execution stamped 0x09/0x0a (Tier-2/3) directly, while validation
     ///      routed a raw 65-byte owner ECDSA sig whose first byte happened to equal 0x09/0x0a through
     ///      the M1 raw-65 fallthrough to Tier-1 ECDSA. A stolen owner ECDSA key could therefore grind
-    ///      sig[0]==0x0a and spend at Tier-3 via executeUserOp→executeBatch. The `sigLen != 65` guards
-    ///      here mirror _validateSignature exactly, so a 65-byte sig always resolves to Tier-1 ECDSA.
+    ///      sig[0]==0x0a and spend at Tier-3 via executeUserOp→executeBatch. The M1 raw-65 fallback is
+    ///      now removed: a 65-byte ambiguous sig is REJECTED at validation, so it never reaches here.
     ///
-    ///      INVARIANT (locked by AlgIdRoutingParity.t.sol): for every (firstByte, sigLen) that
-    ///      _validateSignature accepts, this returns the exact algId it stored — never a higher tier.
+    ///      INVARIANT: for every (firstByte, sigLen) that _validateSignature accepts, this returns the
+    ///      exact algId it stored — never a higher tier. Guarded behaviorally by the executeUserOp tier
+    ///      tests (Beta4AlgIdBundlerFix) + the 0x09/0x0a rejection guards (CumulativeSignature.t.sol).
     function _deriveStoredAlgId(uint8 firstByte, uint256 sigLen) internal pure returns (uint8) {
         if (firstByte == ALG_BLS) return ALG_BLS;                                             // 0x01
         if (firstByte == ALG_P256 && sigLen == 65) return ALG_P256;                           // 0x03

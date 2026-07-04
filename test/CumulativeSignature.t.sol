@@ -735,6 +735,22 @@ contract CumulativeWebAuthnTest is Test {
         assertEq(result, 1, "65-byte sig with ambiguous 0x0a prefix must be REJECTED (CRITICAL-1)");
     }
 
+    /// @dev Revert-free (M-C principle): a UserOp with an unregistered router algId (0x0b) must return
+    ///      SIG_VALIDATION_FAILED (1), NOT revert AlgorithmNotRegistered during validation. The account
+    ///      has a validator router (setUp registers only 0x01), so 0x0b reaches validator.validateSignature
+    ///      → router reverts → the account's try/catch converts it to return 1. (Codex 2026-07-04.)
+    function test_unregisteredRouterAlgId_returnsOne_notRevert() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256("unregistered_algid_0x0b");
+        bytes memory sig = new bytes(66); // 66 bytes so the 65-byte guard doesn't short-circuit it
+        sig[0] = 0x0b;                     // not a native format, not registered in the router
+        userOp.signature = sig;
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "unregistered router algId must return 1, not revert");
+    }
+
     // ─── populateExecAlg covers new algIds ────────────────────────────
 
     function test_populateExecAlg_T2WA_storesAlgId() public {
