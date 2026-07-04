@@ -8,6 +8,42 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.25.0] - 2026-07-04 (CRITICAL: validation/execution tier desync)
+
+A follow-up adversarial audit (4 parallel finders + Codex challenge) surfaced one CRITICAL and one
+HIGH tier-escalation, sharing a root cause: the security tier was derived from the attacker-controlled
+`sig[0]` prefix without binding to the cryptographic factors actually verified. This release fixes the
+CRITICAL.
+
+### Fixed (security)
+- **[CRITICAL-1] Validation/execution tier desync** (`AAStarAirAccountBase`): a raw 65-byte owner ECDSA
+  signature whose first byte happened to equal `0x09`/`0x0a` validated as **Tier-1 ECDSA** (via the M1
+  raw-65 fallthrough) but the execution frame (`_populateExecAlg`, used by `executeUserOp`) re-derived
+  `0x09`/`0x0a` and enforced **Tier-2/3**. Because ERC-4337 clears transient storage between validation
+  and execution, execution re-derives the algId independently — and the two derivations diverged. A
+  **stolen owner ECDSA key** could grind `sig[0]==0x0a` (~256 tries) and spend at **Tier-3** (up to the
+  daily limit) via `executeUserOp→executeBatch`, defeating the multi-factor tier system that is the
+  wallet's "survive owner-key compromise" defense. Fixed at the root: the M1 raw-65 fallback is removed
+  (plain ECDSA is now the explicit 66-byte `[0x02][r][s][v]` form) and a single canonical
+  `_deriveStoredAlgId` table drives both validation and execution so the tier can never diverge.
+
+### Changed
+- Validation is now **revert-free** for unregistered/misbehaving router algIds: they return
+  `SIG_VALIDATION_FAILED` (1) instead of reverting `AlgorithmNotRegistered` (M-C principle; Codex
+  follow-up). Net EIP-170: impl **24,408 B** (168 B headroom — the fix is byte-negative vs 0.24.0).
+
+### Breaking
+- **Raw 65-byte (unprefixed) ECDSA UserOp signatures are no longer accepted.** Plain ECDSA must be the
+  explicit 66-byte `[0x02][r][s][v]` form (the airaccount SDK already emits this). New accounts only;
+  existing accounts (old impl) are unaffected — non-upgradable.
+
+### Known follow-up
+- **[HIGH-1]** the ERC-7579 nonce-key validator-module route still derives the tier from `sig[0]`
+  without binding it to the module's authenticated tier (reachable only with a guardian-installed
+  module that ignores `sig[0]` AND a high-tier algId whitelisted). Tracked for a separate PR.
+
+---
+
 ## [v0.24.0] - 2026-07-03 (Security hardening — global architecture review)
 
 A batch of five hardening fixes from a global security-architecture review (adversarially
