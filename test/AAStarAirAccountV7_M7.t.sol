@@ -280,7 +280,7 @@ contract AAStarAirAccountV7_M7Test is Test {
         return abi.encode(signerIdxs, sigs);
     }
 
-    function test_accountId_is_0_21_0() public view {
+    function test_accountId_versionString() public view {
         assertEq(account.accountId(), "airaccount.v7@0.25.0");
     }
 
