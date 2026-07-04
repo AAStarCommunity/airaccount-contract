@@ -280,12 +280,12 @@ contract AAStarAirAccountV7_M7Test is Test {
         return abi.encode(signerIdxs, sigs);
     }
 
-    function test_accountId_is_0_21_0() public view {
-        assertEq(account.accountId(), "airaccount.v7@0.24.0");
+    function test_accountId_versionString() public view {
+        assertEq(account.accountId(), "airaccount.v7@0.25.0");
     }
 
     function test_ACCOUNT_VERSION_constant() public view {
-        assertEq(account.ACCOUNT_VERSION(), "0.24.0");
+        assertEq(account.ACCOUNT_VERSION(), "0.25.0");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────
@@ -847,7 +847,7 @@ contract AAStarAirAccountV7_M7Test is Test {
         bytes32 userOpHash = keccak256("test op");
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerWallet.privateKey, ethHash);
-        bytes memory sig = abi.encodePacked(r, s, v);
+        bytes memory sig = abi.encodePacked(bytes1(0x02), r, s, v); // explicit ALG_ECDSA (raw-65 removed)
 
         PackedUserOperation memory userOp = PackedUserOperation({
             sender: address(account),

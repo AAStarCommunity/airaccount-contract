@@ -686,29 +686,69 @@ contract CumulativeWebAuthnTest is Test {
 
     // ─── Raw-ECDSA compat: 65-byte sig starting with 0x09/0x0a falls through ──
 
-    function test_rawECDSA_firstByte0x09_fallsThrough() public {
-        // A raw 65-byte ECDSA sig (no algId prefix) whose first byte is 0x09 must NOT
-        // be misrouted to ALG_CUMULATIVE_T2_WA. It should fall through to the raw-ECDSA
-        // compat path and be validated as ECDSA against the owner key.
+    /// @dev CRITICAL-1 regression guard. A raw 65-byte owner ECDSA sig whose first byte is 0x09 (or
+    ///      0x0a) previously fell through to the M1 raw-ECDSA compat path and validated as Tier-1 ECDSA
+    ///      — while the EXECUTION frame (_populateExecAlg) re-derived 0x09/0x0a and enforced Tier-2/3.
+    ///      A stolen owner ECDSA key could grind sig[0]==0x0a and spend at Tier-3 via
+    ///      executeUserOp→executeBatch. The M1 raw-65 fallback is now REMOVED, so such a signature is
+    ///      rejected outright at validation (no ambiguous prefix can ever reach a higher execution tier).
+    function test_rawECDSA_firstByte0x09_rejected() public {
         PackedUserOperation memory userOp = _buildUserOp(address(account));
-        // Craft userOpHash so that the resulting ECDSA sig (r,s,v) starts with 0x09.
-        // We iterate over hashes until vm.sign produces r[0] == 0x09.
+        // Grind a 65-byte owner ECDSA sig whose first byte equals 0x09 (~256 tries).
         bytes32 userOpHash;
         bytes memory sig;
-        for (uint256 i = 0; i < 256; i++) {
+        for (uint256 i = 0; i < 512; i++) {
             userOpHash = keccak256(abi.encode("ecdsa_firstbyte_0x09", i));
             bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
             (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerWallet.privateKey, ethHash);
             sig = abi.encodePacked(r, s, v);
             if (uint8(sig[0]) == 0x09) break;
         }
-        require(uint8(sig[0]) == 0x09, "Could not find sig starting with 0x09 in 256 iters");
+        require(uint8(sig[0]) == 0x09, "Could not find sig starting with 0x09 in 512 iters");
 
         userOp.signature = sig;
 
         vm.prank(address(entryPoint));
         uint256 result = account.validateUserOp(userOp, userOpHash, 0);
-        assertEq(result, 0, "65-byte ECDSA sig with first byte 0x09 must validate via raw-ECDSA path");
+        assertEq(result, 1, "65-byte sig with ambiguous 0x09 prefix must be REJECTED (CRITICAL-1)");
+    }
+
+    /// @dev CRITICAL-1 Tier-3 vector (most severe): same as above for 0x0a. A stolen owner ECDSA key
+    ///      grinding sig[0]==0x0a previously spent at Tier-3; the 65-byte sig must now be rejected.
+    function test_rawECDSA_firstByte0x0a_rejected() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash;
+        bytes memory sig;
+        for (uint256 i = 0; i < 512; i++) {
+            userOpHash = keccak256(abi.encode("ecdsa_firstbyte_0x0a", i));
+            bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerWallet.privateKey, ethHash);
+            sig = abi.encodePacked(r, s, v);
+            if (uint8(sig[0]) == 0x0a) break;
+        }
+        require(uint8(sig[0]) == 0x0a, "Could not find sig starting with 0x0a in 512 iters");
+
+        userOp.signature = sig;
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "65-byte sig with ambiguous 0x0a prefix must be REJECTED (CRITICAL-1)");
+    }
+
+    /// @dev Revert-free (M-C principle): a UserOp with an unregistered router algId (0x0b) must return
+    ///      SIG_VALIDATION_FAILED (1), NOT revert AlgorithmNotRegistered during validation. The account
+    ///      has a validator router (setUp registers only 0x01), so 0x0b reaches validator.validateSignature
+    ///      → router reverts → the account's try/catch converts it to return 1. (Codex 2026-07-04.)
+    function test_unregisteredRouterAlgId_returnsOne_notRevert() public {
+        PackedUserOperation memory userOp = _buildUserOp(address(account));
+        bytes32 userOpHash = keccak256("unregistered_algid_0x0b");
+        bytes memory sig = new bytes(66); // 66 bytes so the 65-byte guard doesn't short-circuit it
+        sig[0] = 0x0b;                     // not a native format, not registered in the router
+        userOp.signature = sig;
+
+        vm.prank(address(entryPoint));
+        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
+        assertEq(result, 1, "unregistered router algId must return 1, not revert");
     }
 
     // ─── populateExecAlg covers new algIds ────────────────────────────

@@ -296,7 +296,8 @@ contract AAStarAirAccountV7M3Test is Test {
 
     // ─── ECDSA backwards compat still works ──────────────────────────
 
-    function test_ecdsaBackwardsCompat() public {
+    /// @dev CRITICAL-1: raw-65 (no algId prefix) fallback removed — must be rejected now.
+    function test_rawECDSA_noPrefix_rejected() public {
         bytes32 userOpHash = keccak256("testOp");
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerKey, ethHash);
@@ -306,7 +307,7 @@ contract AAStarAirAccountV7M3Test is Test {
 
         vm.prank(entryPoint);
         uint256 result = account.validateUserOp(userOp, userOpHash, 0);
-        assertEq(result, 0); // Success
+        assertEq(result, 1); // raw-65 rejected
     }
 
     function test_ecdsaWithAlgIdPrefix() public {
@@ -466,7 +467,7 @@ contract AAStarAirAccountV7M3Test is Test {
         bytes32 userOpHash = keccak256("noGuardTier");
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerKey, ethHash);
-        bytes memory sig = abi.encodePacked(r, s, v);
+        bytes memory sig = abi.encodePacked(bytes1(0x02), r, s, v); // explicit ALG_ECDSA (raw-65 removed)
 
         PackedUserOperation memory userOp = PackedUserOperation({
             sender: address(account), nonce: 0, initCode: "",
