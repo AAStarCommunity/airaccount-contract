@@ -76,6 +76,24 @@ End-to-end through the actual ERC-4337 `validateUserOp→execute` path on a guar
   `validateUserOp` returns `SIG_VALIDATION_FAILED`, so the bundler drops it. This is the on-chain proof
   (through real bundler simulation) that the raw-65 tier-desync surface is closed.
 
+## Codex challenge (release-gate §5) + adjustments
+
+Adversarial verification via `/codex:rescue`. Codex's sandbox could not reach Sepolia RPC (same limitation
+as prior releases), so it did a source + evidence review. It raised two valid methodology points, both
+addressed:
+
+- **Bytecode proof must be re-derivable.** The evidence now carries the **keccak256 of the immutable-masked
+  runtime** for both sides — they match: `0xb4472358ceac4a06db8d725ca5fe026251b0b5548ca9c0c74a8bac71b69281bb`
+  (24,408 B). Anyone can reproduce: fetch the on-chain code, zero the offsets in the artifact's
+  `deployedBytecode.immutableReferences`, `keccak256`, compare to the local masked artifact.
+- **The bundler B4 rejection must be for the RIGHT reason.** B4 now asserts the failure is specifically an
+  **AA24 signature error** (`validateUserOp` → `SIG_VALIDATION_FAILED`), not a gas/nonce error. Combined
+  with B3 (the identical op with a `0x02` prefix was included), the only variable is the sig format — so
+  the AA24 rejection is airtight proof the raw-65 fallback is gone, not a vacuous catch-all pass.
+
+Codex also noted the residual **HIGH-1** (module-route tier binding), which is already tracked as a
+follow-up (issue #171) and out of scope for this release.
+
 ## SDK coordination
 
 Removing the M1 raw-65 fallback breaks the SDK Tier-1 tiering path

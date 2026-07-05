@@ -151,14 +151,22 @@ async function main() {
     else bad(`0x02 UserOp not included in time (id ${id.slice(0, 14)}…)`);
   } catch (e: any) { bad(`0x02 UserOp rejected (regression!): ${e.message?.slice(0, 90)}`); }
 
-  // B4 — CRITICAL-1: raw 65-byte (no-prefix) sig must be REJECTED by the bundler
-  console.log("[B4] CRITICAL-1: same UserOp with RAW 65-byte sig → must be REJECTED...");
+  // B4 — CRITICAL-1: raw 65-byte (no-prefix) sig must be REJECTED by the bundler, and SPECIFICALLY for
+  // a signature-validation failure (AA24 / SIG_VALIDATION_FAILED), NOT for an unrelated gas/nonce error.
+  // Combined with B3 (the SAME op with a 0x02 prefix succeeded), the only variable is the sig format —
+  // so an AA24 rejection here proves the raw-65 fallback is gone (not a vacuous catch-all pass).
+  console.log("[B4] CRITICAL-1: same UserOp with RAW 65-byte sig → must be REJECTED (AA24)...");
   try {
     await buildAndSubmit(account, (uoh) => annie.signMessage({ message: { raw: uoh } })); // raw 65, no 0x02
     bad("raw-65 UserOp was ACCEPTED — CRITICAL-1 fallback still present!");
   } catch (e: any) {
-    // Expected: validateUserOp returns 1 → AA24 signature error / SIG_VALIDATION_FAILED
-    ok(`raw-65 UserOp rejected by bundler ✓ (${e.message?.slice(0, 70)})`);
+    const msg = String(e.message ?? "");
+    // AA24 = validateUserOp returned SIG_VALIDATION_FAILED (the raw-65 rejection). Anything else
+    // (AA21 funds, AA25 nonce, gas-estimation) would NOT be a valid CRITICAL-1 proof.
+    if (/AA24|signature error|SIG_VALIDATION|validateUserOp/i.test(msg))
+      ok(`raw-65 rejected for SIGNATURE failure (AA24) ✓ — raw-65 fallback removed (${msg.slice(0, 60)})`);
+    else
+      bad(`raw-65 rejected but for the WRONG reason (not AA24 signature): ${msg.slice(0, 90)}`);
   }
 
   console.log(`\n=== Bundler E2E: ${pass} passed, ${fail} failed ===`);
