@@ -8,6 +8,53 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.27.0] - 2026-07-05 (DVT validator unification — mount the authoritative BLS validator)
+
+Cross-repo coordination (Seeder CC-10): mounts the **DVT-repo authoritative BLS validator**
+(`YetAnotherAA-Validator`, `0x539B9681aFd5BFbCaa655Fe4c6BdcFe1fa7864bC`) at algId 0x01, replacing
+airaccount's own `AAStarBLSAlgorithm` (0xAF525A). The DVT validator ports airaccount's on-chain RFC9380
+`hashToG2` + `_validateBLSSignature` (same DST, wire-compatible) AND keeps its Plan-A-v3 stake gating,
+so it is the single authoritative BLS/DVT verifier for the ecosystem.
+
+### Changed
+- New validator stack (the router is set-once + finalized, so a fresh router + impl + factory are
+  required — same as v0.24.0). New `AAStarValidator` router: `0x01 → DVT validator`, `0x08 → reused
+  SessionKeyValidator`, finalized. Existing accounts stay on 0xAF525A (non-upgradable); only new accounts
+  use the DVT validator.
+- **Security bonus**: 0xAF525A's `_aggregateNodeKeys` did not enforce strictly-ascending nodeIds
+  (quorum-faking: a single node could submit `[nid,nid,…]+k·sig` to fake M-of-N). The DVT validator
+  enforces strictly-ascending nodeIds, so v0.27.0 accounts gain that fix.
+- Inherits `optimizer_runs=200` (#175): impl 24,304 B (272 B headroom).
+
+### Known limitation (no-break future upgrade)
+- The DVT validator does not expose `aggregator()`, so v0.27.0 accounts use **inline single-op BLS** —
+  ERC-4337 IAggregator batch aggregation is unavailable (a gas-scale optimization). The account already
+  reads `aggregator()` via try/catch, so a future DVT validator that adds it + a future validator-stack
+  version enables batch aggregation for new accounts with NO break to v0.27.0 accounts.
+
+### Wire contract (SDK must follow)
+- BLS aggregate payloads `[nodeIds...][blsSig(256)]` must have **strictly-ascending nodeIds**
+  (aastar-sdk#274). DVT operators re-register with `nodeId = keccak256(pubkey)`.
+
+### Deployed (Sepolia, 2026-07-05) — `ACCOUNT_VERSION` / `FACTORY_VERSION` = `0.27.0`
+| Contract | Address |
+|---|---|
+| **AAStarAirAccountFactoryV7** | `0xf25621DF4c6100cdfe224054C2b09f2963bF487b` |
+| AAStarAirAccountV7 (impl) | `0x4a76dEf9eE4EE44eF6D0B2a327a068B5B7931E1C` |
+| AirAccountExtension | `0xEcE87546989Da7df573b107D54a0ead0aCB49923` |
+| **AAStarValidator (router, new)** | `0xe68d6A7Bb60DA4caE62ceC2439722fc5eEF87a5c` |
+| **DVT validator (algId 0x01)** | `0x539B9681aFd5BFbCaa655Fe4c6BdcFe1fa7864bC` |
+| AgentRegistry | `0x239960EeA98cEC6f02608ED4Bc440b7d8442f3Da` |
+
+### Verification
+- 900 tests (cancun + prague). On-chain **E2E 31/31** (incl. T31: router 0x01 == DVT validator +
+  dvt golden-vector BLS `validate() == 0`) + **4/4 real UserOp** (0x02 included; raw-65 rejected — no
+  regression). Bytecode-identity keccak `0x7b0cf291…` matches the fixed artifact.
+- CC-10 decisions (dvt-confirmed): aggregator → accept single-op; ERC-7562 → validate() reads only own
+  staked storage (same as 0xAF525A).
+
+---
+
 ## [v0.26.0] - 2026-07-05 (HIGH-1: module-route tier binding)
 
 Second of the two findings from the 2026-07-04 audit (the first, CRITICAL-1, shipped in v0.25.0).
