@@ -219,7 +219,14 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
                     // additionally barred (Codex P1-#11): the nonce-key route never calls _storeSessionKey,
                     // so base._enforceGuard would see taggedSessionKey==0 and SKIP scope/velocity. Session
                     // keys must use the native _validateSignature path (106/149-byte M6.4 format).
-                    if (algId == ALG_SESSION_KEY || _algTier(algId) > 1) {
+                    //
+                    // ALG_WEIGHTED (0x07) is _algTier==0 so the tier cap alone would let it through, but it
+                    // is ALSO barred: the nonce-key route does not run _validateWeightedSignature, so no
+                    // weight is accumulated at validation. If the op then executed via executeUserOp, the
+                    // execution frame (_populateExecAlg) would RE-ACCUMULATE the weighted sig — validating
+                    // via the module but executing via weighted, a CRITICAL-1-style val/exec split. Weighted
+                    // multi-sig must use the native _validateSignature path, never a lone module.
+                    if (algId == ALG_SESSION_KEY || algId == ALG_WEIGHTED || _algTier(algId) > 1) {
                         validationData = 1; // SIG_VALIDATION_FAILED
                     } else {
                         _storeValidatedAlgId(algId);

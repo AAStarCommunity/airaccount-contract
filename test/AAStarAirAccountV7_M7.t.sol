@@ -1039,6 +1039,16 @@ contract AAStarAirAccountV7_M7Test is Test {
         assertEq(result, 1, "HIGH-1: BLS Tier-3 algId via module route must be rejected");
     }
 
+    function test_validateUserOp_nonceKey_weightedAlgId_rejected() public {
+        _installWithG0(1, address(mockModule));
+        mockModule.setValidateResult(0);
+        // sig[0] = 0x07 (ALG_WEIGHTED, _algTier==0) — barred so execution can't re-accumulate weighted
+        // (validate-via-module, execute-via-weighted would be a CRITICAL-1-style split).
+        vm.prank(address(ep));
+        uint256 result = account.validateUserOp(_nonceKeyOp(0x07), keccak256("hash"), 0);
+        assertEq(result, 1, "HIGH-1: weighted algId via module route must be rejected");
+    }
+
     function test_validateUserOp_nonceKey_tier1AlgId_allowed() public {
         _installWithG0(1, address(mockModule));
         mockModule.setValidateResult(0);
