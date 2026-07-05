@@ -15,7 +15,7 @@ solc_version = "0.8.33"
 evm_version = "cancun"
 via_ir = true
 optimizer = true
-optimizer_runs = 300  # v0.17.1 runtime-gas floor; size kept under EIP-170 via code-level slimming, not by starving the optimizer
+optimizer_runs = 200  # EIP-170 headroom lever (#170): measured 300→200 = +190 B runtime headroom for ~+0.03% hot-path gas (validateUserOp/execute/executeBatch move ±0.0-0.3%, several DECREASE). The old "300 gas-floor" note was overstated for these paths; 200 is the deliberate size/gas trade.
 bytecode_hash = "none" # drop the trailing IPFS metadata hash (small but free EIP-170 headroom)
 
 remappings = [
