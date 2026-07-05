@@ -63,6 +63,19 @@ Account2 (P256) `0xD4389c3c9e268bF01b7d8b3E3A30B8b619b26F2e`.
 
 Unit tests: **895 pass** (cancun + prague). EIP-170: impl 24,408 B (168 B headroom).
 
+## Real UserOp E2E — `scripts/e2e-v0.25.0-bundler.ts` (4/4 PASS, via Pimlico)
+
+End-to-end through the actual ERC-4337 `validateUserOp→execute` path on a guard-enabled account
+(`0xd8bd42F0beef5Ce826d1b1dEc3dF2898c28EC420`):
+
+- **B1/B2**: `createAccountWithDefaults` (guard-enabled) + fund + `addDeposit`.
+- **B3 (no-regression)**: a self-paying UserOp signed with the **explicit 66-byte `[0x02][r][s][v]`** was
+  **included on-chain** (bundled tx `0x32844640…`) — the fixed impl works end-to-end via a real bundler.
+- **B4 (CRITICAL-1)**: the same UserOp with a **raw 65-byte (no-prefix)** owner ECDSA sig was **rejected
+  by the bundler** (`AA24 signature error`) — on v0.24.0 the M1 raw-65 fallback accepted this; on v0.25.0
+  `validateUserOp` returns `SIG_VALIDATION_FAILED`, so the bundler drops it. This is the on-chain proof
+  (through real bundler simulation) that the raw-65 tier-desync surface is closed.
+
 ## SDK coordination
 
 Removing the M1 raw-65 fallback breaks the SDK Tier-1 tiering path
