@@ -281,11 +281,11 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_accountId_versionString() public view {
-        assertEq(account.accountId(), "airaccount.v7@0.25.0");
+        assertEq(account.accountId(), "airaccount.v7@0.26.0");
     }
 
     function test_ACCOUNT_VERSION_constant() public view {
-        assertEq(account.ACCOUNT_VERSION(), "0.25.0");
+        assertEq(account.ACCOUNT_VERSION(), "0.26.0");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────
@@ -997,6 +997,55 @@ contract AAStarAirAccountV7_M7Test is Test {
         // Even with the validator returning 0, V7 must force a failure when sig[0] is ALG_SESSION_KEY
         // on the nonce-key path. This closes the session-scope bypass.
         assertEq(result, 1, "session key via nonce-key route must be rejected");
+    }
+
+    /// @notice HIGH-1 (2026-07-05): a nonce-key validator module proves ONE delegated factor (returns
+    ///         only 0/1). It must NOT be able to claim a Tier-2/3 algId via the attacker-controlled
+    ///         sig[0] prefix — otherwise a Tier-1 module key could spend at Tier-2/3. The module route
+    ///         is capped to Tier-1: any algId with tier > 1 is rejected even when the module returns 0.
+    function _nonceKeyOp(uint8 algIdByte) internal view returns (PackedUserOperation memory) {
+        bytes memory sig = abi.encodePacked(algIdByte, new bytes(65));
+        return PackedUserOperation({
+            sender: address(account), nonce: uint256(uint192(uint160(address(mockModule)))) << 64,
+            initCode: "", callData: "", accountGasLimits: bytes32(0), preVerificationGas: 0,
+            gasFees: bytes32(0), paymasterAndData: "", signature: sig
+        });
+    }
+
+    function test_validateUserOp_nonceKey_tier3AlgId_rejected() public {
+        _installWithG0(1, address(mockModule));
+        mockModule.setValidateResult(0); // module says "ok"
+        // sig[0] = 0x0a (ALG_CUMULATIVE_T3_WA, tier 3) — a lone module cannot verify Tier-3 factors.
+        vm.prank(address(ep));
+        uint256 result = account.validateUserOp(_nonceKeyOp(0x0a), keccak256("hash"), 0);
+        assertEq(result, 1, "HIGH-1: Tier-3 algId via module route must be rejected");
+    }
+
+    function test_validateUserOp_nonceKey_tier2AlgId_rejected() public {
+        _installWithG0(1, address(mockModule));
+        mockModule.setValidateResult(0);
+        // sig[0] = 0x09 (ALG_CUMULATIVE_T2_WA, tier 2)
+        vm.prank(address(ep));
+        uint256 result = account.validateUserOp(_nonceKeyOp(0x09), keccak256("hash"), 0);
+        assertEq(result, 1, "HIGH-1: Tier-2 algId via module route must be rejected");
+    }
+
+    function test_validateUserOp_nonceKey_blsTier3AlgId_rejected() public {
+        _installWithG0(1, address(mockModule));
+        mockModule.setValidateResult(0);
+        // sig[0] = 0x01 (ALG_BLS legacy triple, tier 3)
+        vm.prank(address(ep));
+        uint256 result = account.validateUserOp(_nonceKeyOp(0x01), keccak256("hash"), 0);
+        assertEq(result, 1, "HIGH-1: BLS Tier-3 algId via module route must be rejected");
+    }
+
+    function test_validateUserOp_nonceKey_tier1AlgId_allowed() public {
+        _installWithG0(1, address(mockModule));
+        mockModule.setValidateResult(0);
+        // sig[0] = 0x02 (ALG_ECDSA, tier 1) — a module legitimately authorizes Tier-1; NOT capped.
+        vm.prank(address(ep));
+        uint256 result = account.validateUserOp(_nonceKeyOp(0x02), keccak256("hash"), 0);
+        assertEq(result, 0, "HIGH-1: Tier-1 algId via module route must still succeed (no regression)");
     }
 
     function test_validateUserOp_fromNonEntryPoint_reverts() public {

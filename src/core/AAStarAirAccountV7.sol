@@ -34,7 +34,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this contract deployment. Used by SDKs for programmatic version detection.
-    string public constant ACCOUNT_VERSION = "0.25.0";
+    string public constant ACCOUNT_VERSION = "0.26.0";
 
     /// @dev Implementation constructor. Does NOT disable initializers so that direct `new` in tests works.
     ///      The factory deploys one shared implementation and uses Clones for user accounts.
@@ -203,23 +203,23 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
                     abi.encodeWithSelector(0x97003203, userOp, userOpHash)
                 );
                 validationData = (ok && ret.length >= 32) ? abi.decode(ret, (uint256)) : 1;
-                // H-6: store sig[0] as algId so guard receives the correct tier.
-                // CompositeValidator may push a more-specific algId first via validateCompositeSignature;
-                // execute() reads that entry (pos 0) first, leaving this one unconsumed.
-                // Gate on "not failed" (!=1) rather than "==0" so validators returning non-zero
-                // validationData (e.g. validUntil timestamp: uint256(expiry)<<160) still queue algId.
-                // SIG_VALIDATION_FAILED = 1 is the only sentinel for rejection.
+                // Store sig[0] as the algId so the guard receives a tier. Gate on "not failed" (!=1)
+                // rather than "==0" so validators returning non-zero validationData (e.g. a validUntil
+                // timestamp: uint256(expiry)<<160) still queue the algId. SIG_VALIDATION_FAILED = 1 is
+                // the only rejection sentinel.
                 if (validationData != 1 && userOp.signature.length > 0) {
                     uint8 algId = uint8(userOp.signature[0]);
-                    // Codex P1-#11 (2026-05-30): session keys (algId 0x08) MUST NOT come in via
-                    // ERC-7579 nonce-key routing. A third-party validator could otherwise pass
-                    // sig[0]==0x08 through this path; base._enforceGuard would see algId=0x08 with
-                    // taggedSessionKey == bytes32(0) (because nonce-key route does not call
-                    // _storeSessionKey) and SKIP the scope/velocity check entirely. To prevent
-                    // that bypass, reject ALG_SESSION_KEY here — session keys belong in the
-                    // native base._validateSignature path (106/149-byte M6.4 format) where
-                    // taggedSessionKey IS populated and _enforceGuard enforces scope.
-                    if (algId == ALG_SESSION_KEY) {
+                    // HIGH-1 (2026-07-05): a nonce-key validator module returns only 0/1 — it proves a
+                    // SINGLE delegated factor. sig[0] is attacker-controlled, so it must NOT be able to
+                    // claim a Tier-2/3 algId (0x01/0x04/0x05/0x09/0x0a) here — otherwise a Tier-1 module
+                    // key could spend at Tier-2/3 (the multi-factor tiers require factors a lone module
+                    // did not verify). Cap the module route to Tier-1: reject any algId whose tier > 1.
+                    //
+                    // ALG_SESSION_KEY (0x08) is Tier-1 so the tier cap doesn't catch it, but it is
+                    // additionally barred (Codex P1-#11): the nonce-key route never calls _storeSessionKey,
+                    // so base._enforceGuard would see taggedSessionKey==0 and SKIP scope/velocity. Session
+                    // keys must use the native _validateSignature path (106/149-byte M6.4 format).
+                    if (algId == ALG_SESSION_KEY || _algTier(algId) > 1) {
                         validationData = 1; // SIG_VALIDATION_FAILED
                     } else {
                         _storeValidatedAlgId(algId);
