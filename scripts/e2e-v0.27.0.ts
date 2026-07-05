@@ -333,10 +333,16 @@ async function main() {
     const blsSig = "000000000000000000000000000000000b9f176f5113c4ccad075895d342d551ab705281d3a134902b8f6f0eb172a02b476efe18a58791bb5308a721bd87a417000000000000000000000000000000000f28139976fdab5e48503ad8d94c08ed65ef56219e423aa5942ae4b1926545ecabd48cde24179509a99ccac4b958499e000000000000000000000000000000000b7f5bcdb9f61925e00695c3a8c04dfe93258e7db5b923f6dd9b18a620e86ad45df02f23039a3ece1a09ea58e0e1677b0000000000000000000000000000000009ccf8330835ca4660012e0f587a6e0727241c3ac771858cc6d3b01d8659e3bf8a4582015610cacb9bee5f10945887af";
     const payload = ("0x" + nodeIds.join("") + blsSig) as Hex;
     const r01 = await pub.readContract({ address: ROUTER, abi: RABI, functionName: "getAlgorithm", args: [0x01] }) as Address;
-    const res = await pub.readContract({ address: DVT, abi: VABI, functionName: "validate", args: [goldenHash, payload] }) as bigint;
-    if (r01.toLowerCase() === DVT.toLowerCase() && res === 0n)
-      ok(`router 0x01 == DVT validator, golden-vector BLS validate() == 0 ✓`);
-    else fail("DVT mount", `router0x01=${r01} validate=${res}`);
+    const pos = await pub.readContract({ address: DVT, abi: VABI, functionName: "validate", args: [goldenHash, payload] }) as bigint;
+    // NEGATIVE vectors (Codex 2026-07-05): prove the DEPLOYED validator actually verifies BLS — a mutated
+    // hash and a corrupted sig must be REJECTED (return != 0), ruling out an always-pass stub.
+    const mutHash = "0x2222222222222222222222222222222222222222222222222222222222222222" as Hex;
+    const mutPayload = ("0x" + nodeIds.join("") + blsSig.slice(0, -4) + "dead") as Hex;
+    const negH = await pub.readContract({ address: DVT, abi: VABI, functionName: "validate", args: [mutHash, payload] }).catch(() => 1n) as bigint;
+    const negS = await pub.readContract({ address: DVT, abi: VABI, functionName: "validate", args: [goldenHash, mutPayload] }).catch(() => 1n) as bigint;
+    if (r01.toLowerCase() === DVT.toLowerCase() && pos === 0n && negH !== 0n && negS !== 0n)
+      ok(`router 0x01 == DVT, golden validate()==0, mutated-hash + corrupted-sig REJECTED (not a stub) ✓`);
+    else fail("DVT mount", `router0x01=${r01} pos=${pos} negH=${negH} negS=${negS}`);
   } catch (e: any) { fail("DVT mount check", e.shortMessage ?? e.message?.slice(0, 60)); }
 
   const total = 31;

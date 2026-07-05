@@ -50,6 +50,29 @@ DVT validator has no `aggregator()` → v0.27.0 accounts use inline single-op BL
 batch aggregation unavailable). Future no-break upgrade: a DVT validator that adds `aggregator()` + a
 future validator-stack version. The account already reads `aggregator()` via try/catch.
 
+## Codex challenge + adjustments (release-gate §5)
+
+Codex's sandbox couldn't reach Sepolia RPC (usual limitation; on-chain claims re-verified via live viem in
+this session). It also read the STALE `lib/YetAnotherAA-Validator` submodule (points to an old `0xF780…`,
+lacks `validate()`) — the deployed validator is the standalone dvt repo's `0x539B…` (`validate(bytes32,bytes)`
+view, confirmed callable on-chain). The "900 tests unreproducible" was Codex running `forge test` WITHOUT
+`--skip script` (this repo's known stale legacy scripts; `forge test --skip 'script/**'` → 900 pass).
+
+Two legitimate points, both addressed:
+- **Positive-only golden vector could pass an always-pass stub.** Added NEGATIVE vectors (E2E T31): the
+  deployed DVT validator REJECTS a mutated userOpHash (`validate → 1`) and a corrupted sig (`→ 1`) while
+  passing the valid golden vector (`→ 0`). Proves it actually verifies BLS, not a stub.
+- **Deploy script didn't assert `FACTORY_VERSION` / `setupComplete`.** Verified live: `FACTORY_VERSION ==
+  "0.27.0"`, `router.setupComplete == true` (finalized).
+
+**Trust boundary (by design, CC-10 Decision A):** the account calls the 0x01 validator via `_callBLSValidator`
+try/catch — fail-safe against reverts, but a validator that returns 0 for INVALID BLS would forge the factor.
+The BLS-factor integrity therefore relies on the DVT validator being correct. Mitigations: the DVT validator
+is Codex-approved in its own repo (2 rounds, 83 tests, golden vectors), and the negative-vector checks above
+confirm the DEPLOYED contract correctly rejects invalid input. This is the intended "dvt = authoritative BLS
+verifier" architecture, identical in trust shape to the prior 0xAF525A (also an external algorithm the account
+called via the same try/catch).
+
 ## Wire contract (SDK)
 BLS aggregate payloads `[nodeIds...][blsSig(256)]` must have **strictly-ascending nodeIds**
 (aastar-sdk#274). DVT operators re-register with `nodeId = keccak256(pubkey)`.
