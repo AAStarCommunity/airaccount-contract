@@ -3,6 +3,22 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
+## Status: v0.25.0 — 2026-07-05 (CRITICAL: validation/execution tier desync fix)
+
+Latest: **v0.25.0** — fixes a CRITICAL tier-escalation. A raw 65-byte owner ECDSA sig whose first byte
+equalled `0x09`/`0x0a` validated as Tier-1 ECDSA (M1 raw-65 fallthrough) but executed at Tier-2/3, so a
+stolen owner ECDSA key could spend at Tier-3 via `executeUserOp→executeBatch`. Fixed at the root: the M1
+raw-65 fallback is removed (plain ECDSA is now the explicit 66-byte `[0x02][r][s][v]`) and a single
+`_deriveStoredAlgId` table drives both validation and execution. Reuses the v0.24.0 validator stack (only
+impl + factory redeployed). Factory (Sepolia): `0x2979C772D8465418D3456960Cd15bB20b50E774e`. Forge test
+**895** (cancun + prague). On-chain E2E **30/30** (views) + **4/4** (real UserOp via Pimlico: 0x02 included,
+raw-65 rejected). **BREAKING**: raw 65-byte (unprefixed) ECDSA UserOp sigs no longer accepted (new accounts
+only) — SDK companion aastar-sdk#273. EIP-170: impl 24,408 B (168 B headroom).
+
+**v0.24.0** — 2026-07-03: five-fix security-hardening batch (guardian front-run, weighted-config
+escalation, self-call escalation, revert-free `validateUserOp`, storage-parity CI). Factory
+`0xD00bFa573B42C9cB046877032742e7961e986631`. See `CHANGELOG.md`.
+
 ## Status: v0.23.0 — 2026-07-01 (isValidOwnerAuth — owner-auth single source of truth)
 
 Latest: **v0.23.0** — adds `isValidOwnerAuth(bytes32 userOpHash, bytes calldata ownerAuth)` (issue #159):
