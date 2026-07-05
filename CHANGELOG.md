@@ -8,6 +8,30 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [v0.26.0] - 2026-07-05 (HIGH-1: module-route tier binding)
+
+Second of the two findings from the 2026-07-04 audit (the first, CRITICAL-1, shipped in v0.25.0).
+Same root cause: **the security tier was derived from the attacker-controlled `sig[0]` prefix without
+binding to the factors actually verified.**
+
+### Fixed (security)
+- **[HIGH-1] ERC-7579 nonce-key validator-module route trusted `sig[0]` as the tier.** On the nonce-key
+  route (`AAStarAirAccountV7.validateUserOp`), the account calls an installed validator module (which
+  returns only `0/1` — one delegated factor) and then stamped the tier from the attacker-controlled
+  `sig[0]`. A module authorizing a Tier-1 key could therefore be driven with `sig[0]==0x0a` to spend at
+  **Tier-3** (given a high-tier algId whitelisted). Fix: the module route is now **capped to Tier-1** —
+  any algId whose `_algTier > 1` (0x01/0x04/0x05/0x09/0x0a) is rejected even when the module returns 0.
+  Session keys (0x08, Tier-1) remain separately barred (Codex P1-#11). A lone module cannot claim the
+  multi-factor tiers it did not verify.
+
+### Notes
+- Non-breaking: only rejects an exploit path that should never have been reachable. Reuses the v0.25.0
+  validator stack; deploy needs only a new impl + factory. EIP-170: impl 24,437 B (139 B headroom).
+- 899 tests (cancun + prague), incl. 4 new module-route tier guards (Tier-2/3/BLS rejected, Tier-1 still
+  succeeds). Closes #171.
+
+---
+
 ## [v0.25.0] - 2026-07-04 (CRITICAL: validation/execution tier desync)
 
 A follow-up adversarial audit (4 parallel finders + Codex challenge) surfaced one CRITICAL and one

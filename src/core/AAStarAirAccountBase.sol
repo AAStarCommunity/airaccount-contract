@@ -744,7 +744,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (firstByte == ALG_WEIGHTED) {
             _storeValidatedAlgId(ALG_WEIGHTED);
             // Re-accumulate weight (re-verifies weighted components) so execute() resolves the tier.
-            _validateWeightedSignature(userOpHash, signature[1:]);
+            // Defense-in-depth (Codex HIGH-1 item 5): _validateWeightedSignature stores weight only on
+            // success; on failure it returns non-zero WITHOUT touching the callData-keyed weight slot. If
+            // that slot held stale weight from a prior same-callData op, execute() could resolve a Tier
+            // from it. Clear the slot on any non-zero (failed) re-accumulation so no stale weight survives.
+            if (_validateWeightedSignature(userOpHash, signature[1:]) != 0) _storeValidatedWeight(0);
             return;
         }
         if (firstByte == ALG_SESSION_KEY) {
