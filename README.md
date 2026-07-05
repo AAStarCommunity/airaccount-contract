@@ -3,6 +3,10 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 A privacy-first, non-upgradable ERC-4337 smart wallet for mobile crypto payments. Tiered security based on transaction value, social recovery via guardians, gasless transactions via paymasters, and hardware-bound passkey (P256/WebAuthn) authentication.
 
+## Status: v0.27.0 — 2026-07-05 (DVT validator unification)
+
+Latest: **v0.27.0** — mounts the DVT-repo authoritative BLS validator (`0x539B9681…`) at algId 0x01, replacing airaccount own `AAStarBLSAlgorithm` (0xAF525A). New validator stack (router 0x01→DVT, 0x08→session). Existing accounts keep 0xAF525A (non-upgradable); new accounts use the DVT validator + gain its strictly-ascending-nodeIds quorum-fake fix. Inline single-op BLS (batch IAggregator is a future no-break upgrade). Factory (Sepolia): `0xf25621DF4c6100cdfe224054C2b09f2963bF487b`. Forge test **900** (cancun + prague). On-chain E2E **31/31** (incl. DVT mount + golden-vector BLS validate()==0) + **4/4** real UserOp. Cross-repo: Seeder CC-10, SDK aastar-sdk#274 (nodeIds sorting).
+
 ## Status: v0.26.0 — 2026-07-05 (HIGH-1: module-route tier binding)
 
 Latest: **v0.26.0** — fixes a HIGH tier-escalation: the ERC-7579 nonce-key validator-module route stamped the tier from the attacker-controlled `sig[0]`, so a Tier-1 module key could claim `sig[0]==0x0a` and spend at Tier-3. Now capped to Tier-1 (rejects session 0x08, weighted 0x07, and any algId with tier > 1), plus a stale-weight guard in `_populateExecAlg`. Reuses the v0.25.0 validator stack (only impl + factory redeployed). Factory (Sepolia): `0x2039a9f81e961497237237c37aD5dBEf57C24F24`. Forge test **900** (cancun + prague). On-chain E2E **30/30** (views) + **4/4** (real UserOp). Non-breaking. Codex-verified (2 rounds). EIP-170: impl 24,494 B (82 B headroom). Closes #171.

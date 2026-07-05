@@ -19,7 +19,7 @@ contract AAStarAirAccountFactoryV7 {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this factory deployment. Used by SDKs for programmatic version detection.
-    string public constant FACTORY_VERSION = "0.26.0";
+    string public constant FACTORY_VERSION = "0.27.0";
 
     /// @dev Shared implementation contract — all user accounts are clones of this address.
     ///      INJECTED as a constructor parameter (deployer must deploy AAStarAirAccountV7 first and
