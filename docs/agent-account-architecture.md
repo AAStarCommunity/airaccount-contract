@@ -3,6 +3,9 @@
 > 综合分析文档：问题分析 · 行业调研 · 架构决策 · 创建路径 · 开发计划
 > 最后更新：2026-05-27 | 对应里程碑：M7（助理型）/ M8（自主型）
 
+> ⚠️ **口径更正（2026-07-06 · 会话密钥统一，见 [#178](https://github.com/AAStarCommunity/airaccount-contract/issues/178)）**
+> airaccount-contract v0.27.0 起，独立的 `AgentSessionKeyValidator`（M7 ERC-7579 安装式模块，type 1 Validator）已**删除**并统一进 `SessionKeyValidator`（router algId `0x08`，agent 作用域）；授权入口为 `SessionKeyValidator.grantSession()`（非 `grantAgentSession()`）。本文下方凡出现 `AgentSessionKeyValidator` / `grantAgentSession` / `revokeAgentSession` / `enforceSessionScope` / `TierGuardHook` / `../src/validators/AgentSessionKeyValidator.sol` 等，均为 **M7 历史设计口径**（`AgentSessionKeyValidator.sol` 与 `TierGuardHook.sol` 均已删除），请以当前源码 `src/validators/SessionKeyValidator.sol` + [ADR 2026-05-30](2026-05-30-adr-session-key-unification.md) 为准。叙事重写在 #178 跟踪。
+
 ---
 
 ## 0. 助理型 vs 自主型：本质区别是"账户边界",不是"权限高低"
