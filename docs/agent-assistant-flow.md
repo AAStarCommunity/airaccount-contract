@@ -5,6 +5,9 @@
 > 账户归属：Agent 在人类 AirAccount 内操作，无独立账户  
 > 状态：M7 已实现，可用
 
+> ⚠️ **口径更正（2026-07-06 · 会话密钥统一，见 [#178](https://github.com/AAStarCommunity/airaccount-contract/issues/178)）**
+> airaccount-contract v0.27.0 起，独立的 `AgentSessionKeyValidator`（M7 ERC-7579 安装式模块）已**删除**并统一进 `SessionKeyValidator`（router algId `0x08`，agent 作用域）；授权入口为 `SessionKeyValidator.grantSession()`（非 `grantAgentSession()`），不存在独立 algId。本文下方凡出现 `AgentSessionKeyValidator` / `grantAgentSession` / `TierGuardHook` 等，均为 **M7 历史设计口径**（TierGuardHook 亦已删除，约束改由 SessionKeyValidator + 执行侧 guard 承担），请以当前源码 `src/validators/SessionKeyValidator.sol` + [ADR 2026-05-30](2026-05-30-adr-session-key-unification.md) 为准。叙事重写在 #178 跟踪。
+
 ---
 
 ## 核心设计原则
