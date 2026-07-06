@@ -358,7 +358,8 @@ contract AAStarAirAccountFactoryV7 {
     ///
     /// @param agentKey    The agent's signing key (EOA address). NOT the account owner — it is the
     ///                   agent's intended session key, authorized after deployment via
-    ///                   AgentSessionKeyValidator.grantAgentSession(). The owner is msg.sender (human).
+    ///                   SessionKeyValidator.grantSession() (algId 0x08, ALG_SESSION_KEY; agent-scoped —
+    ///                   there is no separate AgentSessionKeyValidator). The owner is msg.sender (human).
     ///                   For autonomous agents: use a secure server-side / KMS-held key.
     /// @param agentId     A bytes32 identifier for this agent (e.g. keccak256("my-agent-v1")).
     ///                   Combined with msg.sender to derive a unique deterministic salt.
@@ -426,7 +427,8 @@ contract AAStarAirAccountFactoryV7 {
         }
 
         // owner = msg.sender (humanAirAccount), NOT agentKey.
-        // agentKey is authorized as a session key separately via grantAgentSession() after deployment.
+        // agentKey is authorized as a session key separately via SessionKeyValidator.grantSession()
+        // (algId 0x08, ALG_SESSION_KEY) after deployment.
         // Guardians: [guardian2, communityGuardian] — 2-of-2.
         // humanAirAccount is the owner but NOT a guardian (avoids owner==guardian constraint).
         AAStarAirAccountBase.InitConfig memory config = _buildDefaultConfig(

@@ -985,7 +985,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 | param | type | description |
 |---|---|---|
-| `agentKey` | `address` | The agent's signing key (EOA address). NOT the account owner — it is the                   agent's intended session key, authorized after deployment via                   AgentSessionKeyValidator.grantAgentSession(). The owner is msg.sender (human).                   For autonomous agents: use a secure server-side / KMS-held key. |
+| `agentKey` | `address` | The agent's signing key (EOA address). NOT the account owner — it is the                   agent's intended session key, authorized after deployment via                   SessionKeyValidator.grantSession() (algId 0x08, ALG_SESSION_KEY; agent-scoped —                   there is no separate AgentSessionKeyValidator). The owner is msg.sender (human).                   For autonomous agents: use a secure server-side / KMS-held key. |
 | `agentId` | `bytes32` | A bytes32 identifier for this agent (e.g. keccak256("my-agent-v1")).                   Combined with msg.sender to derive a unique deterministic salt. |
 | `guardian2` | `address` | Second guardian (human's personal backup key, trusted person, etc.) |
 | `guardian2Sig` | `bytes` | guardian2's acceptance signature. Signs:                   keccak256("ACCEPT_AGENT_GUARDIAN" \|\| chainId \|\| factory \|\| agentKey \|\| humanOwner \|\| agentId \|\| deadline).toEthSignedMessageHash()                   The "ACCEPT_AGENT_GUARDIAN" domain and explicit humanOwner + agentId prevent                   cross-namespace collision with createAccountWithDefaults signatures. |
