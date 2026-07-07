@@ -35,6 +35,11 @@ categorization lives in `.github/release.yml`; this file is the correctness gate
 - [ ] Release body = CHANGELOG entry (what-changed + full address table + test counts + E2E tx).
 - [ ] **Set the prerelease flag correctly**: betas = pre-release; GA = `prerelease=false` + Latest. ⚠️ Known Oversight #3.
 - [ ] Cross-link the SDK PR if the release changes ABI / wire format.
+- [ ] **Version numbers in outward text carry the product name** (⚠️ Known Oversight #8): CHANGELOG entry,
+      release title/notes, PR titles, cross-repo (Cooperation-Center / issue) notes → write
+      `airaccount-contract vX.Y.Z`, never a bare `vX.Y.Z`. The git tag itself stays clean semver
+      (`vX.Y.Z` — no product name, don't break tooling). When reporting a sync, name both sides
+      (e.g. "@aastar/sdk 0.37.0 synced to airaccount-contract v0.27.0").
 
 ## 5. E2E on-chain + Codex challenge (MANDATORY GATE)
 A release does NOT meet the bar until ALL of the following pass (established 2026-06-16, owner-mandated):
@@ -70,6 +75,11 @@ These are real misses that shipped. Each release MUST re-check them.
 6. **Deploy/E2E logs committed** — keep `deploy-*.log` / `e2e-*.log` out of git.
 7. **Sepolia txs dropped as underpriced** (2026-06-16) — viem's default `baseFeeMultiplier` (1.2×) under-provisions
    on volatile Sepolia → createAccount txs silently dropped → cascading confirmation-timeouts + nonce snarls
+8. **Bare version numbers in outward text** (2026-07-05, Cooperation-Center CC-14) — reporting a naked `0.37` /
+   `v0.27` is ambiguous across independent version tracks (SDK / contract / DVT / SuperPaymaster / KMS all number
+   separately; SDK 0.37.x ≠ airaccount-contract v0.27.0). **Fix:** outward text (CHANGELOG / release notes / PR
+   titles / cross-repo comments) always writes `airaccount-contract vX.Y.Z`; the tag/version constants stay clean
+   semver. Ecosystem-wide convention — all repos adopted.
    (worsened by killing runs mid-flight). FIX: wallet chain `fees: { baseFeeMultiplier: 2, maxPriorityFeePerGas: 2gwei }`
    (= proven deploy-script `baseFee*2 + tip`). UserOps: use `pimlico_getUserOperationGasPrice`. NEVER re-send on
    timeout (poll the receipt). Also: M3-era scripts drift vs current ABI — `TokenConfig` packed to uint128 (#82, the

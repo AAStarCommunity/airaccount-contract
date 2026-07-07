@@ -46,6 +46,7 @@ Fork → 新建分支 → 写代码 → 提交 PR → 签 CLA → Review → Mer
 - 分支命名：`feat/xxx` · `fix/xxx` · `docs/xxx`
 - Commit 规范：[Conventional Commits](https://www.conventionalcommits.org/)
 - 问题反馈：在本仓库提 Issue
+- **版本号对外带产品名**：CHANGELOG / release notes / PR 标题 / 跨仓沟通里写 `airaccount-contract vX.Y.Z`，不写裸 `vX.Y.Z`（生态内 SDK / 合约 / DVT / SuperPaymaster / KMS 各走各的版本轨道，裸数字会混淆）。git tag 本身保持干净 semver。详见 `docs/RELEASE_CHECKLIST.md` Known Oversight #8。
 
 ## License
 
