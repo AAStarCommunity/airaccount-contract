@@ -40,7 +40,7 @@ Authoritative, auto-generated reference for every external/public function, even
 - [UniswapV3Parser](#uniswapv3parser) — `src/parsers/UniswapV3Parser.sol`
 - [AgentRegistry](#agentregistry) — `src/registries/AgentRegistry.sol`
 - [AlgTierLib](#algtierlib) — `src/utils/AlgTierLib.sol`
-- [AAStarBLSAlgorithm](#aastarblsalgorithm) — `src/validators/AAStarBLSAlgorithm.sol`
+- [AAStarBLSKeyRegistry](#aastarblskeyregistry) — `src/validators/AAStarBLSKeyRegistry.sol`
 - [AAStarValidator](#aastarvalidator) — `src/validators/AAStarValidator.sol`
 - [SessionKeyValidator](#sessionkeyvalidator) — `src/validators/SessionKeyValidator.sol`
 
@@ -5097,11 +5097,11 @@ Authoritative, auto-generated reference for every external/public function, even
 - **Title:** AlgTierLib
 - Shared algorithm-to-security-tier mapping for AAStarAirAccountBase and AAStarGlobalGuard.
 
-## AAStarBLSAlgorithm
+## AAStarBLSKeyRegistry
 
-- **Source:** `src/validators/AAStarBLSAlgorithm.sol`
+- **Source:** `src/validators/AAStarBLSKeyRegistry.sol`
 - **Functions:** 23 · **Events:** 6 · **Errors:** 14
-- **Title:** AAStarBLSAlgorithm - BLS12-381 aggregate signature verification with node management
+- **Title:** AAStarBLSKeyRegistry - Safe-owned BLS12-381 node key registry + aggregate signature verification
 - Extracted from YetAnotherAA AAStarValidator with assembly optimizations.         ABI-compatible with the NestJS backend (registerPublicKey, isRegistered, etc.)
 
 ### Function selector index

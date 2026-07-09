@@ -172,7 +172,7 @@ contract account.
 | `registerAlgorithm(algId, impl)` / `proposeAlgorithm` + `executeProposal` | AAStarValidator | Register a signature algorithm (direct pre-setup; 7-day timelock after `finalizeSetup`). |
 | `getAlgorithm(algId)` / `algorithms(algId)` | AAStarValidator | Resolve an algId → algorithm contract. |
 | `validateSignatures(ops[], sig)` / `aggregateSignatures(ops[])` / `validateUserOpSignature(op)` | AAStarBLSAggregator | ERC-4337 `IAggregator`: batch many UserOps into a single BLS pairing check. |
-| `verify(...)` (per algorithm) | AAStarBLSAlgorithm | The actual signature verification routed to by the validator (algId-dispatched). |
+| `verify(...)` (per algorithm) | AAStarBLSKeyRegistry | The actual signature verification routed to by the validator (algId-dispatched). |
 
 algId convention: first byte of the signature selects the algorithm (e.g. `0x08` =
 session key). `AlgTierLib` maps algId → verification tier for the guard.
