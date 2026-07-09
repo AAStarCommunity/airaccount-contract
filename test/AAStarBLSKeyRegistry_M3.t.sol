@@ -2,11 +2,11 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
+import {AAStarBLSKeyRegistry} from "../src/validators/AAStarBLSKeyRegistry.sol";
 
-/// @title AAStarBLSAlgorithm M3 Tests - Cached aggregated keys, G2 operations
-contract AAStarBLSAlgorithmM3Test is Test {
-    AAStarBLSAlgorithm public bls;
+/// @title AAStarBLSKeyRegistry M3 Tests - Cached aggregated keys, G2 operations
+contract AAStarBLSKeyRegistryM3Test is Test {
+    AAStarBLSKeyRegistry public bls;
     address public owner = address(this);
 
     // Sample G1 points in EIP-2537 format (128 bytes each) — using generator-derived keys
@@ -17,7 +17,7 @@ contract AAStarBLSAlgorithmM3Test is Test {
     bytes32 public nodeId2 = bytes32(uint256(2));
 
     function setUp() public {
-        bls = new AAStarBLSAlgorithm();
+        bls = new AAStarBLSKeyRegistry();
 
         // Create deterministic 128-byte public keys for testing
         pk1 = _makeKey(0x11);
@@ -58,14 +58,14 @@ contract AAStarBLSAlgorithmM3Test is Test {
     ///      `CacheDeprecated` regardless of inputs.
     function test_cacheAggregatedKey_alwaysReverts_empty() public {
         bytes32[] memory empty = new bytes32[](0);
-        vm.expectRevert(AAStarBLSAlgorithm.CacheDeprecated.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.CacheDeprecated.selector);
         bls.cacheAggregatedKey(empty);
     }
 
     function test_cacheAggregatedKey_alwaysReverts_unregistered() public {
         bytes32[] memory ids = new bytes32[](1);
         ids[0] = bytes32(uint256(999));
-        vm.expectRevert(AAStarBLSAlgorithm.CacheDeprecated.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.CacheDeprecated.selector);
         bls.cacheAggregatedKey(ids);
     }
 
@@ -77,7 +77,7 @@ contract AAStarBLSAlgorithmM3Test is Test {
         bls.registerPublicKey(nid, dummyKey);
         bytes32[] memory ids = new bytes32[](1);
         ids[0] = nid;
-        vm.expectRevert(AAStarBLSAlgorithm.CacheDeprecated.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.CacheDeprecated.selector);
         bls.cacheAggregatedKey(ids);
     }
 
@@ -85,14 +85,14 @@ contract AAStarBLSAlgorithmM3Test is Test {
 
     function test_aggregateKeys_emptyReverts() public {
         bytes32[] memory empty = new bytes32[](0);
-        vm.expectRevert(AAStarBLSAlgorithm.NoNodesProvided.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.NoNodesProvided.selector);
         bls.aggregateKeys(empty);
     }
 
     function test_aggregateKeys_unregisteredReverts() public {
         bytes32[] memory ids = new bytes32[](1);
         ids[0] = bytes32(uint256(999));
-        vm.expectRevert(AAStarBLSAlgorithm.NodeNotRegistered.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.NodeNotRegistered.selector);
         bls.aggregateKeys(ids);
     }
 

@@ -6,7 +6,7 @@ import {AAStarAirAccountFactoryV7} from "../src/core/AAStarAirAccountFactoryV7.s
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
-import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
+import {AAStarBLSKeyRegistry} from "../src/validators/AAStarBLSKeyRegistry.sol";
 
 /// @title DeployFullSystem - Deploy all M2+ contracts to Sepolia
 /// @dev Usage: forge script script/DeployFullSystem.s.sol --rpc-url $SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast -vvvv
@@ -27,8 +27,8 @@ contract DeployFullSystem is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         // 1. Deploy BLS Algorithm
-        AAStarBLSAlgorithm blsAlg = new AAStarBLSAlgorithm();
-        console.log("AAStarBLSAlgorithm:", address(blsAlg));
+        AAStarBLSKeyRegistry blsAlg = new AAStarBLSKeyRegistry();
+        console.log("AAStarBLSKeyRegistry:", address(blsAlg));
 
         // 2. Deploy Validator Router
         AAStarValidator validatorRouter = new AAStarValidator();

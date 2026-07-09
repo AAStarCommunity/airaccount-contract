@@ -288,9 +288,9 @@ contract AAStarAirAccountV7_M2Test is Test {
         assertEq(result, 0, "Valid triple sig with mock BLS should pass");
     }
 
-    // issue #45 Part B: the batch aggregator is a SINGLE protocol-level value on AAStarBLSAlgorithm
+    // issue #45 Part B: the batch aggregator is a SINGLE protocol-level value on AAStarBLSKeyRegistry
     // (blsAlgorithm.aggregator(), set only by the protocol Safe) — there is NO account-side setter.
-    // Aggregator ownership/setter tests live in test/AAStarBLSAlgorithm.t.sol; the account reading
+    // Aggregator ownership/setter tests live in test/AAStarBLSKeyRegistry.t.sol; the account reading
     // blsAlgorithm.aggregator() (batch vs inline) is in test/ProtocolAggregator.t.sol; the batch BLS
     // path + #45 binding in test/AAStarBLSAggregator.t.sol and test/BLSReplayBinding.t.sol.
 

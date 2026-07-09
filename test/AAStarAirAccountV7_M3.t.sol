@@ -224,8 +224,8 @@ contract AAStarAirAccountV7M3Test is Test {
 
     // ─── Aggregator Configuration ────────────────────────────────────
     // issue #45 Part B: there is NO account-side aggregator setter. The batch aggregator is a single
-    // protocol-level value on AAStarBLSAlgorithm (set only by the protocol Safe). See
-    // test/AAStarBLSAlgorithm.t.sol (setter/ownership) and test/ProtocolAggregator.t.sol (account read).
+    // protocol-level value on AAStarBLSKeyRegistry (set only by the protocol Safe). See
+    // test/AAStarBLSKeyRegistry.t.sol (setter/ownership) and test/ProtocolAggregator.t.sol (account read).
 
     // ─── Guard Initialization (constructor) ────────────────────────────
 

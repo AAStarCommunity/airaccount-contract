@@ -10,7 +10,7 @@ import {ForceExitModule} from "../src/core/ForceExitModule.sol";
 import {AirAccountDelegate} from "../src/core/AirAccountDelegate.sol";
 import {CalldataParserRegistry} from "../src/core/CalldataParserRegistry.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
-import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
+import {AAStarBLSKeyRegistry} from "../src/validators/AAStarBLSKeyRegistry.sol";
 import {SessionKeyValidator} from "../src/validators/SessionKeyValidator.sol";
 import {AAStarBLSAggregator} from "../src/aggregator/AAStarBLSAggregator.sol";
 import {AgentRegistry} from "../src/registries/AgentRegistry.sol";
@@ -86,7 +86,7 @@ contract DeployAirAccountV017 is Script {
         vm.startBroadcast();
 
         // 1. BLS aggregate-signature algorithm (Tier 2/3 DVT co-sign)
-        d.blsAlgorithm = address(new AAStarBLSAlgorithm());
+        d.blsAlgorithm = address(new AAStarBLSKeyRegistry());
 
         // 2. Validator router (algId -> algorithm)
         AAStarValidator router = new AAStarValidator();

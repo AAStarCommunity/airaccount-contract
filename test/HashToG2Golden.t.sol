@@ -2,7 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
+import {AAStarBLSKeyRegistry} from "../src/validators/AAStarBLSKeyRegistry.sol";
 
 // issue #45 Fix 1 — golden-vector test for on-chain RFC 9380 hash_to_curve.
 // The expected 256-byte G2 points were produced by noble-curves v2.0.1 (the exact
@@ -15,10 +15,10 @@ import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
 ///      0x05/0x11/0x0d under Prague). Under the repo default `cancun` these precompiles are
 ///      absent and the test is skipped via the precompile-availability guard.
 contract HashToG2GoldenTest is Test {
-    AAStarBLSAlgorithm bls;
+    AAStarBLSKeyRegistry bls;
 
     function setUp() public {
-        bls = new AAStarBLSAlgorithm();
+        bls = new AAStarBLSKeyRegistry();
     }
 
     /// @dev Returns true iff EIP-2537 MAP_FP2_TO_G2 (0x11) is present (Prague). Under cancun the

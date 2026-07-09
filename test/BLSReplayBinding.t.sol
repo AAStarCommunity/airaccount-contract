@@ -2,7 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
+import {AAStarBLSKeyRegistry} from "../src/validators/AAStarBLSKeyRegistry.sol";
 
 // issue #45 Fix 1 — replay-binding test (red->green).
 // A real 3-node BLS aggregate was produced off-chain (noble-curves longSignatures, the exact
@@ -12,7 +12,7 @@ import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
 //
 // REQUIRES EIP-2537 → run with `--evm-version prague`. Skipped under the repo default cancun.
 contract BLSReplayBindingTest is Test {
-    AAStarBLSAlgorithm bls;
+    AAStarBLSKeyRegistry bls;
 
     bytes32 constant USEROPHASH_A = 0x1111111111111111111111111111111111111111111111111111111111111111;
     bytes32 constant USEROPHASH_B = 0x8bb1b199f427dfc49e5fe40f2f3278cb1a48587824b78263051c8c4d81d77a81;
@@ -31,7 +31,7 @@ contract BLSReplayBindingTest is Test {
         hex"0000000000000000000000000000000011c5f99ff65ef3a521b5c870d6e2d7343284b8ba946f0e6b237dc057617eb6cc8736290a8724f75e90a5634d48467f2e000000000000000000000000000000001384aedc1b85ae258fbbf830941505cbd1aa2da8932cc34c1257bece2e6d35ba0a25213f71560cfff2daba5a5d7d51f0000000000000000000000000000000001782a5b74dd7e0b7dd781e99280c00724631ae6980431152777efa6deae6bd26c57f6c549ff4a2eb7c6cd5543909f7c3000000000000000000000000000000000cddb637f41155e1f8654a5e39db04c1bebc8150d9e8dc1f5fd1b75ce477b1c4dcd5b8c9da01473d8e5010cb56983737";
 
     function setUp() public {
-        bls = new AAStarBLSAlgorithm();
+        bls = new AAStarBLSKeyRegistry();
         bls.registerPublicKey(NODE0, PK0);
         bls.registerPublicKey(NODE1, PK1);
         bls.registerPublicKey(NODE2, PK2);
