@@ -10,7 +10,14 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ## [Unreleased]
 
+## [v0.28.0] - 2026-07-09 (CC-27 BLS registry rename + version bump)
+
+Cross-repo contract-name-collision cleanup (CC-27) + version bump. Source-level release —
+not yet deployed. Because the account stack is non-upgradable, `AAStarBLSKeyRegistry` and the
+`0.28.0` version constants take effect on the next Sepolia/mainnet deploy.
+
 ### Changed
+- Bump `ACCOUNT_VERSION` / `FACTORY_VERSION` `0.27.0` → `0.28.0` (`accountId` now `airaccount.v7@0.28.0`).
 - **Rename `AAStarBLSAlgorithm` → `AAStarBLSKeyRegistry`** (Seeder CC-27). Resolves the cross-repo
   contract-name collision with `YetAnotherAA-Validator`'s `AAStarBLSAlgorithm` (the permissionless,
   stake-bound DVT node registry with `registerWithProof`). The two are **independent contracts**, not a
