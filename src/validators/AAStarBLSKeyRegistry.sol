@@ -3,11 +3,15 @@ pragma solidity ^0.8.33;
 
 import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
 
-/// @title AAStarBLSAlgorithm - BLS12-381 aggregate signature verification with node management
+/// @title AAStarBLSKeyRegistry - Safe-owned BLS12-381 node key registry + aggregate signature verification
+/// @dev Renamed from AAStarBLSAlgorithm (CC-27): resolves the cross-repo name collision with
+///      YetAnotherAA-Validator's AAStarBLSAlgorithm (the permissionless stake-bound DVT node
+///      registry with registerWithProof). This contract is the protocol Safe-curated key set
+///      (owner-gated registerPublicKey, no PoP/stake) — an independent contract, not a fork.
 /// @notice Extracted from YetAnotherAA AAStarValidator with assembly optimizations.
 ///         ABI-compatible with the NestJS backend (registerPublicKey, isRegistered, etc.)
 /// @dev Uses EIP-2537 precompiles: G1Add (0x0b), Pairing (0x0f)
-contract AAStarBLSAlgorithm is IAAStarAlgorithm {
+contract AAStarBLSKeyRegistry is IAAStarAlgorithm {
     // ─── Storage ──────────────────────────────────────────────────────
 
     /// @dev nodeId → G1 public key (128 bytes EIP-2537 format)

@@ -2,13 +2,13 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
+import {AAStarBLSKeyRegistry} from "../src/validators/AAStarBLSKeyRegistry.sol";
 
-/// @dev Unit tests for AAStarBLSAlgorithm node management and basic structure.
+/// @dev Unit tests for AAStarBLSKeyRegistry node management and basic structure.
 ///      BLS pairing verification requires EIP-2537 precompiles (Sepolia/Prague only),
 ///      so those are tested in E2E tests. Here we test node management ABI compatibility.
-contract AAStarBLSAlgorithmTest is Test {
-    AAStarBLSAlgorithm public bls;
+contract AAStarBLSKeyRegistryTest is Test {
+    AAStarBLSKeyRegistry public bls;
     address owner;
 
     bytes32 constant NODE1 = keccak256("node1");
@@ -27,7 +27,7 @@ contract AAStarBLSAlgorithmTest is Test {
 
     function setUp() public {
         owner = address(this);
-        bls = new AAStarBLSAlgorithm();
+        bls = new AAStarBLSKeyRegistry();
 
         pubKey1 = _fakeG1Point(1);
         pubKey2 = _fakeG1Point(2);
@@ -50,26 +50,26 @@ contract AAStarBLSAlgorithmTest is Test {
     }
 
     function test_registerPublicKey_invalidNodeId() public {
-        vm.expectRevert(AAStarBLSAlgorithm.InvalidNodeId.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.InvalidNodeId.selector);
         bls.registerPublicKey(bytes32(0), pubKey1);
     }
 
     function test_registerPublicKey_invalidKeyLength() public {
-        vm.expectRevert(AAStarBLSAlgorithm.InvalidKeyLength.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.InvalidKeyLength.selector);
         bls.registerPublicKey(NODE1, new bytes(64)); // Wrong length
     }
 
     function test_registerPublicKey_duplicate() public {
         bls.registerPublicKey(NODE1, pubKey1);
 
-        vm.expectRevert(AAStarBLSAlgorithm.NodeAlreadyRegistered.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.NodeAlreadyRegistered.selector);
         bls.registerPublicKey(NODE1, pubKey2);
     }
 
     function test_registerPublicKey_onlyOwner() public {
         // Non-owner cannot register (security fix: was permissionless)
         vm.prank(address(0xdead));
-        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.OnlyOwner.selector);
         bls.registerPublicKey(NODE1, pubKey1);
     }
 
@@ -87,12 +87,12 @@ contract AAStarBLSAlgorithmTest is Test {
         bls.registerPublicKey(NODE1, pubKey1);
 
         vm.prank(address(0xdead));
-        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.OnlyOwner.selector);
         bls.updatePublicKey(NODE1, pubKey2);
     }
 
     function test_updatePublicKey_notRegistered() public {
-        vm.expectRevert(AAStarBLSAlgorithm.NodeNotRegistered.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.NodeNotRegistered.selector);
         bls.updatePublicKey(NODE1, pubKey2);
     }
 
@@ -110,7 +110,7 @@ contract AAStarBLSAlgorithmTest is Test {
         bls.registerPublicKey(NODE1, pubKey1);
 
         vm.prank(address(0xdead));
-        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.OnlyOwner.selector);
         bls.revokePublicKey(NODE1);
     }
 
@@ -152,7 +152,7 @@ contract AAStarBLSAlgorithmTest is Test {
         keys[0] = pubKey1;
 
         vm.prank(address(0xdead));
-        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.OnlyOwner.selector);
         bls.batchRegisterPublicKeys(ids, keys);
     }
 
@@ -163,12 +163,12 @@ contract AAStarBLSAlgorithmTest is Test {
         bytes[] memory keys = new bytes[](1);
         keys[0] = pubKey1;
 
-        vm.expectRevert(AAStarBLSAlgorithm.ArrayLengthMismatch.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.ArrayLengthMismatch.selector);
         bls.batchRegisterPublicKeys(ids, keys);
     }
 
     function test_batchRegisterPublicKeys_empty() public {
-        vm.expectRevert(AAStarBLSAlgorithm.EmptyArrays.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.EmptyArrays.selector);
         bls.batchRegisterPublicKeys(new bytes32[](0), new bytes[](0));
     }
 
@@ -215,13 +215,13 @@ contract AAStarBLSAlgorithmTest is Test {
     function test_acceptOwnership_onlyPendingOwner() public {
         bls.transferOwnership(address(0xBEEF));
         vm.prank(address(0xdead));
-        vm.expectRevert(AAStarBLSAlgorithm.NotPendingOwner.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.NotPendingOwner.selector);
         bls.acceptOwnership();
     }
 
     function test_transferOwnership_onlyOwner() public {
         vm.prank(address(0xdead));
-        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.OnlyOwner.selector);
         bls.transferOwnership(address(0xBEEF));
     }
 
@@ -238,7 +238,7 @@ contract AAStarBLSAlgorithmTest is Test {
 
     function test_setAggregator_nonOwner_reverts() public {
         vm.prank(address(0xdead));
-        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.OnlyOwner.selector);
         bls.setAggregator(address(0xA66));
     }
 
@@ -250,7 +250,7 @@ contract AAStarBLSAlgorithmTest is Test {
         bls.acceptOwnership();
 
         // Old owner (this) can no longer set it.
-        vm.expectRevert(AAStarBLSAlgorithm.OnlyOwner.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.OnlyOwner.selector);
         bls.setAggregator(address(0xA66));
 
         // The Safe can.
@@ -274,7 +274,7 @@ contract AAStarBLSAlgorithmTest is Test {
 
     function test_validateAggregateSignature_emptyNodes() public {
         bytes32[] memory empty = new bytes32[](0);
-        vm.expectRevert(AAStarBLSAlgorithm.NoNodesProvided.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.NoNodesProvided.selector);
         bls.validateAggregateSignature(empty, new bytes(256), new bytes(256));
     }
 
@@ -282,7 +282,7 @@ contract AAStarBLSAlgorithmTest is Test {
         bytes32[] memory ids = new bytes32[](1);
         ids[0] = NODE1;
 
-        vm.expectRevert(AAStarBLSAlgorithm.InvalidSignatureLength.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.InvalidSignatureLength.selector);
         bls.validateAggregateSignature(ids, new bytes(128), new bytes(256));
     }
 
@@ -290,7 +290,7 @@ contract AAStarBLSAlgorithmTest is Test {
         bytes32[] memory ids = new bytes32[](1);
         ids[0] = NODE1;
 
-        vm.expectRevert(AAStarBLSAlgorithm.InvalidMessageLength.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.InvalidMessageLength.selector);
         bls.validateAggregateSignature(ids, new bytes(256), new bytes(128));
     }
 
@@ -311,14 +311,14 @@ contract AAStarBLSAlgorithmTest is Test {
     // ─── aggregateKeys ────────────────────────────────────────────────
 
     function test_aggregateKeys_emptyNodeIds_reverts() public {
-        vm.expectRevert(AAStarBLSAlgorithm.NoNodesProvided.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.NoNodesProvided.selector);
         bls.aggregateKeys(new bytes32[](0));
     }
 
     function test_aggregateKeys_unregisteredNode_reverts() public {
         bytes32[] memory ids = new bytes32[](1);
         ids[0] = NODE1; // not registered
-        vm.expectRevert(AAStarBLSAlgorithm.NodeNotRegistered.selector);
+        vm.expectRevert(AAStarBLSKeyRegistry.NodeNotRegistered.selector);
         bls.aggregateKeys(ids);
     }
 

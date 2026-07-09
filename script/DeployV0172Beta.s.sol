@@ -11,7 +11,7 @@ import {ForceExitModule} from "../src/core/ForceExitModule.sol";
 import {AirAccountDelegate} from "../src/core/AirAccountDelegate.sol";
 import {CalldataParserRegistry} from "../src/core/CalldataParserRegistry.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
-import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
+import {AAStarBLSKeyRegistry} from "../src/validators/AAStarBLSKeyRegistry.sol";
 import {SessionKeyValidator} from "../src/validators/SessionKeyValidator.sol";
 import {AAStarBLSAggregator} from "../src/aggregator/AAStarBLSAggregator.sol";
 import {AgentRegistry} from "../src/registries/AgentRegistry.sol";
@@ -126,8 +126,8 @@ contract DeployV0172Beta is Script {
     ///         that need to deploy without broadcasting (just call from inside a vm.broadcast).
     function deployAll(address entryPoint, address communityGuardian) public {
         // 1. BLS aggregate-signature algorithm (Tier 2/3 DVT co-sign).
-        _d.blsAlgorithm = address(new AAStarBLSAlgorithm());
-        console2.log("Deployed AAStarBLSAlgorithm:", _d.blsAlgorithm);
+        _d.blsAlgorithm = address(new AAStarBLSKeyRegistry());
+        console2.log("Deployed AAStarBLSKeyRegistry:", _d.blsAlgorithm);
 
         // 2. Validator router (algId -> algorithm).
         _d.validatorRouter = address(new AAStarValidator());

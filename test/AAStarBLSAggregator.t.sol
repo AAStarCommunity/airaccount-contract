@@ -3,7 +3,7 @@ pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {AAStarBLSAggregator} from "../src/aggregator/AAStarBLSAggregator.sol";
-import {AAStarBLSAlgorithm} from "../src/validators/AAStarBLSAlgorithm.sol";
+import {AAStarBLSKeyRegistry} from "../src/validators/AAStarBLSKeyRegistry.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 
 /// @dev Minimal EntryPoint stand-in: getUserOpHash(op) = keccak256(abi.encode(sender, nonce)).
@@ -21,7 +21,7 @@ contract MockEntryPointAgg {
 ///      so they self-skip unless run with `--evm-version prague`.
 contract AAStarBLSAggregatorTest is Test {
     AAStarBLSAggregator public aggregator;
-    AAStarBLSAlgorithm public blsAlgorithm;
+    AAStarBLSKeyRegistry public blsAlgorithm;
     MockEntryPointAgg public ep;
 
     // Same 3-node set as the fixtures (sks 0x11..01 / 0x22..02 / 0x33..03).
@@ -44,7 +44,7 @@ contract AAStarBLSAggregatorTest is Test {
         hex"00000000000000000000000000000000187954e0a351bf11a05f2cfbc8516df92832f1633098a0744290d1e2773df6b799cdbd83c4c982976b27f05155efa6aa000000000000000000000000000000000e459be3eb1c9abba7fa136176b74da02b94624874a75c8f62f52d7bf88d16b944adf61371c82799969e0b2255fba481000000000000000000000000000000000925224052a974a939bbf8f3b3b483a8c633ef3972dc7a6482930d503dee5d44abc512f143d0c071e8d2b5dfe0c87bc2000000000000000000000000000000000e6be428da58f033cace24d44ae1ed4d62c757f4cf7bbf43e68674922faa7336a5f2c7c11dd99f602afd0c88b0ad7162";
 
     function setUp() public {
-        blsAlgorithm = new AAStarBLSAlgorithm();
+        blsAlgorithm = new AAStarBLSKeyRegistry();
         ep = new MockEntryPointAgg();
         aggregator = new AAStarBLSAggregator(address(blsAlgorithm), address(ep));
         blsAlgorithm.registerPublicKey(NODE0, PK0);

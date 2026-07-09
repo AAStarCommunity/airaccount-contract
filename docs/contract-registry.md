@@ -33,7 +33,7 @@ All contracts live under `src/`. Submodule `lib/YetAnotherAA-Validator` is read-
 | Contract | Lines | Description |
 |----------|-------|-------------|
 | `AAStarValidator.sol` | ~150 | Validator router. Maps `algId` (first byte of signature) to algorithm contract via `IAAStarAlgorithm`. Only-add registry with optional 7-day governance timelock for new additions. |
-| `AAStarBLSAlgorithm.sol` | ~350 | BLS12-381 signature verification for Tier 2 and Tier 3. Uses EIP-2537 precompiles. Maintains a node registry of 128-byte G1 public keys. Supports pre-cached aggregated keys for gas savings. algId: `0x01`. |
+| `AAStarBLSKeyRegistry.sol` | ~350 | BLS12-381 signature verification for Tier 2 and Tier 3. Uses EIP-2537 precompiles. Maintains a node registry of 128-byte G1 public keys. Supports pre-cached aggregated keys for gas savings. algId: `0x01`. |
 | `SessionKeyValidator.sol` | ~250 | Time-limited session key authorization (M6.4). Stores `sessions[account][sessionKey] → Session{expiry, contractScope, selectorScope, revoked}`. Owner grants sessions via off-chain signature (`grantSession`) or direct call (`grantSessionDirect`). Validates 105-byte `[account(20)][sessionKey(20)][ECDSASig(65)]` signatures. algId: `0x08`. |
 | `AgentSessionKeyValidator.sol` | — | ERC-7579 validator (type 1) for **agent session keys** (M7+). `validateUserOp` reads a 66-byte `[0x08][ECDSASig(65)]` sig, recovers the signer over the EIP-191 `userOpHash`, and looks up `agentSessions[sender][signer] → AgentSessionConfig{expiry, velocityLimit, velocityWindow, revoked, callTargets[], selectorAllowlist[]}`. Sessions are owner-keyed via `grantAgentSession`. Default-installed on agent accounts by the factory (see §1.1). |
 | `AirAccountCompositeValidator.sol` | — | Composite validator combining multiple validation modules under one ERC-7579 entry (weighted / multi-module agent flows). |
@@ -69,7 +69,7 @@ The first byte of every UserOp signature is the `algId`. It determines the signa
 
 | algId | Name | Tier | Contract | Status |
 |-------|------|------|----------|--------|
-| `0x01` | BLS Legacy Triple | Tier 3 | `AAStarBLSAlgorithm` | Registered in Validator Router |
+| `0x01` | BLS Legacy Triple | Tier 3 | `AAStarBLSKeyRegistry` | Registered in Validator Router |
 | `0x02` | ECDSA | Tier 1 | (inline in base) | Native |
 | `0x03` | P256 (Passkey/WebAuthn) | Tier 1 | (inline in base) | Native |
 | `0x04` | Cumulative T2 (P256 + BLS) | Tier 2 | (inline in base) | Native |
@@ -172,8 +172,8 @@ Account runtime exceeded the 24,576 B EIP-170 limit. Fix splits the **cold** fun
 | `AAStarAirAccountM5_4.t.sol` | 8 | ✅ |
 | `AAStarAirAccountM5_8.t.sol` | 9 | ✅ |
 | `AAStarAirAccountFactoryV7.t.sol` | 25 | ✅ |
-| `AAStarBLSAlgorithm.t.sol` | 25 | ✅ |
-| `AAStarBLSAlgorithm_M3.t.sol` | 6 | ✅ |
+| `AAStarBLSKeyRegistry.t.sol` | 25 | ✅ |
+| `AAStarBLSKeyRegistry_M3.t.sol` | 6 | ✅ |
 | `AAStarBLSAggregator.t.sol` | 13 | ✅ |
 | `AAStarGlobalGuard.t.sol` | 26 | ✅ |
 | `AAStarGlobalGuardM5.t.sol` | 41 | ✅ |

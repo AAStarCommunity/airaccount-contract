@@ -12,7 +12,7 @@ import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
 import {AirAccountExtension} from "./AirAccountExtension.sol";
 import {AlgTierLib} from "../utils/AlgTierLib.sol";
 
-/// @dev Minimal view of AAStarBLSAlgorithm's protocol-level aggregator (issue #45 Part B).
+/// @dev Minimal view of AAStarBLSKeyRegistry's protocol-level aggregator (issue #45 Part B).
 ///      The account reads this single value during BLS validation to decide the batch path.
 interface IBLSAggregatorSource {
     function aggregator() external view returns (address);
@@ -454,7 +454,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     }
 
     // issue #45 Part B: there is intentionally NO account-side aggregator setter. The batch BLS
-    // aggregator is a SINGLE protocol-level value on AAStarBLSAlgorithm (`blsAlgorithm.aggregator()`),
+    // aggregator is a SINGLE protocol-level value on AAStarBLSKeyRegistry (`blsAlgorithm.aggregator()`),
     // set only by the protocol Gnosis Safe (the BLS algorithm owner). The account READS it during BLS
     // validation; the end-user owner can never change which aggregator is used.
 
@@ -1013,7 +1013,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
      *
      * NOTE (issue #45): both the single-op path (below) and the batch aggregator path are bound to
      * userOpHash. Single-op: `_callBLSValidator` recomputes the message point from userOpHash inside
-     * AAStarBLSAlgorithm. Batch: when the PROTOCOL aggregator (`blsAlgorithm.aggregator()`, a single
+     * AAStarBLSKeyRegistry. Batch: when the PROTOCOL aggregator (`blsAlgorithm.aggregator()`, a single
      * value set only by the protocol Safe — NOT per-account, NOT owner-settable) is non-zero,
      * verification is deferred to the EntryPoint's `aggregator.validateSignatures()`, and
      * AAStarBLSAggregator likewise recomputes EACH op's message point from its own userOpHash (via
@@ -1051,11 +1051,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         (address recovered,,) = hash.tryRecover(aaSignature);
         if (recovered == address(0) || recovered != owner) return 1;
 
-        // If the PROTOCOL-level aggregator is configured (single value on AAStarBLSAlgorithm, set
+        // If the PROTOCOL-level aggregator is configured (single value on AAStarBLSKeyRegistry, set
         // only by the protocol Safe), defer BLS verification to the EntryPoint's batch
         // validateSignatures(). AAStarBLSAggregator recomputes each op's message point from its
         // userOpHash on-chain, so the batch path is bound to the op just like the single-op path
-        // below. ERC-7562: this reads AAStarBLSAlgorithm storage in the validation phase — the SAME
+        // below. ERC-7562: this reads AAStarBLSKeyRegistry storage in the validation phase — the SAME
         // external-contract read category as _callBLSValidator below (the existing BLS validation),
         // so it adds no new access surface (requires the BLS algorithm singleton to be staked).
         // The validator pointer is SET-ONCE (see setValidator), so a compromised owner cannot

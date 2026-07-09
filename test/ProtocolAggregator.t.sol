@@ -14,7 +14,7 @@ contract MockEntryPointPA {
     receive() external payable {}
 }
 
-/// @dev Stands in for AAStarBLSAlgorithm at the account's ALG_BLS slot: implements validate()
+/// @dev Stands in for AAStarBLSKeyRegistry at the account's ALG_BLS slot: implements validate()
 ///      (always succeeds) AND exposes the protocol-level `aggregator()` value the account reads.
 contract MockBLSWithAggregator is IAAStarAlgorithm {
     address public aggregator;

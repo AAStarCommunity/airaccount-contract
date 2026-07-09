@@ -84,7 +84,7 @@ abstract contract AAStarAgentStorageLayout is Initializable {
 
     /// @dev RESERVED (slot 3). Previously `address public blsAggregator` — a per-account batch
     ///      aggregator. Removed in issue #45 Part B: the batch aggregator is now a SINGLE
-    ///      protocol-level value on AAStarBLSAlgorithm (`blsAlgorithm.aggregator()`), set only by the
+    ///      protocol-level value on AAStarBLSKeyRegistry (`blsAlgorithm.aggregator()`), set only by the
     ///      protocol Safe. There is intentionally NO per-account aggregator and NO account-side
     ///      setter. The slot is retained (not deleted) to preserve the historical numbering of
     ///      slots 4..25 below — never reuse or reorder it.

@@ -8,6 +8,23 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Rename `AAStarBLSAlgorithm` → `AAStarBLSKeyRegistry`** (Seeder CC-27). Resolves the cross-repo
+  contract-name collision with `YetAnotherAA-Validator`'s `AAStarBLSAlgorithm` (the permissionless,
+  stake-bound DVT node registry with `registerWithProof`). The two are **independent contracts**, not a
+  fork: airaccount's version is a protocol-Safe-curated BLS key registry (owner-gated `registerPublicKey`,
+  no PoP/stake) + aggregate-signature verification source read by `AAStarBLSAggregator`. YetAnotherAA-Validator
+  keeps the `AAStarBLSAlgorithm` name (authoritative, in-use, larger cross-repo blast radius). The new name was
+  chosen over `AAStarBLSAggregator` because that name is already taken by this repo's ERC-4337 `IAggregator`
+  wrapper (`src/aggregator/AAStarBLSAggregator.sol`). Pure source-level rename — no behavior change; because the
+  account stack is non-upgradable, the new name takes effect on the next deploy. SDK unaffected (its abi:sync
+  tracks the DVT version). Renamed files: `src/validators/AAStarBLSKeyRegistry.sol`,
+  `test/AAStarBLSKeyRegistry.t.sol`, `test/AAStarBLSKeyRegistry_M3.t.sol`.
+
+---
+
 ## [v0.27.0] - 2026-07-05 (DVT validator unification — mount the authoritative BLS validator)
 
 Cross-repo coordination (Seeder CC-10): mounts the **DVT-repo authoritative BLS validator**

@@ -4,7 +4,7 @@ pragma solidity ^0.8.33;
 import {IAggregator} from "@account-abstraction/interfaces/IAggregator.sol";
 import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
-import {AAStarBLSAlgorithm} from "../validators/AAStarBLSAlgorithm.sol";
+import {AAStarBLSKeyRegistry} from "../validators/AAStarBLSKeyRegistry.sol";
 
 /// @title AAStarBLSAggregator - IAggregator implementation for batch BLS verification
 /// @notice Aggregates BLS signatures across multiple UserOps into a single pairing check.
@@ -44,7 +44,7 @@ contract AAStarBLSAggregator is IAggregator {
     // ─── Storage ────────────────────────────────────────────────────
 
     /// @notice Reference to the BLS algorithm contract for key lookups + on-chain hash_to_curve.
-    AAStarBLSAlgorithm public immutable blsAlgorithm;
+    AAStarBLSKeyRegistry public immutable blsAlgorithm;
 
     /// @notice The ERC-4337 EntryPoint, used to derive each op's userOpHash for the #45 binding.
     IEntryPoint public immutable entryPoint;
@@ -60,12 +60,12 @@ contract AAStarBLSAggregator is IAggregator {
     // ─── Constructor ────────────────────────────────────────────────
 
     constructor(address _blsAlgorithm, address _entryPoint) {
-        blsAlgorithm = AAStarBLSAlgorithm(_blsAlgorithm);
+        blsAlgorithm = AAStarBLSKeyRegistry(_blsAlgorithm);
         entryPoint = IEntryPoint(_entryPoint);
     }
 
     /// @dev issue #45: recompute op_i's BLS message point on-chain from its userOpHash,
-    ///      identical to the single-op path (AAStarBLSAlgorithm.validate). NOT the embedded point.
+    ///      identical to the single-op path (AAStarBLSKeyRegistry.validate). NOT the embedded point.
     function _messagePointForOp(PackedUserOperation calldata op) internal view returns (bytes memory) {
         bytes32 userOpHash = entryPoint.getUserOpHash(op);
         return blsAlgorithm.hashToG2(userOpHash);
