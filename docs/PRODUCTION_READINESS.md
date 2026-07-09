@@ -49,7 +49,7 @@
 | 2 | **CC-27 改名 `AAStarBLSKeyRegistry`** | 源码级改名已合并（PR #182 / `fcf666a`），CI 全绿 | 🟡 源码 done，待版本 bump 部署生效 | 是（含在下条 release） | [主] |
 | 3 | **切一个 tagged release**（bump 版本 + `[Unreleased]`→版本号） | ✅ **v0.28.0**：`ACCOUNT_VERSION`/`FACTORY_VERSION` 0.27.0→0.28.0 + CHANGELOG + 3 处测试断言，900 测试全绿。源码级 release，待部署 | 🟢 已 bump（待 tag+部署）| 是 | [测]→[主] |
 | 4 | **外部安全审计（#29）** | 未做。非可升级钱包托管资金，GA 硬门禁 | 🔴 未开始（jason 安排） | **是（GA 阻塞）** | [主] |
-| 5 | **Etherscan verify** | Etherscan v2 实测 **v0.27.0 栈 0/9 verified**（旧「2/11」是 v0.17.2 期数据）。有效 key = `~/Dev/.env`；`.env.sepolia` 的 `MZD…` key **已失效**。脚本 `scripts/verify-sepolia.sh` 已建。⚠️ 本地 **forge 1.7.1 `forge verify-contract` 生成 standard-json 坏了**（"cannot resolve file"），`--flatten` 又要 `bytecode_hash=ipfs`（部署用 none 不匹配）→ 须在 CI/Linux 或用 build-info POST 跑；且须对**匹配版本 tag** 源码（v0.27.0 栈用 v0.27.0 tag）| 🟠 未完成（tooling blocker） | 是（透明度/信任） | [测]+[主] |
+| 5 | **Etherscan verify** | ✅ **核心 4/9 已 verified**（AAStarValidator/AAStarAirAccountV7/AAStarAirAccountFactoryV7/AgentRegistry）。方法跑通（`forge verify-contract` 用**合约名**不带路径 + `--chain 11155111` + 有效 key `~/Dev/.env`；`.env.sepolia` 的 MZD key 已失效）。此前「跑不了」是我路径写错，非 forge bug。脚本 `scripts/verify-sepolia.sh`。剩 5 个复用模块（SessionKeyValidator/Extension/ForceExit/Delegate/ParserRegistry）需各自部署版本 tag（源码已漂移）| 🟢 核心已验，模块待补 | 部分 | [测]+[主] |
 | 6 | **主网合约部署** | ✅ 骨架 `scripts/deploy-op-mainnet-alpha.ts` 已建（OP mainnet + cast wallet 签名 + P1–P6 守卫）；待配置（DVT 主网 validator / Safe / RPC / keystore）后运行 | 🟡 脚本就绪，待配置运行 | 是 | [主]+[配] |
 | 7 | **主网 e2e_account**（CC-22 遗留） | 主网 impl 部署后按 cc22 脚本 mint + 回填 `contracts_mainnet.e2e_account`（脚本已参数化，见 §4） | 🟠 gated 在主网 impl | 是 | [主]+[配] |
 | 8 | **OP 主网 Gnosis Safe**（协议 owner + community guardian，CC-31 / #135） | 未部署；主网合约 owner 必须是多签 | 🔴 未开始（需 jason 配置） | 是 | [主]（配置/运维） |

@@ -23,9 +23,10 @@
  *
  * Foundry on macOS can't `forge create` (socket error) — this TS+viem path is the deploy method.
  *
- * Usage (after configuring .env.op-mainnet + importing keystore):
- *   cast wallet import mainnet-deployer --interactive   # one-time
- *   pnpm tsx scripts/deploy-op-mainnet-alpha.ts --account mainnet-deployer
+ * Usage (keystore already exists — `cast wallet list` shows `optimism-deployer`):
+ *   pnpm tsx scripts/deploy-op-mainnet-alpha.ts --account optimism-deployer
+ * DVT mainnet validator + OP Safe come via CC-30/CC-31 coordination (subscribe by @-mentioning
+ * @repo:dvt / @repo:sp — they @ you on release); do NOT hardcode or ask for them here.
  */
 
 import { config } from "dotenv";
