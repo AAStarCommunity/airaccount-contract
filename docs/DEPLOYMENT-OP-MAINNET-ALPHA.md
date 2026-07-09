@@ -1,10 +1,12 @@
 # AirAccount — OP Mainnet Alpha 部署计划
 
-> 文档版本：2026-06-24
-> 目标版本：v0.20.0 (当前 Sepolia beta 稳定后发布)
-> 目标链：Optimism Mainnet (chainId=10)
+> 文档版本：2026-07-09（refreshed）
+> 目标版本：**下个 tagged release**（当前 Sepolia = v0.27.0 + `[Unreleased]` CC-27 改名；主网前切一个带 bump 的 release）
+> 目标链：Optimism Mainnet (chainId=10) — 见 known-issues KI-7，仅 OP Stack 链支持 P256/WebAuthn
 > 负责人：jason
 > 状态：**待执行** — beta 期间持续更新此文档
+>
+> 📌 **主文档**：本文件是「主网部署操作手册」。**发布就绪总盘点（含审计门、依赖矩阵、测试网/主网差异、open issues/TODO 整合）见 [`PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md)（CC-30 单一真相源）。**
 
 ---
 
@@ -46,14 +48,17 @@ cast wallet address --account mainnet-deployer
 - [ ] Safe 地址记录到 `.env.op-mainnet` 为 `PROTOCOL_SAFE_ADDRESS`
 - [ ] 同一个 Safe 同时作为 `COMMUNITY_GUARDIAN_ADDRESS`（或单独部署另一个 Safe）
 
-### P4. DVT BLS 节点 (生产节点密钥)
+### P4. DVT BLS 节点 (生产节点公钥 — KMS-TEE 托管，无需裸私钥)
 
-> ⚠️ 已在 YetAnotherAA-Validator 仓库提 issue #DVT-MAINNET，请 DVT 团队提供以下信息
+> ⚠️ 请 @repo:dvt + @repo:kms 提供（CC-22 Variant B 已定 KMS-TEE 托管姿势）。
+> **更新（2026-07-09）**：DVT 私钥密封在 KMS TEE，节点跑 **key-less `node_state.json`**（只有 `{nodeId, publicKey}`，无 privateKey）。
+> 所以主网只需 **nodeId + 48B G1 pubkey**（KMS `BlsGenKey` provision 产出），**不在任何 .env 放裸 BLS 私钥**。
 
-- [ ] 生产 DVT 节点 1：`BLS_PROD_NODE_ID_1` + `BLS_PROD_PUBLIC_KEY_1`
-- [ ] 生产 DVT 节点 2：`BLS_PROD_NODE_ID_2` + `BLS_PROD_PUBLIC_KEY_2`
-- [ ] 节点运行稳定，能响应 BLS 签名请求
-- [ ] **Sepolia 测试节点 (`BLS_TEST_*`) 禁止用于主网**
+- [ ] 生产 DVT 节点 1：`BLS_PROD_NODE_ID_1` + `BLS_PROD_PUBLIC_KEY_1`（KMS provision）
+- [ ] 生产 DVT 节点 2：`BLS_PROD_NODE_ID_2` + `BLS_PROD_PUBLIC_KEY_2`（KMS provision）
+- [ ] 节点 `RUST_SIGNER_URL` 指向 KMS `/sign`，`RUST_SIGNER_REQUIRED=true`（fail-closed，不回退本地签）
+- [ ] 主网 DVT validator 地址（@repo:dvt 提供，替换 Sepolia `0x539B…`）
+- [ ] **Sepolia 测试节点 (`BLS_TEST_*`) + 已泄露测试键 (`0xb56000…`, KI-12) 禁止用于主网**
 
 ### P5. aPNTs Token 地址
 
@@ -68,10 +73,15 @@ cast wallet address --account mainnet-deployer
 
 ---
 
-## 建议项 (SHOULD — 强烈建议但非硬性阻断)
+## 发布分级门禁（更新 2026-07-09）
 
-- [ ] 外部安全审计（审计范围：`src/core/`、`src/validators/`、`src/modules/`）
-- [ ] Etherscan 合约验证脚本就绪（`forge verify-contract --chain 10`）
+- **beta / alpha 版**：可在**未审计**下发（测试网 + 主网 alpha 早期），但须显式标注 beta/alpha + known-issues。
+- **正式版 (GA)**：🔴 **外部安全审计（#29）为硬门禁 —— 未过审计不发 GA，只发 beta/alpha。** 审计由 jason 安排（Code4rena / Cantina），范围 `src/core/`、`src/validators/`、`src/modules/`。
+
+### MUST（此前误列为 SHOULD，现提为硬性）
+- [ ] **Etherscan verify** — 主网合约全部 verified（`forge verify-contract --chain 10`，key 在 `~/Dev/.env` / `.env.sepolia`）。当前 Sepolia 2/11，须先修 foundry source path 问题补齐 9 个。
+
+### SHOULD
 - [ ] WalletBeat 评分达标（当前 Sepolia 版本已通过）
 - [ ] SDK E2E 测试对接 OP mainnet 合约地址通过
 
