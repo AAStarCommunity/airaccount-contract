@@ -59,6 +59,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     /// @param _ownerP256Y Owner P256 public key y-coordinate (or bytes32(0) if not setting)
     function initialize(address _entryPoint, address _owner, InitConfig calldata _config, address _guardAddr, bytes32 _ownerP256X, bytes32 _ownerP256Y) external initializer {
         _initAccount(_entryPoint, _owner, _config.guardians, _config.guardianP256X, _config.guardianP256Y, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
+        _bakeTierLimits(_config.tier1Limit, _config.tier2Limit); // #161: native-ETH tier profile in one step
         // Set owner passkey atomically at account birth. Skipping the emit saves ~100 bytes; the
         // factory already logs AccountCreated which anchors the on-chain record.
         p256KeyX = _ownerP256X;
@@ -80,6 +81,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
         address _guardAddr
     ) external initializer {
         _initAccount(_entryPoint, _owner, _config.guardians, _config.guardianP256X, _config.guardianP256Y, _config.minDailyLimit, _guardAddr, _config.approvedAlgIds);
+        _bakeTierLimits(_config.tier1Limit, _config.tier2Limit); // #161: native-ETH tier profile in one step
     }
 
     // ─── ERC-7579 Minimum Compatibility Shim ─────────────────────────

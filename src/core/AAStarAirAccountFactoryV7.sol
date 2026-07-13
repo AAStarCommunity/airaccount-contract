@@ -513,7 +513,9 @@ contract AAStarAirAccountFactoryV7 {
             approvedAlgIds: algIds,
             minDailyLimit: minLimit,
             initialTokens: tokens,
-            initialTokenConfigs: configs
+            initialTokenConfigs: configs,
+            tier1Limit: 0,  // #161: defaults path leaves native-ETH tiering unset (unchanged behavior); owner may setTierLimits() later
+            tier2Limit: 0
         });
     }
 
@@ -534,7 +536,9 @@ contract AAStarAirAccountFactoryV7 {
             config.approvedAlgIds,
             config.minDailyLimit,
             config.initialTokens,
-            config.initialTokenConfigs
+            config.initialTokenConfigs,
+            config.tier1Limit,  // #161: bind native-ETH tier profile so it can't be front-run away
+            config.tier2Limit
         ));
     }
 

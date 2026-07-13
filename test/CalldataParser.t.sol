@@ -214,7 +214,9 @@ contract CalldataParserTest is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: emptyTokens,
-            initialTokenConfigs: emptyCfgs
+            initialTokenConfigs: emptyCfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         address accountOwner = address(this);
@@ -256,7 +258,9 @@ contract CalldataParserTest is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: emptyTokens,
-            initialTokenConfigs: emptyCfgs
+            initialTokenConfigs: emptyCfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));
@@ -301,7 +305,9 @@ contract CalldataParserTest is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: tokens,
-            initialTokenConfigs: tokenCfgs
+            initialTokenConfigs: tokenCfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));
@@ -355,7 +361,9 @@ contract CalldataParserTest is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: tokens,
-            initialTokenConfigs: tokenCfgs
+            initialTokenConfigs: tokenCfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));
@@ -408,7 +416,9 @@ contract CalldataParserTest is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: tokens,
-            initialTokenConfigs: tokenCfgs
+            initialTokenConfigs: tokenCfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));
@@ -474,7 +484,9 @@ contract CalldataParserTest is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: tokens,
-            initialTokenConfigs: tokenCfgs
+            initialTokenConfigs: tokenCfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));

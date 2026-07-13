@@ -88,7 +88,9 @@ contract WeightedSignatureTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         account.initialize(address(ep), ownerW.addr, cfg, address(0), bytes32(0), bytes32(0));
@@ -432,7 +434,9 @@ contract WeightedSignatureTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 acc1 = new AAStarAirAccountV7(address(0));
         acc1.initialize(address(ep), ownerW.addr, cfg, address(0), bytes32(0), bytes32(0));
@@ -491,7 +495,9 @@ contract WeightedSignatureTest is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7(address(0));
         _initWithGuard(tieredAcc, address(ep), ownerW.addr, cfg);
@@ -534,7 +540,9 @@ contract WeightedSignatureTest is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 tieredAcc = new AAStarAirAccountV7(address(0));
         _initWithGuard(tieredAcc, address(ep), ownerW.addr, cfg);

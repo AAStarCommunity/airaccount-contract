@@ -94,7 +94,9 @@ contract CumulativeSignatureTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPointAddr, ownerWallet.addr, config, address(0), bytes32(0), bytes32(0));
@@ -170,7 +172,9 @@ contract CumulativeSignatureTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 failAccount = new AAStarAirAccountV7(address(0));
         failAccount.initialize(entryPointAddr, ownerWallet.addr, config, address(0), bytes32(0), bytes32(0));
@@ -513,7 +517,9 @@ contract CumulativeWebAuthnTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         account.initialize(address(entryPoint), ownerWallet.addr, cfg, address(0), bytes32(0), bytes32(0));

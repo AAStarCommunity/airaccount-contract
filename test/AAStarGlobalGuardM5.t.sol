@@ -252,7 +252,9 @@ contract AAStarGlobalGuardM5Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: tokens,
-            initialTokenConfigs: cfgs
+            initialTokenConfigs: cfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));
@@ -293,7 +295,9 @@ contract AAStarGlobalGuardM5Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: tokens,
-            initialTokenConfigs: cfgs
+            initialTokenConfigs: cfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));
@@ -329,7 +333,9 @@ contract AAStarGlobalGuardM5Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: tokens,
-            initialTokenConfigs: cfgs
+            initialTokenConfigs: cfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         AAStarAirAccountV7 acct = new AAStarAirAccountV7(address(0));

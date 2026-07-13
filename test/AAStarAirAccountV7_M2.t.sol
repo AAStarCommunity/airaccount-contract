@@ -73,7 +73,9 @@ contract AAStarAirAccountV7_M2Test is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
     }
 

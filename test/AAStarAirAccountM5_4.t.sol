@@ -61,7 +61,9 @@ contract AAStarAirAccountM5_4Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         account = new AAStarAirAccountV7(address(0));
@@ -166,7 +168,9 @@ contract AAStarAirAccountM5_4Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 accountNoKey = new AAStarAirAccountV7(address(0));
         accountNoKey.initialize(entryPoint, owner, config, address(0), bytes32(0), bytes32(0));

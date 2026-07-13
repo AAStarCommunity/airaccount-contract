@@ -111,7 +111,9 @@ contract AAStarAirAccountSessionKeyTest is Test {
             approvedAlgIds:      algIds,
             minDailyLimit:       0,
             initialTokens:       new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         acct = new AAStarAirAccountV7(address(0));
@@ -329,7 +331,9 @@ contract ParserTryCatchTest is Test {
             approvedAlgIds:      algIds,
             minDailyLimit:       0,
             initialTokens:       new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         account = new AAStarAirAccountV7(address(0));
@@ -437,7 +441,9 @@ contract SessionKeyBatchScopeTest is Test {
             approvedAlgIds:      algIds,
             minDailyLimit:       0,
             initialTokens:       new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         account = new AAStarAirAccountV7(address(0));

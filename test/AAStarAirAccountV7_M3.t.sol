@@ -41,7 +41,9 @@ contract AAStarAirAccountV7M3Test is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
     }
 
@@ -241,7 +243,9 @@ contract AAStarAirAccountV7M3Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 guardedAccount = new AAStarAirAccountV7(address(0));
         _initWithGuard(guardedAccount, entryPoint, ownerAddr, config);
@@ -272,7 +276,9 @@ contract AAStarAirAccountV7M3Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 ga = new AAStarAirAccountV7(address(0));
         _initWithGuard(ga, entryPoint, ownerAddr, config);
@@ -340,7 +346,9 @@ contract AAStarAirAccountV7M3Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 ga = new AAStarAirAccountV7(address(0));
         _initWithGuard(ga, entryPoint, ownerAddr, config);
@@ -405,7 +413,9 @@ contract AAStarAirAccountV7M3Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 ga = new AAStarAirAccountV7(address(0));
         _initWithGuard(ga, entryPoint, ownerAddr, config);

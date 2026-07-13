@@ -56,7 +56,9 @@ contract IsValidOwnerAuthTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         account.initialize(ENTRY_POINT, ownerWallet.addr, cfg, address(0), bytes32(0), bytes32(0));
@@ -185,7 +187,9 @@ contract IsValidOwnerAuthTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 noKeyAcct = new AAStarAirAccountV7(address(0));
         noKeyAcct.initialize(ENTRY_POINT, ownerWallet.addr, cfg, address(0), bytes32(0), bytes32(0));

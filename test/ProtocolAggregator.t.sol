@@ -60,7 +60,9 @@ contract ProtocolAggregatorTest is Test {
             approvedAlgIds: new uint8[](0),
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
     }
 

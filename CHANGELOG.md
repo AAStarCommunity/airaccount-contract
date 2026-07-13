@@ -10,6 +10,24 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ## [Unreleased]
 
+### Added
+- **#161 — native-ETH tier limits in `InitConfig`.** `InitConfig` gains `tier1Limit` / `tier2Limit`
+  (native ETH), baked at account birth via a new internal `_bakeTierLimits`, symmetric with the
+  per-token `TokenConfig` that already sets token tiers in the guard constructor. Same validation
+  (`tier1 <= tier2`) and one-time latch semantics as `setTierLimits` — a birth-baked profile locks the
+  owner-only `setTierLimits` path (later changes go through `modifyTierLimitsWithGuardians`). `(0,0)`
+  leaves tiering unconfigured (unchanged default). The two fields are folded into the factory
+  `_getConfigHash` (CREATE2 salt + relay-mode digest) so the tier profile **can't be front-run away** by
+  pre-deploying the counterfactual address with a weakened config. Tests: `test/NativeTierInitConfig.t.sol`
+  (5) + `test_nativeTier_configHashBinding`. Impl 24,443 B (133 B EIP-170 headroom — tightening; see #149).
+  **Breaking ABI:** `InitConfig` tuple grows by 2 fields — SDKs constructing it must append `tier1Limit`,
+  `tier2Limit` (0/0 preserves prior behavior). Takes effect on the next deploy (non-upgradable).
+
+### Closed (already delivered, issues cleaned up)
+- **#159** isValidOwnerAuth — delivered since v0.23.0, live in v0.28.0 Extension; issue closed.
+- **#138** Guard strict mode (`blockUnconfiguredTokens`) — already implemented + 7 tests; the KI-14
+  high-security mitigation. Issue closed.
+
 ## [v0.28.0] - 2026-07-09 (CC-27 BLS registry rename + version bump)
 
 Cross-repo contract-name-collision cleanup (CC-27) + version bump. Source-level release —

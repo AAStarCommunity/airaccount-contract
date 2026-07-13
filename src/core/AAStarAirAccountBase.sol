@@ -170,6 +170,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         uint256 minDailyLimit;                     // Floor for decreaseDailyLimit (0 = no floor)
         address[] initialTokens;                   // ERC20 tokens with spending limits (may be empty)
         AAStarGlobalGuard.TokenConfig[] initialTokenConfigs; // Per-token tier/daily configs, 1:1 with initialTokens
+        uint256 tier1Limit;                        // #161: native-ETH Tier-1 threshold baked at birth (0 = leave unset)
+        uint256 tier2Limit;                        // #161: native-ETH Tier-2 threshold baked at birth (0 = T2 unused). Symmetric with per-token TokenConfig; equivalent to a post-init setTierLimits() but in one step + folded into the CREATE2 config hash so it can't be front-run away.
     }
 
     // ─── Custom Errors ────────────────────────────────────────────────
@@ -482,6 +484,21 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///         re-open owner-only configuration.
     function setTierLimits(uint256 _tier1, uint256 _tier2) external onlyOwnerOrSelf {
         if (_tierLimitsInitialized) revert CannotIncreaseTierLimit();
+        if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
+        _tierLimitsInitialized = true;
+        tier1Limit = _tier1;
+        tier2Limit = _tier2;
+        emit TierLimitsSet(_tier1, _tier2);
+    }
+
+    /// @dev #161: bake native-ETH tier limits from InitConfig at account birth (one-step, symmetric
+    ///      with the per-token TokenConfig that already sets token tiers in the guard constructor).
+    ///      Same validation + latch semantics as setTierLimits, so a birth-baked profile also locks
+    ///      out the owner-only setTierLimits path (subsequent changes go through
+    ///      modifyTierLimitsWithGuardians). No-op when both are 0 (tiering left unconfigured), which
+    ///      keeps the default (guard-only, no per-tier gating) for accounts that don't opt in.
+    function _bakeTierLimits(uint256 _tier1, uint256 _tier2) internal {
+        if (_tier1 == 0 && _tier2 == 0) return;
         if (_tier2 > 0 && _tier1 > _tier2) revert InvalidTierConfig();
         _tierLimitsInitialized = true;
         tier1Limit = _tier1;

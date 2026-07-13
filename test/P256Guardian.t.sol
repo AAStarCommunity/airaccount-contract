@@ -76,7 +76,9 @@ contract P256GuardianTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPoint, owner, cfg, address(0), bytes32(0), bytes32(0));
@@ -92,7 +94,9 @@ contract P256GuardianTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPoint, owner, cfg, address(0), bytes32(0), bytes32(0));
@@ -108,7 +112,9 @@ contract P256GuardianTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPoint, owner, cfg, address(0), bytes32(0), bytes32(0));
@@ -128,7 +134,9 @@ contract P256GuardianTest is Test {
             guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(0), bytes32(0), bytes32(0));
     }
 
@@ -143,7 +151,9 @@ contract P256GuardianTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPoint, owner, cfg, address(0), bytes32(0), bytes32(0));
@@ -374,7 +384,9 @@ contract P256GuardianTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         vm.expectRevert();
@@ -623,7 +635,9 @@ contract P256GuardianTest is Test {
             guardianP256Y: [bytes32(0), P256_Y0, bytes32(0)],
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(0), bytes32(0), bytes32(0));
         // layout: g2=idx0(ECDSA), P256=idx1(X0/Y0), g3=idx2(ECDSA)
 
@@ -647,7 +661,9 @@ contract P256GuardianTest is Test {
             guardianP256Y: [bytes32(0), P256_Y0, bytes32(0)],
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(0), bytes32(0), bytes32(0));
         // layout: g1a=idx0(ECDSA), P256=idx1(X0/Y0), g3=idx2(ECDSA)
         h = keccak256(abi.encode(
