@@ -906,7 +906,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | selector | function | mutability | access | notice |
 |---|---|---|---|---|
 | `0x0d1cfcae` | `agentRegistry()` | view | — |  |
-| `0x5f6314a2` | `createAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),bytes32,bytes32,uint256,uint256,bytes)` | nonpayable | — | Deploy a new account with full configuration.Deploy an AirAccount clone from this factory.Deploy an AirAccount clone from this factory.      Two authorization modes (auto-selected by ownerSig.length):      Direct mode (ownerSig empty, msg.sender == owner):        EOA owners who send the tx themselves need no extra signature — the tx is their proof.        nonce and deadline are ignored; pass (0, 0) or any value.      Relayed / KMS mode (ownerSig non-empty):        For KMS-managed accounts whose owner key lives in a TEE and cannot issue raw txs.        Any relayer can submit; the signature authenticates the owner.        Signature domain: EIP-191 over          keccak256(abi.encode("CREATE_ACCOUNT", chainId, address(this), owner, salt,                               ownerP256X, ownerP256Y, _getConfigHash(config), nonce, deadline))        nonce must equal createNonces[owner] (incremented on success).        Validator is auto-wired from the implementation's validatorRouter immutable.        Owner passkey (p256KeyX/Y) is set atomically at account birth when ownerP256X/Y are non-zero. |
+| `0xa72b4cab` | `createAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)` | nonpayable | — | Deploy a new account with full configuration.Deploy an AirAccount clone from this factory.Deploy an AirAccount clone from this factory.      Two authorization modes (auto-selected by ownerSig.length):      Direct mode (ownerSig empty, msg.sender == owner):        EOA owners who send the tx themselves need no extra signature — the tx is their proof.        nonce and deadline are ignored; pass (0, 0) or any value.      Relayed / KMS mode (ownerSig non-empty):        For KMS-managed accounts whose owner key lives in a TEE and cannot issue raw txs.        Any relayer can submit; the signature authenticates the owner.        Signature domain: EIP-191 over          keccak256(abi.encode("CREATE_ACCOUNT", chainId, address(this), owner, salt,                               ownerP256X, ownerP256Y, _getConfigHash(config), nonce, deadline))        nonce must equal createNonces[owner] (incremented on success).        Validator is auto-wired from the implementation's validatorRouter immutable.        Owner passkey (p256KeyX/Y) is set atomically at account birth when ownerP256X/Y are non-zero. |
 | `0xdd8d1e3a` | `createAccountWithDefaults(address,uint256,address,bytes,address,bytes,uint256)` | nonpayable | — | Deploy account with default community guardian as third guardian. |
 | `0x2b690ea6` | `createAgentAccount(address,bytes32,address,bytes,bytes,uint48,uint256)` | nonpayable | — | Create a dedicated AirAccount for an autonomous AI agent.         The human caller (msg.sender) becomes the account OWNER (not a guardian).         Guardians are [guardian2, communityGuardian] (2-of-2); only guardian2 must sign. |
 | `0xea783a1e` | `createNonces(address)` | view | — |  |
@@ -914,13 +914,13 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xb0d691fe` | `entryPoint()` | view | — |  |
 | `0xbd382b40` | `FACTORY_VERSION()` | view | — | Semantic version of this factory deployment. Used by SDKs for programmatic version detection. |
 | `0x17d8ec7f` | `factoryAdmin()` | view | — |  |
-| `0xbd4bcf83` | `getAddress(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),bytes32,bytes32)` | view | — | Predict the counterfactual address for a full-config account. |
-| `0xaf799fc6` | `getAddressWithChainId(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),bytes32,bytes32)` | view | — | Predict account address AND its chain-qualified identifier in one call. |
+| `0x2f9f643b` | `getAddress(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256),bytes32,bytes32)` | view | — | Predict the counterfactual address for a full-config account. |
+| `0x0ce14167` | `getAddressWithChainId(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256),bytes32,bytes32)` | view | — | Predict account address AND its chain-qualified identifier in one call. |
 | `0x17253640` | `getAddressWithDefaults(address,uint256,address,address,uint256)` | view | — | Predict address for a default-config account. |
 | `0x303f69a1` | `getAgentAddress(address,address,bytes32)` | view | — | Predict the address of a future agent account. |
 | `0x990bb980` | `getChainQualifiedAddress(address)` | view | — | ERC-7828: Returns a chain-qualified address identifier.         Enables cross-chain address disambiguation for accounts deployed at the same address         on multiple L2s via CREATE2 with the same salt. |
-| `0x2b7d70a9` | `getConfigHash((address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]))` | pure | — | Public view of the InitConfig hash the factory folds into the CREATE2 clone salt and the         relay-mode ownerSig digest. Exposes the internal `_getConfigHash` so SDKs/relayers hash the         SAME preimage on-chain instead of replicating it off-chain (one wrong byte => wrong address         / InvalidOwnerSignature). #155. |
-| `0xe01f2bf2` | `hashCreateAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),bytes32,bytes32,uint256,uint256)` | view | — | Public view of the relay-mode CREATE_ACCOUNT digest — the INNER hash, BEFORE EIP-191.         The owner signs this via personal_sign / EIP-191 (the relay branch applies         `.toEthSignedMessageHash()` before `ecrecover`), and that signature is passed as         `createAccount(..., ownerSig)` in relay mode (msg.sender != owner). Lets SDKs/relayers read         the exact digest from chain rather than reconstruct `_getConfigHash` + the preimage. #155. |
+| `0x4338e410` | `getConfigHash((address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256))` | pure | — | Public view of the InitConfig hash the factory folds into the CREATE2 clone salt and the         relay-mode ownerSig digest. Exposes the internal `_getConfigHash` so SDKs/relayers hash the         SAME preimage on-chain instead of replicating it off-chain (one wrong byte => wrong address         / InvalidOwnerSignature). #155. |
+| `0x8d4e4a5f` | `hashCreateAccount(address,uint256,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256),bytes32,bytes32,uint256,uint256)` | view | — | Public view of the relay-mode CREATE_ACCOUNT digest — the INNER hash, BEFORE EIP-191.         The owner signs this via personal_sign / EIP-191 (the relay branch applies         `.toEthSignedMessageHash()` before `ecrecover`), and that signature is passed as         `createAccount(..., ownerSig)` in relay mode (msg.sender != owner). Lets SDKs/relayers read         the exact digest from chain rather than reconstruct `_getConfigHash` + the preimage. #155. |
 | `0x5c60da1b` | `implementation()` | view | — |  |
 | `0x28342ecf` | `setAgentRegistry(address)` | nonpayable | — | One-time setter for the AgentRegistry whose `isValidAccount` mapping records         which accounts were created by this factory. Caller must be `factoryAdmin`         (i.e., the deployer of this factory). Set-once: cannot be re-pointed. |
 
@@ -934,9 +934,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `createAccount(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config, bytes32 ownerP256X, bytes32 ownerP256Y, uint256 nonce, uint256 deadline, bytes ownerSig)`
+#### `createAccount(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256) config, bytes32 ownerP256X, bytes32 ownerP256Y, uint256 nonce, uint256 deadline, bytes ownerSig)`
 
-`0x5f6314a2` · nonpayable · access: —
+`0xa72b4cab` · nonpayable · access: —
 
 > Deploy a new account with full configuration.Deploy an AirAccount clone from this factory.Deploy an AirAccount clone from this factory.      Two authorization modes (auto-selected by ownerSig.length):      Direct mode (ownerSig empty, msg.sender == owner):        EOA owners who send the tx themselves need no extra signature — the tx is their proof.        nonce and deadline are ignored; pass (0, 0) or any value.      Relayed / KMS mode (ownerSig non-empty):        For KMS-managed accounts whose owner key lives in a TEE and cannot issue raw txs.        Any relayer can submit; the signature authenticates the owner.        Signature domain: EIP-191 over          keccak256(abi.encode("CREATE_ACCOUNT", chainId, address(this), owner, salt,                               ownerP256X, ownerP256Y, _getConfigHash(config), nonce, deadline))        nonce must equal createNonces[owner] (incremented on success).        Validator is auto-wired from the implementation's validatorRouter immutable.        Owner passkey (p256KeyX/Y) is set atomically at account birth when ownerP256X/Y are non-zero.
 
@@ -944,7 +944,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` | Account owner (ECDSA signer / KMS-derived address) |
 | `salt` | `uint256` | User-chosen CREATE2 salt (combined with owner + configHash + passkey for uniqueness) |
-| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Full init config (guardians, algIds, limits, tokens) |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256)` | Full init config (guardians, algIds, limits, tokens) |
 | `ownerP256X` | `bytes32` | Owner P256 passkey x-coordinate (bytes32(0) to skip) |
 | `ownerP256Y` | `bytes32` | Owner P256 passkey y-coordinate (bytes32(0) to skip) |
 | `nonce` | `uint256` | Replay-prevention nonce (relayed mode only; ignored if ownerSig is empty) |
@@ -1043,9 +1043,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `getAddress(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config, bytes32 ownerP256X, bytes32 ownerP256Y)`
+#### `getAddress(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256) config, bytes32 ownerP256X, bytes32 ownerP256Y)`
 
-`0xbd4bcf83` · view · access: —
+`0x2f9f643b` · view · access: —
 
 > Predict the counterfactual address for a full-config account.
 
@@ -1055,7 +1055,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
-| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256)` |  |
 | `ownerP256X` | `bytes32` |  |
 | `ownerP256Y` | `bytes32` |  |
 
@@ -1063,9 +1063,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `address` |  |
 
-#### `getAddressWithChainId(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config, bytes32 ownerP256X, bytes32 ownerP256Y)`
+#### `getAddressWithChainId(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256) config, bytes32 ownerP256X, bytes32 ownerP256Y)`
 
-`0xaf799fc6` · view · access: —
+`0x0ce14167` · view · access: —
 
 > Predict account address AND its chain-qualified identifier in one call.
 
@@ -1075,7 +1075,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
-| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256)` |  |
 | `ownerP256X` | `bytes32` |  |
 | `ownerP256Y` | `bytes32` |  |
 
@@ -1136,23 +1136,23 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_0` | `bytes32` | Chain-qualified address bytes32 identifier |
 
-#### `getConfigHash((address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config)`
+#### `getConfigHash((address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256) config)`
 
-`0x2b7d70a9` · pure · access: —
+`0x4338e410` · pure · access: —
 
 > Public view of the InitConfig hash the factory folds into the CREATE2 clone salt and the         relay-mode ownerSig digest. Exposes the internal `_getConfigHash` so SDKs/relayers hash the         SAME preimage on-chain instead of replicating it off-chain (one wrong byte => wrong address         / InvalidOwnerSignature). #155.
 
 | param | type | description |
 |---|---|---|
-| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256)` |  |
 
 | returns | type | description |
 |---|---|---|
 | `_0` | `bytes32` |  |
 
-#### `hashCreateAccount(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) config, bytes32 ownerP256X, bytes32 ownerP256Y, uint256 nonce, uint256 deadline)`
+#### `hashCreateAccount(address owner, uint256 salt, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256) config, bytes32 ownerP256X, bytes32 ownerP256Y, uint256 nonce, uint256 deadline)`
 
-`0xe01f2bf2` · view · access: —
+`0x8d4e4a5f` · view · access: —
 
 > Public view of the relay-mode CREATE_ACCOUNT digest — the INNER hash, BEFORE EIP-191.         The owner signs this via personal_sign / EIP-191 (the relay branch applies         `.toEthSignedMessageHash()` before `ecrecover`), and that signature is passed as         `createAccount(..., ownerSig)` in relay mode (msg.sender != owner). Lets SDKs/relayers read         the exact digest from chain rather than reconstruct `_getConfigHash` + the preimage. #155.
 
@@ -1162,7 +1162,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `owner` | `address` |  |
 | `salt` | `uint256` |  |
-| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256)` |  |
 | `ownerP256X` | `bytes32` |  |
 | `ownerP256Y` | `bytes32` |  |
 | `nonce` | `uint256` |  |
@@ -1270,8 +1270,8 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x54387ad7` | `guardianCount()` | view | — | Returns number of active guardians. |
 | `0xf560c734` | `guardians(uint256)` | view | — | Returns guardian address at index (0-2). Returns address(0) for empty slots. |
 | `0x253e659b` | `guardSetStrictMode(bool)` | nonpayable | — | #22: toggle the guard's strict mode (block unconfigured tokens). Default OFF. |
-| `0xa8743d6b` | `initialize(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address,bytes32,bytes32)` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization.Initialize this account with a pre-deployed guard and owner P256 passkey.         Called by the factory when ownerP256X/Y are passed to createAccount.         The owner passkey is set atomically at account birth (no post-deploy tx required).         ownerP256X/Y are NOT in InitConfig so the account address is independent of passkey         (folded into the clone salt separately). Different passkeys → different addresses. |
-| `0xe2a30d26` | `initializeAgentAccount(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]),address)` | nonpayable | initializer | Initialize an autonomous-agent account. |
+| `0xd09fdeb3` | `initialize(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256),address,bytes32,bytes32)` | nonpayable | initializer | Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization.Initialize this account with a pre-deployed guard and owner P256 passkey.         Called by the factory when ownerP256X/Y are passed to createAccount.         The owner passkey is set atomically at account birth (no post-deploy tx required).         ownerP256X/Y are NOT in InitConfig so the account address is independent of passkey         (folded into the clone salt separately). Different passkeys → different addresses. |
+| `0xa0790bad` | `initializeAgentAccount(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256),address)` | nonpayable | initializer | Initialize an autonomous-agent account. |
 | `0x112d3a7d` | `isModuleInstalled(uint256,address,bytes)` | view | — | ERC-7579: check whether a module is installed.         Checks the unified module registry for supported types (1,2,4).         Note: the built-in ECDSA validator is registered at initialize time. |
 | `0x1626ba7e` | `isValidSignature(bytes32,bytes)` | view | — | ERC-1271: on-chain signature validation used by ERC-7579 tooling and DeFi protocols.         Validates that the ECDSA signature was produced by this account's owner. |
 | `0x3fe81b6a` | `modifyTierLimitsWithGuardians(uint256,uint256,uint256,bytes[])` | nonpayable | — | Modify tier limits after initial setup — requires RECOVERY_THRESHOLD guardian signatures.         Handles all post-init changes: increase, decrease, or reset to (0,0) to disable tiering.         Security principle: the authorization level to change a spending guard must match         the tier level being guarded (spending at T2 requires a guardian; modifying T2 does too). |
@@ -1537,9 +1537,9 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `enabled` | `bool` |  |
 
-#### `initialize(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr, bytes32 _ownerP256X, bytes32 _ownerP256Y)`
+#### `initialize(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256) _config, address _guardAddr, bytes32 _ownerP256X, bytes32 _ownerP256Y)`
 
-`0xa8743d6b` · nonpayable · access: initializer
+`0xd09fdeb3` · nonpayable · access: initializer
 
 > Initialize this account without a guard (called directly in tests or for no-guard accounts).         The `initializer` modifier from OZ Initializable prevents re-initialization.Initialize this account with a pre-deployed guard and owner P256 passkey.         Called by the factory when ownerP256X/Y are passed to createAccount.         The owner passkey is set atomically at account birth (no post-deploy tx required).         ownerP256X/Y are NOT in InitConfig so the account address is independent of passkey         (folded into the clone salt separately). Different passkeys → different addresses.
 
@@ -1547,14 +1547,14 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_entryPoint` | `address` | ERC-4337 EntryPoint address |
 | `_owner` | `address` | Initial account owner (ECDSA signer) |
-| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` | Initialization config |
+| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256)` | Initialization config |
 | `_guardAddr` | `address` | Pre-deployed AAStarGlobalGuard address (or address(0) for no guard) |
 | `_ownerP256X` | `bytes32` | Owner P256 public key x-coordinate (or bytes32(0) if not setting) |
 | `_ownerP256Y` | `bytes32` | Owner P256 public key y-coordinate (or bytes32(0) if not setting) |
 
-#### `initializeAgentAccount(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[]) _config, address _guardAddr)`
+#### `initializeAgentAccount(address _entryPoint, address _owner, (address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256) _config, address _guardAddr)`
 
-`0xe2a30d26` · nonpayable · access: initializer
+`0xa0790bad` · nonpayable · access: initializer
 
 > Initialize an autonomous-agent account.
 
@@ -1564,7 +1564,7 @@ Authoritative, auto-generated reference for every external/public function, even
 |---|---|---|
 | `_entryPoint` | `address` |  |
 | `_owner` | `address` |  |
-| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[])` |  |
+| `_config` | `(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256)` |  |
 | `_guardAddr` | `address` |  |
 
 #### `isModuleInstalled(uint256 moduleTypeId, address module, bytes arg2)`
