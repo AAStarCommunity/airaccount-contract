@@ -23,16 +23,20 @@
 
 ## 1. 当前部署状态
 
-### Sepolia（v0.27.0，已部署 + 链上验证）
-| 合约 | 地址 |
-|---|---|
-| Factory | `0xf25621DF4c6100cdfe224054C2b09f2963bF487b` |
-| Impl (AAStarAirAccountV7) | `0x4a76dEf9eE4EE44eF6D0B2a327a068B5B7931E1C` |
-| Extension (isValidOwnerAuth 宿主) | `0xEcE87546989Da7df573b107D54a0ead0aCB49923` |
-| Validator Router | `0xe68d6A7Bb60DA4caE62ceC2439722fc5eEF87a5c` |
-| DVT BLS Validator (algId 0x01，CC-10 统一) | `0x539B9681aFd5BFbCaa655Fe4c6BdcFe1fa7864bC`（DVT 仓权威） |
-| AgentRegistry | `0x239960EeA98cEC6f02608ED4Bc440b7d8442f3Da` |
-| CC-22 e2e_account (owner-auth 参考账户) | `0x92EA8b02D34A4D5d10f0Db9Ea894e8bC72e292e8` |
+### Sepolia（v0.28.0，**当前** — 已部署 + 5/5 新合约链上验证，2026-07-13，blocks 11262068–76）
+| 合约 | 地址 | verified |
+|---|---|---|
+| Factory | `0x778ab75636F1350c31930078208eFB02E9765ed3` | ✅ |
+| Impl (AAStarAirAccountV7) | `0xcCD6DfbaeE8c4249D2F9825781ece2cb5a456d97` | ✅ |
+| Extension (isValidOwnerAuth 宿主) | `0x7499968EC5a162b783b5816CbEC339008F132CAC` | ✅ |
+| Validator Router | `0xA6bdfD17C178b43B464736408e0Fe03D5a7684eB` | ✅ |
+| AgentRegistry | `0xB683dECf86C327Cc033Ac2d18d45a4D30DFdE947` | ✅ |
+| DVT BLS Validator (algId 0x01，CC-10 统一) | `0x539B9681aFd5BFbCaa655Fe4c6BdcFe1fa7864bC`（DVT 仓权威） | — |
+
+明细见 `docs/DEPLOYMENT-v0.28.0.md`。reused 模块（SessionKeyValidator `0x6b04…`/ForceExit `0x3fDe…`/Delegate `0xd273…`/ParserRegistry `0x7dEe…`）沿用 v0.27.0 地址。
+
+### Sepolia（v0.27.0，prior — 仍在链上，非可升级，现有账户不受影响）
+Factory `0xf25621DF4c6100cdfe224054C2b09f2963bF487b` · Impl `0x4a76dEf9eE4EE44eF6D0B2a327a068B5B7931E1C` · Extension `0xEcE87546989Da7df573b107D54a0ead0aCB49923` · Router `0xe68d6A7Bb60DA4caE62ceC2439722fc5eEF87a5c` · AgentRegistry `0x239960EeA98cEC6f02608ED4Bc440b7d8442f3Da` · CC-22 e2e_account `0x92EA8b02D34A4D5d10f0Db9Ea894e8bC72e292e8`（owner-auth 参考，宿主在 v0.27.0 Extension）
 
 ### OP Mainnet
 **未部署。** 无任何主网地址。部署脚本 `scripts/deploy-op-mainnet-alpha.ts` 待创建。
@@ -49,7 +53,7 @@
 | 2 | **CC-27 改名 `AAStarBLSKeyRegistry`** | 源码级改名已合并（PR #182 / `fcf666a`），CI 全绿 | 🟡 源码 done，待版本 bump 部署生效 | 是（含在下条 release） | [主] |
 | 3 | **切一个 tagged release**（bump 版本 + `[Unreleased]`→版本号） | ✅ **v0.28.0**：`ACCOUNT_VERSION`/`FACTORY_VERSION` 0.27.0→0.28.0 + CHANGELOG + 3 处测试断言，900 测试全绿。源码级 release，待部署 | 🟢 已 bump（待 tag+部署）| 是 | [测]→[主] |
 | 4 | **外部安全审计（#29）** | 未做。非可升级钱包托管资金，GA 硬门禁 | 🔴 未开始（jason 安排） | **是（GA 阻塞）** | [主] |
-| 5 | **Etherscan verify** | ✅ **8/9 verified**（Router/Impl/Factory/AgentRegistry/Extension/SessionKeyValidator/ForceExit/ParserRegistry）。方法跑通（`forge verify-contract` 用**合约名**不带路径 + `--chain 11155111` + 有效 key `~/Dev/.env`；此前「跑不了」是我路径写错，非 forge bug）。复用模块从各自部署版本 tag worktree 验（300 runs）。⬜ 仅剩 `AirAccountDelegate`（v0.20.0 EIP-7702 singleton）—— worktree submodule 漂移阻塞，需干净 v0.20.0 clone。脚本 `scripts/verify-sepolia.sh`。主网重部署=全新栈一把验全 | 🟢 8/9（1 冷门待补） | 基本完成 | [测]+[主] |
+| 5 | **Etherscan verify** | ✅ **v0.28.0 当前栈 5/5 全 verified**（Router/Impl/Factory/AgentRegistry/Extension，全新栈 200 runs、无版本漂移一把过）。方法跑通（`forge verify-contract` 用**合约名**不带路径 + `--chain 11155111` + 有效 key `~/Dev/.env`）。reused 模块沿用 v0.27.0 地址（此前已验，仅 `AirAccountDelegate` 冷门待补，非阻塞）。脚本 `scripts/verify-sepolia.sh`。主网重部署=全新栈同法一把验全 | 🟢 当前栈全绿 | 完成 | [测]+[主] |
 | 6 | **主网合约部署** | ✅ 骨架 `scripts/deploy-op-mainnet-alpha.ts` 已建（OP mainnet + cast wallet 签名 + P1–P6 守卫）；待配置（DVT 主网 validator / Safe / RPC / keystore）后运行 | 🟡 脚本就绪，待配置运行 | 是 | [主]+[配] |
 | 7 | **主网 e2e_account**（CC-22 遗留） | 主网 impl 部署后按 cc22 脚本 mint + 回填 `contracts_mainnet.e2e_account`（脚本已参数化，见 §4） | 🟠 gated 在主网 impl | 是 | [主]+[配] |
 | 8 | **OP 主网 Gnosis Safe**（协议 owner + community guardian，CC-31 / #135） | 未部署；主网合约 owner 必须是多签 | 🔴 未开始（需 jason 配置） | 是 | [主]（配置/运维） |
@@ -110,7 +114,7 @@
 
 ### GA 硬门禁
 1. **外部安全审计（#29）** — 未过审计不发正式版，只发 beta/alpha。审计由 jason 安排。范围 `src/core/ src/validators/ src/modules/`。
-2. **Etherscan verify** — 主网合约必须全部 verified（当前 Sepolia **8/9**，方法已跑通，仅剩 `AirAccountDelegate` 待补；主网同法走 chainid 10）。
+2. **Etherscan verify** — 主网合约必须全部 verified（当前 Sepolia v0.28.0 栈 **5/5 全绿**，方法已跑通；主网同法走 chainid 10）。
 3. **主网 owner = Gnosis Safe** + EntryPoint stake + transferOwnership（#135）。
 
 ### 生产 DVT 密钥 —— KMS-TEE 托管下还需要密钥吗？
