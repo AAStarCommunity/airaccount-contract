@@ -18,10 +18,10 @@ All contracts live under `src/`. Submodule `lib/YetAnotherAA-Validator` is read-
 | Contract | Description |
 |----------|-------------|
 | `AAStarAirAccountBase.sol` | Abstract base inherited by V7. ERC-4337 `validateUserOp`, tiered signature dispatch, global guard enforcement (`_enforceGuard`), social recovery, guardian management, P256 key storage, daily ETH limit, parser registry, **content-keyed transient validation queue (HIGH-3)**, and the **`fallback` that routes cold selectors to `AirAccountExtension`** (diamond-lite). Most security invariants live here. |
-| `AAStarAirAccountV7.sol` | Concrete account (impl; users are EIP-1167 clones). Non-upgradable. ERC-7579 module surface, `initialize` / `initializeAgentAccount` (the latter default-installs a session-key validator for agent accounts). Runtime **21,872 B** (under EIP-170). |
+| `AAStarAirAccountV7.sol` | Concrete account (impl; users are EIP-1167 clones). Non-upgradable. ERC-7579 module surface, `initialize` / `initializeAgentAccount` (v0.17.2+: neither pre-installs a validator module — agent session keys use the router-registered `SessionKeyValidator` at algId `0x08`, authorized post-deploy via `grantSession`). Runtime **21,872 B** (under EIP-170). |
 | `AirAccountExtension.sol` | **Diamond-lite facet (v0.17.1)**. Holds the cold functions split out of the account to fit EIP-170: ERC-8004 agent (identity/reputation/wallet binding) + weighted-signature config governance (`setWeightConfig` + change-proposal flow). Reached via the account's `fallback`+`delegatecall`, so it runs in the account's storage context. Runtime ~8,330 B. |
 | `AAStarAgentStorageLayout.sol` | Abstract shared storage prefix (slots 0–23) inherited by **both** `AAStarAirAccountBase` and `AirAccountExtension`, so the delegatecall boundary sees identical slots. `forge inspect storageLayout` verified byte-identical to the pre-split layout. |
-| `AAStarAirAccountFactoryV7.sol` | CREATE2 / EIP-1167 clone factory; config-bound salt (front-run safe). `createAccountWithDefaults` / `createAgentAccount`. Agent accounts default-install `AgentSessionKeyValidator` when `setAgentSessionKeyValidator` is configured (**deployer-only, set-once**, `factoryAdmin = deployer`). |
+| `AAStarAirAccountFactoryV7.sol` | CREATE2 / EIP-1167 clone factory; config-bound salt (front-run safe). `createAccountWithDefaults` / `createAgentAccount`. Agent accounts are authorized **post-deploy** via the unified `SessionKeyValidator.grantSession()` (router algId `0x08`); the old `setAgentSessionKeyValidator` default-install machinery was removed in v0.17.2 (there is no separate agent-session validator). |
 | `AAStarGlobalGuard.sol` | Per-account immutable spending guard. ETH daily limit, ERC20 token tier limits (ECDSA/P256/SessionKey=Tier1, BLS=Tier3), cumulative daily spend tracking. Monotonic: limits only decrease, algorithms only added. |
 | `AirAccountDelegate.sol` | EIP-7702 path: turn an existing EOA into an AirAccount (guardian rescue, daily limit). Singleton. |
 | `TierGuardHook.sol` | ERC-7579 hook (type 4): tier + session-scope enforcement on `execute` (factory default hook). |
@@ -35,8 +35,8 @@ All contracts live under `src/`. Submodule `lib/YetAnotherAA-Validator` is read-
 | `AAStarValidator.sol` | ~150 | Validator router. Maps `algId` (first byte of signature) to algorithm contract via `IAAStarAlgorithm`. Only-add registry with optional 7-day governance timelock for new additions. |
 | `AAStarBLSKeyRegistry.sol` | ~350 | BLS12-381 signature verification for Tier 2 and Tier 3. Uses EIP-2537 precompiles. Maintains a node registry of 128-byte G1 public keys. Supports pre-cached aggregated keys for gas savings. algId: `0x01`. |
 | `SessionKeyValidator.sol` | ~250 | Time-limited session key authorization (M6.4). Stores `sessions[account][sessionKey] → Session{expiry, contractScope, selectorScope, revoked}`. Owner grants sessions via off-chain signature (`grantSession`) or direct call (`grantSessionDirect`). Validates 105-byte `[account(20)][sessionKey(20)][ECDSASig(65)]` signatures. algId: `0x08`. |
-| `AgentSessionKeyValidator.sol` | — | ERC-7579 validator (type 1) for **agent session keys** (M7+). `validateUserOp` reads a 66-byte `[0x08][ECDSASig(65)]` sig, recovers the signer over the EIP-191 `userOpHash`, and looks up `agentSessions[sender][signer] → AgentSessionConfig{expiry, velocityLimit, velocityWindow, revoked, callTargets[], selectorAllowlist[]}`. Sessions are owner-keyed via `grantAgentSession`. Default-installed on agent accounts by the factory (see §1.1). |
-| `AirAccountCompositeValidator.sol` | — | Composite validator combining multiple validation modules under one ERC-7579 entry (weighted / multi-module agent flows). |
+| `AgentSessionKeyValidator.sol` | — | **Deleted in v0.27.0 — no longer a separate contract.** The agent session-key controls (expiry, velocity, `callTargets[]`, `selectorAllowlist[]`) were unified into `SessionKeyValidator` (router algId `0x08`, agent-scoped); authorization is now via `SessionKeyValidator.grantSession()` / `grantSessionDirect()` (there is no `grantAgentSession`). Row kept for historical reference only. |
+| `AirAccountCompositeValidator.sol` | — | **Deleted in v0.17.2-beta.1** — folded into the unified `SessionKeyValidator` (algId `0x08`). Row kept for historical reference only. |
 
 ### 1.3 Parser Contracts (`src/parsers/`)
 
@@ -76,7 +76,7 @@ The first byte of every UserOp signature is the `algId`. It determines the signa
 | `0x05` | Cumulative T3 (P256 + BLS + Guardian) | Tier 3 | (inline in base) | Native |
 | `0x06` | Combined T1 (ECDSA + P256 combined) | Tier 1 | (inline in base) | Native |
 | `0x07` | Weighted Multi-Signature (configurable per-source weights) | per config | `AirAccountCompositeValidator` | M6 — weighted multisig |
-| `0x08` | Session Key (ephemeral ECDSA, time-limited) | Tier 1 | `SessionKeyValidator` / `AgentSessionKeyValidator` | M6.4 — register in Validator Router |
+| `0x08` | Session Key (ephemeral ECDSA, time-limited) + agent session keys | Tier 1 | `SessionKeyValidator` (unified; the former `AgentSessionKeyValidator` was folded in — v0.27.0) | M6.4 — register in Validator Router |
 
 **Tier definitions**:
 - **Tier 1**: ECDSA / P256 / Session Key — for transactions ≤ tier1Limit (e.g., ≤ 0.1 ETH or ≤ 100 USDC)

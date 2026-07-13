@@ -83,7 +83,7 @@ Complete feature reference by milestone. Each feature includes its characteristi
 | **ERC-7579 模块系统** | 支持 Validator(1)/Executor(2)/Hook(3) 三类模块，guardian 授权安装/卸载 | 账户可按需安装功能插件，不改主合约 | 主动（用户安装） |
 | **AirAccountCompositeValidator** | 复合验证模块，多签策略外挂 | 更复杂的签名策略无需升级主合约 | 主动 |
 | **TierGuardHook** | ERC-7579 Hook，每次执行前强制 tier 检查 | 模块路径下的交易同样受 tier 守卫保护 | 被动 |
-| **AgentSessionKeyValidator** | Agent 会话密钥：过期时间 + 消费上限 + 调用速率（velocity）限制 | 授权 AI Agent 操作账户，限额可控，随时撤销 | 主动（用户授权） |
+| **Agent 会话密钥（统一 `SessionKeyValidator`, algId `0x08`）** | 过期时间 + 消费上限 + 调用速率（velocity）限制。v0.27.0 起独立的 `AgentSessionKeyValidator` 已删除并入 `SessionKeyValidator`，经 `grantSession`/`grantSessionDirect` 授权 | 授权 AI Agent 操作账户，限额可控，随时撤销 | 主动（用户授权） |
 | **delegateSession 子委托** | Agent 可向子 Agent 委托，子配置不可超过父配置（速率用 cross-multiply 比较） | Agent 可安全再授权，不会超出原始授权范围 | 被动（自动校验） |
 | **ERC-5564 Stealth Address** | 发送方发布一次性隐匿收款地址公告，接收方链下扫描 | 隐匿收款，无法从链上追踪资金归属 | 主动（用户发起） |
 | **ERC-7828 链限定地址** | `keccak256(addr \|\| chainId)`，同地址跨链有不同标识 | 防止跨链重放和地址混淆攻击 | 被动 |
