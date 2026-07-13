@@ -1,7 +1,7 @@
 # AirAccount — OP Mainnet Alpha 部署计划
 
-> 文档版本：2026-07-09（refreshed）
-> 目标版本：**下个 tagged release**（当前 Sepolia = v0.27.0 + `[Unreleased]` CC-27 改名；主网前切一个带 bump 的 release）
+> 文档版本：2026-07-13（refreshed）
+> 目标版本：**v0.28.0**（CC-27 改名 + version bump 已切；Sepolia 先跑 v0.28.0-beta，主网以观察后最新稳定版部署）
 > 目标链：Optimism Mainnet (chainId=10) — 见 known-issues KI-7，仅 OP Stack 链支持 P256/WebAuthn
 > 负责人：jason
 > 状态：**待执行** — beta 期间持续更新此文档
@@ -23,7 +23,7 @@ Sepolia beta 运行 2-3 周无严重问题后，以当时最新稳定版本部�
 ### P1. 代码 & 测试
 
 - [ ] `forge build` 编译干净，无 warning
-- [ ] `forge test` 全部通过（当前 805+ tests，Prague 22 tests）
+- [ ] `forge test` 全部通过（当前 900 tests 全绿，Prague profile 亦全绿）
 - [ ] Sepolia beta E2E 16/16 通过（Phase 01–16 全绿）
 - [ ] Phase 11 GR.9-GR.12 (installModule/uninstallModule) 已修复并在 Sepolia 验证
 - [ ] 无 HIGH/CRITICAL 未关闭的安全 issue
