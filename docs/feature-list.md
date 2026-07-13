@@ -81,7 +81,7 @@ Complete feature reference by milestone. Each feature includes its characteristi
 | Feature | 特征 | 用户价值 | 主动/被动 |
 |---------|------|---------|---------|
 | **ERC-7579 模块系统** | 支持 Validator(1)/Executor(2)/Hook(3) 三类模块，guardian 授权安装/卸载 | 账户可按需安装功能插件，不改主合约 | 主动（用户安装） |
-| **AirAccountCompositeValidator** | 复合验证模块，多签策略外挂 | 更复杂的签名策略无需升级主合约 | 主动 |
+| **加权多签（0x07, `_validateWeightedSignature`）** | 内联在 `AAStarAirAccountBase` 的加权多签验证；v0.17.2-beta.1 起独立的 `AirAccountCompositeValidator` 已删除、逻辑内联（与 0x08 SessionKeyValidator 无关） | 更复杂的签名策略无需外挂模块 | 主动 |
 | **TierGuardHook** | ERC-7579 Hook，每次执行前强制 tier 检查 | 模块路径下的交易同样受 tier 守卫保护 | 被动 |
 | **Agent 会话密钥（统一 `SessionKeyValidator`, algId `0x08`）** | 过期时间 + 消费上限 + 调用速率（velocity）限制。v0.27.0 起独立的 `AgentSessionKeyValidator` 已删除并入 `SessionKeyValidator`，经 `grantSession`/`grantSessionDirect` 授权 | 授权 AI Agent 操作账户，限额可控，随时撤销 | 主动（用户授权） |
 | **delegateSession 子委托** | Agent 可向子 Agent 委托，子配置不可超过父配置（速率用 cross-multiply 比较） | Agent 可安全再授权，不会超出原始授权范围 | 被动（自动校验） |

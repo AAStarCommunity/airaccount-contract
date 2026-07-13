@@ -288,7 +288,7 @@ What AirAccount ships and what each contract does. **Deploy** column: `singleton
 | `AAStarValidator` | Algorithm router: algId → algorithm address | singleton |
 | `AAStarBLSAlgorithm` | BLS aggregate signature verification (DVT co-sign) | singleton |
 | `AAStarBLSAggregator` | ERC-4337 IAggregator for batched BLS UserOps | singleton |
-| `SessionKeyValidator` | Unified session key validator (algId `0x08`): classic single-target sessions + agent-grade controls (velocity, `callTargets[]`, `selectorAllowlist[]`, P256 passkey). Replaced `AgentSessionKeyValidator` + `AirAccountCompositeValidator` in v0.17.2-beta.1 | singleton |
+| `SessionKeyValidator` | Unified session key validator (algId `0x08`): classic single-target sessions + agent-grade controls (velocity, `callTargets[]`, `selectorAllowlist[]`, P256 passkey). Replaced `AgentSessionKeyValidator` in v0.17.2-beta.1. (`AirAccountCompositeValidator` was also deleted then, but weighted multisig `0x07` went **inline** to `AAStarAirAccountBase._validateWeightedSignature` — not into this validator) | singleton |
 
 **Signature algorithms (algId):** ECDSA `0x02`, P256/WebAuthn `0x03`, Cumulative T2 (P256+BLS) `0x04`, Cumulative T3 (P256+BLS+Guardian) `0x05`, Combined T1 (P256∧ECDSA) `0x06`, Weighted multi-sig `0x07`, Session Key `0x08`, BLS triple `0x01`.
 

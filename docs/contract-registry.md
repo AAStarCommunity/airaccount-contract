@@ -36,7 +36,7 @@ All contracts live under `src/`. Submodule `lib/YetAnotherAA-Validator` is read-
 | `AAStarBLSKeyRegistry.sol` | ~350 | BLS12-381 signature verification for Tier 2 and Tier 3. Uses EIP-2537 precompiles. Maintains a node registry of 128-byte G1 public keys. Supports pre-cached aggregated keys for gas savings. algId: `0x01`. |
 | `SessionKeyValidator.sol` | ~250 | Time-limited session key authorization (M6.4). Stores `sessions[account][sessionKey] → Session{expiry, contractScope, selectorScope, revoked}`. Owner grants sessions via off-chain signature (`grantSession`) or direct call (`grantSessionDirect`). Validates 105-byte `[account(20)][sessionKey(20)][ECDSASig(65)]` signatures. algId: `0x08`. |
 | `AgentSessionKeyValidator.sol` | — | **Deleted in v0.27.0 — no longer a separate contract.** The agent session-key controls (expiry, velocity, `callTargets[]`, `selectorAllowlist[]`) were unified into `SessionKeyValidator` (router algId `0x08`, agent-scoped); authorization is now via `SessionKeyValidator.grantSession()` / `grantSessionDirect()` (there is no `grantAgentSession`). Row kept for historical reference only. |
-| `AirAccountCompositeValidator.sol` | — | **Deleted in v0.17.2-beta.1** — folded into the unified `SessionKeyValidator` (algId `0x08`). Row kept for historical reference only. |
+| `AirAccountCompositeValidator.sol` | — | **Deleted in v0.17.2-beta.1** — weighted multi-signature (algId `0x07`) is now **inline in `AAStarAirAccountBase._validateWeightedSignature`**, not a separate validator (unrelated to `SessionKeyValidator` / `0x08`). Row kept for historical reference only. |
 
 ### 1.3 Parser Contracts (`src/parsers/`)
 
@@ -75,7 +75,7 @@ The first byte of every UserOp signature is the `algId`. It determines the signa
 | `0x04` | Cumulative T2 (P256 + BLS) | Tier 2 | (inline in base) | Native |
 | `0x05` | Cumulative T3 (P256 + BLS + Guardian) | Tier 3 | (inline in base) | Native |
 | `0x06` | Combined T1 (ECDSA + P256 combined) | Tier 1 | (inline in base) | Native |
-| `0x07` | Weighted Multi-Signature (configurable per-source weights) | per config | `AirAccountCompositeValidator` | M6 — weighted multisig |
+| `0x07` | Weighted Multi-Signature (configurable per-source weights) | per config | (inline in base — `_validateWeightedSignature`) | M6 — weighted multisig |
 | `0x08` | Session Key (ephemeral ECDSA, time-limited) + agent session keys | Tier 1 | `SessionKeyValidator` (unified; the former `AgentSessionKeyValidator` was folded in — v0.27.0) | M6.4 — register in Validator Router |
 
 **Tier definitions**:
