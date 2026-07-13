@@ -110,7 +110,7 @@
 
 ### GA 硬门禁
 1. **外部安全审计（#29）** — 未过审计不发正式版，只发 beta/alpha。审计由 jason 安排。范围 `src/core/ src/validators/ src/modules/`。
-2. **Etherscan verify** — 主网合约必须全部 verified（当前 Sepolia 2/11，须先修 foundry source path 问题把 9 个补齐，主网同法走 chainid 10）。
+2. **Etherscan verify** — 主网合约必须全部 verified（当前 Sepolia **8/9**，方法已跑通，仅剩 `AirAccountDelegate` 待补；主网同法走 chainid 10）。
 3. **主网 owner = Gnosis Safe** + EntryPoint stake + transferOwnership（#135）。
 
 ### 生产 DVT 密钥 —— KMS-TEE 托管下还需要密钥吗？

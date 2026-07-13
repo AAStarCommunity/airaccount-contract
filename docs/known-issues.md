@@ -1,8 +1,9 @@
 # AirAccount — Known Issues & Accepted Risks
 
-**Version**: v0.17.2-beta.1 (session-key unification + Codex 4-round + David review)
-**Last Updated**: 2026-05-31
-**Status**: pre-release beta — security audit pending tag
+**Version**: v0.28.0-beta (CC-27 BLS registry rename + version bump; carries forward all KI-1..15 trade-offs unchanged)
+**Last Updated**: 2026-07-13
+**Status**: pre-release beta — external security audit (#29) pending before GA tag
+**Note**: KI entries below were authored at v0.17.2-beta.1. The described design trade-offs are **still in force** in v0.28.0 (no behavior change since the diamond-lite split; CC-27 was a pure rename). Line-number references may drift; the risk statements remain authoritative. KI-14 (calldata parsers disabled) applies to this beta — see the release note in `CHANGELOG.md`.
 **Purpose**: This document explicitly declares known limitations and accepted risks in AirAccount's design. It exists so that security auditors and users can make an informed decision. Items listed here are **intentional design trade-offs**, not bugs. Auditors should NOT file findings for these items unless they identify a new exploit path that makes the described risk worse than documented.
 
 ---

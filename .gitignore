@@ -16,6 +16,9 @@ states/
 .env.local
 node_modules/
 
+# CodeGraph local index
+.codegraph/
+
 # Foundry
 out/
 cache/

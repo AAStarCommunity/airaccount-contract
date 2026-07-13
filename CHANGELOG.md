@@ -30,6 +30,15 @@ not yet deployed. Because the account stack is non-upgradable, `AAStarBLSKeyRegi
   tracks the DVT version). Renamed files: `src/validators/AAStarBLSKeyRegistry.sol`,
   `test/AAStarBLSKeyRegistry.t.sol`, `test/AAStarBLSKeyRegistry_M3.t.sol`.
 
+### Shipped with known limitation (beta)
+- **KI-14 — calldata parsers disabled**: this beta deploys with both DeFi calldata parsers
+  (Railgun / UniswapV3) set to `address(0)`, carried forward from v0.17.2-beta.1 (Codex round 5
+  HIGH-4/HIGH-5 fail-open mitigation). Consequence: **token-tier spending limits are NOT enforced
+  on swap-style calldata** (e.g. Uniswap multicall, Curve swaps) — only direct ERC20
+  `transfer`/`approve` selectors are tier-gated. This is an **accepted, documented trade-off** for
+  the beta, not a regression (v0.17.1 had strictly weaker checks). Integrators must not assume
+  per-token tier caps apply to arbitrary DeFi calldata. See `docs/known-issues.md` KI-14.
+
 ---
 
 ## [v0.27.0] - 2026-07-05 (DVT validator unification — mount the authoritative BLS validator)
