@@ -10,6 +10,24 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ## [Unreleased]
 
+### Changed
+- **#149 — extract WebAuthn P-256 verification into external `WebAuthnLib`.** The `webauthn.get`
+  assertion verifier that was duplicated as private copies in `AAStarAirAccountBase._verifyWebAuthnOwnerSig`
+  and `AirAccountExtension._verifyOwnerWebAuthn` (the code itself flagged "MUST stay byte-for-byte
+  identical" — a hand-sync hazard on a non-upgradable path) is now a single external library,
+  `WebAuthnLib.verifyP256(challenge, sig, pubKeyX, pubKeyY)` (deployed once, delegatecall-linked). Both
+  owner paths delegate to it, so that invariant is now **structural**. The low-level secp256r1 verify uses
+  Solady `P256.verifySignatureAllowMalleability` (same RIP-7212 `0x100` precompile on OP → byte-identical;
+  plus a Solidity fallback on non-precompile chains). Everything else ported verbatim (352-byte floor,
+  no-revert ABI pre-validation, `webauthn.get` type binding, UP flag, explicit low-S gate, base64url).
+  **Result:** impl `AAStarAirAccountV7` **24,443 → 22,816 B (freed 1,627 B; EIP-170 headroom 133 → 1,760 B)**.
+  907 tests green; storage-parity + ABI unchanged. Reviewed: self + Codex adversarial (runtime logic
+  6/6 byte-identical; one deploy-linking High found + fixed — the deploy path now deploys WebAuthnLib
+  first and resolves the link placeholder, fail-closed). **Deploy note:** the account carries a library
+  link reference — deploy WebAuthnLib first + link it (see `scripts/deploy-op-mainnet-alpha.ts`; raw
+  `bytecode.object` ships a broken account). The guardian WebAuthn path (revert-semantics) is intentionally
+  left inline — separate follow-up. Adds `solady` (v0.1.26) dependency.
+
 ### Added
 - **#161 — native-ETH tier limits in `InitConfig`.** `InitConfig` gains `tier1Limit` / `tier2Limit`
   (native ETH), baked at account birth via a new internal `_bakeTierLimits`, symmetric with the
