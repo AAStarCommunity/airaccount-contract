@@ -80,4 +80,17 @@ contract NativeTierInitConfigTest is Test {
         a.setTierLimits(1 ether, 5 ether);
         assertEq(a.tier1Limit(), 1 ether, "settable post-init when not baked");
     }
+
+    /// H1/#194: withdrawDepositTo is now metered by the ETH guard, so a compromised Tier-1 owner key
+    /// cannot drain the EntryPoint deposit past the account's tier limit. On a tiered account, a withdraw
+    /// above tier1 with owner ECDSA (Tier 1) is rejected by _enforceGuard BEFORE EntryPoint.withdrawTo —
+    /// closing the guard-bypass. (Non-tiered accounts are unaffected: the guard early-returns, which the
+    /// unchanged 907-test baseline over non-tiered accounts already exercises.)
+    function test_H1_withdrawDepositTo_aboveTier1_revertsInsufficientTier() public {
+        AAStarAirAccountV7 a = _newAccount(1 ether, 5 ether); // tier1 = 1 ETH, tier2 = 5 ETH
+        vm.prank(ownerAddr);
+        // 2 ETH → requiredTier = 2 (above tier1, ≤ tier2); ECDSA provides Tier 1 → InsufficientTier(2,1).
+        vm.expectRevert(abi.encodeWithSelector(AAStarAirAccountBase.InsufficientTier.selector, uint8(2), uint8(1)));
+        a.withdrawDepositTo(payable(address(0xBEEF)), 2 ether);
+    }
 }

@@ -454,6 +454,28 @@ contract SocialRecoveryTest is Test {
         assertEq(cleared, address(0));
     }
 
+    // H2/#194: recovery must revoke the OLD owner's P256 device passkey, not just the ECDSA key —
+    // otherwise a compromised/lost old passkey keeps authorizing ALG_P256 UserOps after recovery.
+    function test_executeRecovery_clearsOwnerP256Passkey() public {
+        // old owner sets a device passkey
+        vm.prank(ownerAddr);
+        account.setP256Key(bytes32(uint256(0xAAAA)), bytes32(uint256(0xBBBB)));
+        assertEq(account.p256KeyX(), bytes32(uint256(0xAAAA)));
+        assertEq(account.p256KeyY(), bytes32(uint256(0xBBBB)));
+
+        _addThreeGuardians();
+        _proposeRecoveryFromGuardian1();
+        vm.prank(guardian2);
+        IAirAccountRecovery(address(account)).approveRecovery();
+        vm.warp(block.timestamp + 2 days);
+        IAirAccountRecovery(address(account)).executeRecovery();
+
+        // new ECDSA owner AND the old passkey is fully revoked
+        assertEq(account.owner(), newOwnerAddr);
+        assertEq(account.p256KeyX(), bytes32(0), "old owner P256 x must be cleared on recovery");
+        assertEq(account.p256KeyY(), bytes32(0), "old owner P256 y must be cleared on recovery");
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // 18–20. executeRecovery: revert cases
     // ═══════════════════════════════════════════════════════════════════

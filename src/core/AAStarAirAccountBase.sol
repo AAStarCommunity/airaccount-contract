@@ -1814,6 +1814,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     }
 
     function withdrawDepositTo(address payable to, uint256 amount) external onlyOwner {
+        // H1/#194: meter the withdrawal through the account's ETH guard, exactly like execute()'s ETH
+        // path. Without this, a compromised Tier-1 owner ECDSA key could drain the entire EntryPoint
+        // deposit to any address, bypassing the "uncircumventable" tier/daily ETH limits. `_enforceGuard`
+        // is a no-op for accounts with no tier limits (it early-returns unless tier1/2Limit is set), so
+        // this does not restrict accounts that never opted into tiering. Empty `func` (`msg.data[0:0]`)
+        // skips the token-guard branch (this is a pure ETH movement); bytes32(0) session = owner-direct.
+        _enforceGuard(amount, ALG_ECDSA, bytes32(0), to, msg.data[0:0], false, address(guard));
         IEntryPoint(entryPoint).withdrawTo(to, amount);
     }
 
