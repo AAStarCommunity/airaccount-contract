@@ -160,7 +160,9 @@ contract AAStarAirAccountV7_M7Test is Test {
             approvedAlgIds: algs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(0), bytes32(0), bytes32(0));
 
         vm.deal(address(account), 10 ether);
@@ -441,7 +443,9 @@ contract AAStarAirAccountV7_M7Test is Test {
             approvedAlgIds: algs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(0), bytes32(0), bytes32(0));
 
         // threshold=0 → defaults to 70 → sigsRequired=1; guardian[0]=address(0), slot is empty →
@@ -743,7 +747,9 @@ contract AAStarAirAccountV7_M7Test is Test {
             approvedAlgIds: algs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(guard), bytes32(0), bytes32(0));
         vm.deal(address(gacct), 10 ether);
 
@@ -1275,7 +1281,9 @@ contract AAStarAirAccountV7_M7Test is Test {
             approvedAlgIds: algs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(0), bytes32(0), bytes32(0));
 
         // Slot 7 = _installModuleThreshold (uint8) after unified _installedModules mapping at slot 6.
@@ -1508,7 +1516,9 @@ contract AAStarAirAccountV7_M7Test is Test {
             approvedAlgIds: algs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(grd), bytes32(0), bytes32(0));
     }
 
@@ -1560,7 +1570,9 @@ contract AAStarAirAccountV7_M7Test is Test {
                 approvedAlgIds: algs,
                 minDailyLimit: 0,
                 initialTokens: new address[](0),
-                initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+                initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+                tier1Limit: 0,
+                tier2Limit: 0
             }),
             address(0) // no guard
         );
@@ -1581,7 +1593,9 @@ contract AAStarAirAccountV7_M7Test is Test {
             approvedAlgIds: algs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         agentAcct.initializeAgentAccount(address(ep), ownerWallet.addr, cfg, address(0));
         vm.expectRevert(); // initializer modifier: InvalidInitialization

@@ -154,7 +154,9 @@ contract M5ScenarioTests is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 _ret = new AAStarAirAccountV7(address(0));
         address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
@@ -191,7 +193,9 @@ contract M5ScenarioTests is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: tokens,
-            initialTokenConfigs: cfgs
+            initialTokenConfigs: cfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 _ret = new AAStarAirAccountV7(address(0));
         address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));
@@ -694,7 +698,9 @@ contract M5ScenarioTests is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         vm.prank(aliceWallet.addr);
@@ -717,7 +723,9 @@ contract M5ScenarioTests is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         AAStarAirAccountV7 _ret = new AAStarAirAccountV7(address(0));
         address g = address(new AAStarGlobalGuard(address(_ret), config.dailyLimit, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs));

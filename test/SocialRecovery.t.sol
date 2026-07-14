@@ -48,7 +48,9 @@ contract SocialRecoveryTest is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPointAddr, ownerAddr, config, address(0), bytes32(0), bytes32(0));
@@ -69,7 +71,9 @@ contract SocialRecoveryTest is Test {
             guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
             dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(0), bytes32(0), bytes32(0));
     }
 

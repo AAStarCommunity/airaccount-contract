@@ -105,7 +105,9 @@ contract ModuleInstallTimelockTest is Test {
             approvedAlgIds: algs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         }), address(0), bytes32(0), bytes32(0));
         vm.deal(address(account), 10 ether);
     }

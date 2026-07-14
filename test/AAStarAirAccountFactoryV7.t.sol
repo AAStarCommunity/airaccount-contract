@@ -70,7 +70,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds: noAlgs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
     }
 
@@ -219,7 +221,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         vm.prank(ownerA);
@@ -259,7 +263,8 @@ contract AAStarAirAccountFactoryV7Test is Test {
             factory.getConfigHash(config),
             keccak256(abi.encode(
                 config.guardians, config.guardianP256X, config.guardianP256Y, config.dailyLimit,
-                config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs
+                config.approvedAlgIds, config.minDailyLimit, config.initialTokens, config.initialTokenConfigs,
+                config.tier1Limit, config.tier2Limit // #161
             )),
             "getConfigHash mismatch"
         );
@@ -304,15 +309,31 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds:      algIds,
             minDailyLimit:       0.01 ether,
             initialTokens:       tokens,
-            initialTokenConfigs: tokenCfgs
+            initialTokenConfigs: tokenCfgs,
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         bytes32 expected = keccak256(abi.encode(
             cfg.guardians, cfg.guardianP256X, cfg.guardianP256Y, cfg.dailyLimit,
-            cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs
+            cfg.approvedAlgIds, cfg.minDailyLimit, cfg.initialTokens, cfg.initialTokenConfigs,
+            cfg.tier1Limit, cfg.tier2Limit // #161
         ));
 
         assertEq(factory.getConfigHash(cfg), expected, "getConfigHash non-empty mismatch");
+    }
+
+    // ─── #161: native-ETH tier limits are bound into the config hash (front-run protection) ──
+
+    function test_nativeTier_configHashBinding() public view {
+        AAStarAirAccountBase.InitConfig memory a = _minimalConfig();
+        AAStarAirAccountBase.InitConfig memory b = _minimalConfig();
+        b.tier1Limit = 1 ether; // differ ONLY in the native tier profile
+        b.tier2Limit = 5 ether;
+        assertTrue(
+            factory.getConfigHash(a) != factory.getConfigHash(b),
+            "tier profile must change the config hash so it can't be front-run away"
+        );
     }
 
     // ─── Different params produce different addresses ────────────────
@@ -424,7 +445,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
 
         vm.prank(ownerA);
@@ -626,7 +649,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         vm.expectRevert(AAStarAirAccountFactoryV7.DuplicateGuardian.selector);
         vm.prank(ownerA);
@@ -645,7 +670,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         vm.expectRevert(AAStarAirAccountFactoryV7.DuplicateGuardian.selector);
         vm.prank(ownerA);
@@ -664,7 +691,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         vm.expectRevert(AAStarAirAccountFactoryV7.DuplicateGuardian.selector);
         vm.prank(ownerA);
@@ -681,7 +710,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds: new uint8[](0),
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         // Should NOT revert — all zeros means no guardians
         vm.prank(ownerA);
@@ -701,7 +732,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds: algIds,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         vm.prank(ownerA);
         address acc = factory.createAccount(ownerA, 51, config, bytes32(0), bytes32(0), 0, 0, new bytes(0));
@@ -725,7 +758,9 @@ contract AAStarAirAccountFactoryV7Test is Test {
             approvedAlgIds: algs,
             minDailyLimit: 0, // victim wants no floor (can tighten later)
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         address victimAddr = factory.getAddress(ownerA, 7, victimCfg, bytes32(0), bytes32(0));
 

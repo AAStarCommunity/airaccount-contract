@@ -41,7 +41,9 @@ contract Beta4AlgIdBundlerFixTest is Test {
             approvedAlgIds: algs,
             minDailyLimit: 0,
             initialTokens: new address[](0),
-            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0)
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0,
+            tier2Limit: 0
         });
         address g = address(0);
         if (dailyLimit > 0) {
