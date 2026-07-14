@@ -50,8 +50,12 @@ const PRIORITY_FEE_FLOOR = 1_000_000n; // OP gas is cheap; floor low
 // ── MUST-SET from config (guarded in main) ───────────────────────────────────
 // DVT authoritative BLS validator on OP MAINNET — from @repo:dvt (Sepolia was 0x539B…; mainnet TBD).
 const DVT_VALIDATOR = process.env.DVT_VALIDATOR_MAINNET as Address;
-// Protocol Gnosis Safe on OP Mainnet = community guardian / owner (CC-31 / #135).
-const COMMUNITY = (process.env.COMMUNITY_GUARDIAN_ADDRESS ?? process.env.PROTOCOL_SAFE_ADDRESS) as Address;
+// Mycelium community Gnosis Safe — three-chain same address (OP 10 / ETH 1 / Sepolia 11155111),
+// canonical governance owner + community guardian (CC-31 / #135; matches @aastar/sdk COMMUNITY_SAFE).
+// Hardcoded so ownership convergence is baked into the deploy, not dependent on an env var that could
+// be forgotten. Env override allowed only for testing.
+const COMMUNITY_SAFE = "0x51eDf11fDb0A4F66220eFb8efA54Eca77232E114" as Address;
+const COMMUNITY = (process.env.COMMUNITY_GUARDIAN_ADDRESS ?? process.env.PROTOCOL_SAFE_ADDRESS ?? COMMUNITY_SAFE) as Address;
 const RPC_URLS = [process.env.OP_MAINNET_RPC_URL, process.env.OP_MAINNET_RPC_URL2].filter(Boolean) as string[];
 
 // ── Signing via `cast wallet` keystore (NO PRIVATE_KEY env — P2) ─────────────
@@ -75,6 +79,8 @@ const ROUTER_ABI = [
   { name: "registerAlgorithm", type: "function", stateMutability: "nonpayable", inputs: [{ type: "uint8" }, { type: "address" }], outputs: [] },
   { name: "finalizeSetup",     type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { name: "getAlgorithm",      type: "function", stateMutability: "view",       inputs: [{ type: "uint8" }], outputs: [{ type: "address" }] },
+  { name: "transferOwnership", type: "function", stateMutability: "nonpayable", inputs: [{ type: "address" }], outputs: [] },
+  { name: "owner",             type: "function", stateMutability: "view",       inputs: [], outputs: [{ type: "address" }] },
 ] as const;
 const REGISTRY_ABI = [
   { name: "bindFactory", type: "function", stateMutability: "nonpayable", inputs: [{ type: "address" }], outputs: [] },
@@ -217,6 +223,29 @@ async function main() {
   const ver = await reader.readContract({ address: impl, abi: IMPL_ABI, functionName: "ACCOUNT_VERSION" });
   guard(ver === TARGET_VERSION, `Version mismatch: expected "${TARGET_VERSION}", got "${ver}"`);
   console.log(`\n[Verify] ACCOUNT_VERSION = "${ver}" ✓`);
+
+  // ── [GA ops #135] Converge governance to the community Safe ──────────────────────────────────
+  // `AAStarValidator.owner` RETAINS power after finalizeSetup — proposeAlgorithm → executeProposal adds
+  // new algIds through the 7-day governance timelock — so it must NOT stay the deployer EOA. Transfer it
+  // to the OP-mainnet community Safe (CC-31) as the FINAL step (the deployer needed owner rights for the
+  // register/finalize calls above). This is a ONE-STEP transfer (owner = newOwner immediately).
+  //
+  // Non-upgradable stack: there is NO proxy admin or account Ownable to transfer — the router is the only
+  // residual on-chain governance point in THIS deploy. (AAStarBLSKeyRegistry, the other Safe-owned
+  // contract by design, is NOT deployed here; the DVT validator 0x539B… is mounted at algId 0x01.)
+  // factoryAdmin is immutable = deployer and its only power (setAgentRegistry) was already consumed above.
+  console.log("\n[GA ops #135] transfer AAStarValidator router owner → community Safe...");
+  await call("router.transferOwnership→Safe", router, ROUTER_ABI as unknown[], "transferOwnership", [COMMUNITY_SAFE], 80_000n);
+  const routerOwner = await reader.readContract({ address: router, abi: ROUTER_ABI, functionName: "owner" }) as Address;
+  guard(routerOwner.toLowerCase() === COMMUNITY_SAFE.toLowerCase(), `router owner not Safe: ${routerOwner}`);
+  console.log(`  Router owner → ${routerOwner} (community Safe) ✓`);
+
+  // ⚠️ [GA ops #135 — MANUAL, post-deploy via Safe multisig] EntryPoint stake:
+  // if the production bundler policy requires the factory (a first-time account deployer that touches
+  // storage in validation) to be EntryPoint-staked, add stake by having the community Safe call
+  // `EntryPoint.addStake{value}(unstakeDelaySec)` (stake is credited to msg.sender = the Safe, so the
+  // Safe — not the deployer EOA — owns/withdraws it). Not scripted here: it is a value-bearing Safe
+  // multisig action, and whether it's needed depends on the chosen bundler's reputation policy.
 
   // TODO(post-alpha, non-core): deploy auxiliary modules if the alpha exercises them:
   //   ForceExitModule / AirAccountDelegate / CalldataParserRegistry (confirm ctor args first).
