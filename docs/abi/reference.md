@@ -40,6 +40,7 @@ Authoritative, auto-generated reference for every external/public function, even
 - [UniswapV3Parser](#uniswapv3parser) — `src/parsers/UniswapV3Parser.sol`
 - [AgentRegistry](#agentregistry) — `src/registries/AgentRegistry.sol`
 - [AlgTierLib](#algtierlib) — `src/utils/AlgTierLib.sol`
+- [WebAuthnLib](#webauthnlib) — `src/utils/WebAuthnLib.sol`
 - [AAStarBLSKeyRegistry](#aastarblskeyregistry) — `src/validators/AAStarBLSKeyRegistry.sol`
 - [AAStarValidator](#aastarvalidator) — `src/validators/AAStarValidator.sol`
 - [SessionKeyValidator](#sessionkeyvalidator) — `src/validators/SessionKeyValidator.sol`
@@ -5096,6 +5097,38 @@ Authoritative, auto-generated reference for every external/public function, even
 - **Functions:** 0 · **Events:** 0 · **Errors:** 0
 - **Title:** AlgTierLib
 - Shared algorithm-to-security-tier mapping for AAStarAirAccountBase and AAStarGlobalGuard.
+
+## WebAuthnLib
+
+- **Source:** `src/utils/WebAuthnLib.sol`
+- **Functions:** 1 · **Events:** 0 · **Errors:** 0
+- **Title:** WebAuthnLib — shared WebAuthn (FIDO2 `webauthn.get`) P-256 assertion verifier
+- #149: single source of truth for the P-256 / WebAuthn owner+guardian assertion check that         was previously carried as private copies in BOTH `AAStarAirAccountBase` and         `AirAccountExtension` (the code even noted "Mirrors ...", "Identical verification logic to         ...", a hand-sync hazard on a security-critical, non-upgradable path). Extracting it here         (a) removes the duplication and (b) frees EIP-170 headroom in the account impl + extension         because the WebAuthn bytecode is deployed ONCE (this external library), not twice.         Behavior is byte-identical to the prior inline implementation: same 352-byte ABI floor,         same no-revert ABI pre-validation (ERC-4337 `validateUserOp` must return, not revert), same         `webauthn.get` type binding (rejects replayed registration assertions), same UP-flag check,         same explicit low-S canonicality gate (EIP-7212 / the RIP-7212 precompile do NOT enforce         low-S), same clientDataJSON reconstruction. Only the raw `staticcall(0x100)` is replaced by         Solady `P256.verifySignatureAllowMalleability`, which is the same RIP-7212 precompile call         on chains that have it (the OP-mainnet target) and additionally falls back to a Solidity         verifier on chains that don't (a strict superset — the prior code returned false there).         Public (not internal) so Solidity deploys it once and links it via delegatecall — that is         what yields the bytecode saving. The function is pure w.r.t. the caller's storage (the         public key is a parameter), so running under the account's delegatecall context is safe.         ⚠️ DEPLOYMENT (external library — read before deploying the account stack): because this is         a linked library, `AAStarAirAccountV7` and `AirAccountExtension` creation bytecode carry an         UNRESOLVED link placeholder (`__$…$__`). You MUST deploy WebAuthnLib FIRST and substitute its         address into that placeholder before deploying the impl — sending raw `artifact.bytecode.object`         (the pre-#149 deploy pattern) ships a BROKEN account whose WebAuthn verification jumps to a         garbage address. The TS deploy scripts do this via `linkBytecode()` +         `LIBRARIES["src/utils/WebAuthnLib.sol:WebAuthnLib"]` (fail-closed: any residual placeholder         throws). `forge`/`forge script` auto-link. See `scripts/deploy-op-mainnet-alpha.ts`.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0xaffccd95` | `verifyP256(bytes32,bytes,bytes32,bytes32)` | view | — | Verify a WebAuthn `webauthn.get` P-256 assertion over `challenge` against `(pubKeyX, pubKeyY)`. |
+
+### Functions
+
+#### `verifyP256(bytes32 challenge, bytes sig, bytes32 pubKeyX, bytes32 pubKeyY)`
+
+`0xaffccd95` · view · access: —
+
+> Verify a WebAuthn `webauthn.get` P-256 assertion over `challenge` against `(pubKeyX, pubKeyY)`.
+
+| param | type | description |
+|---|---|---|
+| `challenge` | `bytes32` | The 32-byte value that was base64url-encoded into `clientDataJSON.challenge` (the userOpHash / op digest). |
+| `sig` | `bytes` | `abi.encode(authenticatorData, clientDataJSONPrefix, clientDataJSONSuffix, r, s)`. |
+| `pubKeyX` | `bytes32` | Owner/guardian passkey P-256 x-coordinate. |
+| `pubKeyY` | `bytes32` | Owner/guardian passkey P-256 y-coordinate. |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` | True iff the assertion is a valid, low-S, `webauthn.get` signature over the challenge. |
 
 ## AAStarBLSKeyRegistry
 
