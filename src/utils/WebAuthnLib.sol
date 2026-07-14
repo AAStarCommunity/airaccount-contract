@@ -23,6 +23,15 @@ import {P256} from "solady/utils/P256.sol";
 ///         Public (not internal) so Solidity deploys it once and links it via delegatecall — that is
 ///         what yields the bytecode saving. The function is pure w.r.t. the caller's storage (the
 ///         public key is a parameter), so running under the account's delegatecall context is safe.
+///
+///         ⚠️ DEPLOYMENT (external library — read before deploying the account stack): because this is
+///         a linked library, `AAStarAirAccountV7` and `AirAccountExtension` creation bytecode carry an
+///         UNRESOLVED link placeholder (`__$…$__`). You MUST deploy WebAuthnLib FIRST and substitute its
+///         address into that placeholder before deploying the impl — sending raw `artifact.bytecode.object`
+///         (the pre-#149 deploy pattern) ships a BROKEN account whose WebAuthn verification jumps to a
+///         garbage address. The TS deploy scripts do this via `linkBytecode()` +
+///         `LIBRARIES["src/utils/WebAuthnLib.sol:WebAuthnLib"]` (fail-closed: any residual placeholder
+///         throws). `forge`/`forge script` auto-link. See `scripts/deploy-op-mainnet-alpha.ts`.
 library WebAuthnLib {
     /// @dev secp256r1 group order / 2. A signature with s above this is the high-S malleable twin and
     ///      is rejected here (the precompile itself accepts both s and n-s).

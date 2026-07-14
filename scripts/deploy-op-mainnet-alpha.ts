@@ -35,7 +35,7 @@ import { readFileSync } from "fs";
 import { execSync } from "child_process";
 import {
   createPublicClient, createWalletClient, http, encodeDeployData, encodeFunctionData,
-  getAddress, type Address, type Hex,
+  getAddress, keccak256, stringToBytes, type Address, type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { optimism } from "viem/chains";
@@ -88,9 +88,34 @@ const IMPL_ABI = [
   { name: "ACCOUNT_VERSION", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
 ] as const;
 
+// #149: deployed external-library addresses, keyed by fully-qualified name
+// ("src/utils/WebAuthnLib.sol:WebAuthnLib"). Populated at runtime AFTER the library is deployed
+// and BEFORE any dependent artifact (impl/extension) is loaded — see main().
+const LIBRARIES: Record<string, Address> = {};
+
+// #149: resolve Solidity external-library link placeholders (`__$<34-hex>$__`) in creation bytecode.
+// The impl embeds the extension's creation code, so both WebAuthnLib references live in the impl's
+// bytecode and are patched here. Fails CLOSED: an unregistered library or any residual `__$` placeholder
+// throws, so a raw unlinked artifact can never be sent on-chain (that would deploy a BROKEN account whose
+// WebAuthn verification jumps to a garbage address).
+function linkBytecode(name: string, bytecode: string, linkRefs: Record<string, Record<string, unknown>> | undefined): Hex {
+  let out = bytecode;
+  for (const [file, libs] of Object.entries(linkRefs ?? {})) {
+    for (const lib of Object.keys(libs)) {
+      const fq = `${file}:${lib}`;
+      const addr = LIBRARIES[fq];
+      if (!addr) throw new Error(`${name}: unlinked library ${fq} — deploy it and register in LIBRARIES before loading this artifact`);
+      const placeholder = "__$" + keccak256(stringToBytes(fq)).slice(2, 36) + "$__";
+      out = out.split(placeholder).join(getAddress(addr).slice(2).toLowerCase());
+    }
+  }
+  if (out.includes("__$")) throw new Error(`${name}: residual unlinked library placeholder after linking`);
+  return out as Hex;
+}
+
 function loadArtifact(name: string) {
   const a = JSON.parse(readFileSync(resolve(import.meta.dirname, `../out/${name}.sol/${name}.json`), "utf-8"));
-  return { abi: a.abi as unknown[], bytecode: a.bytecode.object as Hex };
+  return { abi: a.abi as unknown[], bytecode: linkBytecode(name, a.bytecode.object as string, a.bytecode.linkReferences) };
 }
 function pub(url: string) { return createPublicClient({ chain: optimism, transport: http(url, { timeout: 60_000 }) }); }
 function wal(url: string) { return createWalletClient({ account: deployer, chain: optimism, transport: http(url, { timeout: 60_000 }) }); }
@@ -166,8 +191,13 @@ async function main() {
   guard(r01.toLowerCase() === DVT_VALIDATOR.toLowerCase(), `router 0x01 mismatch: ${r01}`);
   console.log(`  Router: ${router}  (0x01=DVT ✓)`);
 
-  // [3] impl (+ fresh extension)
-  console.log("\n[3/5] AAStarAirAccountV7 impl...");
+  // [3] impl (+ fresh extension). #149: WebAuthnLib is an external library the impl + extension link
+  // via delegatecall — it MUST be deployed and registered BEFORE the impl is loaded, or linkBytecode
+  // throws (fail-closed). Deploying the impl with an unlinked placeholder would produce a broken account.
+  console.log("\n[3/5] WebAuthnLib (external library) + AAStarAirAccountV7 impl...");
+  const webAuthnLib = await deploy("webAuthnLib", "WebAuthnLib", [], 1_500_000n);
+  LIBRARIES["src/utils/WebAuthnLib.sol:WebAuthnLib"] = webAuthnLib;
+  console.log(`  WebAuthnLib: ${webAuthnLib}`);
   const impl = await deploy("impl", "AAStarAirAccountV7", [router], 15_000_000n);
   const extension = await reader.readContract({ address: impl, abi: IMPL_ABI, functionName: "agentExtension" }) as Address;
   console.log(`  Impl: ${impl}\n  Extension: ${extension}`);
