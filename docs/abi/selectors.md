@@ -288,6 +288,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xacfff8f6` | `getAlgorithm(uint8)` | AAStarValidator |
 | `0xae574a43` | `aggregateSignatures((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[])` | AAStarBLSAggregator |
 | `0xaffa4167` | `L2_TYPE_OPTIMISM()` | ForceExitModule |
+| `0xaffccd95` | `verifyP256(bytes32,bytes,bytes32,bytes32)` | WebAuthnLib |
 | `0xb06e5ab4` | `aggregateKeys(bytes32[])` | AAStarBLSKeyRegistry |
 | `0xb0d691fe` | `entryPoint()` | AAStarBLSAggregator |
 | `0xb0d691fe` | `entryPoint()` | AAStarAgentStorageLayout |

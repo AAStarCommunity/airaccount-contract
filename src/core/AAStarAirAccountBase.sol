@@ -11,6 +11,7 @@ import {ICalldataParser, ICalldataParserRegistry} from "../interfaces/ICalldataP
 import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
 import {AirAccountExtension} from "./AirAccountExtension.sol";
 import {AlgTierLib} from "../utils/AlgTierLib.sol";
+import {WebAuthnLib} from "../utils/WebAuthnLib.sol";
 
 /// @dev Minimal view of AAStarBLSKeyRegistry's protocol-level aggregator (issue #45 Part B).
 ///      The account reads this single value during BLS validation to decide the batch path.
@@ -884,30 +885,6 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         return abi.decode(result, (uint256)) == 1 ? 0 : 1;
     }
 
-    /// @dev Base64url-encode a bytes32 value into 43 URL-safe characters (no padding).
-    ///      Used by _verifyWebAuthnOwnerSig to reconstruct clientDataJSON from the challenge.
-    ///      Mirrors AirAccountExtension._base64UrlEncode32 (private there, internal here).
-    function _base64UrlEncode32(bytes32 input) internal pure returns (bytes memory result) {
-        result = new bytes(43);
-        bytes memory data = abi.encodePacked(input);
-        bytes memory t = bytes("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_");
-        uint256 j = 0;
-        for (uint256 i = 0; i < 30; i += 3) {
-            uint256 b0 = uint8(data[i]);
-            uint256 b1 = uint8(data[i + 1]);
-            uint256 b2 = uint8(data[i + 2]);
-            result[j++] = t[b0 >> 2];
-            result[j++] = t[((b0 & 0x03) << 4) | (b1 >> 4)];
-            result[j++] = t[((b1 & 0x0F) << 2) | (b2 >> 6)];
-            result[j++] = t[b2 & 0x3F];
-        }
-        // Final 2 bytes (indices 30, 31) -> 3 base64url chars (no padding)
-        uint256 b30 = uint8(data[30]);
-        uint256 b31 = uint8(data[31]);
-        result[j++] = t[b30 >> 2];
-        result[j++] = t[((b30 & 0x03) << 4) | (b31 >> 4)];
-        result[j]   = t[(b31 & 0x0F) << 2];
-    }
 
     /**
      * @dev Validate ALG_COMBINED_T1 (0x06): P256 passkey AND owner ECDSA simultaneously.
@@ -1333,77 +1310,14 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
      *      instead of reverting (to fit the 0/1 return convention of the validator layer).
      */
     function _verifyWebAuthnOwnerSig(bytes32 challenge, bytes memory sig) internal view returns (bool) {
-        if (p256KeyX == bytes32(0) && p256KeyY == bytes32(0)) return false;
-        // ABI(bytes,bytes,bytes,bytes32,bytes32) head: 5*32 = 160 bytes; each dynamic bytes
-        // needs at least 32 (length word) + 32 (one padded word) = 64 bytes.
-        // Absolute minimum = 160 + 3*64 = 352 bytes. Use 352 matching Extension's guard.
-        if (sig.length < 352) return false;
-
-        // Pre-validate ABI structure to prevent abi.decode from reverting on malformed input.
-        // A revert inside validateUserOp violates ERC-4337 (bundlers expect return 1, not revert).
-        // Layout: [off0(32)][off1(32)][off2(32)][r(32)][s(32)] then dynamic data.
-        // All offsets must be >= 160 (past the fixed head) and their content must fit in sig.
-        {
-            uint256 off0; uint256 off1; uint256 off2;
-            uint256 len0; uint256 len1; uint256 len2;
-            assembly {
-                let base := add(sig, 32) // skip bytes memory length slot
-                off0 := mload(base)
-                off1 := mload(add(base, 32))
-                off2 := mload(add(base, 64))
-            }
-            uint256 dataLen = sig.length;
-            // Each offset must be within [160, dataLen-32] so there is room for a length word.
-            // Use (off > dataLen - 32) instead of (off + 32 > dataLen) to avoid checked-arithmetic
-            // overflow panic when off is near MAX_UINT256 — both forms are equivalent when dataLen>=32
-            // (guaranteed by the sig.length >= 352 gate above), but only the subtraction form is safe.
-            if (off0 < 160 || off0 > dataLen - 32) return false;
-            if (off1 < 160 || off1 > dataLen - 32) return false;
-            if (off2 < 160 || off2 > dataLen - 32) return false;
-            assembly {
-                let base := add(sig, 32)
-                len0 := mload(add(base, off0))
-                len1 := mload(add(base, off1))
-                len2 := mload(add(base, off2))
-            }
-            // Each array's content (length word + padded data) must not exceed sig.
-            // Same pattern: use (len > dataLen - off - 32) to avoid overflow.
-            if (len0 > dataLen - off0 - 32) return false;
-            if (len1 > dataLen - off1 - 32) return false;
-            if (len2 > dataLen - off2 - 32) return false;
-        }
-
-        (
-            bytes memory authenticatorData,
-            bytes memory clientDataJSONPrefix,
-            bytes memory clientDataJSONSuffix,
-            bytes32 r,
-            bytes32 s
-        ) = abi.decode(sig, (bytes, bytes, bytes, bytes32, bytes32));
-
-        // Minimum authenticatorData: rpIdHash(32) + flags(1) + signCount(4) = 37 bytes
-        if (authenticatorData.length < 37) return false;
-        // UP (User Present) flag must be set (bit 0 of flags byte at index 32)
-        if (uint8(authenticatorData[32]) & 0x01 == 0) return false;
-
-        // Bind operation type: clientDataJSONPrefix must be the standard assertion preamble.
-        // Prevents replay of webauthn.create (registration) assertions through this path.
-        if (keccak256(clientDataJSONPrefix) != keccak256(bytes('{"type":"webauthn.get","challenge":"'))) {
-            return false;
-        }
-
-        bytes memory clientDataJSON = abi.encodePacked(
-            clientDataJSONPrefix,
-            _base64UrlEncode32(challenge),
-            clientDataJSONSuffix
-        );
-
-        bytes32 clientDataHash = sha256(clientDataJSON);
-        bytes32 payloadHash    = sha256(abi.encodePacked(authenticatorData, clientDataHash));
-
-        if (uint256(s) > SECP256R1_N_OVER_2) return false;
-        (bool ok, bytes memory result) = P256_VERIFIER.staticcall(abi.encode(payloadHash, r, s, p256KeyX, p256KeyY));
-        return ok && result.length >= 32 && abi.decode(result, (uint256)) == 1;
+        // #149: the full audited WebAuthn (webauthn.get) verification is now in WebAuthnLib — deployed
+        // ONCE and linked via delegatecall, freeing EIP-170 headroom that a private copy here consumed.
+        // Behavior is byte-identical (verbatim port: 352-byte floor, no-revert ABI pre-validation,
+        // webauthn.get type binding, UP flag, explicit low-S, verbatim base64url); only the raw
+        // staticcall(0x100) became Solady P256 (same RIP-7212 precompile on OP). The prior on-chain
+        // owner-WebAuthn path and Extension's isValidOwnerAuth WebAuthn branch now call the SAME code,
+        // so the "must stay byte-for-byte identical" invariant is structurally guaranteed.
+        return WebAuthnLib.verifyP256(challenge, sig, p256KeyX, p256KeyY);
     }
 
     // ─── Tiered Routing (F21) ────────────────────────────────────────
