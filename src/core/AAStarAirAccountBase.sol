@@ -12,6 +12,7 @@ import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
 import {AirAccountExtension} from "./AirAccountExtension.sol";
 import {AlgTierLib} from "../utils/AlgTierLib.sol";
 import {WebAuthnLib} from "../utils/WebAuthnLib.sol";
+import {P256} from "solady/utils/P256.sol";
 
 /// @dev Minimal view of AAStarBLSKeyRegistry's protocol-level aggregator (issue #45 Part B).
 ///      The account reads this single value during BLS validation to decide the batch path.
@@ -56,9 +57,6 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     // Requires EVM precompile (EIP-TBD). Implementation deferred until precompile availability (~2027-2029).
 
     uint256 internal constant G2_POINT_LENGTH = 256;
-
-    /// @dev EIP-7212 P256 verification precompile
-    address internal constant P256_VERIFIER = address(0x100);
 
     /// @dev Sentinel stored in a guardian address slot to mark it as a P-256 (passkey) guardian.
     ///      The paired P-256 public key (x, y) is stored in the parallel _guardianP256X/Y slots.
@@ -875,14 +873,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // EIP-2 check applied in _validateECDSA for secp256k1.
         if (uint256(s) > SECP256R1_N_OVER_2) return 1;
 
-        bytes memory callData = abi.encode(userOpHash, r, s, p256KeyX, p256KeyY);
-
-        // EIP-7212 precompile at 0x100: P256VERIFY(hash, r, s, x, y) → 1 if valid
-        // Deployment requirement: only deploy on chains with EIP-7212 precompile active.
-        // If precompile is unavailable, fail fast rather than fall back to expensive Solidity.
-        (bool success, bytes memory result) = P256_VERIFIER.staticcall(callData);
-        if (!success || result.length < 32) return 1;
-        return abi.decode(result, (uint256)) == 1 ? 0 : 1;
+        // #191: routed through Solady P256 (single audited primitive source — same RIP-7212 `0x100`
+        // precompile on the OP target → byte-identical to the prior raw staticcall; eliminates the
+        // private precompile-copy drift risk). Low-S is enforced above (secp256r1 canonical), and
+        // `verifySignatureAllowMalleability` is the raw-precompile equivalent (no built-in low-S).
+        return P256.verifySignatureAllowMalleability(userOpHash, r, s, p256KeyX, p256KeyY) ? 0 : 1;
     }
 
 

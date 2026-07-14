@@ -4,6 +4,7 @@ pragma solidity ^0.8.33;
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
+import {P256} from "solady/utils/P256.sol";
 
 /// @title SessionKeyValidator — Unified Session Key (algId 0x08) for AAStar AirAccount
 /// @notice Implements scoped, time-limited delegated signing keys for ERC-4337 accounts.
@@ -35,9 +36,6 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     string public constant MODULE_VERSION = "0.17.2";
 
     // ─── Constants ────────────────────────────────────────────────────
-
-    /// @dev EIP-7212 P256 verification precompile
-    address internal constant P256_VERIFIER = address(0x100);
 
     /// @dev floor((n-1)/2) for the secp256r1 order n — the low-S bound. EIP-7212/RIP-7696 do NOT
     ///      enforce canonical (low-S) signatures, so both (r,s) and (r,n-s) pass the precompile.
@@ -201,10 +199,12 @@ contract SessionKeyValidator is IAAStarAlgorithm {
             return 1;
         }
 
-        // EIP-7212 P256 verification (sha256-wrapped userOpHash)
+        // EIP-7212 P256 verification (sha256-wrapped userOpHash). #191: routed through Solady P256
+        // (single audited primitive source — same RIP-7212 0x100 precompile on OP → byte-identical to
+        // the prior raw staticcall; eliminates the drift risk of a private precompile copy here). Low-S
+        // is enforced above (191); Solady's allow-malleability variant is the raw-precompile equivalent.
         bytes32 msgHash = sha256(abi.encodePacked(userOpHash));
-        (bool ok, bytes memory result) = P256_VERIFIER.staticcall(abi.encode(msgHash, r, s_val, keyX, keyY));
-        if (!ok || result.length < 32 || abi.decode(result, (uint256)) != 1) return 1;
+        if (!P256.verifySignatureAllowMalleability(msgHash, r, s_val, keyX, keyY)) return 1;
 
         return 0;
     }

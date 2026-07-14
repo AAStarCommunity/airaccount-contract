@@ -10,6 +10,7 @@ import {ERC8004Addresses} from "../config/ERC8004Addresses.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {WebAuthnLib} from "../utils/WebAuthnLib.sol";
+import {P256} from "solady/utils/P256.sol";
 
 /// @title AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 /// @notice Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase
@@ -733,9 +734,6 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
 
     // ─── P-256 Guardian Support (issue #119) ─────────────────────────────
 
-    /// @dev EIP-7212 P256 verification precompile (mirror AAStarAirAccountBase)
-    address private constant P256_VERIFIER = address(0x100);
-
     /// @dev secp256r1 curve order / 2 for low-S canonicality (mirror AAStarAirAccountBase)
     uint256 private constant SECP256R1_N_OVER_2 =
         0x7FFFFFFF800000007FFFFFFFFFFFFFFFDE737D56D38BCF4279DCE5617E3192A8;
@@ -876,8 +874,10 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
 
         if (uint256(s) > SECP256R1_N_OVER_2) revert InvalidP256GuardianSignature(gIdx);
         (bytes32 px, bytes32 py) = _getP256Key(gIdx);
-        (bool ok, bytes memory result) = P256_VERIFIER.staticcall(abi.encode(payloadHash, r, s, px, py));
-        if (!ok || result.length < 32 || abi.decode(result, (uint256)) != 1) {
+        // #191: raw precompile → Solady P256 (single audited primitive; same 0x100 on OP → byte-identical
+        // revert behavior). Low-S enforced above; the WebAuthn wrapper (base64url/clientDataJSON) and this
+        // path's distinct revert semantics are unchanged (only the primitive call is deduplicated).
+        if (!P256.verifySignatureAllowMalleability(payloadHash, r, s, px, py)) {
             revert InvalidP256GuardianSignature(gIdx);
         }
     }
