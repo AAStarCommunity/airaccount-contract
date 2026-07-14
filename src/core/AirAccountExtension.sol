@@ -1164,6 +1164,13 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
 
         address oldOwner = owner;
         owner = r.newOwner;
+        // H2/#194: recovery must revoke ALL of the old owner's auth factors, not just the ECDSA key.
+        // The old owner's P256 device passkey (ALG_P256 0x03, Tier-1-whitelisted by default, and a
+        // factor in cumulative tiers) survived recovery otherwise, so a compromised/lost old device
+        // could keep authorizing UserOps after the account was recovered to a new owner. Clear it; the
+        // new owner re-establishes their own passkey via setP256Key after recovery.
+        p256KeyX = bytes32(0);
+        p256KeyY = bytes32(0);
         delete activeRecovery;
         _recoveryNonce++;
 
