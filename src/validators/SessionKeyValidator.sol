@@ -98,6 +98,14 @@ contract SessionKeyValidator is IAAStarAlgorithm {
     /// @notice P256 session registry: account → keccak256(keyX||keyY) → Session
     mapping(address => mapping(bytes32 => Session)) internal _sessions_p256;
 
+    /// @notice M1/#194: owner (account.owner()) that granted each session. A session is only valid while
+    ///         the account's CURRENT owner equals its grant-time owner — so social recovery (which is the
+    ///         only path that changes owner, guardian-gated) invalidates ALL pre-recovery sessions,
+    ///         instead of leaving a broad pre-recovery session usable for up to its full expiry window.
+    ///         Stored separately from the user-supplied Session cfg so a grantor cannot forge it.
+    mapping(address => mapping(address => address)) internal _ecdsaSessionOwner;
+    mapping(address => mapping(bytes32 => address)) internal _p256SessionOwner;
+
     /// @notice Velocity counters (execute-phase state).
     mapping(address => mapping(address => SessionState)) public sessionStates;
     mapping(address => mapping(bytes32 => SessionState)) public sessionStates_p256;
@@ -164,6 +172,8 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         if (s.expiry == 0) return 1;
         if (s.revoked) return 1;
         if (block.timestamp >= s.expiry) return 1;
+        // M1/#194: invalidate sessions granted under a prior owner (i.e. before a social recovery).
+        if (_ecdsaSessionOwner[account][sessionKey] != _ownerOf(account)) return 1;
 
         // Velocity early-reject (view, would-exceed). SSTORE happens in recordCallForVelocity (execute phase).
         // Mirrors the sliding-window estimate used on the execute side (issue #57).
@@ -193,6 +203,8 @@ contract SessionKeyValidator is IAAStarAlgorithm {
         if (s.expiry == 0) return 1;
         if (s.revoked) return 1;
         if (block.timestamp >= s.expiry) return 1;
+        // M1/#194: invalidate sessions granted under a prior owner (i.e. before a social recovery).
+        if (_p256SessionOwner[account][keyHash] != _ownerOf(account)) return 1;
 
         if (s.velocityLimit > 0 &&
             _velocityWouldExceed(sessionStates_p256[account][keyHash], s.velocityLimit, s.velocityWindow)) {
@@ -518,11 +530,13 @@ contract SessionKeyValidator is IAAStarAlgorithm {
 
     function _storeSession(address account, address sessionKey, Session calldata cfg) internal {
         _sessions[account][sessionKey] = cfg;
+        _ecdsaSessionOwner[account][sessionKey] = _ownerOf(account); // M1/#194: bind to grant-time owner
         emit SessionGranted(account, sessionKey, cfg);
     }
 
     function _storeP256Session(address account, bytes32 keyHash, Session calldata cfg) internal {
         _sessions_p256[account][keyHash] = cfg;
+        _p256SessionOwner[account][keyHash] = _ownerOf(account); // M1/#194: bind to grant-time owner
         emit P256SessionGranted(account, keyHash, cfg);
     }
 
