@@ -440,6 +440,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x30044a2f` | `SelfCallForbidden()` | AAStarAirAccountV7 |
 | `0x30cd7471` | `NotOwner()` | AAStarAirAccountBase |
 | `0x311d795a` | `InvalidAgentSignature()` | AgentRegistry |
+| `0x3201dcbc` | `P256KeyAlreadySet()` | AAStarAirAccountBase |
 | `0x33afc34b` | `ModuleInstallProposalExpired()` | AirAccountExtension |
 | `0x36bf0fb2` | `MinGuardianRequired()` | AAStarAirAccountBase |
 | `0x38a85a8d` | `InvalidOwnerSignature()` | AAStarAirAccountFactoryV7 |
@@ -500,6 +501,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x886d7fb9` | `TierLimitTooLarge()` | AAStarGlobalGuard |
 | `0x89b9c34b` | `InvalidGuardianSig()` | ForceExitModule |
 | `0x8b906c97` | `NotDeployer()` | AgentRegistry |
+| `0x8b9ff862` | `UnparseableGuardedCall(address)` | AAStarAirAccountBase |
 | `0x8d0242c9` | `InvalidMessageLength()` | AAStarBLSKeyRegistry |
 | `0x8d5f8a45` | `PairingVerificationFailed()` | AAStarBLSAggregator |
 | `0x8f2afd27` | `GuardianSigExpired()` | AAStarAirAccountFactoryV7 |

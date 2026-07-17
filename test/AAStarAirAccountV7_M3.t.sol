@@ -82,6 +82,16 @@ contract AAStarAirAccountV7M3Test is Test {
         account.setP256Key(bytes32(0), bytes32(0));
     }
 
+    // M2/#194: owner ECDSA alone cannot REPLACE an already-set device passkey (factor-separation).
+    // First set works; a second set reverts P256KeyAlreadySet (rotate via guardian social recovery).
+    function test_setP256Key_secondSet_revertsAlreadySet() public {
+        vm.prank(ownerAddr);
+        account.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
+        vm.prank(ownerAddr);
+        vm.expectRevert(abi.encodeWithSignature("P256KeyAlreadySet()"));
+        account.setP256Key(bytes32(uint256(3)), bytes32(uint256(4)));
+    }
+
     function test_validateP256_noKeySet() public {
         // P256 signature: algId(0x03) + r(32) + s(32) = 65 bytes
         // Now routes to P256 path (algId check takes priority over raw ECDSA)

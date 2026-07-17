@@ -100,25 +100,32 @@ contract UniswapV3Parser is ICalldataParser {
     ///        bytes  (offset 196): path data (tokenIn is first 20 bytes)
     ///
     ///      Minimum data: 4 + 5*32 (fixed) + 32 (path length) + 43 (min path: 20+3+20) = 235 bytes
+    /// @dev exactInput(ExactInputParams). Because the struct has a dynamic `bytes path`, the whole
+    ///      struct is a DYNAMIC tuple — the calldata is [selector][top-level offset to struct][struct…].
+    ///      H3/#194: the prior code OMITTED the top-level struct-offset word, so it read `deadline` as
+    ///      amountIn and mis-located the path. Correct layout (base = 4 + structOffset, normally 36):
+    ///        struct head @ base : [path-offset][recipient][deadline][amountIn][amountOutMin]
+    ///        so amountIn @ base+96 ; path.length @ base + path-offset ; tokenIn = path[0:20].
+    ///      Bounds use the subtraction form (x > len - k) to avoid checked-arith overflow on hostile
+    ///      offsets; returns (0,0) on any malformed/short input (never reverts — ICalldataParser contract).
     function _parseExactInput(bytes calldata data) internal pure returns (address token, uint256 amount) {
-        if (data.length < 200) return (address(0), 0);
+        uint256 len = data.length;
+        if (len < 36) return (address(0), 0);
 
-        // amountIn is at fixed offset 100 (word 3 after selector)
-        amount = uint256(bytes32(data[100:132]));
+        uint256 structOff = uint256(bytes32(data[4:36]));            // top-level offset to struct data
+        // struct head is 5 words (160 bytes); need base + 160 within bounds.
+        if (structOff > len - 4 || len - 4 - structOff < 160) return (address(0), 0);
+        uint256 base = 4 + structOff;
 
-        // path is a dynamic bytes field. Its offset from the start of the tuple data (offset 4)
-        // is stored at data[4:36]. Add 4 (selector) to get absolute offset of path length word.
-        uint256 pathOffset = uint256(bytes32(data[4:36]));
-        // Guard against overflow: pathOffset must fit within data bounds before adding 4
-        if (pathOffset > data.length - 4) return (address(0), 0);
-        uint256 pathLenOffset = 4 + pathOffset;           // absolute offset of path.length word
-        if (data.length < pathLenOffset + 32) return (address(0), 0);
+        amount = uint256(bytes32(data[base + 96 : base + 128]));     // amountIn (4th struct field)
 
-        uint256 pathLen = uint256(bytes32(data[pathLenOffset:pathLenOffset + 32]));
-        uint256 pathStart = pathLenOffset + 32;           // absolute offset of path bytes
-        if (pathLen < 20 || data.length < pathStart + 20) return (address(0), 0);
+        uint256 pathOff = uint256(bytes32(data[base : base + 32]));  // path offset within the struct
+        if (pathOff > len - base || len - base - pathOff < 32) return (address(0), 0);
+        uint256 pathLenOff = base + pathOff;
+        uint256 pathLen = uint256(bytes32(data[pathLenOff : pathLenOff + 32]));
+        uint256 pathStart = pathLenOff + 32;
+        if (pathLen < 20 || pathStart > len || len - pathStart < 20) return (address(0), 0);
 
-        // tokenIn is the first 20 bytes of the path
-        token = address(bytes20(data[pathStart:pathStart + 20]));
+        token = address(bytes20(data[pathStart : pathStart + 20])); // tokenIn = first 20 bytes of path
     }
 }

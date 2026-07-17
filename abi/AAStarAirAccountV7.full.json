@@ -2235,6 +2235,11 @@
     },
     {
       "type": "error",
+      "name": "P256KeyAlreadySet",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "RecoveryAlreadyActive",
       "inputs": []
     },
@@ -2277,6 +2282,17 @@
       "type": "error",
       "name": "UnauthorizedRegistry",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "UnparseableGuardedCall",
+      "inputs": [
+        {
+          "name": "dest",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
     },
     {
       "type": "error",

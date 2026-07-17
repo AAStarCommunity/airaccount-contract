@@ -194,6 +194,17 @@ contract SessionKeyValidatorTest is Test {
         assertEq(validator.validate(USER_OP_HASH, sig), 0);
     }
 
+    // M1/#194: a session granted under owner X is invalidated once the account's owner changes (social
+    // recovery is the only owner-change path, guardian-gated). Valid before, rejected after.
+    function test_validate_sessionInvalidatedByOwnerChange_returns1() public {
+        _grantSession(account, sessionKey, uint48(block.timestamp + 1 hours));
+        bytes memory sig = _buildValidateSig(account, sessionKey, sessionKeyPriv, USER_OP_HASH);
+        assertEq(validator.validate(USER_OP_HASH, sig), 0, "valid under grant-time owner");
+
+        MockAccount(account).setOwner(address(0xBEEF)); // simulate social-recovery owner change
+        assertEq(validator.validate(USER_OP_HASH, sig), 1, "session must be rejected after owner change (recovery)");
+    }
+
     function test_validate_expiredSession_returns1() public {
         uint48 expiry = uint48(block.timestamp + 1 hours);
         _grantSession(account, sessionKey, expiry);
@@ -901,6 +912,11 @@ contract MockAccount {
 
     function owner() external view returns (address) {
         return _owner;
+    }
+
+    // M1/#194 test helper: simulate a social-recovery owner change.
+    function setOwner(address o) external {
+        _owner = o;
     }
 }
 
