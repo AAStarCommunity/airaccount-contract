@@ -278,7 +278,7 @@ What AirAccount ships and what each contract does. **Deploy** column: `singleton
 | `AAStarAirAccountBase` | Shared account logic inherited by V7 (signature validation, tiers, recovery, guard enforcement, fallback routing) | abstract (not deployed) |
 | `AirAccountExtension` | **Diamond-lite facet** (v0.17.1): ERC-8004 agent (identity/reputation/wallet binding) + weighted-signature config governance. Reached via the account's `fallback`+`delegatecall` — runs in the account's storage context; split out to keep the account under EIP-170 | singleton (per impl) |
 | `AAStarAgentStorageLayout` | Shared storage prefix (slots 0–23) inherited by both `AAStarAirAccountBase` and `AirAccountExtension` so delegatecall slots align | abstract (not deployed) |
-| `AAStarAirAccountFactoryV7` | CREATE2 / EIP-1167 clone factory; config-bound salt (front-run safe); `createAccountWithDefaults` / `createAgentAccount` (agent accounts default-install `AgentSessionKeyValidator` once `setAgentSessionKeyValidator` is configured — deployer-only, set-once) | singleton |
+| `AAStarAirAccountFactoryV7` | CREATE2 / EIP-1167 clone factory; config-bound salt (front-run safe); `createAccountWithDefaults` / `createAgentAccount`. Agent accounts are authorized post-deploy via the unified `SessionKeyValidator.grantSession()` (router algId `0x08`); the old `setAgentSessionKeyValidator` default-install machinery was removed in v0.17.2 (no separate agent-session validator) | singleton |
 | `AAStarGlobalGuard` | Immutable per-account spending guard: daily limits, ERC20 token limits, algorithm whitelist (monotonic tighten-only) | per-account |
 | `AirAccountDelegate` | EIP-7702 path: turn an existing EOA into an AirAccount (guardian rescue, daily limit) | singleton |
 
@@ -288,7 +288,7 @@ What AirAccount ships and what each contract does. **Deploy** column: `singleton
 | `AAStarValidator` | Algorithm router: algId → algorithm address | singleton |
 | `AAStarBLSAlgorithm` | BLS aggregate signature verification (DVT co-sign) | singleton |
 | `AAStarBLSAggregator` | ERC-4337 IAggregator for batched BLS UserOps | singleton |
-| `SessionKeyValidator` | Unified session key validator (algId `0x08`): classic single-target sessions + agent-grade controls (velocity, `callTargets[]`, `selectorAllowlist[]`, P256 passkey). Replaced `AgentSessionKeyValidator` + `AirAccountCompositeValidator` in v0.17.2-beta.1 | singleton |
+| `SessionKeyValidator` | Unified session key validator (algId `0x08`): classic single-target sessions + agent-grade controls (velocity, `callTargets[]`, `selectorAllowlist[]`, P256 passkey). Replaced `AgentSessionKeyValidator` in v0.17.2-beta.1. (`AirAccountCompositeValidator` was also deleted then, but weighted multisig `0x07` went **inline** to `AAStarAirAccountBase._validateWeightedSignature` — not into this validator) | singleton |
 
 **Signature algorithms (algId):** ECDSA `0x02`, P256/WebAuthn `0x03`, Cumulative T2 (P256+BLS) `0x04`, Cumulative T3 (P256+BLS+Guardian) `0x05`, Combined T1 (P256∧ECDSA) `0x06`, Weighted multi-sig `0x07`, Session Key `0x08`, BLS triple `0x01`.
 
