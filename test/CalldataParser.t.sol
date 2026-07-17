@@ -143,9 +143,13 @@ contract CalldataParserTest is Test {
 
     // ─── UniswapV3Parser — exactInput (multi-hop) ─────────────────────
 
-    /// @dev Build exactInput calldata
-    ///      struct ExactInputParams: path, recipient, deadline, amountIn, amountOutMin
-    ///      path = tokenIn(20) + fee(3) + tokenOut(20) for a single-hop
+    /// @dev Build REAL exactInput(ExactInputParams) calldata. Because `path` is dynamic, the struct is a
+    ///      dynamic tuple → the calldata carries a TOP-LEVEL struct offset (0x20) then the struct head
+    ///      (path-offset 0xa0, recipient, deadline, amountIn, amountOutMin), then path.length + padded path.
+    ///      H3/#194: the prior helper used `encodeWithSelector(sel, path, recipient, …)` — 5 SEPARATE
+    ///      top-level args (no struct offset) — which matched the prior buggy parser but NOT real router
+    ///      calldata. This manual layout matches the actual on-chain shape (and avoids struct-in-memory).
+    ///      path = tokenIn(20)+fee(3)+tokenOut(20).
     function _buildExactInput(
         address tokenIn,
         address tokenOut,
@@ -156,14 +160,11 @@ contract CalldataParserTest is Test {
         uint256 amountOutMin
     ) internal pure returns (bytes memory) {
         bytes memory path = abi.encodePacked(tokenIn, fee, tokenOut);
-        return abi.encodeWithSelector(
-            EXACT_INPUT,
-            path,
-            recipient,
-            deadline,
-            amountIn,
-            amountOutMin
-        );
+        // abi.encode(5 fields) IS the struct's internal tuple encoding (head + path, correctly padded).
+        // Prepend the selector + the top-level struct offset (0x20) to get the real exactInput(struct)
+        // calldata that an on-chain SwapRouter receives.
+        bytes memory inner = abi.encode(path, recipient, deadline, amountIn, amountOutMin);
+        return abi.encodePacked(EXACT_INPUT, uint256(0x20), inner);
     }
 
     function test_uniswapParser_exactInput_correctToken() public view {
