@@ -181,6 +181,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     error ArrayLengthMismatch();
     error CallFailed(bytes returnData);
     error InvalidP256Key();
+    error P256KeyAlreadySet();
     error InsufficientTier(uint8 required, uint8 provided);
     error GuardianAlreadySet();
     error InvalidGuardian();
@@ -469,6 +470,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
 
     function setP256Key(bytes32 _x, bytes32 _y) external onlyOwner {
         if (_x == bytes32(0) && _y == bytes32(0)) revert InvalidP256Key();
+        // M2/#194: bootstrap-only. The owner ECDSA key alone must NOT be able to REPLACE an already-set
+        // device passkey — otherwise a compromised ECDSA key could seize the independent P256 factor that
+        // cumulative tiers rely on (undermining factor separation). Rotating an existing passkey goes
+        // through guardian-gated social recovery, which clears the old P256 (executeRecovery, H2/#194);
+        // the new owner then sets a fresh key here. (Birth passkey is set via initialize's ownerP256X/Y,
+        // not this path.)
+        if (p256KeyX != bytes32(0) || p256KeyY != bytes32(0)) revert P256KeyAlreadySet();
         p256KeyX = _x;
         p256KeyY = _y;
         emit P256KeySet(_x, _y);
