@@ -111,6 +111,11 @@ contract RailgunParser is ICalldataParser {
     ///      Minimum data length 352 bytes (after selector).
     function _parseShield(bytes calldata data) internal pure returns (address tok, uint256 amt) {
         if (data.length < SHIELD_MIN_LEN) return (address(0), 0);
+        // H4/#194: array length is at [32:64] (after the [0:32] array pointer). This parser only meters
+        // the FIRST element at its fixed offsets. A call with MORE than one request would move configured
+        // tokens in the extra elements UNMETERED — so refuse to return a partial result for multi-element
+        // calls (return (0,0)); the guard fails closed on a registered parser returning nothing.
+        if (uint256(bytes32(data[32:64])) != 1) return (address(0), 0);
 
         tok = address(uint160(uint256(bytes32(data[SHIELD_TOKEN_ADDR_OFFSET : SHIELD_TOKEN_ADDR_OFFSET + 32]))));
         amt = uint256(bytes32(data[SHIELD_AMOUNT_OFFSET : SHIELD_AMOUNT_OFFSET + 32]));
@@ -122,6 +127,10 @@ contract RailgunParser is ICalldataParser {
     ///      Minimum data length 960 bytes (after selector).
     function _parseTransact(bytes calldata data) internal pure returns (address tok, uint256 amt) {
         if (data.length < TRANSACT_MIN_LEN) return (address(0), 0);
+        // H4/#194: reject multi-transaction calls — only the first tx's fixed offsets are metered, so
+        // extra txs would move configured tokens unmetered. Array length is at [32:64]. (Guard fails
+        // closed on (0,0) from a registered parser.)
+        if (uint256(bytes32(data[32:64])) != 1) return (address(0), 0);
 
         tok = address(uint160(uint256(bytes32(data[TRANSACT_TOKEN_ADDR_OFFSET : TRANSACT_TOKEN_ADDR_OFFSET + 32]))));
         amt = uint256(bytes32(data[TRANSACT_AMOUNT_OFFSET : TRANSACT_AMOUNT_OFFSET + 32]));

@@ -379,6 +379,27 @@ contract ParserTryCatchTest is Test {
         // reaching here = success
     }
 
+    /// H3/H4/#194: a registered parser that CANNOT account for the call (reverts / returns (0,0)) and is
+    /// NOT a direct ERC20 transfer/approve now FAILS CLOSED — execute reverts UnparseableGuardedCall
+    /// instead of silently bypassing the token limits (the old try/catch fell through to fail-open).
+    function test_revertingParser_nonERC20Call_failsClosed() public {
+        // Non-ERC20 calldata (random selector) to a parser-registered dest.
+        bytes memory calldata_ = abi.encodeWithSelector(bytes4(0x12345678), uint256(1), uint256(2));
+
+        PackedUserOperation memory uop = _buildUserOpFor(address(account));
+        uop.callData = abi.encodeWithSelector(
+            AAStarAirAccountBase.execute.selector, address(0x1234), uint256(0), calldata_
+        );
+        bytes32 h = keccak256(abi.encode(uop));
+        uop.signature = _ecdsaSig(ownerKey, h);
+        vm.prank(address(ep));
+        assertEq(account.validateUserOp(uop, h, 0), 0, "validateUserOp must pass");
+
+        vm.prank(address(ep));
+        vm.expectRevert(abi.encodeWithSignature("UnparseableGuardedCall(address)", address(0x1234)));
+        account.execute(address(0x1234), 0, calldata_);
+    }
+
     function _ecdsaSig(uint256 privKey, bytes32 uopHash) internal pure returns (bytes memory) {
         bytes32 eth = uopHash.toEthSignedMessageHash();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privKey, eth);

@@ -343,7 +343,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountBase
 
 - **Source:** `src/core/AAStarAirAccountBase.sol`
-- **Functions:** 36 · **Events:** 27 · **Errors:** 58
+- **Functions:** 36 · **Events:** 27 · **Errors:** 60
 - **Title:** AAStarAirAccountBase
 - Non-upgradable ERC-4337 smart wallet base with algId-based signature routing,         tiered verification, P256 passkey, social recovery, and global guard.
 
@@ -857,6 +857,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x30cd7471` | `NotOwner()` |
 | `0x50a222f4` | `NotOwnerOrEntryPoint()` |
 | `0x1e142ec1` | `NoWeightChangeProposal()` |
+| `0x3201dcbc` | `P256KeyAlreadySet()` |
 | `0x6e5510ce` | `RecoveryAlreadyActive()` |
 | `0x39d51cb2` | `RecoveryNotApproved()` |
 | `0xaa40cfc6` | `RecoveryTimelockNotExpired()` |
@@ -865,6 +866,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x3f041335` | `SessionScopeViolation()` |
 | `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |
+| `0x8b9ff862` | `UnparseableGuardedCall(address)` |
 | `0x6cd89112` | `UseGuardianConsensus()` |
 | `0x2157e2e7` | `ValidatorAlreadySet()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
@@ -1241,7 +1243,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 49 · **Events:** 27 · **Errors:** 60
+- **Functions:** 49 · **Events:** 27 · **Errors:** 62
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1950,6 +1952,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x30cd7471` | `NotOwner()` |
 | `0x50a222f4` | `NotOwnerOrEntryPoint()` |
 | `0x1e142ec1` | `NoWeightChangeProposal()` |
+| `0x3201dcbc` | `P256KeyAlreadySet()` |
 | `0x6e5510ce` | `RecoveryAlreadyActive()` |
 | `0x39d51cb2` | `RecoveryNotApproved()` |
 | `0xaa40cfc6` | `RecoveryTimelockNotExpired()` |
@@ -1959,6 +1962,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x3f041335` | `SessionScopeViolation()` |
 | `0x54123466` | `TierLimitSigExpired()` |
 | `0xf5b28a64` | `UnauthorizedRegistry()` |
+| `0x8b9ff862` | `UnparseableGuardedCall(address)` |
 | `0x63ce4efa` | `UnsupportedInnerSelector()` |
 | `0x6cd89112` | `UseGuardianConsensus()` |
 | `0x2157e2e7` | `ValidatorAlreadySet()` |

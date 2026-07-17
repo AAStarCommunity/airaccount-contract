@@ -182,6 +182,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     error CallFailed(bytes returnData);
     error InvalidP256Key();
     error P256KeyAlreadySet();
+    error UnparseableGuardedCall(address dest);
     error InsufficientTier(uint8 required, uint8 provided);
     error GuardianAlreadySet();
     error InvalidGuardian();
@@ -1663,25 +1664,35 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///        not re-SLOAD the `guard` slot. Always equals address(guard) and is non-zero here
     ///        (caller only invokes _checkTokenGuard when guardAddr != address(0)).
     function _checkTokenGuard(address dest, bytes calldata data, uint8 algId, address guardAddr) internal {
-        bool tokenHandled;
+        // If a parser is REGISTERED for `dest`, the owner opted into guarding this DeFi destination.
+        bool parserRegistered;
         if (parserRegistry != address(0)) {
-            try ICalldataParserRegistry(parserRegistry).getParser(dest) returns (address parser) {
-                if (parser != address(0)) {
-                    try ICalldataParser(parser).parseTokenTransfer(data) returns (address tok, uint256 amt) {
-                        if (tok != address(0) && amt > 0) {
-                            AAStarGlobalGuard(guardAddr).recordTokenSpend(tok, amt, algId);
-                            tokenHandled = true;
-                        }
-                    } catch {}
-                }
-            } catch {}
+            address parser;
+            try ICalldataParserRegistry(parserRegistry).getParser(dest) returns (address p) { parser = p; } catch {}
+            if (parser != address(0)) {
+                parserRegistered = true;
+                try ICalldataParser(parser).parseTokenTransfer(data) returns (address tok, uint256 amt) {
+                    if (tok != address(0) && amt > 0) {
+                        AAStarGlobalGuard(guardAddr).recordTokenSpend(tok, amt, algId);
+                        return;
+                    }
+                } catch {}
+            }
         }
-        if (!tokenHandled && data.length >= 68) {
+        // Direct ERC20 transfer/approve — metered whether or not a parser is registered.
+        if (data.length >= 68) {
             bytes4 sel = bytes4(data[:4]);
             if (sel == ERC20_TRANSFER || sel == ERC20_APPROVE) {
                 AAStarGlobalGuard(guardAddr).recordTokenSpend(dest, abi.decode(data[36:68], (uint256)), algId);
+                return;
             }
         }
+        // H3/H4/#194: FAIL CLOSED — a parser was registered for `dest` (the owner opted into guarding it)
+        // but NEITHER the parser NOR the ERC20 fallback could account for this call (unknown selector, or
+        // a multi-element/array call the parser refuses to partially meter). Reject it instead of silently
+        // letting it bypass the token tier/daily limits. Only affects accounts that registered a parser
+        // (parsers are off by default, KI-14); non-parser destinations are unaffected (no revert here).
+        if (parserRegistered) revert UnparseableGuardedCall(dest);
     }
 
     // ─── Social Recovery (F28) ───────────────────────────────────────

@@ -37,13 +37,21 @@ contract RailgunParserTest is Test {
     ///      data[4:] layout: 128B padding | tokenAddress(32) | 32B padding | amount(32) | 160B tail padding
     ///      Total: 4 + 352 = 356 bytes.
     function _buildShieldCalldata(address token, uint256 amount) internal pure returns (bytes memory) {
+        return _buildShieldCalldataN(token, amount, 1);
+    }
+
+    /// @dev H4/#194: build shield() calldata with an explicit ShieldRequest[] length `n` (was implicitly 0
+    ///      via all-zero padding). Real Railgun calldata carries the array length at [32:64] in data[4:].
+    function _buildShieldCalldataN(address token, uint256 amount, uint256 n) internal pure returns (bytes memory) {
         return abi.encodePacked(
             RAILGUN_SHIELD,
-            new bytes(128),                           // [4:132]   padding (ABI ptr + len + npk + tokenType)
-            bytes32(uint256(uint160(token))),          // [132:164]  tokenAddress  (offset 128 in data[4:])
-            new bytes(32),                            // [164:196]  tokenSubID
-            bytes32(amount),                          // [196:228]  amount         (offset 192 in data[4:])
-            new bytes(160)                            // [228:388]  ShieldCiphertext tail to reach 352-byte min
+            uint256(0x20),                            // [0:32]    array pointer
+            n,                                        // [32:64]   array length
+            new bytes(64),                            // [64:128]  npk + tokenType
+            bytes32(uint256(uint160(token))),          // [128:160] tokenAddress
+            new bytes(32),                            // [160:192] tokenSubID
+            bytes32(amount),                          // [192:224] amount
+            new bytes(128)                            // tail to reach 352-byte min
         );
     }
 
@@ -51,13 +59,20 @@ contract RailgunParserTest is Test {
     ///      data[4:] layout: 544B padding | tokenAddress(32) | 32B padding | amount(32) | 320B tail padding
     ///      Total: 4 + 960 = 964 bytes.
     function _buildTransactCalldata(address token, uint256 amount) internal pure returns (bytes memory) {
+        return _buildTransactCalldataN(token, amount, 1);
+    }
+
+    /// @dev H4/#194: build transact() calldata with an explicit Transaction[] length `n`.
+    function _buildTransactCalldataN(address token, uint256 amount, uint256 n) internal pure returns (bytes memory) {
         return abi.encodePacked(
             RAILGUN_TRANSACT,
-            new bytes(544),                           // [4:548]   padding (SnarkProof + merkleRoot + offsets + npk + tokenType)
-            bytes32(uint256(uint160(token))),          // [548:580]  tokenAddress  (offset 544 in data[4:])
-            new bytes(32),                            // [580:612]  tokenSubID
-            bytes32(amount),                          // [612:644]  amount         (offset 608 in data[4:])
-            new bytes(320)                            // [644:964]  tail to reach 960-byte min
+            uint256(0x20),                            // [0:32]    array pointer
+            n,                                        // [32:64]   array length
+            new bytes(480),                           // [64:544]  tx fields before tokenAddress
+            bytes32(uint256(uint160(token))),          // [544:576] tokenAddress
+            new bytes(32),                            // [576:608] tokenSubID
+            bytes32(amount),                          // [608:640] amount
+            new bytes(320)                            // tail to reach 960-byte min
         );
     }
 
@@ -89,6 +104,23 @@ contract RailgunParserTest is Test {
         (address tok, uint256 amt) = parser.parseTokenTransfer(data);
         assertEq(tok, TOKEN_USDT);
         assertEq(amt, 500e18);
+    }
+
+    // H4/#194: the parser only meters the FIRST array element, so a multi-request shield() must NOT
+    // return a partial result (else the extra requests move tokens unmetered). Returns (0,0) → the
+    // guard fails closed on a registered parser returning nothing.
+    function test_shield_multiElement_returnsZero() public view {
+        bytes memory data = _buildShieldCalldataN(TOKEN_USDT, 500e18, 2);
+        (address tok, uint256 amt) = parser.parseTokenTransfer(data);
+        assertEq(tok, address(0), "multi-element shield must not be partially metered");
+        assertEq(amt, 0);
+    }
+
+    function test_transact_multiElement_returnsZero() public view {
+        bytes memory data = _buildTransactCalldataN(TOKEN_USDT, 500e18, 2);
+        (address tok, uint256 amt) = parser.parseTokenTransfer(data);
+        assertEq(tok, address(0), "multi-element transact must not be partially metered");
+        assertEq(amt, 0);
     }
 
     function test_shield_zeroToken_returnsZero() public view {
