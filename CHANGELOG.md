@@ -10,7 +10,42 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ## [Unreleased]
 
+## [v0.29.0] - 2026-07-17 (security hardening + WebAuthnLib externalization + native-ETH tiers)
+
+Fresh non-upgradable stack. Accumulates #161 · #149 · #191 · #135 · #194 (H1/H2 + M2/M1/H3/H4) · #178.
+Version constants `ACCOUNT_VERSION` / `FACTORY_VERSION` `0.28.0` → `0.29.0` (`accountId` now
+`airaccount.v7@0.29.0`). Takes effect on deploy (non-upgradable).
+
+### Security (#194 — free Codex pre-audit findings, each self + Codex adversarial reviewed)
+- **H1 — `withdrawDepositTo` guard bypass** (PR #195): routed through `_enforceGuard` so a compromised
+  Tier-1 owner key can't drain the EntryPoint deposit past the tier/daily ETH limits (no-op for non-tiered
+  accounts).
+- **H2 — social recovery didn't revoke the owner passkey** (PR #195): `executeRecovery` now clears
+  `p256KeyX/p256KeyY`, so the old device can't authorize `ALG_P256` after recovery.
+- **M2 — `setP256Key` bootstrap-only** (PR #196): owner ECDSA alone can no longer REPLACE an existing
+  passkey (`P256KeyAlreadySet`); rotation is via guardian recovery.
+- **M1 — sessions invalidated on owner change** (PR #196): each `SessionKeyValidator` session is bound to
+  its grant-time `account.owner()`; social recovery now revokes ALL pre-recovery sessions.
+- **H3 — UniswapV3Parser `exactInput` decode** (PR #196): added the missing top-level struct offset (the
+  dynamic-tuple `ExactInputParams`) — the parser had read `deadline` as `amountIn`. Scope: classic
+  SwapRouter (5-field, selector `0xc04b8d59`) only; SwapRouter02 (`0xb858183f`) is a different selector →
+  not matched → guard fail-closed (not mis-decoded).
+- **H4 — Railgun multi-element bypass + guard fail-closed** (PR #196): RailgunParser rejects multi-element
+  shield/transact; `_checkTokenGuard` now FAILS CLOSED (`UnparseableGuardedCall`) when a registered parser
+  and the ERC20 fallback both can't account for a call — instead of the prior fail-open. Only affects
+  parser-registered destinations (parsers off by default, KI-14). The ERC20 transfer/approve fallback is
+  preserved.
+- Residual (tracked in #194, NOT introduced here, LOW): a registered parser is trusted for its returned
+  (token, amount) — a buggy/malicious parser can under-meter. Robust fix = balance-diff enforcement,
+  deferred to the parser-enable milestone (parsers are not live under KI-14).
+
 ### Changed
+- **#191 — dedup the P256 verify primitive.** All inline `P256_VERIFIER(0x100).staticcall` copies
+  (SessionKeyValidator 0x08, base 0x03, guardian WebAuthn) now route through the single Solady
+  `P256.verifySignatureAllowMalleability` — byte-identical on OP; removes the private-copy drift risk.
+- **#135 — bake the community Safe as governance owner** in `scripts/deploy-op-mainnet-alpha.ts`: hardcoded
+  `COMMUNITY_SAFE` (0x51eDf11f…) + final-step router `transferOwnership` → Safe (deploy-tooling only).
+- **#178 — cleaned stale `AgentSessionKeyValidator` docs** (deleted+unified into SessionKeyValidator 0x08).
 - **#149 — extract WebAuthn P-256 verification into external `WebAuthnLib`.** The `webauthn.get`
   assertion verifier that was duplicated as private copies in `AAStarAirAccountBase._verifyWebAuthnOwnerSig`
   and `AirAccountExtension._verifyOwnerWebAuthn` (the code itself flagged "MUST stay byte-for-byte

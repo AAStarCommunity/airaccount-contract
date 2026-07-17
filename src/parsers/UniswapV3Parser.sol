@@ -38,6 +38,12 @@ contract UniswapV3Parser is ICalldataParser {
     // ─── Selectors ───────────────────────────────────────────────────
 
     bytes4 internal constant EXACT_INPUT_SINGLE = 0x414bf389;
+    // SCOPE: this is the CLASSIC SwapRouter `exactInput((bytes,address,uint256,uint256,uint256))` (5-field
+    // ExactInputParams, WITH deadline). SwapRouter02 dropped `deadline` → its `exactInput` is a DIFFERENT
+    // signature/selector (0xb858183f, amountIn at struct base+64 not +96). Because this constant only
+    // matches 0xc04b8d59, a SwapRouter02 call does NOT match and falls to (0,0) → guard fail-closed (it is
+    // NOT mis-decoded). Register this parser only against a classic SwapRouter; a SwapRouter02 parser needs
+    // its own decoder. (#194 review scope note.)
     bytes4 internal constant EXACT_INPUT        = 0xc04b8d59;
 
     // ─── ICalldataParser ─────────────────────────────────────────────
