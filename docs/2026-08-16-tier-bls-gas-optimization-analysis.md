@@ -70,13 +70,19 @@ already assembly. The ~304k is therefore mostly (a) **per-node stake/status SLOA
 decentralized staked model, intentional and to be **kept**; and (b) **RFC-9380 Solidity glue** (expand_message
 loop, Fp field-reduction memory moves), point decode, subgroup checks, calldata parse — **largely inherent**
 to this RFC-9380 + EIP-2537 verification design on the EVM, not sloppy code.
-**Stronger (and honest) conclusion for the paper:** two *independently written* assembly-optimized BLS
-validators (our registry + YAAA's AAStarValidator) both land at ~300k+ impl overhead → this is close to a
-**structural floor** for decentralized on-chain BLS-threshold verification, not low-hanging fruit. Real
-optimizable headroom is **UNMEASURED and probably single-digit-%**, pending repo:dvt splitting the 304k
-into (a) stake-SLOAD (keep) vs (b) non-stake glue (maybe micro-optimizable). **Do NOT claim material
-savings.** Our `AAStarBLSKeyRegistry` stays a *reference* (and a weaker Safe-curated trust model — NOT a
-drop-in replacement, see §4a).
+**"Structural floor" conjecture — MEASURED and REFUTED (2026-08-16).** I earlier conjectured both
+implementations land at ~300k+ impl overhead (a structural floor). Measured second data point refutes it:
+`AAStarBLSKeyRegistry.validate()` = **219,963 gas** (forge --gas-report, real 3-node golden,
+`test/BLSReplayBinding.t.sol`; hashToG2 63,880) vs YAAA's `AAStarValidator.validate()` = **458,380**
+(fc0270c8) — **ours is ~48%, roughly half.** Crypto floor is ~equal both sides (h2c ~52-64k, pairing
+~103k); the entire ~238k gap is in the **non-precompile EVM layer** (ours impl overhead ~52k vs YAAA ~304k).
+So impl overhead is **NOT a shared structural floor** — implementation-dependent variance is large.
+**Confound (do not over-read the other way either):** our registry has **no stake logic** (Safe-curated);
+YAAA is **stake-bound Plan A v3**. The ~238k gap therefore mixes (a) YAAA's decentralized-staking machinery
+(legitimate feature to keep) with (b) shared-code implementation-efficiency difference — **our side cannot
+separate them** (we have no stake tier at all). So: do NOT claim "YAAA has 238k of waste", and do NOT claim
+"structural floor". The clean split needs repo:dvt's own sub-trace (stake-SLOAD vs generic-glue). Our
+`AAStarBLSKeyRegistry` stays a *reference* / weaker Safe-curated trust model — NOT a drop-in replacement (§4a).
 
 ### ② Cache the aggregate pubkey (~32k/op) — owner: repo:dvt (validator)
 For a fixed node set (dvt1/2/3) the aggregate G1 pubkey is constant; caching it avoids re-SLOADing 3×
