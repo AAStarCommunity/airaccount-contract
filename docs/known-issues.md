@@ -210,14 +210,17 @@ The absence of a module-install timelock is a deliberate UX trade-off. Auditors 
 
 > **Correction 2026-05-30**: prior wording stated AirAccount "falls back to a Solidity software implementation" of P256 verification on chains without the EIP-7212 precompile. That is **not true** in the current code. The contract calls the precompile at `0x100` via `staticcall` and **fails fast** (returns SIG_VALIDATION_FAILED) when the precompile is absent — there is no software fallback. Deployment on a chain without EIP-7212 means P256 (and any cumulative/combined algId that requires P256) is **unusable on that chain**, not "expensive". Treat KI-7 as a deployment-blocking constraint for any chain that lacks the precompile.
 
+> **Correction 2026-08-16**: **Ethereum Sepolia now HAS the P256VERIFY precompile at `0x100`** (activated with Pectra/Prague). Verified on-chain: a valid RIP-7212 vector `eth_call`'d to `0x100` returns `0x…01` on two independent Sepolia RPCs, and `eth_getCode(0x100) = 0x` (no bytecode ⇒ genuine precompile, not a deployed verifier), so cost is the fixed ~3,450 gas. The list below ("does not exist on Ethereum mainnet/Sepolia") predates Pectra and is **stale for Sepolia** — Sepolia is now a fully P256-capable AirAccount target (tier-2/tier-3 cumulative algIds usable). Ethereum **mainnet** gains it whenever Pectra ships there; re-verify per-chain before relying on it.
+
 ### Description
 
 P256 (WebAuthn) signature verification uses the EIP-7212 precompile at address `0x0000000000000000000000000000000000000100`. Natively available on:
 
 - OP Mainnet, Base, and other OP Stack chains with Fjord active
 - Optimism Sepolia, Base Sepolia (Fjord testnets)
+- **Ethereum Sepolia** (post-Pectra — verified on-chain 2026-08-16, see correction above)
 
-On **Ethereum mainnet** and non-OP-Stack L2s (Arbitrum One, zkSync Era, etc.) the precompile does **not** exist. `_validateP256` returns `1` (SIG_VALIDATION_FAILED) when the precompile staticcall fails; no software fallback is attempted.
+On non-OP-Stack L2s that have not adopted it (Arbitrum One, zkSync Era, etc.) and on any pre-Pectra Ethereum chain, the precompile does **not** exist. `_validateP256` returns `1` (SIG_VALIDATION_FAILED) when the precompile staticcall fails; no software fallback is attempted.
 
 ### Risk
 
