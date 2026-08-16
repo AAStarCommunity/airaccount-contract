@@ -10,6 +10,33 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ## [Unreleased]
 
+## [v0.30.0] - (pending coordinated deploy) — tier-2/3 BLS committee quorum (CC-97)
+
+Version constants `ACCOUNT_VERSION` / `FACTORY_VERSION` `0.29.0` → `0.30.0` (`accountId` now
+`airaccount.v7@0.30.0`). Non-upgradable — takes effect on the coordinated redeploy.
+
+### Security (CC-97 — on-chain quorum for tier-2/3 BLS aggregate signatures)
+- **Account-side committee-quorum enforcement.** Before this, any aggregate carrying **≥1** registered
+  staked node passed tier-2/3 BLS verification — a single staked node (or one leaked key) satisfied it.
+  The account now reads `eligibleNodeCount()` / `requiredQuorum()` from the mounted BLS validator (new
+  interface `IAAStarValidatorQuorum`) and independently enforces **committee `N ≥ 3` and signers
+  `k ≥ ⌈2N/3⌉`** (`3k ≥ 2N`, division-free) in the single choke point `_callBLSValidator` — covering
+  T2/T3/T2WA/T3WA/weighted and the triple-signature path at once.
+- **Defense-in-depth, not the sole floor.** The authoritative floor lives in the validator's `validate()`
+  (repo:dvt, `AAStarValidator` PR #235). The account recomputes `⌈2N/3⌉` itself (does not trust a returned
+  `requiredQuorum()` value) so it catches a validator whose gate is buggy but whose views are correct.
+- **Migration-safe & fail-closed.** `requiredQuorum()==0` (the validator's default-OFF, or a legacy
+  validator without the views) ⇒ the account does **not** enforce ⇒ tier-2/3 behaviour is byte-for-byte
+  unchanged until the validator's `setQuorumRequired(true)` is flipped. When enforcement is on, an
+  unreadable or absurd (`2N` would overflow) committee size fails closed (reject, never a validation-phase
+  revert — ERC-4337/7562 safe).
+- **Deploy ordering** (coordinated in Seeder CC-97): dvt deploys the quorum-capable validator first (new
+  address, quorum default OFF), then airaccount re-mounts the router + deploys v0.30.0; testnet e2e
+  ("1 signer → reject / ⌈2N/3⌉ → pass"), then owner (Safe) flips `setQuorumRequired(true)`.
+- Discovered by the DSR *Onion* §5 source review; rule `⌈2N/3⌉` + committee floor 3 confirmed by Jason
+  2026-08-16. Interface signatures locked with repo:dvt in CC-97. Tests: `test/BLSQuorumGate.t.sol`
+  (11 cases — the decisive one holds signer bytes fixed and moves only N: N=3 pass / N=4 reject).
+
 ## [v0.29.0] - 2026-07-17 (security hardening + WebAuthnLib externalization + native-ETH tiers)
 
 Fresh non-upgradable stack. Accumulates #161 · #149 · #191 · #135 · #194 (H1/H2 + M2/M1/H3/H4) · #178.

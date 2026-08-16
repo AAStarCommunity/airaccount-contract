@@ -173,6 +173,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x67e3afe7` | `bindERC8004AgentWallet(address,uint256,address,uint256,bytes)` | AirAccountExtension |
 | `0x67e3afe7` | `bindERC8004AgentWallet(address,uint256,address,uint256,bytes)` | IAirAccountAgent |
 | `0x67eeba0c` | `dailyLimit()` | AAStarGlobalGuard |
+| `0x68440052` | `eligibleNodeCount()` | IAAStarValidatorQuorum |
 | `0x6b56c654` | `proposeWeightChange((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | AirAccountExtension |
 | `0x6b56c654` | `proposeWeightChange((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | IAirAccountAgent |
 | `0x6d61fe70` | `onInstall(bytes)` | ForceExitModule |
@@ -185,8 +186,10 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x6ee377a8` | `getAgentByIndex(address,uint256)` | AgentRegistry |
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | AAStarAirAccountBase |
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | AAStarAirAccountV7 |
+| `0x7036014e` | `requiredQuorum()` | IAAStarValidatorQuorum |
 | `0x70a08231` | `balanceOf(address)` | IERC8004IdentityRegistry |
 | `0x70a08231` | `balanceOf(address)` | AgentRegistry |
+| `0x740cba49` | `quorumFor(uint256)` | IAAStarValidatorQuorum |
 | `0x750e75bf` | `grantNonces(address,address)` | SessionKeyValidator |
 | `0x753cd38a` | `parserFor(address)` | CalldataParserRegistry |
 | `0x79ba5097` | `acceptOwnership()` | AAStarBLSKeyRegistry |

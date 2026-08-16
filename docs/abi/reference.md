@@ -27,6 +27,7 @@ Authoritative, auto-generated reference for every external/public function, even
 - [IL2ToL1MessagePasser](#il2tol1messagepasser) — `src/core/ForceExitModule.sol`
 - [IAAStarAlgorithm](#iaastaralgorithm) — `src/interfaces/IAAStarAlgorithm.sol`
 - [IAAStarValidator](#iaastarvalidator) — `src/interfaces/IAAStarValidator.sol`
+- [IAAStarValidatorQuorum](#iaastarvalidatorquorum) — `src/interfaces/IAAStarValidatorQuorum.sol`
 - [IAirAccountAgent](#iairaccountagent) — `src/interfaces/IAirAccountAgent.sol`
 - [ICalldataParser](#icalldataparser) — `src/interfaces/ICalldataParser.sol`
 - [ICalldataParserRegistry](#icalldataparserregistry) — `src/interfaces/ICalldataParser.sol`
@@ -3647,6 +3648,59 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `validationData` | `uint256` | 0 for success, 1 for failure |
+
+## IAAStarValidatorQuorum
+
+- **Source:** `src/interfaces/IAAStarValidatorQuorum.sol`
+- **Functions:** 3 · **Events:** 0 · **Errors:** 0
+- **Title:** IAAStarValidatorQuorum — committee-quorum read interface exposed by the BLS validator
+- CC-97: tier-2/3 BLS aggregate signing requires an on-chain committee quorum. The         authoritative floor lives in the validator's `validate()` (repo:dvt, PR #235); the         account reads these views to enforce the SAME rule a second time as defense-in-depth         (policy belongs to the account, isomorphic with tier limits — CC-10 Decision A).
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x68440052` | `eligibleNodeCount()` | view | — | The eligible signing committee size N: registered AND (when `requireStake` is on)         staked nodes, excluding retired bootstrap nodes. This is the correct denominator for         ceil(2N/3) — NOT the raw `activeNodeCount()` (which includes bootstrap). |
+| `0x740cba49` | `quorumFor(uint256)` | pure | — | Pure ceil(2n/3) helper (3->2, 4->3, 5->4, 6->4, 7->5). Provided for off/on-chain         cross-checks; the account recomputes the bound itself rather than trusting a returned value. |
+| `0x7036014e` | `requiredQuorum()` | view | — | The number of distinct signers `validate()` currently requires: 0 when quorum         enforcement is OFF (migration-safe default), `type(uint256).max` when the committee is         below the minimum (unsatisfiable, fail-closed), otherwise ceil(2N/3). |
+
+### Functions
+
+#### `eligibleNodeCount()`
+
+`0x68440052` · view · access: —
+
+> The eligible signing committee size N: registered AND (when `requireStake` is on)         staked nodes, excluding retired bootstrap nodes. This is the correct denominator for         ceil(2N/3) — NOT the raw `activeNodeCount()` (which includes bootstrap).
+
+*@dev* Same value the validator's own `validate()` gate uses (`_eligibleNodeCount()`), read in      the same userOp validation frame → the account never rejects what the validator accepts.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `quorumFor(uint256 n)`
+
+`0x740cba49` · pure · access: —
+
+> Pure ceil(2n/3) helper (3->2, 4->3, 5->4, 6->4, 7->5). Provided for off/on-chain         cross-checks; the account recomputes the bound itself rather than trusting a returned value.
+
+| param | type | description |
+|---|---|---|
+| `n` | `uint256` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
+
+#### `requiredQuorum()`
+
+`0x7036014e` · view · access: —
+
+> The number of distinct signers `validate()` currently requires: 0 when quorum         enforcement is OFF (migration-safe default), `type(uint256).max` when the committee is         below the minimum (unsatisfiable, fail-closed), otherwise ceil(2N/3).
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
 
 ## IAirAccountAgent
 

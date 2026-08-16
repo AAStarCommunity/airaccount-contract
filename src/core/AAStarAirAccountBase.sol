@@ -6,6 +6,7 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {IAAStarValidator} from "../interfaces/IAAStarValidator.sol";
 import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
+import {IAAStarValidatorQuorum} from "../interfaces/IAAStarValidatorQuorum.sol";
 import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 import {ICalldataParser, ICalldataParserRegistry} from "../interfaces/ICalldataParser.sol";
 import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
@@ -57,6 +58,10 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     // Requires EVM precompile (EIP-TBD). Implementation deferred until precompile availability (~2027-2029).
 
     uint256 internal constant G2_POINT_LENGTH = 256;
+
+    /// @dev CC-97: minimum eligible BLS committee size (hard floor, matches repo:dvt's `minCommittee`
+    ///      floor=3). A committee below this can never satisfy the account-side quorum gate.
+    uint256 internal constant MIN_BLS_COMMITTEE = 3;
 
     /// @dev Sentinel stored in a guardian address slot to mark it as a P-256 (passkey) guardian.
     ///      The paired P-256 public key (x, y) is stored in the parallel _guardianP256X/Y slots.
@@ -944,11 +949,59 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     function _callBLSValidator(bytes32 hash, bytes calldata blsData) private view returns (uint256) {
         address blsAlg = _resolveBLSAlgorithm();
         if (blsAlg == address(0)) return 1;
+        // CC-97: account-side committee-quorum defense-in-depth. This is the single choke point every
+        // tier-2/3 BLS path funnels through (both _blsPayloadValid and _validateTripleSignature), so the
+        // gate lives here once. It is INDEPENDENT of the validator's own authoritative floor (repo:dvt
+        // PR #235) and migration-safe (no-op until the validator's setQuorumRequired is flipped).
+        // NOTE (scope): the protocol-batch path (blsAlgorithm.aggregator() != 0) defers to the EntryPoint
+        // aggregator and does NOT pass through here; its quorum is the aggregator's concern. The currently
+        // deployed 0x539B exposes no aggregator(), so on the live stack every op takes this single-op path.
+        if (!_blsQuorumOK(blsAlg, blsData)) return 1;
         try IAAStarAlgorithm(blsAlg).validate(hash, blsData) returns (uint256 r) {
             return r;
         } catch {
             return 1;
         }
+    }
+
+    /// @dev CC-97 committee-quorum gate (account-side second enforcement of dvt's authoritative floor).
+    ///      `blsData` is the standard `[nodeIds(k×32)][blsSig(256)]` layout, so the number of signers
+    ///      k = (len − 256) / 32. Returns true (pass) when quorum enforcement is not active, so tier-2/3
+    ///      behaviour is byte-for-byte unchanged until the mounted validator turns quorum on.
+    ///      Design (locked with repo:dvt in Seeder CC-97, 2026-08-16):
+    ///        1. requiredQuorum()==0  → enforcement OFF (or legacy validator reverts) → pass (migration-safe).
+    ///        2. enforcement ON       → INDEPENDENTLY recompute ceil(2N/3) from eligibleNodeCount() and
+    ///           reject if committee < MIN_BLS_COMMITTEE or k < ceil(2N/3). We do NOT trust the returned
+    ///           requiredQuorum() value — recomputing is what makes this a real second line of defense
+    ///           (it catches a validator whose gate is buggy but whose views are correct).
+    ///      ceil(2N/3) with no division: k ≥ ceil(2N/3) ⟺ 3k ≥ 2N (for integer k). Verified N=3..7.
+    function _blsQuorumOK(address blsAlg, bytes calldata blsData) private view returns (bool) {
+        uint256 required;
+        try IAAStarValidatorQuorum(blsAlg).requiredQuorum() returns (uint256 r) {
+            required = r;
+        } catch {
+            return true; // legacy validator without the quorum views → enforcement not active
+        }
+        if (required == 0) return true; // quorum enforcement OFF on the validator → migration-safe no-op
+
+        // Enforcement is ON. Malformed payload (should be caught by callers) → fail-closed.
+        if (blsData.length < G2_POINT_LENGTH || (blsData.length - G2_POINT_LENGTH) % 32 != 0) return false;
+        uint256 signerCount = (blsData.length - G2_POINT_LENGTH) / 32;
+
+        uint256 n;
+        try IAAStarValidatorQuorum(blsAlg).eligibleNodeCount() returns (uint256 e) {
+            n = e;
+        } catch {
+            return false; // enforcement ON but committee size unreadable → fail-closed
+        }
+        if (n < MIN_BLS_COMMITTEE) return false;       // committee floor (also traps eligible==0)
+        // Overflow-safe: n is read from the (trusted, set-once) validator, but a bogus huge value must
+        // never make `2 * n` revert here — that would turn a validation-phase check into a revert
+        // (ERC-4337/7562: return, never revert). Such a committee is absurd and fails quorum anyway.
+        // signerCount is bounded by the payload (callers cap it), so `3 * signerCount` cannot overflow.
+        if (n > type(uint256).max / 2) return false;
+        if (3 * signerCount < 2 * n) return false;     // k ≥ ceil(2N/3)
+        return true;
     }
 
     /// @dev issue #45 (Codex MEDIUM): fail-safe resolution of the BLS algorithm from the validator

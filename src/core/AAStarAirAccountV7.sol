@@ -34,7 +34,7 @@ contract AAStarAirAccountV7 is IAccount, AAStarAirAccountBase {
     using MessageHashUtils for bytes32;
 
     /// @notice Semantic version of this contract deployment. Used by SDKs for programmatic version detection.
-    string public constant ACCOUNT_VERSION = "0.29.0";
+    string public constant ACCOUNT_VERSION = "0.30.0";
 
     /// @dev Implementation constructor. Does NOT disable initializers so that direct `new` in tests works.
     ///      The factory deploys one shared implementation and uses Clones for user accounts.
