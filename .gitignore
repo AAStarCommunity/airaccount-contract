@@ -20,7 +20,7 @@ node_modules/
 .codegraph/
 
 # Foundry
-out/
+/out/
 cache/
 
 .claude/
