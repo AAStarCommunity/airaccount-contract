@@ -67,7 +67,15 @@ This is a one-time cost shared by all users — economically fine.
 ## EIP-7212 P-256 Precompile — Cross-Chain Availability (issue #28)
 
 P-256 verification cost depends entirely on whether the chain has the EIP-7212 (RIP-7212) precompile
-at `0x100`: **~6,900 gas on L1 (EIP-7951) / ~3,450 on OP-Stack (RIP-7212) with it**. The **~300,000 gas** figure is the *reference cost of a pure-Solidity secp256r1 verifier* — **NOT an automatic account-wide fallback**. Fallback is path-dependent: `_validateP256` (algId 0x03) and the SessionKeyValidator P256 path **fail fast with no software fallback** when the precompile is absent (**[KI-7](known-issues.md) is a deployment-blocking constraint** — P256 is *unusable*, not merely "expensive", on such a chain); only the owner-WebAuthn path (via Solady `P256.verifySignatureAllowMalleability`, `WebAuthnLib.sol`) can reach a Solidity verifier, and only where one is deployed.
+at `0x100`: **~6,900 gas on L1 (EIP-7951) / ~3,450 on OP-Stack (RIP-7212) with it**.
+
+Without the precompile, **all four P256 call sites behave identically** — they all route through
+Solady `P256.verifySignatureAllowMalleability` (`_validateP256` algId 0x03 `AAStarAirAccountBase.sol`,
+`SessionKeyValidator`, `AirAccountExtension`, `WebAuthnLib`), which falls back to the canonical Solidity
+verifier at `0x000000000000D01eA45F9eFD5c54f037Fa57Ea1a` (**~300,000 gas**, deployed on most chains incl.
+Sepolia — verify with `cast code <addr>`). If **neither** the precompile **nor** that verifier is present,
+the call returns `false` and the account path returns `SIG_VALIDATION_FAILED` — see [KI-7](known-issues.md).
+Describe availability by the **primitive** (one shared Solady function), not by algId/call-site.
 
 **Probe `0x100` with a valid `abi.encode(hash,r,s,x,y)` — returns `1` iff the precompile is live.**
 Reproduce: `bash scripts/probe-eip7212.sh`.
