@@ -648,7 +648,9 @@ window.dispatchEvent(new Event('eip6963:requestProvider'));
 | P-256 (daimo verifier) | ~330,000 gas |
 | P-256 (P256VERIFY precompile @ 0x100) | ~6,900 gas (L1 EIP-7951) / ~3,450 (OP RIP-7212) |
 
-> EIP-7212 (P-256 precompile) is live on Base, zkSync. On mainnet/Sepolia, use daimo verifier fallback.
+> ~~EIP-7212 (P-256 precompile) is live on Base, zkSync. On mainnet/Sepolia, use daimo verifier fallback.~~
+> **UPDATE 2026:** EIP-7951/Fusaka shipped P256VERIFY @ 0x100 on **ETH mainnet AND Sepolia too** — no
+> daimo fallback needed there. See `known-issues.md:213` / `gas-analysis.md` probe table (authoritative).
 
 ---
 

@@ -55,9 +55,12 @@ SLOADs + G1 aggregation + calldata parse".
 > see correction below): hash-to-curve **51,088 (~11%)** · pairing k=2 **102,900 (~22%)** · G1ADD **375**
 > → crypto floor **154,363 (~34%)**; **implementation overhead 304,017 (~66%)**, pure EVM (isRegistered
 > SLOADs, decode, subgroup, RFC-9380 glue, memory).
-> - **Stake is NOT in this 304,017.** The ~56k gap between this forge 458,380 and the on-chain ~514k is the
->   `requireStake=true` per-node stake SLOADs, which sit **outside** the 304,017 bucket (they appear only
->   on-chain, not in this no-stake forge run).
+> - **Stake is NOT in this 304,017 — and the ~56k forge-vs-chain gap is not all stake either.** The 55,620
+>   gap (on-chain ~514k − forge 458,380) decomposes as: **h2c drift ~14,912** (66k on-chain vs 51,088
+>   reported — the unreconciled item below, NOT stake) + the **2→3-node delta ~10,500** (on-chain is a live
+>   3-node committee, this forge run is 2-node) + only **~30,208 attributable to `requireStake` per-node
+>   stake SLOADs** (which still sit **outside** the 304,017 — they appear only on-chain). An earlier draft
+>   called the whole ~56k "stake"; that over-attributes it ~1.85×.
 > - **2→3 node correction.** Going from 2 to 3 registered nodes adds far more than the +375 G1ADD — each
 >   extra node also costs its registered-pubkey SLOADs (128 B = 4 slots ≈ 8,400 cold) + `isRegistered`
 >   (2,100) + decode/subgroup ≈ **~10,500/node** (consistent with §3②'s own ~32k ≈ 3×10,500 cache estimate).
@@ -79,8 +82,9 @@ The ~304k impl overhead (repo:dvt forge trace, unverified) is the largest non-pr
 (2026-08-16, walking back an earlier over-claim):** repo:dvt reports YAAA's `AAStarValidator` is **already
 assembly-optimized (~10 assembly blocks, precompile calls already asm)** — just like our own
 `AAStarBLSKeyRegistry` (7 asm blocks). So **"port the assembly hot-paths" is NOT a lever** — both are
-already assembly. Note the ~304,017 (forge, no-stake) is **NOT** mostly stake SLOADs — stake is the
-separate ~56k on-chain surcharge (see §2). The 304k is **RFC-9380 Solidity glue** (expand_message loop,
+already assembly. Note the ~304,017 (forge, no-stake) is **NOT** mostly stake SLOADs — stake is only a
+~30k on-chain surcharge (see §2; the full ~56k forge-vs-chain gap also includes h2c drift + the 2→3-node
+delta, so ~30k of it is stake). The 304k is **RFC-9380 Solidity glue** (expand_message loop,
 Fp field-reduction memory moves), point decode, subgroup checks, and calldata parse — but as the measured
 comparison just below shows, it is **NOT inherent/structural**: our own registry does the equivalent crypto
 in ~52k, so the bulk of YAAA's 304k is **implementation-dependent, not a floor**.
@@ -88,7 +92,10 @@ in ~52k, so the bulk of YAAA's 304k is **implementation-dependent, not a floor**
 implementations land at ~300k+ impl overhead (a structural floor). Measured second data point refutes it:
 `AAStarBLSKeyRegistry.validate()` = **219,963 gas** (forge --gas-report, real 3-node golden,
 `test/BLSReplayBinding.t.sol`; hashToG2 63,880) vs YAAA's `AAStarValidator.validate()` = **458,380**
-(repo:dvt-reported, unverified) — **ours is ~48%, roughly half.** The gap is **not** purely EVM-layer:
+(repo:dvt-reported, unverified) — **ours is ~48%, roughly half.** ⚠️ **Node-count caveat:** ours is a
+**live 3-node** measurement, YAAA's 458,380 is a **2-node bootstrap** (§2); on a like-for-like production
+3-node basis (YAAA ≈ **469k**, §2) the ratio is **~46.9%** and the gap **~248,917**. The derived figures
+below use the reported 458,380 (2-node) and are therefore a lower bound on the gap. The gap is **not** purely EVM-layer:
 our impl overhead ≈ 219,963 − (h2c 63,880 + pairing 102,900 + G1ADD 375) ≈ **52,808** vs YAAA's 304,017
 → EVM-layer gap **≈ 251,209**; but our hash-to-curve is **12,792 more expensive** than YAAA's (63,880 vs
 51,088), which offsets it, netting the **total ~238,417 gap** (458,380 − 219,963). So the crypto floor is

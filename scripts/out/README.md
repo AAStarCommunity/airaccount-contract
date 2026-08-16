@@ -48,6 +48,8 @@ Citing the event column would understate the tier-2 premium by ~29%. Use `receip
 See `docs/2026-08-16-tier-bls-gas-optimization-analysis.md` — repo:dvt forge per-precompile trace.
 **The commit SHA for this trace is unverified**: it resolves in no public YAAA repo as of 2026-08-16, so
 **do NOT cite these figures in the paper** until dvt publishes a public commit + forge artifact.
-As reported: validate() 458,380 (2-node bootstrap; production 3-node ≈ 469k) = hash-to-curve 51,088 (11%)
-+ pairing 102,900 (22%) + impl overhead 304,017 (66%). Cost is dominated by **implementation overhead,
-NOT hash-to-curve** (an earlier draft wrongly said the latter).
+As reported: validate() 458,380 (2-node bootstrap) = hash-to-curve 51,088 (11%) + pairing 102,900 (22%)
++ G1ADD 375 + impl overhead 304,017 (66%) [sums to 458,380]. Cost is dominated by **implementation
+overhead, NOT hash-to-curve** (an earlier draft wrongly said the latter). Production DVT is **3-node**
+(this benchmark's own on-chain aggregate is dvt1/2/3): the like-for-like breakdown is **≈ 469k**; the
+458,380 above is the reported **2-node** bootstrap, so treat it as a lower bound.

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Probe the EIP-7212 (RIP-7212) P-256 precompile at 0x100 across chains (read-only, no gas).
 # A valid abi.encode(hash,r,s,x,y) returns 1 iff the precompile is live; empty return = absent
-# (P-256 verification would fall back to ~300k-gas pure-Solidity instead of ~3,450 gas).
+# (precompile cost ~6,900 gas on L1 EIP-7951 / ~3,450 on OP-Stack RIP-7212; without it, inline P-256
+#  verify fails — the ~300k-gas pure-Solidity path exists only on the owner-WebAuthn route via Solady).
 # Issue #28. Usage: bash scripts/probe-eip7212.sh
 set -u
 # A known-valid secp256r1 vector (payloadHash || r || s || x || y), 160 bytes.

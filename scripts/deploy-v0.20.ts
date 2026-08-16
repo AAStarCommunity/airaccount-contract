@@ -298,8 +298,10 @@ async function main() {
   console.log(`(Actual usage is far lower — caps are over-provisioned.)\n`);
 
   // ── EIP-7212 pre-deploy guard (issue #28) ────────────────────────────
-  // P-256 (passkey) guardians need the EIP-7212 precompile at 0x100. Without it, P-256
-  // verification falls back to ~300k gas (vs ~3,450) — effectively unusable. Probe with a valid
+  // P-256 (passkey) guardians need the P256VERIFY precompile at 0x100 (~6,900 gas on L1 EIP-7951,
+  // ~3,450 on OP-Stack RIP-7212). Without it, inline guardian P-256 verify fails (~300k pure-Solidity
+  // is only reachable on the owner-WebAuthn path via Solady since #190, not for guardians) — effectively
+  // unusable for guardians. Probe with a valid
   // vector (returns 1 iff live) and WARN before spending deploy gas on a chain that lacks it.
   {
     const P256_PROBE = "0x8b60709d5ed0da5caf5fb6c91e7c507a7580a438046e24aa527761fa93b249a4c8dd49a86356bf038385cce161bad16a4208c21c3a5bff43b7fb4560a1794ed458b3f6aaddc832edf24a7fae98b65a336daedf059b4091ee5aa00d674c6d7d5fe8e47200eb693978a384a1d2d4baaca209c91a2fefa004e818ae9a734bf7287c6e9808d701ac9a2fcad8ede6374ed3dc8187eaade2f0ae3a43a0232441df32d1" as Hex;
@@ -308,7 +310,7 @@ async function main() {
     }).catch(() => ({ data: "0x" as Hex }));
     const has7212 = probe.data === ("0x" + "0".repeat(63) + "1");
     if (has7212) {
-      console.log("EIP-7212 P-256 precompile: ✅ present — passkey guardians fully supported (~3,450 gas).\n");
+      console.log("P256VERIFY precompile @ 0x100: ✅ present — passkey guardians fully supported (~6,900 gas L1 / ~3,450 OP).\n");
     } else {
       console.log("EIP-7212 P-256 precompile: ❌ ABSENT on this chain.");
       console.log("  → P-256 (passkey) guardian ops would cost ~300k gas / effectively fail.");

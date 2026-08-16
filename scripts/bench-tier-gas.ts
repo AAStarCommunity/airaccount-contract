@@ -302,7 +302,7 @@ async function main() {
   // pre-registered; measured deltas ran ~5.0× (t1→2) and ~2.6× (t2→3) OVER them — that gap is the
   // finding, see scripts/out/README.md. (Persisted there, not only stdout.)
   const median = (t: number) => {
-    const xs = rows.filter(r => r.tier === t).map(r => r.gasUsed).sort((a,b)=>a<b?-1:1);
+    const xs = rows.filter(r => r.tier === t).map(r => r.gasUsed).sort((a,b)=>a<b?-1:a>b?1:0);
     const n = xs.length; if (n === 0) return 0n;
     // true median: average the two middle values on even n (xs[n/2-1] is the lower-middle);
     // odd n takes the single middle. (Prior xs[floor(n/2)] returned the upper-middle on even n.)

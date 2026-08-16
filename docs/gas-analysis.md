@@ -144,7 +144,7 @@ it, configure ECDSA guardians only (the account supports mixed guardian sets nat
 |--------|----------|-------|
 | EIP-1153 transient storage (current) | ~200 | `tload` + `tstore` |
 | SSTORE-based (OpenZeppelin) | ~7,100 | Cold SLOAD + SSTORE |
-| **Savings** | **~6,900 (97%)** | Per execute/executeBatch call |
+| **Savings** | **~6,900 (97%)** | Per execute/executeBatch call (EIP-1153 transient storage — NOT related to the P256 precompile's ~6,900 L1 cost above; same number, different mechanism) |
 
 ---
 

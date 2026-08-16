@@ -714,13 +714,20 @@ Similarly, zkSync Era implements P256 via RIP-7212 but with a different precompi
 
 #### After (M5.4)
 
+> ⚠️ **STALE (2026 plan-history):** the `setP256FallbackVerifier(daimo)` per-account mechanism below was
+> **never shipped** — it does not exist in `src/`. The delivered design instead routes owner-WebAuthn P256
+> through Solady's `P256.verifySignatureAllowMalleability` (WebAuthnLib, since #190), which uses the 0x100
+> precompile where present and falls back to a pure-Solidity verifier automatically (no owner setter);
+> inline guardian/session P256 still fail-close where the precompile is absent (#191). Full reconciliation
+> of this section is deferred — see the PR #199 note. Numbers corrected inline below.
+
 Owner calls `setP256FallbackVerifier(daimoP256VerifierAddr)` after account creation.
 
 `daimoP256VerifierAddr` is Daimo's pure-Solidity P256Verifier.sol — a well-audited,
 gas-optimized (~174k gas) fallback deployed at a known address on all chains.
 
-`_validateP256` tries the EIP-7212 precompile first (3000 gas, fast). If the precompile
-call fails or returns empty, it falls back to the Solidity verifier seamlessly.
+`_validateP256` tries the P256VERIFY precompile @ 0x100 first (~6,900 gas L1 / ~3,450 OP, fast). If the
+precompile call fails or returns empty, it falls back to the Solidity verifier seamlessly.
 
 Account owners on Polygon, zkSync, Linea, and Scroll can:
 1. Deploy the account normally
