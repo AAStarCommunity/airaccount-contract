@@ -26,6 +26,11 @@
  * native tier signature-verification path (guard/whitelist cost excluded). The
  * tier→tier DELTA is unaffected by the guard; disclosed to DSR.
  *
+ * ⚠️ CITE `receipt_gasUsed`, NOT `event_actualGasUsed`: the event column = internal gas + the
+ *    hard-coded synthetic `preVerificationGas`(80,000), which biases tier-1 by +52% and distorts the
+ *    cross-tier ratio. See scripts/out/README.md for column caliber, provenance, and the SCOPE note
+ *    (dailyLimit=0 ⇒ no guard ⇒ §4.3 cumulative path not covered).
+ *
  * Output CSV: scripts/out/bench-tier-gas-<salt>.csv
  *   tier,run_idx,block_number,tx_hash,receipt_gasUsed,event_actualGasUsed,event_actualGasCost,tier_factors
  *
@@ -101,7 +106,9 @@ const EP_ABI = [
 ] as const;
 
 // ─── clients (robust fee: Sepolia baseFee*2, avoids under-priced tx) ─────
-const robust = { ...sepolia, fees: { baseFeeMultiplier: 2, maxPriorityFeePerGas: 2_000_000_000n } } as const;
+// viem ChainFees key is `defaultPriorityFee`, NOT `maxPriorityFeePerGas` (the latter is silently
+// ignored — untyped literal so TS didn't catch it; pr-daemon #199 R2 finding).
+const robust = { ...sepolia, fees: { baseFeeMultiplier: 2, defaultPriorityFee: 2_000_000_000n } } as const;
 const pub = createPublicClient({ chain: sepolia, transport: http(RPC_URL, { timeout: 60_000 }) });
 const wal = createWalletClient({ account: owner, chain: robust, transport: http(RPC_URL, { timeout: 60_000 }) });
 
@@ -291,9 +298,15 @@ async function main() {
 
   const mean = (t: number, f: (r: Row) => bigint) => { const xs = rows.filter((r) => r.tier === t).map(f); return xs.reduce((a, b) => a + b, 0n) / BigInt(xs.length || 1); };
   const g1 = mean(1, (r) => r.gasUsed), g2 = mean(2, (r) => r.gasUsed), g3 = mean(3, (r) => r.gasUsed);
-  console.log(`\nmean receipt.gasUsed: t1=${g1} t2=${g2} t3=${g3}`);
-  console.log(`delta tier1→2 = ${g2 - g1} (predict ≈ BLS pairing 102,900 + P256 ~3,450 + branch)`);
-  console.log(`delta tier2→3 = ${g3 - g2} (predict ≈ guardian ecrecover ~3,000 + branch)`);
+  // Report median too (mean is skewed by the tier-1 cold-write outlier, run#1). Predictions are
+  // pre-registered; measured deltas ran ~5.0× (t1→2) and ~2.6× (t2→3) OVER them — that gap is the
+  // finding, see scripts/out/README.md. (Persisted there, not only stdout.)
+  const median = (t: number) => { const xs = rows.filter(r => r.tier === t).map(r => r.gasUsed).sort((a,b)=>a<b?-1:1); return xs[Math.floor(xs.length/2)]; };
+  const m1 = median(1), m2 = median(2), m3 = median(3);
+  console.log(`\nmean receipt.gasUsed:   t1=${g1} t2=${g2} t3=${g3}`);
+  console.log(`median receipt.gasUsed: t1=${m1} t2=${m2} t3=${m3}  ← cite median (t1 run#1 is a cold-write outlier)`);
+  console.log(`delta tier1→2 = ${m2 - m1} (pre-registered predict ~106k; measured is ~5×, NOT pure pairing — see README)`);
+  console.log(`delta tier2→3 = ${m3 - m2} (pre-registered predict ~3,000 guardian ecrecover; measured is ~2.6×)`);
   console.log(`account=${accountAddr}  (EP deposit recoverable via withdrawTo)`);
 }
 

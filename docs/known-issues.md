@@ -210,17 +210,16 @@ The absence of a module-install timelock is a deliberate UX trade-off. Auditors 
 
 > **Correction 2026-05-30**: prior wording stated AirAccount "falls back to a Solidity software implementation" of P256 verification on chains without the EIP-7212 precompile. That is **not true** in the current code. The contract calls the precompile at `0x100` via `staticcall` and **fails fast** (returns SIG_VALIDATION_FAILED) when the precompile is absent — there is no software fallback. Deployment on a chain without EIP-7212 means P256 (and any cumulative/combined algId that requires P256) is **unusable on that chain**, not "expensive". Treat KI-7 as a deployment-blocking constraint for any chain that lacks the precompile.
 
-> **Correction 2026-08-16**: **Ethereum Sepolia now HAS the P256VERIFY precompile at `0x100`** (activated with Pectra/Prague). Verified on-chain: a valid RIP-7212 vector `eth_call`'d to `0x100` returns `0x…01` on two independent Sepolia RPCs, and `eth_getCode(0x100) = 0x` (no bytecode ⇒ genuine precompile, not a deployed verifier), so cost is the fixed ~3,450 gas. The list below ("does not exist on Ethereum mainnet/Sepolia") predates Pectra and is **stale for Sepolia** — Sepolia is now a fully P256-capable AirAccount target (tier-2/tier-3 cumulative algIds usable). Ethereum **mainnet** gains it whenever Pectra ships there; re-verify per-chain before relying on it.
+> **Correction 2026-08-16**: **Ethereum Sepolia AND mainnet both HAVE the P256VERIFY precompile at `0x100`.** The fork is **EIP-7951 (secp256r1 P256VERIFY), shipped in Fusaka — NOT Pectra** (Pectra shipped EIP-2537 BLS; the two are different EIPs and were conflated in an earlier draft of this note). This was **already recorded in [`gas-analysis.md`](gas-analysis.md) (probe table, 2026-06-20: "ETH mainnet ✅ present (Fusaka)", "ETH Sepolia ✅ present")** — the authoritative source; this KI just cross-links it. Re-confirmed on-chain 2026-08-16: a valid P256 vector `eth_call`'d to `0x100` returns `0x…01` on two independent Sepolia RPCs and `eth_getCode(0x100)=0x` (no bytecode ⇒ genuine precompile), cost fixed ~3,450 gas. → Both ETH mainnet and Sepolia are P256-capable AirAccount targets now (tier-2/tier-3 cumulative algIds usable). The availability list below is updated accordingly.
 
 ### Description
 
-P256 (WebAuthn) signature verification uses the EIP-7212 precompile at address `0x0000000000000000000000000000000000000100`. Natively available on:
+P256 (WebAuthn) signature verification uses the P256VERIFY precompile at address `0x0000000000000000000000000000000000000100` (RIP-7212 on OP Stack; **EIP-7951 on Ethereum L1 via Fusaka**). Natively available on:
 
-- OP Mainnet, Base, and other OP Stack chains with Fjord active
-- Optimism Sepolia, Base Sepolia (Fjord testnets)
-- **Ethereum Sepolia** (post-Pectra — verified on-chain 2026-08-16, see correction above)
+- OP Mainnet, Base, and other OP Stack chains with Fjord active; Optimism Sepolia, Base Sepolia
+- **Ethereum mainnet and Sepolia** (Fusaka / EIP-7951 — see `gas-analysis.md` probe table 2026-06-20 + on-chain re-confirm 2026-08-16)
 
-On non-OP-Stack L2s that have not adopted it (Arbitrum One, zkSync Era, etc.) and on any pre-Pectra Ethereum chain, the precompile does **not** exist. `_validateP256` returns `1` (SIG_VALIDATION_FAILED) when the precompile staticcall fails; no software fallback is attempted.
+On non-OP-Stack L2s that have not adopted it (Arbitrum One, zkSync Era, etc.) and on any chain that has activated **neither** Fusaka (L1) **nor** Fjord (OP Stack), the precompile does **not** exist. `_validateP256` returns `1` (SIG_VALIDATION_FAILED) when the precompile staticcall fails; no software fallback is attempted.
 
 ### Risk
 
