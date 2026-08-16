@@ -1327,9 +1327,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     // ─── Tiered Routing (F21) ────────────────────────────────────────
 
     /// @dev Determine the required algorithm tier based on transaction value.
-    ///      Tier 1 (≤tier1Limit): ECDSA only
-    ///      Tier 2 (≤tier2Limit): ECDSA + P256 dual factor
-    ///      Tier 3 (>tier2Limit): BLS triple signature (multi-sig consensus)
+    ///      Tier definitions are authoritative in AlgTierLib (see src/utils/AlgTierLib.sol);
+    ///      this comment mirrors it — update AlgTierLib, not here.
+    ///      Tier 1 (≤tier1Limit): single-factor (ECDSA, P256, COMBINED_T1, SESSION_KEY)
+    ///      Tier 2 (≤tier2Limit): dual-factor (P256 + BLS DVT)
+    ///      Tier 3 (>tier2Limit): triple-factor (P256 + BLS + Guardian ECDSA)
     function requiredTier(uint256 txValue) public view returns (uint8) {
         if (tier1Limit == 0 && tier2Limit == 0) return 0; // Tiering not configured
         if (txValue <= tier1Limit) return 1;

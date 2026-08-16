@@ -525,6 +525,71 @@ This is a delegate-specific limitation, NOT a regression. v0.17.1 had a strictly
 
 ---
 
+## KI-16 — Tiered tests fail under `forge test --gas-report` / `--isolate` (test-harness artifact, NOT a contract defect)
+
+**Severity**: None (testing-environment artifact)
+**Affected**: `test/AAStarAirAccountV7_M3.t.sol`, `test/CumulativeSignature.t.sol`, `test/WeightedSignature.t.sol` (tests that call `validateUserOp` and `execute`/`executeBatch` as two separate top-level calls)
+**Category**: Test tooling / EIP-1153 transient storage
+
+### Symptom
+
+The suite is green in the default runner but 6 tiered tests fail the moment `--gas-report` is added:
+
+```
+forge test --evm-version prague                  # 913 passed, 0 failed
+forge test --evm-version prague --gas-report     # 907 passed, 6 failed
+```
+
+Failures all report a **provided tier of 0**, e.g. `InsufficientTier(1, 0)`, `InsufficientTier(2, 0)`:
+`test_batchBypassPrevented`, `test_multiTxBypassPrevented`, `test_todaySpent_noGuard`,
+`test_tierEnforcement_cumulativeTier2`, `test_execute_weighted_resolvesTier2`,
+`test_executeBatch_secondCallOutOfScope_reverts`.
+
+### Root cause
+
+This is **not** `--gas-report`-specific and **not** a cross-*frame* sensitivity of EIP-1153. `--gas-report`
+turns on Foundry's **isolate** execution (confirmed: `forge test --isolate` alone reproduces the identical
+failure with a byte-identical gas figure). Isolate mode executes each **top-level** call from the test as a
+**separate transaction** so per-transaction gas accounting is accurate. Per EIP-1153, transient storage is
+cleared at the end of every transaction.
+
+The affected tests invoke the two ERC-4337 phases as two separate top-level calls:
+
+```solidity
+vm.prank(entryPoint); account.validateUserOp(userOp, userOpHash, 0);  // tstore algId  (transaction 1)
+vm.prank(entryPoint); account.executeBatch(dests, values, funcs);     // tload algId    (transaction 2)
+```
+
+The `algId` the account stores during validation (`_storeValidatedAlgId`, transient slot keyed by
+`keccak256(callDataKey, tag)` in `AAStarAirAccountBase.sol`) is wiped at the transaction-1 boundary, so
+`_consumeValidatedAlgId()` reads back **0** in transaction 2 → `AlgTierLib.algTier(0) = 0` → "provided
+tier 0". The default (non-isolate) runner executes the whole test body as one transaction, so the transient
+value survives and the tests pass.
+
+### Why this is not a defect
+
+On-chain, `EntryPoint.handleOps` calls `validateUserOp` and then `execute`/`executeBatch` **within a single
+transaction**. EIP-1153 transient storage is stable across *call frames* inside one transaction — which is the
+only guarantee this design relies on, and it is rock-solid. The isolate runner models a *cross-transaction*
+boundary that never occurs for these two phases in production. The artifact is in the test structure (two
+top-level calls), not in the contract.
+
+### Guidance
+
+- To measure gas without hitting this, either accept the 6 isolate-mode failures as expected, or run gas
+  reporting on tests that drive both phases through a single top-level entry (e.g. a real `EntryPoint.handleOps`
+  call) so validation + execution share one transaction.
+- A future dedicated tiered-gas benchmark test should route through one top-level call for exactly this reason.
+- Related: KI-11 documents the same transient-queue mechanism's content-keying under identical calldata.
+
+### Auditor / researcher note
+
+Do **not** classify these `--gas-report` failures as a tiering defect or an EIP-1153 cross-frame weakness.
+The transient-storage design assumption (both ERC-4337 phases in one transaction) holds in production; the
+failure is a Foundry isolate-mode transaction-splitting artifact.
+
+---
+
 ## Summary Table
 
 | ID | Issue | Severity | Category | Fixable? |
@@ -544,3 +609,4 @@ This is a delegate-specific limitation, NOT a regression. v0.17.1 had a strictly
 | KI-13 | ForceExit constrained by Tier-1 daily limit | Low | Operational UX | Deferred to v0.18 (dedicated bypass path) |
 | KI-14 | Calldata parsers disabled in beta.1 (HIGH-4/5) | was HIGH, mitigated | Parser correctness | Planned beta.2 (rewrite parsers) |
 | KI-15 | 7702 delegate has minimal token guard (no DeFi parser) | Low | 7702 ergonomics | Planned v0.18+ |
+| KI-16 | Tiered tests fail under `--gas-report`/`--isolate` (transient algId cleared across split transactions) | None (test artifact) | Test tooling / EIP-1153 | N/A — production runs both phases in one tx |
