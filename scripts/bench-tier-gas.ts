@@ -301,7 +301,13 @@ async function main() {
   // Report median too (mean is skewed by the tier-1 cold-write outlier, run#1). Predictions are
   // pre-registered; measured deltas ran ~5.0× (t1→2) and ~2.6× (t2→3) OVER them — that gap is the
   // finding, see scripts/out/README.md. (Persisted there, not only stdout.)
-  const median = (t: number) => { const xs = rows.filter(r => r.tier === t).map(r => r.gasUsed).sort((a,b)=>a<b?-1:1); return xs[Math.floor(xs.length/2)]; };
+  const median = (t: number) => {
+    const xs = rows.filter(r => r.tier === t).map(r => r.gasUsed).sort((a,b)=>a<b?-1:1);
+    const n = xs.length; if (n === 0) return 0n;
+    // true median: average the two middle values on even n (xs[n/2-1] is the lower-middle);
+    // odd n takes the single middle. (Prior xs[floor(n/2)] returned the upper-middle on even n.)
+    return n % 2 === 1 ? xs[(n - 1) / 2] : (xs[n / 2 - 1] + xs[n / 2]) / 2n;
+  };
   const m1 = median(1), m2 = median(2), m3 = median(3);
   console.log(`\nmean receipt.gasUsed:   t1=${g1} t2=${g2} t3=${g3}`);
   console.log(`median receipt.gasUsed: t1=${m1} t2=${m2} t3=${m3}  ← cite median (t1 run#1 is a cold-write outlier)`);

@@ -14,7 +14,7 @@ graph TB
     subgraph Account["AAStarAirAccountBase"]
         ROUTE{algId = sig 0}
         ECDSA["内联 _validateECDSA<br/>algId=0x02 · 3,000 gas"]
-        P256["内联 _validateP256<br/>algId=0x03 · 3,450 gas"]
+        P256["内联 _validateP256<br/>algId=0x03 · 6,900 gas (L1)"]
         EXT["external call →<br/>AAStarValidator"]
         ROUTE -->|"0x02"| ECDSA
         ROUTE -->|"0x03"| P256
@@ -234,7 +234,7 @@ contract AAStarValidator {
 | 算法 | 验证核心代码 | 需要状态？ | 验证 gas | external call 开销 | 开销占比 | 决策 |
 |------|------------|-----------|---------|-------------------|---------|------|
 | **ECDSA (K1)** | `ecrecover(hash,v,r,s) == signer` | 否 | 3,000 | 2,600 | **87%** | **内联** ✅ |
-| **P256** | `P256.verifySignature(hash,r,s,qx,qy)` via EIP-7212 | 否 | 3,450 | 2,600 | **75%** | **内联** ✅ |
+| **P256** | `P256.verifySignature(hash,r,s,qx,qy)` via P256VERIFY @ 0x100 | 否 | 6,900 (L1) | 2,600 | **38%** | **内联** ✅ |
 | **BLS** | 多预编译 + 节点注册表 + 聚合逻辑 | **是**（节点、公钥） | 407,000 | 2,600 | **0.6%** | **外部** |
 | **ML-DSA** | 预编译调用（EIP-8051） | 否 | 4,500（预编译后） | 2,600 | **58%** | **内联**（未来） |
 
@@ -296,7 +296,7 @@ function _validateSignatureWithTieredRouting(
         // Tier 1/2: ECDSA — 内联，3,000 gas
         return _validateECDSA(userOpHash, signature[1:]);
     } else if (algId == 0x03) {
-        // Tier 1: P256 passkey — 内联，3,450 gas
+        // Tier 1: P256 passkey — 内联，6,900 gas (L1 EIP-7951; 3,450 on OP)
         return _validateP256(userOpHash, signature[1:]);
     } else {
         // Tier 3+: 走路由器（BLS, PQ, 未来算法）

@@ -18,9 +18,11 @@
   → external `IAAStarAlgorithm(0x539B).validate(userOpHash, [nodeIds][aggSig])` (try/catch, view).
 - **Dependency object**: YAAA `AAStarValidator` @ `0x539B9681aFd5BFbCaa655Fe4c6BdcFe1fa7864bC`
   (their `contracts/src/AAStarValidator.sol`, `validate()` / on-chain RFC-9380 hash-to-curve).
-  > Line numbers (`validate()`@L221, `_hashToG2`@L257) are from repo:dvt's own report (4fc1eb79);
-  > this repo's YAAA submodule is **stale** (does not match the deployed `validate(bytes32,bytes)`),
-  > so for the paper cite a **verified dvt commit/artifact**, not our submodule.
+  > Line numbers (`validate()`@L221, `_hashToG2`@L257) come from a repo:dvt-reported trace whose
+  > commit SHA I could **not verify** — the SHA I was given resolves in none of the public YAAA repos
+  > (see §2 note). Treat them as **unverified / pending dvt publication**. This repo's YAAA submodule is
+  > **stale** (does not match the deployed `validate(bytes32,bytes)`), so for the paper cite a
+  > **verified, published dvt commit/artifact** once available — not our submodule, and not this trace.
 - **Step**: tier-2 / tier-3 BLS signature verification. Note on algIds: the *account-side* tiered
   signature tags are `0x04` (cumulative T2) / `0x05` (cumulative T3); those paths **resolve the BLS
   algorithm slot `ALG_BLS = 0x01`** on the router (`getAlgorithm(0x01)` → 0x539B). CC-10 Decision A: the account
@@ -44,14 +46,25 @@ Per tier-2 op, receipt.gasUsed ≈ 629k; tier1→2 delta ≈ **527k** ≈ the ex
 repo:dvt (contract owner) confirmed the ~345k is "point decode + subgroup checks + registered-pubkey
 SLOADs + G1 aggregation + calldata parse".
 
-> **Authoritative refinement (repo:dvt forge per-precompile trace, fc0270c8, 2026-08-16)** — supersedes
-> the estimateGas figures above for the paper. `validate()` = **458,380 gas** (forge test, 2-node bootstrap):
-> hash-to-curve **51,088 (~11%)** · pairing k=2 **102,900 (~22%)** · G1ADD **375** → crypto floor
-> **154,363 (~34%)**; **implementation overhead 304,017 (~66%)**, pure EVM (isRegistered SLOADs, decode,
-> subgroup, RFC-9380 glue, memory). The ~56k gap vs on-chain ~514k = `requireStake=true` per-node stake
-> SLOADs (lands in the impl-overhead bucket only). 3-node vs 2-node: +375 (one more G1ADD), pairing stays
-> k=2 → no material change. This forge trace **confirms** the estimateGas split (~34% floor / ~66% impl)
-> and is the version to cite.
+> **Refinement (repo:dvt forge per-precompile trace, 2026-08-16) — UNVERIFIED, pending dvt publication.**
+> The commit SHA I was given for this trace resolves in **none** of the public YAAA repos
+> (`AAStarCommunity/{YetAnotherAA-Validator,YetAnotherAA,dvt}`, checked 2026-08-16; local `fetch --all`
+> also absent; positive control passes). So the numbers below are **repo:dvt-reported, not independently
+> reproduced** — do NOT cite them in the paper until dvt publishes a public commit + forge artifact.
+> As reported: `validate()` = **458,380 gas** (forge test, **2-node bootstrap** — production DVT is 3-node,
+> see correction below): hash-to-curve **51,088 (~11%)** · pairing k=2 **102,900 (~22%)** · G1ADD **375**
+> → crypto floor **154,363 (~34%)**; **implementation overhead 304,017 (~66%)**, pure EVM (isRegistered
+> SLOADs, decode, subgroup, RFC-9380 glue, memory).
+> - **Stake is NOT in this 304,017.** The ~56k gap between this forge 458,380 and the on-chain ~514k is the
+>   `requireStake=true` per-node stake SLOADs, which sit **outside** the 304,017 bucket (they appear only
+>   on-chain, not in this no-stake forge run).
+> - **2→3 node correction.** Going from 2 to 3 registered nodes adds far more than the +375 G1ADD — each
+>   extra node also costs its registered-pubkey SLOADs (128 B = 4 slots ≈ 8,400 cold) + `isRegistered`
+>   (2,100) + decode/subgroup ≈ **~10,500/node** (consistent with §3②'s own ~32k ≈ 3×10,500 cache estimate).
+>   So **production 3-node ≈ 469k**; 458,380 is a 2-node lower bound.
+> - **h2c unreconciled.** The trace's aggregate 34/66 split is consistent with the estimateGas aggregate
+>   split, but the two disagree ~30% on hash-to-curve alone (on-chain ~66k vs reported 51,088) — the
+>   per-component h2c figure is itself not reconciled.
 
 **Correct framing (agreed with repo:dvt, for DSR §5.1)**: estimating BLS cost from the EIP-2537
 schedule (pairing only, 102,900) **underestimates the real on-chain cost ~5×**, and the gap's main
@@ -61,21 +74,26 @@ to the exact userOpHash, prevents cross-op replay) — a security↔gas trade-of
 
 ## 3. Optimization options, ranked by leverage
 
-### ① Optimize the validator implementation — largest non-precompile bucket (~304k), realistic headroom likely SMALL — owner: repo:dvt
-The ~304k impl overhead (forge trace fc0270c8) is the largest non-precompile bucket. **Update (2026-08-16,
-walking back an earlier over-claim):** repo:dvt reports YAAA's `AAStarValidator` is **already
+### ① Optimize the validator implementation — largest non-precompile bucket (~304k), realistic headroom LARGE (measured — see §3① below) — owner: repo:dvt
+The ~304k impl overhead (repo:dvt forge trace, unverified) is the largest non-precompile bucket. **Update
+(2026-08-16, walking back an earlier over-claim):** repo:dvt reports YAAA's `AAStarValidator` is **already
 assembly-optimized (~10 assembly blocks, precompile calls already asm)** — just like our own
 `AAStarBLSKeyRegistry` (7 asm blocks). So **"port the assembly hot-paths" is NOT a lever** — both are
-already assembly. The ~304k is therefore mostly (a) **per-node stake/status SLOADs** — the price of the
-decentralized staked model, intentional and to be **kept**; and (b) **RFC-9380 Solidity glue** (expand_message
-loop, Fp field-reduction memory moves), point decode, subgroup checks, calldata parse — **largely inherent**
-to this RFC-9380 + EIP-2537 verification design on the EVM, not sloppy code.
+already assembly. Note the ~304,017 (forge, no-stake) is **NOT** mostly stake SLOADs — stake is the
+separate ~56k on-chain surcharge (see §2). The 304k is **RFC-9380 Solidity glue** (expand_message loop,
+Fp field-reduction memory moves), point decode, subgroup checks, and calldata parse — but as the measured
+comparison just below shows, it is **NOT inherent/structural**: our own registry does the equivalent crypto
+in ~52k, so the bulk of YAAA's 304k is **implementation-dependent, not a floor**.
 **"Structural floor" conjecture — MEASURED and REFUTED (2026-08-16).** I earlier conjectured both
 implementations land at ~300k+ impl overhead (a structural floor). Measured second data point refutes it:
 `AAStarBLSKeyRegistry.validate()` = **219,963 gas** (forge --gas-report, real 3-node golden,
 `test/BLSReplayBinding.t.sol`; hashToG2 63,880) vs YAAA's `AAStarValidator.validate()` = **458,380**
-(fc0270c8) — **ours is ~48%, roughly half.** Crypto floor is ~equal both sides (h2c ~52-64k, pairing
-~103k); the entire ~238k gap is in the **non-precompile EVM layer** (ours impl overhead ~52k vs YAAA ~304k).
+(repo:dvt-reported, unverified) — **ours is ~48%, roughly half.** The gap is **not** purely EVM-layer:
+our impl overhead ≈ 219,963 − (h2c 63,880 + pairing 102,900 + G1ADD 375) ≈ **52,808** vs YAAA's 304,017
+→ EVM-layer gap **≈ 251,209**; but our hash-to-curve is **12,792 more expensive** than YAAA's (63,880 vs
+51,088), which offsets it, netting the **total ~238,417 gap** (458,380 − 219,963). So the crypto floor is
+**not** equal both sides (our h2c is ~25% pricier); the dominant term is still the EVM-layer impl gap
+(~251k), partially clawed back by our costlier h2c.
 So impl overhead is **NOT a shared structural floor** — implementation-dependent variance is large.
 **Confound (do not over-read the other way either):** our registry has **no stake logic** (Safe-curated);
 YAAA is **stake-bound Plan A v3**. The ~238k gap therefore mixes (a) YAAA's decentralized-staking machinery
@@ -132,7 +150,14 @@ is a REFERENCE for the crypto hot-paths, not a replacement.**
   (measured cost + where the gap is + concrete levers) — a stronger systems contribution.
 
 ## 5. Open items (must not be asserted as fact until closed)
-- Exact per-precompile split of the ~345k → repo:dvt forge trace.
-- Whether `AAStarBLSKeyRegistry.validate()` is actually cheaper than 0x539B → measure it (§4).
+- **Public, verifiable dvt artifact** for the per-precompile split (458,380 / 51,088 / 304,017): the SHA I
+  was given resolves nowhere public — the split is currently **repo:dvt-reported, not independently
+  reproduced** (§2). CLOSE by citing a published dvt commit + forge output.
+- **3-node production trace**: the reported 458,380 is a **2-node bootstrap**; production ≈ 469k (§2).
+- **Sub-split of YAAA's ~304k** into stake-SLOAD vs generic-glue — only repo:dvt can (its contract).
 - §4.3 cumulative-tier path was NOT covered by the n=10 batch (benchmark account guard()==0);
   a guard-on rerun would measure that separate ~few-k overhead.
+
+> Resolved this round (were open in earlier drafts): the per-precompile split is now *reported* in §2
+> (though still unverified), and `AAStarBLSKeyRegistry.validate()` was measured cheaper than 0x539B in §3①
+> (219,963) — both nonetheless remain pending an independently verifiable dvt artifact.

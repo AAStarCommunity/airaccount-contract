@@ -339,7 +339,7 @@ challenge = keccak256(GUARDIAN_SIG_VERSION=4, chainId, accountAddress, "P256_GUA
 | `executeRecovery` (现有) | ~45,000 | owner update+delete+nonce++ |
 | `removeGuardianWithMixedSigs` | ~95,000+ | N× sig verify + storage shift |
 
-*EIP-7212 P256 precompile: ~3,450 gas（指定值）；sha256 precompile: ~200 gas。propose/approve 为
+*P256VERIFY precompile @ 0x100: ~6,900 gas（L1 EIP-7951 指定值；OP-Stack RIP-7212 为 3,450）；sha256 precompile: ~200 gas。propose/approve 为
 v0.20 Sepolia 链上实测（见 `docs/tx-archive/v0.20.0.md`）——比早期"简化路径"预估高，因为完整 WebAuthn
 要在链上 base64url 重建 clientDataJSON 并做两次 sha256。*
 

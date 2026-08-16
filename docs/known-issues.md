@@ -210,7 +210,7 @@ The absence of a module-install timelock is a deliberate UX trade-off. Auditors 
 
 > **Correction 2026-05-30**: prior wording stated AirAccount "falls back to a Solidity software implementation" of P256 verification on chains without the EIP-7212 precompile. That is **not true** in the current code. The contract calls the precompile at `0x100` via `staticcall` and **fails fast** (returns SIG_VALIDATION_FAILED) when the precompile is absent — there is no software fallback. Deployment on a chain without EIP-7212 means P256 (and any cumulative/combined algId that requires P256) is **unusable on that chain**, not "expensive". Treat KI-7 as a deployment-blocking constraint for any chain that lacks the precompile.
 
-> **Correction 2026-08-16**: **Ethereum Sepolia AND mainnet both HAVE the P256VERIFY precompile at `0x100`.** The fork is **EIP-7951 (secp256r1 P256VERIFY), shipped in Fusaka — NOT Pectra** (Pectra shipped EIP-2537 BLS; the two are different EIPs and were conflated in an earlier draft of this note). This was **already recorded in [`gas-analysis.md`](gas-analysis.md) (probe table, 2026-06-20: "ETH mainnet ✅ present (Fusaka)", "ETH Sepolia ✅ present")** — the authoritative source; this KI just cross-links it. Re-confirmed on-chain 2026-08-16: a valid P256 vector `eth_call`'d to `0x100` returns `0x…01` on two independent Sepolia RPCs and `eth_getCode(0x100)=0x` (no bytecode ⇒ genuine precompile), cost fixed ~3,450 gas. → Both ETH mainnet and Sepolia are P256-capable AirAccount targets now (tier-2/tier-3 cumulative algIds usable). The availability list below is updated accordingly.
+> **Correction 2026-08-16**: **Ethereum Sepolia AND mainnet both HAVE the P256VERIFY precompile at `0x100`.** The fork is **EIP-7951 (secp256r1 P256VERIFY), shipped in Fusaka — NOT Pectra** (Pectra shipped EIP-2537 BLS; the two are different EIPs and were conflated in an earlier draft of this note). This was **already recorded in [`gas-analysis.md`](gas-analysis.md) (probe table, 2026-06-20: "ETH mainnet ✅ present (Fusaka)", "ETH Sepolia ✅ present")** — the authoritative source; this KI just cross-links it. Re-confirmed on-chain 2026-08-16: a valid P256 vector `eth_call`'d to `0x100` returns `0x…01` on two independent Sepolia RPCs and `eth_getCode(0x100)=0x` (no bytecode ⇒ genuine precompile), cost fixed **~6,900 gas on L1 (EIP-7951; OP-Stack's RIP-7212 is 3,450)** — re-measured 2026-08-16 by binary search (30,460 gas succeeds, 30,459 out-of-gas; minus 23,560 intrinsic+calldata ⇒ 6,900 precompile). → Both ETH mainnet and Sepolia are P256-capable AirAccount targets now (tier-2/tier-3 cumulative algIds usable). The availability list below is updated accordingly.
 
 ### Description
 
@@ -229,7 +229,7 @@ Deploying on a chain without EIP-7212 means:
 - `ALG_BLS` (0x01) and `ALG_ECDSA` (0x02) work fine — no precompile dependency.
 - Session keys: ECDSA session (105-byte format) works; P256 session (148-byte format) fails.
 
-This is by design — using the precompile keeps gas low (~3,450 vs ~330k for any pure-Solidity P256), and a chain without EIP-7212 should not be a primary AirAccount target.
+This is by design — using the precompile keeps gas low (~6,900 on L1 / ~3,450 on OP-Stack vs ~330k for any pure-Solidity P256), and a chain without EIP-7212 should not be a primary AirAccount target.
 
 ### Mitigation
 

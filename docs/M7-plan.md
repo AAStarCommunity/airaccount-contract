@@ -646,7 +646,7 @@ window.dispatchEvent(new Event('eip6963:requestProvider'));
 |----------|----------------------|
 | ECDSA (secp256k1) | ~3,000 gas (ecrecover precompile) |
 | P-256 (daimo verifier) | ~330,000 gas |
-| P-256 (EIP-7212 precompile, future) | ~3,450 gas |
+| P-256 (P256VERIFY precompile @ 0x100) | ~6,900 gas (L1 EIP-7951) / ~3,450 (OP RIP-7212) |
 
 > EIP-7212 (P-256 precompile) is live on Base, zkSync. On mainnet/Sepolia, use daimo verifier fallback.
 

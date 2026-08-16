@@ -67,7 +67,7 @@ This is a one-time cost shared by all users — economically fine.
 ## EIP-7212 P-256 Precompile — Cross-Chain Availability (issue #28)
 
 P-256 verification cost depends entirely on whether the chain has the EIP-7212 (RIP-7212) precompile
-at `0x100`: **~3,450 gas with it, ~300,000 gas without** (pure-Solidity secp256r1 fallback).
+at `0x100`: **~6,900 gas on L1 (EIP-7951) / ~3,450 on OP-Stack (RIP-7212) with it, ~300,000 gas without** (pure-Solidity secp256r1 fallback).
 
 **Probe `0x100` with a valid `abi.encode(hash,r,s,x,y)` — returns `1` iff the precompile is live.**
 Reproduce: `bash scripts/probe-eip7212.sh`.
@@ -95,7 +95,7 @@ so the "expensive on some chains" risk that motivated #28 is effectively resolve
 | `proposeRecoveryWithSig` | 150,831 | base64url rebuild + sha256×2 + EIP-7212 + activeRecovery init |
 | `approveRecoveryWithSig` | 84,559 | WebAuthn verify + bitmap update |
 
-> The ~3,450 gas is just the precompile; the rest is the on-chain WebAuthn envelope
+> The ~6,900 gas (L1 EIP-7951; ~3,450 on OP-Stack RIP-7212) is just the precompile; the rest is the on-chain WebAuthn envelope
 > (`_base64UrlEncode32` + 2× sha256 + assertion decode). Source: `docs/tx-archive/v0.20.0.md`.
 
 **Deploy guard:** `scripts/deploy-v0.20.ts` probes `0x100` before deploying and warns if the target

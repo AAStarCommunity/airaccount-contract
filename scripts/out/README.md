@@ -43,8 +43,11 @@ Citing the event column would understate the tier-2 premium by ~29%. Use `receip
 - Submission: **direct `EntryPoint.handleOps`, one op/tx** (NOT a bundler). `preVerificationGas` = **80,000 (synthetic)**; `accountGasLimits` = verificationGasLimit 900k ‖ callGasLimit 200k (constant across tiers).
 - **SCOPE**: `dailyLimit = 0` ⇒ no `AAStarGlobalGuard` deployed ⇒ this measures **tiered signature-verification cost only**; the §4.3 cumulative-tier / anti-splitting path (`requiredTier(alreadySpent+value)` + `recordSpend`) is **NOT exercised** by this batch (guard()==0 on-chain). A guard-on run would add a separate ~few-k overhead.
 
-## Cost breakdown of the tier-2/3 BLS verify (authoritative)
+## Cost breakdown of the tier-2/3 BLS verify (repo:dvt-reported — UNVERIFIED)
 
-See `docs/2026-08-16-tier-bls-gas-optimization-analysis.md` — repo:dvt forge per-precompile trace:
-validate() 458,380 = hash-to-curve 51,088 (11%) + pairing 102,900 (22%) + impl overhead 304,017 (66%).
-Cost is dominated by **implementation overhead, NOT hash-to-curve** (an earlier draft wrongly said the latter).
+See `docs/2026-08-16-tier-bls-gas-optimization-analysis.md` — repo:dvt forge per-precompile trace.
+**The commit SHA for this trace is unverified**: it resolves in no public YAAA repo as of 2026-08-16, so
+**do NOT cite these figures in the paper** until dvt publishes a public commit + forge artifact.
+As reported: validate() 458,380 (2-node bootstrap; production 3-node ≈ 469k) = hash-to-curve 51,088 (11%)
++ pairing 102,900 (22%) + impl overhead 304,017 (66%). Cost is dominated by **implementation overhead,
+NOT hash-to-curve** (an earlier draft wrongly said the latter).
