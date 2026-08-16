@@ -240,7 +240,7 @@ ERC-4337 合约体系的三个核心角色：
   ✗ AAStarPQAlgorithm     — 未来 PQ 实现，独立部署，路由器调用
 
 好处：
-  - Tier 1/2 内联验证 → 小额交易极低 gas（3,000-3,450）
+  - Tier 1/2 内联验证 → 小额交易极低 gas（ECDSA ~3,000 / P256 ~6,900 L1 · ~3,450 OP）
   - Tier 3 外部调用 → 支持未来算法升级（PQ），用户零操作
   - 验证器升级不影响已部署的账户（只需路由器注册新算法）
   - 所有用户共享同一组全局合约 → 链上只需各部署一份
@@ -259,7 +259,7 @@ graph TB
     subgraph NEW["AirAccount 新架构（按金额路由）"]
         EP2[EntryPoint] --> AV7_NEW[AAStarAirAccountV7<br/>不可升级，无 Proxy]
         AV7_NEW --> BASE_NEW[AAStarAirAccountBase<br/>algId 路由]
-        BASE_NEW -->|"algId=0x03<br/>Tier 1 < $100"| P256["内联 P256 passkey<br/>3,450 gas"]
+        BASE_NEW -->|"algId=0x03<br/>Tier 1 < $100"| P256["内联 P256 passkey<br/>6,900 gas (L1)"]
         BASE_NEW -->|"algId=0x02<br/>Tier 2 < $1000"| K1["内联 ECDSA<br/>3,000 gas"]
         BASE_NEW -->|"algId=0x01<br/>Tier 3 > $1000"| ROUTER["AAStarValidator 路由器"]
         ROUTER --> BLS_NEW["AAStarBLSAlgorithm<br/>~200k gas（优化后）"]
@@ -588,7 +588,7 @@ interface IValidator {
 | 算法 | algId | 实现方式 | Gas（单笔） | 说明 |
 |------|-------|---------|------------|------|
 | ECDSA secp256k1 | 0x02 | **内联** Base | ~3,000 | Tier 1/2，`ecrecover` 预编译 |
-| P-256 WebAuthn | 0x03 | **内联** Base | ~3,450 | Tier 1，EIP-7212 预编译 |
+| P-256 WebAuthn | 0x03 | **内联** Base | ~6,900 (L1) / ~3,450 (OP) | Tier 1，P256VERIFY 预编译 @ 0x100 |
 | BLS12-381 | 0x01 | **外部** `AAStarBLSAlgorithm` | ~130,000（优化后） | Tier 3，复杂+有状态 |
 | ML-DSA (Dilithium) | 0x04 | **外部** 预留 | ~4,500（预编译后） | 等 EIP-8051 |
 | FALCON | 0x05 | **外部** 预留 | ~1,200（预编译后） | 待提案 |

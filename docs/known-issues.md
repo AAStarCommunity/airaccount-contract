@@ -210,14 +210,18 @@ The absence of a module-install timelock is a deliberate UX trade-off. Auditors 
 
 > **Correction 2026-05-30**: prior wording stated AirAccount "falls back to a Solidity software implementation" of P256 verification on chains without the EIP-7212 precompile. That is **not true** in the current code. The contract calls the precompile at `0x100` via `staticcall` and **fails fast** (returns SIG_VALIDATION_FAILED) when the precompile is absent — there is no software fallback. Deployment on a chain without EIP-7212 means P256 (and any cumulative/combined algId that requires P256) is **unusable on that chain**, not "expensive". Treat KI-7 as a deployment-blocking constraint for any chain that lacks the precompile.
 
+> **Correction 2026-08-16 (software fallback — supersedes the 2026-05-30 "fails fast, no fallback" claim above)**: since **#191 unified all four P256 call sites** (`_validateP256` algId 0x03 `AAStarAirAccountBase.sol:889`, `SessionKeyValidator.sol:219`, `AirAccountExtension.sol:880`, `WebAuthnLib.sol:122`) onto the **one shared Solady primitive** `P256.verifySignatureAllowMalleability`, there **is** a software fallback and all four behave identically. Solady tries the `0x100` precompile, then the canonical Solidity verifier at `0x000000000000D01eA45F9eFD5c54f037Fa57Ea1a` (`lib/solady/src/utils/P256.sol:18/:61/:68`), returning `false` only when **neither** responds. That verifier is deployed on most chains **including Sepolia** (`cast code 0x…Ea1a` → ~4,135 bytes). ⇒ P256 is **usable at ~300,000 gas wherever that verifier is deployed, even without the `0x100` precompile**; it is **unusable only where neither the precompile nor the verifier exists**. So KI-7 is deployment-blocking **only** on chains that have neither — **verify with `cast code`**, do not assume. Describe P256 availability by the **shared primitive**, never by algId/call-site (the 2026-05-30 correction, written before #191, mis-stated it as fail-fast).
+
+> **Correction 2026-08-16**: **Ethereum Sepolia AND mainnet both HAVE the P256VERIFY precompile at `0x100`.** The fork is **EIP-7951 (secp256r1 P256VERIFY), shipped in Fusaka — NOT Pectra** (Pectra shipped EIP-2537 BLS; the two are different EIPs and were conflated in an earlier draft of this note). This was **already recorded in [`gas-analysis.md`](gas-analysis.md) (probe table, 2026-06-20: "ETH mainnet ✅ present (Fusaka)", "ETH Sepolia ✅ present")** — the authoritative source; this KI just cross-links it. Re-confirmed on-chain 2026-08-16: a valid P256 vector `eth_call`'d to `0x100` returns `0x…01` on two independent Sepolia RPCs and `eth_getCode(0x100)=0x` (no bytecode ⇒ genuine precompile), cost fixed **~6,900 gas on L1 (EIP-7951; OP-Stack's RIP-7212 is 3,450)** — re-measured 2026-08-16 by binary search (30,460 gas succeeds, 30,459 out-of-gas; minus 23,560 intrinsic+calldata ⇒ 6,900 precompile). → Both ETH mainnet and Sepolia are P256-capable AirAccount targets now (tier-2/tier-3 cumulative algIds usable). The availability list below is updated accordingly.
+
 ### Description
 
-P256 (WebAuthn) signature verification uses the EIP-7212 precompile at address `0x0000000000000000000000000000000000000100`. Natively available on:
+P256 (WebAuthn) signature verification uses the P256VERIFY precompile at address `0x0000000000000000000000000000000000000100` (RIP-7212 on OP Stack; **EIP-7951 on Ethereum L1 via Fusaka**). Natively available on:
 
-- OP Mainnet, Base, and other OP Stack chains with Fjord active
-- Optimism Sepolia, Base Sepolia (Fjord testnets)
+- OP Mainnet, Base, and other OP Stack chains with Fjord active; Optimism Sepolia, Base Sepolia
+- **Ethereum mainnet and Sepolia** (Fusaka / EIP-7951 — see `gas-analysis.md` probe table 2026-06-20 + on-chain re-confirm 2026-08-16)
 
-On **Ethereum mainnet** and non-OP-Stack L2s (Arbitrum One, zkSync Era, etc.) the precompile does **not** exist. `_validateP256` returns `1` (SIG_VALIDATION_FAILED) when the precompile staticcall fails; no software fallback is attempted.
+On non-OP-Stack L2s that have not adopted it (Arbitrum One, zkSync Era, etc.) and on any chain that has activated **neither** Fusaka (L1) **nor** Fjord (OP Stack), the precompile does **not** exist. There, all four P256 sites (via the shared Solady primitive) fall back to the canonical Solidity verifier at `0x…Ea1a` if it is deployed (~300,000 gas); `_validateP256` returns `1` (SIG_VALIDATION_FAILED) **only** when **neither** the precompile **nor** that verifier is present (see the 2026-08-16 fallback correction above — verify with `cast code`).
 
 ### Risk
 
@@ -227,7 +231,7 @@ Deploying on a chain without EIP-7212 means:
 - `ALG_BLS` (0x01) and `ALG_ECDSA` (0x02) work fine — no precompile dependency.
 - Session keys: ECDSA session (105-byte format) works; P256 session (148-byte format) fails.
 
-This is by design — using the precompile keeps gas low (~3,450 vs ~330k for any pure-Solidity P256), and a chain without EIP-7212 should not be a primary AirAccount target.
+This is by design — using the precompile keeps gas low (~6,900 on L1 / ~3,450 on OP-Stack vs ~330k for any pure-Solidity P256), and a chain without EIP-7212 should not be a primary AirAccount target.
 
 ### Mitigation
 
@@ -525,6 +529,71 @@ This is a delegate-specific limitation, NOT a regression. v0.17.1 had a strictly
 
 ---
 
+## KI-16 — Tiered tests fail under `forge test --gas-report` / `--isolate` (test-harness artifact, NOT a contract defect)
+
+**Severity**: None (testing-environment artifact)
+**Affected**: `test/AAStarAirAccountV7_M3.t.sol`, `test/CumulativeSignature.t.sol`, `test/WeightedSignature.t.sol` (tests that call `validateUserOp` and `execute`/`executeBatch` as two separate top-level calls)
+**Category**: Test tooling / EIP-1153 transient storage
+
+### Symptom
+
+The suite is green in the default runner but 6 tiered tests fail the moment `--gas-report` is added:
+
+```
+forge test --evm-version prague                  # 913 passed, 0 failed
+forge test --evm-version prague --gas-report     # 907 passed, 6 failed
+```
+
+Failures all report a **provided tier of 0**, e.g. `InsufficientTier(1, 0)`, `InsufficientTier(2, 0)`:
+`test_batchBypassPrevented`, `test_multiTxBypassPrevented`, `test_todaySpent_noGuard`,
+`test_tierEnforcement_cumulativeTier2`, `test_execute_weighted_resolvesTier2`,
+`test_executeBatch_secondCallOutOfScope_reverts`.
+
+### Root cause
+
+This is **not** `--gas-report`-specific and **not** a cross-*frame* sensitivity of EIP-1153. `--gas-report`
+turns on Foundry's **isolate** execution (confirmed: `forge test --isolate` alone reproduces the identical
+failure with a byte-identical gas figure). Isolate mode executes each **top-level** call from the test as a
+**separate transaction** so per-transaction gas accounting is accurate. Per EIP-1153, transient storage is
+cleared at the end of every transaction.
+
+The affected tests invoke the two ERC-4337 phases as two separate top-level calls:
+
+```solidity
+vm.prank(entryPoint); account.validateUserOp(userOp, userOpHash, 0);  // tstore algId  (transaction 1)
+vm.prank(entryPoint); account.executeBatch(dests, values, funcs);     // tload algId    (transaction 2)
+```
+
+The `algId` the account stores during validation (`_storeValidatedAlgId`, transient slot keyed by
+`keccak256(callDataKey, tag)` in `AAStarAirAccountBase.sol`) is wiped at the transaction-1 boundary, so
+`_consumeValidatedAlgId()` reads back **0** in transaction 2 → `AlgTierLib.algTier(0) = 0` → "provided
+tier 0". The default (non-isolate) runner executes the whole test body as one transaction, so the transient
+value survives and the tests pass.
+
+### Why this is not a defect
+
+On-chain, `EntryPoint.handleOps` calls `validateUserOp` and then `execute`/`executeBatch` **within a single
+transaction**. EIP-1153 transient storage is stable across *call frames* inside one transaction — which is the
+only guarantee this design relies on, and it is rock-solid. The isolate runner models a *cross-transaction*
+boundary that never occurs for these two phases in production. The artifact is in the test structure (two
+top-level calls), not in the contract.
+
+### Guidance
+
+- To measure gas without hitting this, either accept the 6 isolate-mode failures as expected, or run gas
+  reporting on tests that drive both phases through a single top-level entry (e.g. a real `EntryPoint.handleOps`
+  call) so validation + execution share one transaction.
+- A future dedicated tiered-gas benchmark test should route through one top-level call for exactly this reason.
+- Related: KI-11 documents the same transient-queue mechanism's content-keying under identical calldata.
+
+### Auditor / researcher note
+
+Do **not** classify these `--gas-report` failures as a tiering defect or an EIP-1153 cross-frame weakness.
+The transient-storage design assumption (both ERC-4337 phases in one transaction) holds in production; the
+failure is a Foundry isolate-mode transaction-splitting artifact.
+
+---
+
 ## Summary Table
 
 | ID | Issue | Severity | Category | Fixable? |
@@ -544,3 +613,4 @@ This is a delegate-specific limitation, NOT a regression. v0.17.1 had a strictly
 | KI-13 | ForceExit constrained by Tier-1 daily limit | Low | Operational UX | Deferred to v0.18 (dedicated bypass path) |
 | KI-14 | Calldata parsers disabled in beta.1 (HIGH-4/5) | was HIGH, mitigated | Parser correctness | Planned beta.2 (rewrite parsers) |
 | KI-15 | 7702 delegate has minimal token guard (no DeFi parser) | Low | 7702 ergonomics | Planned v0.18+ |
+| KI-16 | Tiered tests fail under `--gas-report`/`--isolate` (transient algId cleared across split transactions) | None (test artifact) | Test tooling / EIP-1153 | N/A — production runs both phases in one tx |

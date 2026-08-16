@@ -67,7 +67,15 @@ This is a one-time cost shared by all users — economically fine.
 ## EIP-7212 P-256 Precompile — Cross-Chain Availability (issue #28)
 
 P-256 verification cost depends entirely on whether the chain has the EIP-7212 (RIP-7212) precompile
-at `0x100`: **~3,450 gas with it, ~300,000 gas without** (pure-Solidity secp256r1 fallback).
+at `0x100`: **~6,900 gas on L1 (EIP-7951) / ~3,450 on OP-Stack (RIP-7212) with it**.
+
+Without the precompile, **all four P256 call sites behave identically** — they all route through
+Solady `P256.verifySignatureAllowMalleability` (`_validateP256` algId 0x03 `AAStarAirAccountBase.sol`,
+`SessionKeyValidator`, `AirAccountExtension`, `WebAuthnLib`), which falls back to the canonical Solidity
+verifier at `0x000000000000D01eA45F9eFD5c54f037Fa57Ea1a` (**~300,000 gas**, deployed on most chains incl.
+Sepolia — verify with `cast code <addr>`). If **neither** the precompile **nor** that verifier is present,
+the call returns `false` and the account path returns `SIG_VALIDATION_FAILED` — see [KI-7](known-issues.md).
+Describe availability by the **primitive** (one shared Solady function), not by algId/call-site.
 
 **Probe `0x100` with a valid `abi.encode(hash,r,s,x,y)` — returns `1` iff the precompile is live.**
 Reproduce: `bash scripts/probe-eip7212.sh`.
@@ -95,7 +103,7 @@ so the "expensive on some chains" risk that motivated #28 is effectively resolve
 | `proposeRecoveryWithSig` | 150,831 | base64url rebuild + sha256×2 + EIP-7212 + activeRecovery init |
 | `approveRecoveryWithSig` | 84,559 | WebAuthn verify + bitmap update |
 
-> The ~3,450 gas is just the precompile; the rest is the on-chain WebAuthn envelope
+> The ~6,900 gas (L1 EIP-7951; ~3,450 on OP-Stack RIP-7212) is just the precompile; the rest is the on-chain WebAuthn envelope
 > (`_base64UrlEncode32` + 2× sha256 + assertion decode). Source: `docs/tx-archive/v0.20.0.md`.
 
 **Deploy guard:** `scripts/deploy-v0.20.ts` probes `0x100` before deploying and warns if the target
@@ -144,7 +152,7 @@ it, configure ECDSA guardians only (the account supports mixed guardian sets nat
 |--------|----------|-------|
 | EIP-1153 transient storage (current) | ~200 | `tload` + `tstore` |
 | SSTORE-based (OpenZeppelin) | ~7,100 | Cold SLOAD + SSTORE |
-| **Savings** | **~6,900 (97%)** | Per execute/executeBatch call |
+| **Savings** | **~6,900 (97%)** | Per execute/executeBatch call (EIP-1153 transient storage — NOT related to the P256 precompile's ~6,900 L1 cost above; same number, different mechanism) |
 
 ---
 

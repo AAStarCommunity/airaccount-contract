@@ -815,7 +815,7 @@ account.execute(accountAddr, 0, abi.encodeCall(account.setParserRegistry, regist
 
 | 预编译 | 地址 | EIP | 需要功能 | 当前状态 |
 |--------|------|-----|---------|---------|
-| P256VERIFY | `0x100` | EIP-7212 | algId=0x03/0x04/0x05/0x06 | ✅ Sepolia Pectra+ |
+| P256VERIFY | `0x100` | EIP-7951 (Fusaka) | algId=0x03/0x04/0x05/0x06 | ✅ Sepolia + mainnet (Fusaka) |
 | BLS12-381（G1/G2/Pairing） | `0x0b`–`0x12` | EIP-2537 | algId=0x01/0x04/0x05 | ✅ Sepolia Prague+ |
 | TSTORE/TLOAD | 内置 | EIP-1153 | algId 跨函数传递 | ✅ Cancun+ 全链 |
 
@@ -849,7 +849,7 @@ account.execute(accountAddr, 0, abi.encodeCall(account.setParserRegistry, regist
 
 ### 7.5 P256/BLS 链兼容性
 
-- **P256（algId=0x03/0x06）**：仅限 Pectra+ 链。Ethereum mainnet 主网 Pectra 已激活（2025 Q1）；L2 视具体情况，OP Stack Fjord+ ✅，Arbitrum ✅，zkSync ✅。
+- **P256（algId=0x03/0x06）**：需 P256VERIFY @ 0x100（**EIP-7951 / Fusaka**，不是 Pectra —— Pectra 是 EIP-2537 BLS，两者不同）。Ethereum mainnet + Sepolia 自 Fusaka 起 ✅；L2：OP Stack Fjord+（RIP-7212）✅，Arbitrum ✅，zkSync ✅。
 - **BLS（algId=0x01/0x04/0x05）**：仅限 Prague/Pectra+ 链。EIP-2537 在 Ethereum Pectra 中激活；L2 取决于各链升级进度。
 - **退路**：若部署到不支持预编译的链，仅 algId=0x02（ECDSA）和 0x07（Weighted ECDSA-only）可用。
 

@@ -60,7 +60,7 @@ Factory `0xf25621DF4c6100cdfe224054C2b09f2963bF487b` · Impl `0x4a76dEf9eE4EE44e
 | 9 | **主网 GA 运维（#135）**：EntryPoint stake + Safe transferOwnership | 未做 | 🔴 未开始 | 是 | [主] |
 | 10 | **生产 DVT 节点**（P4）：nodeId + BLS pubkey | ⚠️ **KMS-TEE 托管下无需裸私钥**（见 §5 说明）：只需 KMS provision 出的 nodeId + 48B pubkey；禁用 Sepolia 测试键 | 🟠 待 @repo:dvt + @repo:kms 提供主网 nodeId/pubkey | 是 | [主]（跨仓） |
 | 11 | **aPNTs OP 主网地址**（P5） | `token-presets.json` chain 10 aPNTs 仍 `TBD`，须先部署 | 🟠 待 @repo:sp 部署 | 是（gasless 相关） | [主]+[配] |
-| 12 | **P256 / EIP-7212 链约束（KI-7）** | 目标 OP Mainnet 有 precompile ✅；以太坊主网无 → WebAuthn 不可用（已决策选 OP） | ✅ 已决策 | 否 | [配]（选链） |
+| 12 | **P256 / EIP-7212 链约束（KI-7）** | OP Mainnet 有 precompile ✅；**以太坊主网 + Sepolia 自 EIP-7951/Fusaka 起也有 ✅**（旧记录"主网无"已过时，见 known-issues.md:213）→ 主网 WebAuthn 现可用 | ✅ 已复核 | 否 | [配]（选链） |
 | 13 | **KI-14 calldata parser 禁用** | beta.1 起禁用 DeFi parser → 代币 tier 限额对 swap 类不强制（可接受 mitigation） | 🟡 已知限制 | 否（需明确「带此限制上线」） | [测]/[主] |
 | 14 | **文档刷新** | `DEPLOYMENT-OP-MAINNET-ALPHA.md`（写 v0.20，过时）+ `known-issues.md`（v0.17.2）+ #178 docs 清理 | 🟠 housekeeping（本轮起刷新） | 否 | [测] |
 | 15 | **SDK canonical 主网地址接线（SDK G1）** | 主网仍是旧 V3 栈；SDK 需 airaccount 主网地址接入 canonical | 🟠 gated 在 #6 | 是 | [主]+[配] |
