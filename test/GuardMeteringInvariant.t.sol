@@ -8,6 +8,14 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
+/// @dev Mock EntryPoint that holds the account's deposit and honors `withdrawTo` — needed so the
+///      `withdrawDepositTo` path (the historical H1 bypass) actually moves ETH in the invariant.
+contract MockEntryPointDeposit {
+    function withdrawTo(address payable to, uint256 amount) external { to.transfer(amount); }
+    function balanceOf(address) external pure returns (uint256) { return 0; }
+    receive() external payable {}
+}
+
 /// @title GuardMeteringInvariant — CC-99 需求2: non-bypass verification via a Foundry invariant.
 /// @notice Property (the reviewer's "cheapest large credibility upgrade"): over ANY sequence of external
 ///         value-moving calls, the guard's cumulative accounting (`todaySpent()`) is never LESS than the
@@ -69,17 +77,28 @@ contract GuardMeteringHandler is Test {
         vm.prank(entryPoint);
         try account.executeBatch(dests, vals, funcs) { ghostSent += a + b; } catch { }
     }
+
+    /// The H1 path: owner-only withdrawal from the EntryPoint deposit — must ALSO route through the guard
+    /// (algId passed directly as ECDSA, no validateUserOp). Moves ETH from the mock EntryPoint to receiver.
+    function withdrawDeposit(uint256 rawValue) external {
+        uint256 value = bound(rawValue, 0, 0.5 ether);
+        if (entryPoint.balance < value) return;
+        vm.prank(owner.addr);
+        try account.withdrawDepositTo(payable(receiver), value) { ghostSent += value; } catch { }
+    }
 }
 
 contract GuardMeteringInvariantTest is StdInvariant, Test {
     AAStarAirAccountV7 account;
     AAStarGlobalGuard guard;
     GuardMeteringHandler handler;
-    address entryPoint = address(0xEE7);
+    address entryPoint;
     Vm.Wallet owner;
 
     function setUp() public {
         owner = vm.createWallet("cc99-owner");
+        entryPoint = address(new MockEntryPointDeposit());
+        vm.deal(entryPoint, 100 ether); // the account's EntryPoint deposit, for withdrawDepositTo
         account = new AAStarAirAccountV7(address(0));
 
         // Guard-configured account: tier1Limit huge (all fuzzed values stay tier-1), dailyLimit huge
