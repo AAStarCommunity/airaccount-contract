@@ -42,7 +42,16 @@ Per tier-2 op, receipt.gasUsed ≈ 629k; tier1→2 delta ≈ **527k** ≈ the ex
 | └ implementation overhead | ~345k | ~67% | remainder; **not** any single crypto primitive |
 
 repo:dvt (contract owner) confirmed the ~345k is "point decode + subgroup checks + registered-pubkey
-SLOADs + G1 aggregation + calldata parse" and offered a forge per-precompile trace to pin it exactly.
+SLOADs + G1 aggregation + calldata parse".
+
+> **Authoritative refinement (repo:dvt forge per-precompile trace, fc0270c8, 2026-08-16)** — supersedes
+> the estimateGas figures above for the paper. `validate()` = **458,380 gas** (forge test, 2-node bootstrap):
+> hash-to-curve **51,088 (~11%)** · pairing k=2 **102,900 (~22%)** · G1ADD **375** → crypto floor
+> **154,363 (~34%)**; **implementation overhead 304,017 (~66%)**, pure EVM (isRegistered SLOADs, decode,
+> subgroup, RFC-9380 glue, memory). The ~56k gap vs on-chain ~514k = `requireStake=true` per-node stake
+> SLOADs (lands in the impl-overhead bucket only). 3-node vs 2-node: +375 (one more G1ADD), pairing stays
+> k=2 → no material change. This forge trace **confirms** the estimateGas split (~34% floor / ~66% impl)
+> and is the version to cite.
 
 **Correct framing (agreed with repo:dvt, for DSR §5.1)**: estimating BLS cost from the EIP-2537
 schedule (pairing only, 102,900) **underestimates the real on-chain cost ~5×**, and the gap's main
@@ -52,17 +61,22 @@ to the exact userOpHash, prevents cross-op replay) — a security↔gas trade-of
 
 ## 3. Optimization options, ranked by leverage
 
-### ① Optimize the validator implementation — largest measured non-precompile bucket (~345k), optimization potential UNMEASURED — owner: repo:dvt
-The ~345k is the largest bucket that is NOT a precompile floor, so it is *where to look first* — but
-"how much is recoverable" is **not measured**. Part of it (per-node stake/status reads) is the
-**price of the decentralized staked model and is intentional/largely irreducible if you keep staking**;
-part (point decode, memory, non-assembly G1 aggregation) may be optimizable. airaccount's own
-`AAStarBLSKeyRegistry` is assembly-optimized (G1Add/pairing in assembly; **no stake logic**) and can
-serve as a reference for the crypto hot-paths — but it is a **weaker trust model** (Safe-curated, no
-stake), so it is NOT a drop-in replacement (see §4a). **Hypothesis (UNMEASURED)**: porting the assembly
-hot-paths into YAAA's `validate()` *while keeping stake logic* could cut part of the 345k. **Must be
-validated** by (a) repo:dvt's forge per-precompile trace on 0x539B (separates stake-logic from generic
-glue), and/or (b) a measured comparison. Do NOT commit to a rewrite on the hypothesis alone.
+### ① Optimize the validator implementation — largest non-precompile bucket (~304k), realistic headroom likely SMALL — owner: repo:dvt
+The ~304k impl overhead (forge trace fc0270c8) is the largest non-precompile bucket. **Update (2026-08-16,
+walking back an earlier over-claim):** repo:dvt reports YAAA's `AAStarValidator` is **already
+assembly-optimized (~10 assembly blocks, precompile calls already asm)** — just like our own
+`AAStarBLSKeyRegistry` (7 asm blocks). So **"port the assembly hot-paths" is NOT a lever** — both are
+already assembly. The ~304k is therefore mostly (a) **per-node stake/status SLOADs** — the price of the
+decentralized staked model, intentional and to be **kept**; and (b) **RFC-9380 Solidity glue** (expand_message
+loop, Fp field-reduction memory moves), point decode, subgroup checks, calldata parse — **largely inherent**
+to this RFC-9380 + EIP-2537 verification design on the EVM, not sloppy code.
+**Stronger (and honest) conclusion for the paper:** two *independently written* assembly-optimized BLS
+validators (our registry + YAAA's AAStarValidator) both land at ~300k+ impl overhead → this is close to a
+**structural floor** for decentralized on-chain BLS-threshold verification, not low-hanging fruit. Real
+optimizable headroom is **UNMEASURED and probably single-digit-%**, pending repo:dvt splitting the 304k
+into (a) stake-SLOAD (keep) vs (b) non-stake glue (maybe micro-optimizable). **Do NOT claim material
+savings.** Our `AAStarBLSKeyRegistry` stays a *reference* (and a weaker Safe-curated trust model — NOT a
+drop-in replacement, see §4a).
 
 ### ② Cache the aggregate pubkey (~32k/op) — owner: repo:dvt (validator)
 For a fixed node set (dvt1/2/3) the aggregate G1 pubkey is constant; caching it avoids re-SLOADing 3×
