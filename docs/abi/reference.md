@@ -661,7 +661,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0xd0771689` · view · access: —
 
-*@dev* Determine the required algorithm tier based on transaction value.      Tier 1 (≤tier1Limit): ECDSA only      Tier 2 (≤tier2Limit): ECDSA + P256 dual factor      Tier 3 (>tier2Limit): BLS triple signature (multi-sig consensus)
+*@dev* Determine the required algorithm tier based on transaction value.      Tier definitions are authoritative in AlgTierLib (see src/utils/AlgTierLib.sol);      this comment mirrors it — update AlgTierLib, not here.      Tier 1 (≤tier1Limit): single-factor (ECDSA, P256, COMBINED_T1, SESSION_KEY)      Tier 2 (≤tier2Limit): dual-factor (P256 + BLS DVT)      Tier 3 (>tier2Limit): triple-factor (P256 + BLS + Guardian ECDSA)
 
 | param | type | description |
 |---|---|---|
@@ -1710,7 +1710,7 @@ Authoritative, auto-generated reference for every external/public function, even
 
 `0xd0771689` · view · access: —
 
-*@dev* Determine the required algorithm tier based on transaction value.      Tier 1 (≤tier1Limit): ECDSA only      Tier 2 (≤tier2Limit): ECDSA + P256 dual factor      Tier 3 (>tier2Limit): BLS triple signature (multi-sig consensus)
+*@dev* Determine the required algorithm tier based on transaction value.      Tier definitions are authoritative in AlgTierLib (see src/utils/AlgTierLib.sol);      this comment mirrors it — update AlgTierLib, not here.      Tier 1 (≤tier1Limit): single-factor (ECDSA, P256, COMBINED_T1, SESSION_KEY)      Tier 2 (≤tier2Limit): dual-factor (P256 + BLS DVT)      Tier 3 (>tier2Limit): triple-factor (P256 + BLS + Guardian ECDSA)
 
 | param | type | description |
 |---|---|---|
