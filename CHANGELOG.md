@@ -10,6 +10,57 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ## [Unreleased]
 
+## [v0.30.0] - 2026-08-17 (CC-102 weighted-governance hardening — DSR found→fixed loop)
+
+Fresh non-upgradable stack. Version constants `ACCOUNT_VERSION` / `FACTORY_VERSION` `0.29.0` → `0.30.0`
+(`accountId` now `airaccount.v7@0.30.0`). Takes effect on deploy (non-upgradable). Delivers the five
+implementable weighted-governance hardening items DSR requested (CC-102) so the Weighted MFA paper can
+re-pin and write the found→fixed→re-verified evaluation loop. No cross-repo signature-format change; the
+CC-98 committee BLS integration is a separate v0.31.0 workstream. ABI adds one external function
+(`proposeGuardianAddition`) + `GuardianAdditionProposed` event; `full.json` regenerated.
+
+### Security (CC-102 — Weighted MFA DSR hardening; each item has a negative test in `WeightedGovernanceHardeningCC102.t.sol`)
+- **F-W6 — `_isWeakening` tier-enable gap** (`AirAccountExtension.sol`): enabling a previously-disabled
+  higher tier (`tier2/tier3` `0 → N`) is now flagged as a weakening, so it routes through the guardian
+  proposal flow instead of a direct owner `setWeightConfig`.
+- **F-W5/F-W7 — guardian-set self-escalation / recovery takeover** (`AAStarAirAccountBase.sol` +
+  `AirAccountExtension.sol`): the bootstrap guardian addition that REACHES `RECOVERY_THRESHOLD` (count
+  `1 → 2`) is now two-step + timelocked (`propose…` → wait `GUARDIAN_ADD_TIMELOCK` = 2 days → add). A stolen
+  owner key can no longer instantly self-add two puppet guardians to both reach a Tier-3 owner-only subset
+  and form a full recovery quorum. Applied to **both** storage-sharing twins — the ECDSA path
+  (`addGuardian` / `proposeGuardianAddition`) **and** the P256 path (`addP256Guardian` /
+  `proposeP256GuardianAddition`; a P256 slot is a full recovery guardian). The first guardian (`0 → 1`)
+  stays instant; InitConfig guardians are unaffected; the consensus paths (`*WithMixedSigs`, count ≥ 2) are
+  never a `1 → 2` add and are untouched. The 2-day window is an observability/reaction window, not a hard
+  cancel (a stolen owner controls any override) — see known residual below.
+- **F-W8 — weakening proposal survives recovery** (`AirAccountExtension.sol`): `executeRecovery` now
+  `delete`s `pendingWeightChange`, so a weakening approved under a compromised owner cannot be executed by
+  the permissionless `executeWeightChange` after the account is recovered to a new owner.
+- **F-W9 — phantom weakening approvals across guardian-set change** (`AAStarAirAccountBase.sol`):
+  `addGuardian`/`removeGuardian` now `delete` `pendingWeightChange`, so slot-indexed approval bits can
+  never be re-counted against a compressed/changed guardian set.
+- **F-W11 — unbounded weight accumulator self-DoS** (`AirAccountExtension.sol`): `_validateWeightConfig`
+  now rejects configs whose factor weights sum to > 255, preventing a `Panic(0x11)` overflow revert of the
+  `uint8` accumulator inside `validateUserOp` (ERC-7562 / M-C revert-free rule).
+
+### Known residuals (documented, deferred to a later tag)
+- **F-W6 boundary**: `setWeightConfig` still skips `_isWeakening` entirely on the FIRST config
+  (`current.tier1Threshold == 0`), so a stolen owner key on a never-configured account can set any tier
+  layout in one call, bounded only by the existing `passkey + ecdsa < tier3` invariant. Pre-existing
+  behavior; F-W6 hardens only the enable-a-disabled-tier transition on an already-initialised config.
+- **F-W8 ordering**: `delete pendingWeightChange` in `executeRecovery` covers the recovery-executed-first
+  ordering. A weakening whose timelock expires BEFORE recovery completes can still be landed by the
+  permissionless `executeWeightChange` in the window before `executeRecovery`. The correct fix binds the
+  proposal to the proposing owner / `_recoveryNonce` (needs a storage field in `WeightChangeProposal`) —
+  deferred to a later tag; gating `executeWeightChange` on `activeRecovery` is rejected (an
+  expiry-less active recovery would permanently freeze all weight changes).
+- **F-W5/F-W7 window**: the 2-day timelock is a pure observability window on a compromised-owner account
+  (no independent cancel exists until a guardian quorum forms). A stronger veto is future work.
+
+### Deferred
+- **F-W12 / F-W13** (owner-subset tier-2 cap, P256-guardian zero-weight path): design/disclosure items,
+  evaluated as non-blocking per CC-102.
+
 ## [v0.29.0] - 2026-07-17 (security hardening + WebAuthnLib externalization + native-ETH tiers)
 
 Fresh non-upgradable stack. Accumulates #161 · #149 · #191 · #135 · #194 (H1/H2 + M2/M1/H3/H4) · #178.

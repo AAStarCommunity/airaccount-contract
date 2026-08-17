@@ -141,6 +141,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     uint256 internal constant WEIGHT_CHANGE_THRESHOLD = 2;
     /// @dev Proposals expire after 30 days if never executed
     uint256 internal constant WEIGHT_CHANGE_EXPIRY    = 30 days;
+    /// @dev CC-102 F-W5/F-W7: timelock on the bootstrap guardian addition that reaches RECOVERY_THRESHOLD
+    uint256 internal constant GUARDIAN_ADD_TIMELOCK   = 2 days;
 
     /// @notice Read-only snapshot of the account's current configuration.
     ///         Used by off-chain UIs and tools like ForceExitModule to read account state.
@@ -203,6 +205,8 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     error SessionScopeViolation();
     error InvalidTierConfig();
     error UseGuardianConsensus();
+    error GuardianAdditionNotProposed();
+    error GuardianAdditionTimelockNotExpired();
     error CannotIncreaseTierLimit();
     error TierLimitSigExpired();
     /// @dev HIGH-2: Agent session keys must use execute(), not executeBatch(), when a hook module
@@ -255,6 +259,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     event P256KeySet(bytes32 x, bytes32 y);
     event TierLimitsSet(uint256 tier1, uint256 tier2);
     event GuardianAdded(uint8 indexed index, address indexed guardian);
+    event GuardianAdditionProposed(address indexed guardian, uint256 executeAfter);
     event GuardianRemoved(uint8 indexed index, address indexed guardian);
     event P256GuardianAdded(uint8 indexed index, bytes32 x, bytes32 y);
     // Declared for V7 ABI completeness; emitted from AirAccountExtension (delegatecall) — signatures
@@ -1714,9 +1719,47 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             if (_getGuardian(i) == _guardian) revert GuardianAlreadySet();
         }
 
+        // CC-102 F-W5/F-W7: the addition that REACHES RECOVERY_THRESHOLD (count 1 → 2) both completes a
+        // recovery quorum and lets an owner-only subset {passkey, ecdsa, g0, g1} reach Tier-3. A stolen
+        // owner key could otherwise instantly self-add two puppet guardians and irreversibly take the
+        // account over (executeRecovery is permissionless; cancelRecovery is guardian-only). Require this
+        // specific add to have been proposed >= GUARDIAN_ADD_TIMELOCK ago via proposeGuardianAddition,
+        // giving the legitimate owner an observable reaction window. The FIRST guardian (count 0 → 1) stays
+        // instant — a lone guardian is below every quorum and weight threshold. Guardians supplied at
+        // account creation (InitConfig) never touch this path.
+        if (_guardianCount + 1 >= RECOVERY_THRESHOLD) {
+            if (_pendingGuardian != _guardian || _pendingGuardianAt == 0) revert GuardianAdditionNotProposed();
+            if (block.timestamp < uint256(_pendingGuardianAt) + GUARDIAN_ADD_TIMELOCK) {
+                revert GuardianAdditionTimelockNotExpired();
+            }
+            _pendingGuardian = address(0);
+            _pendingGuardianAt = 0;
+        }
+
         _setGuardian(_guardianCount, _guardian);
         emit GuardianAdded(_guardianCount, _guardian);
         _guardianCount++;
+
+        // CC-102 F-W9: any guardian-set mutation invalidates in-flight weakening approvals (which are
+        // recorded by slot index). Symmetric with removeGuardian — clear the pending proposal so approvals
+        // can never be counted against a set that changed after they were cast.
+        delete pendingWeightChange;
+    }
+
+    /// @notice Step 1 of the timelocked bootstrap guardian addition (CC-102 F-W5/F-W7). Only needed for
+    ///         the add that reaches RECOVERY_THRESHOLD (count 1 → 2); the first guardian is added directly.
+    ///         After GUARDIAN_ADD_TIMELOCK, call addGuardian(_guardian) to complete it. Re-proposing
+    ///         overwrites the pending entry and restarts the clock.
+    function proposeGuardianAddition(address _guardian) external onlyOwner {
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+        if (_guardianCount >= RECOVERY_THRESHOLD) revert UseGuardianConsensus();
+        if (_guardian == address(0) || _guardian == owner || _guardian == P256_GUARDIAN_SENTINEL) revert InvalidGuardian();
+        for (uint8 i = 0; i < _guardianCount; i++) {
+            if (_getGuardian(i) == _guardian) revert GuardianAlreadySet();
+        }
+        _pendingGuardian = _guardian;
+        _pendingGuardianAt = uint40(block.timestamp);
+        emit GuardianAdditionProposed(_guardian, block.timestamp + GUARDIAN_ADD_TIMELOCK);
     }
 
     /// @notice Remove a guardian by index.
@@ -1775,6 +1818,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         }
         _setGuardian(_guardianCount - 1, address(0));
         _guardianCount--;
+
+        // CC-102 F-W9: approveWeightChange records approvals by guardian SLOT INDEX (a bit in
+        // approvalBitmap), but this left-compresses indices on removal, so a surviving proposal's
+        // approval bits would silently re-point to different guardians (phantom approvals — a soundness
+        // break in the approval count). Any guardian-set mutation invalidates in-flight weakening
+        // approvals: clear the pending proposal so it must be re-proposed against the new set.
+        delete pendingWeightChange;
 
         emit GuardianRemoved(index, guardianToRemove);
     }

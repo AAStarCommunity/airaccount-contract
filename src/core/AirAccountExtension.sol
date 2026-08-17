@@ -32,6 +32,9 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     uint256 internal constant WEIGHT_CHANGE_TIMELOCK  = 2 days;
     uint256 internal constant WEIGHT_CHANGE_THRESHOLD = 2;
     uint256 internal constant WEIGHT_CHANGE_EXPIRY    = 30 days;
+    /// @dev CC-102 F-W5/F-W7: timelock on the bootstrap guardian add that reaches RECOVERY_THRESHOLD
+    ///      (mirror AAStarAirAccountBase — the P256 twin path lives in this contract).
+    uint256 internal constant GUARDIAN_ADD_TIMELOCK   = 2 days;
 
     // Guardian-signed domain version (mirror AAStarAirAccountBase, issue #84).
     uint8 internal constant GUARDIAN_SIG_VERSION = 4;
@@ -706,6 +709,16 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
             uint16(config.passkeyWeight) + uint16(config.ecdsaWeight) >= config.tier3Threshold) {
             revert InsecureWeightConfig();
         }
+        // CC-102 F-W11: bound the SUM of all factor weights to uint8 max. `_validateWeightedSignature`
+        // accumulates matched factors into a `uint8` with checked arithmetic; a config whose weights sum to
+        // > 255 (each still `< tier1Threshold`, so the per-weight checks above pass) would Panic(0x11)-revert
+        // INSIDE validateUserOp once enough factors sign — a validation-phase revert, violating the repo's
+        // revert-free rule (ERC-7562 / fix M-C: return 1, never revert). Cap the max reachable accumulator.
+        if (uint16(config.passkeyWeight) + uint16(config.ecdsaWeight) + uint16(config.blsWeight)
+            + uint16(config.guardian0Weight) + uint16(config.guardian1Weight) + uint16(config.guardian2Weight)
+            > 255) {
+            revert InsecureWeightConfig();
+        }
     }
 
     /// @dev Returns true if proposed config is a weakening of current config.
@@ -729,6 +742,15 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         if (proposed.tier1Threshold  < current.tier1Threshold)  return true;
         if (proposed.tier2Threshold  < current.tier2Threshold)  return true;
         if (proposed.tier3Threshold  < current.tier3Threshold)  return true;
+        // CC-102 F-W6: ENABLING a previously-disabled higher tier (tier2/tier3 0 → N) is a weakening — it
+        // makes a tier reachable that `_resolveWeightedAlgId` gated off (the `tierN > 0` guard), handing
+        // whatever signer subset already sums past N a level that was unreachable. Route it through the
+        // guardian proposal flow, not a direct owner set. NOTE: `_isWeakening` is reached from BOTH
+        // setWeightConfig (which pre-gates on `current.tier1Threshold != 0`) AND proposeWeightChange (no
+        // init gate), so `current` may be all-zero here — harmless (an all-zero `current` makes every
+        // enable return true, the correct direction), but do NOT assume `current` is initialised.
+        if (current.tier2Threshold == 0 && proposed.tier2Threshold != 0) return true;
+        if (current.tier3Threshold == 0 && proposed.tier3Threshold != 0) return true;
         return false;
     }
 
@@ -765,10 +787,13 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     error InvalidTierConfig();
     error CannotIncreaseTierLimit();
     error UseGuardianConsensus();
+    error GuardianAdditionNotProposed();
+    error GuardianAdditionTimelockNotExpired();
     error InvalidAuthenticatorData();
 
     // Events (same selectors as AAStarAirAccountBase)
     event GuardianAdded(uint8 indexed index, address indexed guardian);
+    event GuardianAdditionProposed(address indexed guardian, uint256 executeAfter);
     event GuardianRemoved(uint8 indexed index, address indexed guardian);
     event P256GuardianAdded(uint8 indexed index, bytes32 x, bytes32 y);
     // guardianIdx (review #120 follow-up): the WithSig paths are submitted by a relayer, so
@@ -997,7 +1022,41 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
     function addP256Guardian(bytes32 x, bytes32 y) external onlyOwner {
         if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
         if (_guardianCount >= RECOVERY_THRESHOLD) revert UseGuardianConsensus();
+        // CC-102 F-W5/F-W7 (P256 twin of base addGuardian — pr-daemon B1): the add that REACHES
+        // RECOVERY_THRESHOLD (count 1 → 2) forms a full recovery quorum. A P256 slot is a COMPLETE recovery
+        // guardian (approveRecoveryWithSig checks only slot index + a WebAuthn assertion over an
+        // attacker-chosen (x,y)), so an untimelocked path here lets a stolen owner key instantly self-add a
+        // puppet passkey guardian and take the account over — the exact bypass the ECDSA-path timelock
+        // closes. Require a matching proposal aged >= GUARDIAN_ADD_TIMELOCK, committed to THIS (x,y). The
+        // first guardian (0 → 1) stays instant; addP256GuardianWithMixedSigs (count >= 2) is never a 1 → 2
+        // add, so it is untouched (sinking the gate into _addP256GuardianInternal would wrongly freeze it).
+        if (_guardianCount + 1 >= RECOVERY_THRESHOLD) {
+            address commitment = address(uint160(uint256(keccak256(abi.encode(x, y)))));
+            if (_pendingGuardian != commitment || _pendingGuardianAt == 0) revert GuardianAdditionNotProposed();
+            if (block.timestamp < uint256(_pendingGuardianAt) + GUARDIAN_ADD_TIMELOCK) {
+                revert GuardianAdditionTimelockNotExpired();
+            }
+            _pendingGuardian = address(0);
+            _pendingGuardianAt = 0;
+        }
         _addP256GuardianInternal(x, y);
+        // F-W9 defensive symmetry with base addGuardian: growing the guardian set clears in-flight
+        // weakening approval bits.
+        delete pendingWeightChange;
+    }
+
+    /// @notice Step 1 of the timelocked bootstrap P256-guardian addition (CC-102 F-W5/F-W7, pr-daemon B1).
+    ///         Only needed for the add that reaches RECOVERY_THRESHOLD (count 1 → 2); the first guardian is
+    ///         added directly by addP256Guardian. Commits to the specific (x, y) key via a 160-bit hash in
+    ///         the shared _pendingGuardian slot (no new storage). After GUARDIAN_ADD_TIMELOCK, call
+    ///         addP256Guardian(x, y). Re-proposing overwrites the pending entry and restarts the clock.
+    function proposeP256GuardianAddition(bytes32 x, bytes32 y) external onlyOwner {
+        if (activeRecovery.newOwner != address(0)) revert RecoveryAlreadyActive();
+        if (_guardianCount >= RECOVERY_THRESHOLD) revert UseGuardianConsensus();
+        if (x == bytes32(0) || y == bytes32(0)) revert InvalidP256GuardianKey();
+        _pendingGuardian = address(uint160(uint256(keccak256(abi.encode(x, y)))));
+        _pendingGuardianAt = uint40(block.timestamp);
+        emit GuardianAdditionProposed(_pendingGuardian, block.timestamp + GUARDIAN_ADD_TIMELOCK);
     }
 
     /// @notice Add a P-256 (passkey) guardian with existing guardian consensus.
@@ -1171,6 +1230,11 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         // new owner re-establishes their own passkey via setP256Key after recovery.
         p256KeyX = bytes32(0);
         p256KeyY = bytes32(0);
+        // CC-102 F-W8: recovery changes the owner, so any weakening weight-change proposal collected under
+        // the OLD (compromised) owner must not survive into the new owner's account. executeWeightChange is
+        // permissionless and only checks approvals + timelock, so a proposal approved during the compromise
+        // window would otherwise stay executable for up to WEIGHT_CHANGE_EXPIRY after recovery. Clear it.
+        delete pendingWeightChange;
         delete activeRecovery;
         _recoveryNonce++;
 
@@ -1279,6 +1343,12 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         }
         _setGuardian(_guardianCount - 1, address(0));
         _guardianCount--;
+
+        // CC-102 F-W9 (twin of base removeGuardian): this mixed-sig removal does the SAME left-compression
+        // of guardian slots, so a surviving weakening proposal's slot-indexed approval bits would re-point
+        // to different guardians (phantom approvals — the exact soundness break the base fix closes). Clear
+        // the pending proposal here too, or the fix is applied to only one of two storage-sharing twins.
+        delete pendingWeightChange;
 
         emit GuardianRemoved(index, guardianToRemove);
     }
