@@ -21,10 +21,16 @@
  *    LIBRARIES BEFORE the impl artifact is loaded. linkBytecode fails CLOSED on any residual `__$…$__`
  *    placeholder, so a partially-linked (broken) account can never be sent on-chain.
  *
- * ── COMMITTEE VALIDATOR: mounted at algId 0x01 (REPLACES the v0.29.0 whole-set DVT validator 0x539B).
- *    Address = dvt AAStarCommitteeValidator (#237) on Sepolia, expected ~0x1A8Db639… — set the FULL
- *    checksum via env DVT_COMMITTEE_VALIDATOR. Pending dvt confirmation on Seeder task f7810089
- *    (address + snapshotEpoch keeper + migration interlock).
+ * ── COMMITTEE VALIDATOR: mounted at algId 0x01 of the NEW v0.31.0 router (a fresh set-once router). This
+ *    does NOT edit the v0.29.0 production router — that stack (router + whole-set validator 0x539B +
+ *    production nodes) is untouched and its accounts keep running. v0.31.0 is a parallel new stack.
+ *    Address = dvt AAStarCommitteeValidator (#237), 0x1A8Db639b5d8Bd5742edB083656EDD56f416cd64 — set via
+ *    env DVT_COMMITTEE_VALIDATOR. Confirmed on Seeder f7810089 (address + keeper #238 + interlock).
+ *
+ * ── EMPTY-VALIDATOR GUARD (dvt catch): the committee validator must have registered DVT nodes BEFORE
+ *    mount — an empty validator (getRegisteredNodeCount()==0) breaks LEGACY whole-set too (no nodes to
+ *    verify against → every tier-2/3 op fails), not just committee. This script throws if it is empty.
+ *    Rollout: dvt registers >=3 DVT nodes on 0x1A8Db639 → THEN run this deploy.
  *
  * ── MIGRATION ORDER (non-upgradable, committee mode OFF at deploy): this deploys the stack with the
  *    committee validator mounted but committeeActive() still false (validator epochLength==0) → the
@@ -53,9 +59,9 @@ const PRIORITY_FEE_FLOOR = 1_500_000_000n;
 const TARGET_VERSION = "0.31.0";
 
 // CC-98: DVT per-proposal COMMITTEE validator (YetAnotherAA-Validator AAStarCommitteeValidator #237),
-// mounted at algId 0x01 — REPLACES the v0.29.0 whole-set validator 0x539B. Expected ~0x1A8Db639…; set the
-// full checksum via env DVT_COMMITTEE_VALIDATOR (pending dvt confirmation, Seeder f7810089). Falls back to
-// AIRACCOUNT_V0290_DVT_VALIDATOR only for a legacy-mode dry-run — real committee deploy needs the committee validator.
+// mounted at algId 0x01 of the NEW v0.31.0 router (fresh set-once router; v0.29.0 router + 0x539B are
+// untouched — parallel stacks). 0x1A8Db639b5d8Bd5742edB083656EDD56f416cd64; set via env
+// DVT_COMMITTEE_VALIDATOR (confirmed on Seeder f7810089). Must have registered nodes before mount (guard below).
 const DVT_COMMITTEE_VALIDATOR = (process.env.DVT_COMMITTEE_VALIDATOR ?? "") as string;
 
 const PRIVATE_KEY = (process.env.PRIVATE_KEY_ANNI ?? process.env.PRIVATE_KEY) as Hex;
@@ -109,9 +115,11 @@ const IMPL_ABI = [
   { name: "validatorRouter", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { name: "ACCOUNT_VERSION", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
 ] as const;
-// Committee validator sanity: it must expose committeeActive() so the account's mode-gating is meaningful.
+// Committee validator sanity: committeeActive() (mode-gating) + getRegisteredNodeCount() (empty-validator
+// guard — an empty validator breaks legacy whole-set too, per dvt on f7810089).
 const COMMITTEE_ABI = [
-  { name: "committeeActive", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { name: "committeeActive",       type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { name: "getRegisteredNodeCount", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
 ] as const;
 
 function loadArtifact(name: string) {
@@ -178,7 +186,16 @@ async function main() {
   const cvCode = await reader.getBytecode({ address: committeeValidator });
   if (!cvCode || cvCode.length <= 2) throw new Error(`committee validator ${committeeValidator} has no code`);
   const activeAtDeploy = await reader.readContract({ address: committeeValidator, abi: COMMITTEE_ABI, functionName: "committeeActive" }) as boolean;
-  console.log(`Committee validator code: ${cvCode.length / 2 - 1} bytes ✓  committeeActive()=${activeAtDeploy}`);
+  const nodeCount = await reader.readContract({ address: committeeValidator, abi: COMMITTEE_ABI, functionName: "getRegisteredNodeCount" }) as bigint;
+  console.log(`Committee validator code: ${cvCode.length / 2 - 1} bytes ✓  committeeActive()=${activeAtDeploy}  registeredNodes=${nodeCount}`);
+  // EMPTY-VALIDATOR GUARD (dvt catch, f7810089): mounting an empty validator breaks legacy whole-set too —
+  // every tier-2/3 op on the new stack would fail. dvt must register >=3 DVT nodes on it before deploy.
+  if (nodeCount === 0n) {
+    throw new Error(
+      `Committee validator ${committeeValidator} has 0 registered nodes — mounting it would break legacy ` +
+      `tier-2/3 too. dvt must register the DVT node set first (Seeder f7810089), then re-run.`,
+    );
+  }
   if (activeAtDeploy) {
     console.warn("  ⚠️  committeeActive() is ALREADY true — migration interlock says the account must be " +
       "deployed + enrolled BEFORE committee mode is flipped on. Confirm with dvt (f7810089) before proceeding.");
