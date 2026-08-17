@@ -6,6 +6,7 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {IAAStarValidator} from "../interfaces/IAAStarValidator.sol";
 import {IAAStarAlgorithm} from "../interfaces/IAAStarAlgorithm.sol";
+import {IAAStarCommitteeValidator} from "../interfaces/IAAStarCommitteeValidator.sol";
 import {AAStarGlobalGuard} from "./AAStarGlobalGuard.sol";
 import {ICalldataParser, ICalldataParserRegistry} from "../interfaces/ICalldataParser.sol";
 import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
