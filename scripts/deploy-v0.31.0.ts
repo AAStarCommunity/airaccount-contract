@@ -55,8 +55,13 @@ import { sepolia } from "viem/chains";
 config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 
 const ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
-const PRIORITY_FEE_FLOOR = 1_500_000_000n;
+// Proven Sepolia fee formula (feedback_sepolia_gas_pricing): maxFee = baseFee*2 + max(tip, 2gwei floor).
+// viem's default 1.2× underprovisions → silent mempool drops. Floor raised 1.5→2 gwei to match the
+// canonical deploy-v0.18/beta4 fees().
+const PRIORITY_FEE_FLOOR = 2_000_000_000n;
 const TARGET_VERSION = "0.31.0";
+// DRY_RUN=1 → sanity + link-check every artifact (landmine) + estimateGas each deploy, send NOTHING.
+const DRY_RUN = process.env.DRY_RUN === "1";
 
 // CC-98: DVT per-proposal COMMITTEE validator (YetAnotherAA-Validator AAStarCommitteeValidator #237),
 // mounted at algId 0x01 of the NEW v0.31.0 router (fresh set-once router; v0.29.0 router + 0x539B are
@@ -162,9 +167,61 @@ async function call(label: string, to: Address, abi: unknown[], fn: string, args
   await waitReceipt(hash, label);
 }
 
+async function estimateDeploy(reader: ReturnType<typeof pub>, label: string, artifactName: string, args: unknown[]): Promise<bigint> {
+  const art = loadArtifact(artifactName); // links libs → throws on any residual __$ placeholder (landmine check)
+  const data = encodeDeployData({ abi: art.abi, bytecode: art.bytecode, args });
+  const gas = await reader.estimateGas({ account: deployer.address, data });
+  console.log(`  ${label.padEnd(28)} est gas ${gas.toString().padStart(10)}  (bytecode ${((art.bytecode.length - 2) / 2).toString().padStart(6)} B)`);
+  return gas;
+}
+
+// DRY RUN: sanity + link-check every artifact + estimateGas each deploy. Sends NOTHING. The impl estimate
+// runs the ctor (which deploys AirAccountExtension inline), so it validates the 15M limit against the
+// grown v0.31.0 bytecode (feedback_impl_gas_limit).
+async function dryRun() {
+  console.log("\n=== v0.31.0 DRY RUN — no transactions sent ===");
+  if (!isAddress(DVT_COMMITTEE_VALIDATOR)) throw new Error("DVT_COMMITTEE_VALIDATOR not set to a valid address");
+  const committeeValidator = getAddress(DVT_COMMITTEE_VALIDATOR);
+  const reader = pub(RPC_URLS[0]);
+  const bal = await reader.getBalance({ address: deployer.address });
+  console.log(`Deployer ${deployer.address}  balance ${(Number(bal) / 1e18).toFixed(4)} ETH`);
+
+  const cvCode = await reader.getBytecode({ address: committeeValidator });
+  if (!cvCode || cvCode.length <= 2) throw new Error(`committee validator ${committeeValidator} has no code`);
+  const active = await reader.readContract({ address: committeeValidator, abi: COMMITTEE_ABI, functionName: "committeeActive" }) as boolean;
+  const nodes = await reader.readContract({ address: committeeValidator, abi: COMMITTEE_ABI, functionName: "getRegisteredNodeCount" }) as bigint;
+  console.log(`Committee validator ${committeeValidator}: committeeActive=${active} registeredNodes=${nodes}`);
+  if (nodes === 0n) throw new Error("committee validator has 0 registered nodes — dvt must register first (f7810089)");
+  if (active) console.warn("  ⚠️  committeeActive() already true — must deploy+enroll BEFORE flip (interlock)");
+
+  const sess = v0290("SESSION_KEY_VALIDATOR"); v0290("FORCE_EXIT_MODULE"); v0290("DELEGATE"); v0290("PARSER_REGISTRY");
+  console.log(`Reused v0.29.0 peripherals resolve ✓ (session ${sess})`);
+
+  const DUMMY = "0x000000000000000000000000000000000000dEaD" as Address;
+  console.log("\n[0] libraries");
+  const gL1 = await estimateDeploy(reader, "WebAuthnLib", "WebAuthnLib", []);
+  const gL2 = await estimateDeploy(reader, "CommitteeBLSLib", "CommitteeBLSLib", []);
+  // Register dummy lib addrs so impl/extension link (the __$…$__ placeholder resolution = landmine check).
+  LIBRARIES["src/utils/WebAuthnLib.sol:WebAuthnLib"] = DUMMY;
+  LIBRARIES["src/utils/CommitteeBLSLib.sol:CommitteeBLSLib"] = DUMMY;
+  console.log("[1-4] stack (dummy constructor deps for estimation)");
+  const gR = await estimateDeploy(reader, "router (AAStarValidator)", "AAStarValidator", []);
+  const gI = await estimateDeploy(reader, "impl (AAStarAirAccountV7)", "AAStarAirAccountV7", [DUMMY]);
+  const gF = await estimateDeploy(reader, "factory", "AAStarAirAccountFactoryV7", [DUMMY, ENTRYPOINT, COMMUNITY, [], []]);
+  const gA = await estimateDeploy(reader, "agentRegistry", "AgentRegistry", []);
+
+  const total = gL1 + gL2 + gR + gI + gF + gA;
+  const f = await fees();
+  console.log(`\nImpl est gas ${gI} vs 15,000,000 limit → ${gI < 15_000_000n ? "OK ✓" : "⚠️  EXCEEDS — bump impl gas limit"}`);
+  console.log(`Total est deploy gas ${total} (+ ~700k for 5 config calls)`);
+  console.log(`~Max cost @ ${(Number(f.maxFeePerGas) / 1e9).toFixed(2)} gwei: ${(Number((total + 700_000n) * f.maxFeePerGas) / 1e18).toFixed(4)} ETH`);
+  console.log("\n=== DRY RUN OK — all artifacts link, sanity passes, nothing sent ===");
+}
+
 async function main() {
   if (!PRIVATE_KEY) throw new Error("PRIVATE_KEY not set");
   if (!COMMUNITY) throw new Error("COMMUNITY_GUARDIAN_ADDRESS not set");
+  if (DRY_RUN) { await dryRun(); return; }
   if (!isAddress(DVT_COMMITTEE_VALIDATOR)) {
     throw new Error(
       "DVT_COMMITTEE_VALIDATOR not set to a valid address. Set the FULL checksum of the dvt " +
