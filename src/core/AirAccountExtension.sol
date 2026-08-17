@@ -706,6 +706,16 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
             uint16(config.passkeyWeight) + uint16(config.ecdsaWeight) >= config.tier3Threshold) {
             revert InsecureWeightConfig();
         }
+        // CC-102 F-W11: bound the SUM of all factor weights to uint8 max. `_validateWeightedSignature`
+        // accumulates matched factors into a `uint8` with checked arithmetic; a config whose weights sum to
+        // > 255 (each still `< tier1Threshold`, so the per-weight checks above pass) would Panic(0x11)-revert
+        // INSIDE validateUserOp once enough factors sign — a validation-phase revert, violating the repo's
+        // revert-free rule (ERC-7562 / fix M-C: return 1, never revert). Cap the max reachable accumulator.
+        if (uint16(config.passkeyWeight) + uint16(config.ecdsaWeight) + uint16(config.blsWeight)
+            + uint16(config.guardian0Weight) + uint16(config.guardian1Weight) + uint16(config.guardian2Weight)
+            > 255) {
+            revert InsecureWeightConfig();
+        }
     }
 
     /// @dev Returns true if proposed config is a weakening of current config.
@@ -729,6 +739,13 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         if (proposed.tier1Threshold  < current.tier1Threshold)  return true;
         if (proposed.tier2Threshold  < current.tier2Threshold)  return true;
         if (proposed.tier3Threshold  < current.tier3Threshold)  return true;
+        // CC-102 F-W6: ENABLING a previously-disabled higher tier (0 → N) is a weakening — it makes a tier
+        // reachable that `_resolveWeightedAlgId` gated off (the `tierN > 0` guard), handing whatever signer
+        // subset already sums past N a level that was unreachable. `_isWeakening` is only consulted once the
+        // config is initialised (setWeightConfig gates on `current.tier1Threshold != 0`), so tier1 is never
+        // 0 here; guard tier2/tier3 enable so it routes through the guardian proposal flow, not a direct set.
+        if (current.tier2Threshold == 0 && proposed.tier2Threshold != 0) return true;
+        if (current.tier3Threshold == 0 && proposed.tier3Threshold != 0) return true;
         return false;
     }
 
@@ -1171,6 +1188,11 @@ contract AirAccountExtension is AAStarAgentStorageLayout, IAirAccountAgent {
         // new owner re-establishes their own passkey via setP256Key after recovery.
         p256KeyX = bytes32(0);
         p256KeyY = bytes32(0);
+        // CC-102 F-W8: recovery changes the owner, so any weakening weight-change proposal collected under
+        // the OLD (compromised) owner must not survive into the new owner's account. executeWeightChange is
+        // permissionless and only checks approvals + timelock, so a proposal approved during the compromise
+        // window would otherwise stay executable for up to WEIGHT_CHANGE_EXPIRY after recovery. Clear it.
+        delete pendingWeightChange;
         delete activeRecovery;
         _recoveryNonce++;
 

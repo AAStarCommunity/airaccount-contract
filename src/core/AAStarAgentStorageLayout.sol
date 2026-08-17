@@ -191,6 +191,15 @@ abstract contract AAStarAgentStorageLayout is Initializable {
     ///      guardian-signed "add guardian X" message after that addition is completed.
     uint256 internal _guardianAdditionNonce;                                               // slot 39
 
+    /// @dev CC-102 F-W5/F-W7: pending bootstrap guardian addition. The add that REACHES
+    ///      RECOVERY_THRESHOLD (count 1 → 2) both completes a recovery quorum and lets an owner-only
+    ///      signer subset reach Tier-3, so a stolen owner key could otherwise instantly self-add two
+    ///      puppet guardians and irreversibly take over. That specific add is two-step + timelocked;
+    ///      this holds the proposed guardian and its propose time. Packed: address(20) + uint40(5)
+    ///      share one slot. Appended at slot 40. (0 address / 0 time = no pending addition.)
+    address internal _pendingGuardian;                                                     // slot 40
+    uint40  internal _pendingGuardianAt;                                                   // slot 40 (packed)
+
     // ── P-256 key slot helpers ─────────────────────────────────────────────────────────────────────
     // Shared by AAStarAirAccountBase (removeGuardian) and AirAccountExtension (all P-256 ops).
     // Defined here so both inheritors use a single implementation without duplicating logic.

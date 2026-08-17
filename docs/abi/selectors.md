@@ -270,6 +270,8 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xa0790bad` | `initializeAgentAccount(address,address,(address[3],bytes32[3],bytes32[3],uint256,uint8[],uint256,address[],(uint128,uint128,uint256)[],uint256,uint256),address)` | AAStarAirAccountV7 |
 | `0xa0cf00cf` | `isValidOwnerAuth(bytes32,bytes)` | AirAccountExtension |
 | `0xa16a4fa2` | `registerParser(address,address)` | CalldataParserRegistry |
+| `0xa228c4e0` | `proposeGuardianAddition(address)` | AAStarAirAccountBase |
+| `0xa228c4e0` | `proposeGuardianAddition(address)` | AAStarAirAccountV7 |
 | `0xa22cb465` | `setApprovalForAll(address,bool)` | IERC8004IdentityRegistry |
 | `0xa314d1c5` | `guardApproveAlgorithm(uint8)` | AAStarAirAccountBase |
 | `0xa314d1c5` | `guardApproveAlgorithm(uint8)` | AAStarAirAccountV7 |
@@ -466,6 +468,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x50a222f4` | `NotOwnerOrEntryPoint()` | AAStarAirAccountBase |
 | `0x50fa3d7f` | `ForceExitCallFailed()` | ForceExitModule |
 | `0x52793b0b` | `InvalidNodeId()` | AAStarBLSKeyRegistry |
+| `0x534910fe` | `GuardianAdditionTimelockNotExpired()` | AAStarAirAccountBase |
 | `0x53682430` | `GuardianAlreadySet()` | AAStarAirAccountBase |
 | `0x5384200c` | `InvalidKeyLength()` | AAStarBLSKeyRegistry |
 | `0x53baf714` | `MaxTargetsExceeded()` | SessionKeyValidator |
@@ -560,6 +563,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xe112ed91` | `NonceMismatch()` | AAStarAirAccountFactoryV7 |
 | `0xe2d401be` | `NoNodesProvided()` | AAStarBLSKeyRegistry |
 | `0xe6c4247b` | `InvalidAddress()` | AirAccountDelegate |
+| `0xe73be0e7` | `GuardianAdditionNotProposed()` | AAStarAirAccountBase |
 | `0xe780655f` | `NotAirAccount()` | SessionKeyValidator |
 | `0xe8e195da` | `ModuleInstallAuthChanged()` | AirAccountExtension |
 | `0xe9d4784c` | `AlgorithmNotRegistered()` | AAStarValidator |
@@ -621,6 +625,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x42c4105e67e78337e7a891b020494a3df6f5c1726fa935c8c4ce74da0110f8be` | `AgentAccountCreated(address,address,address,bytes32,address,uint256)` | AAStarAirAccountFactoryV7 |
 | `0x4bc5a5383386ddc8ca046e71afc9f36199d32d5c29218a10b8ca51def6207fae` | `ExitProposed(address,address,uint256)` | ForceExitModule |
 | `0x530436c3634a98e1e626b0898be2f1e9980cc1bd2a78c07a0aba52d0a48a5059` | `ValidationRequest(address,uint256,string,bytes32)` | IERC8004ValidationRegistry |
+| `0x552d086939405f695c847ba78535d10f6cfae97c1dc2ad76193f942cf0266958` | `GuardianAdditionProposed(address,uint256)` | AAStarAirAccountBase |
 | `0x576deb2334d64aacc3de78fdc843b12c4601431d7d7546f8ef6ff413d18ad8e7` | `WeightChangeCancelled()` | AAStarAirAccountBase |
 | `0x60f9f98be64687700419cfa6fdd7877bc88c6daeb10bc664a2be9fdd6b0c7921` | `RecoveryExecuted(address,address)` | AAStarAirAccountBase |
 | `0x6a4a61743519c9d648a14e6493f47dbe3ff1aa29e7785c96c8326a205e58febc` | `NewFeedback(uint256,address,uint64,int128,uint8,string,string,string,string,string,bytes32)` | IERC8004ReputationRegistry |
