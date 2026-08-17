@@ -220,7 +220,10 @@ contract P256GuardianTest is Test {
         // count=1 is still below threshold — 1 guardian cannot form the required quorum.
         _deployEmpty();
         vm.startPrank(owner);
-        address(account).call(abi.encodeWithSignature("addP256Guardian(bytes32,bytes32)", P256_X0, P256_Y0)); // 0→1
+        address(account).call(abi.encodeWithSignature("addP256Guardian(bytes32,bytes32)", P256_X0, P256_Y0)); // 0→1 instant
+        // 1→2 now requires a timelocked proposal (CC-102 F-W5/F-W7 P256 twin — pr-daemon B1).
+        address(account).call(abi.encodeWithSignature("proposeP256GuardianAddition(bytes32,bytes32)", P256_X1, P256_Y1));
+        vm.warp(block.timestamp + 2 days + 1);
         address(account).call(abi.encodeWithSignature("addP256Guardian(bytes32,bytes32)", P256_X1, P256_Y1)); // 1→2
         // count=2 == RECOVERY_THRESHOLD → third direct add must fail (UseGuardianConsensus)
         (bool ok,) = address(account).call(abi.encodeWithSignature(
@@ -823,6 +826,49 @@ contract P256GuardianTest is Test {
         // nonce after: 1
         (, bytes memory d1) = address(account).call(abi.encodeWithSignature("tierLimitNonce()"));
         assertEq(abi.decode(d1, (uint256)), 1, "nonce should be 1 after first modify");
+    }
+
+    // ── CC-102 F-W5/F-W7 P256 twin timelock (pr-daemon B1) ─────────────────────
+
+    /// @dev count 1 → 2 via the P256 path now requires a timelocked proposal (was the untimelocked twin).
+    function test_FW5_p256_secondGuardian_instantAdd_reverts() public {
+        _deployEmpty();
+        vm.startPrank(owner);
+        address(account).call(abi.encodeWithSignature("addP256Guardian(bytes32,bytes32)", P256_X0, P256_Y0)); // 0→1
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "addP256Guardian(bytes32,bytes32)", P256_X1, P256_Y1
+        )); // 1→2 without proposal
+        vm.stopPrank();
+        assertFalse(ok);
+        assertEq(account.guardianCount(), 1);
+    }
+
+    function test_FW5_p256_secondGuardian_afterTimelock_succeeds() public {
+        _deployEmpty();
+        vm.startPrank(owner);
+        address(account).call(abi.encodeWithSignature("addP256Guardian(bytes32,bytes32)", P256_X0, P256_Y0)); // 0→1
+        address(account).call(abi.encodeWithSignature("proposeP256GuardianAddition(bytes32,bytes32)", P256_X1, P256_Y1));
+        vm.warp(block.timestamp + 2 days + 1);
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "addP256Guardian(bytes32,bytes32)", P256_X1, P256_Y1
+        )); // 1→2 after timelock
+        vm.stopPrank();
+        assertTrue(ok);
+        assertEq(account.guardianCount(), 2);
+    }
+
+    /// @dev The review's takeover probe: a stolen owner key must NOT reach a 2-guardian recovery quorum in
+    ///      a single block by mixing the ECDSA (base) and P256 (extension) twins. The P256 1→2 add is blocked.
+    function test_FW5_p256_singleBlockTakeoverChain_blocked() public {
+        _deployEmpty();
+        vm.startPrank(owner);
+        account.addGuardian(makeAddr("puppetEcdsa"));               // 0→1 instant (ECDSA)
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "addP256Guardian(bytes32,bytes32)", P256_X0, P256_Y0
+        ));                                                          // 1→2 same block via P256 twin
+        vm.stopPrank();
+        assertFalse(ok);                                            // blocked — no untimelocked path to quorum
+        assertEq(account.guardianCount(), 1);
     }
 
     // ── Utility ───────────────────────────────────────────────────────────────

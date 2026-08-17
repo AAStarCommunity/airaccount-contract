@@ -2528,7 +2528,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AirAccountExtension
 
 - **Source:** `src/core/AirAccountExtension.sol`
-- **Functions:** 46 · **Events:** 26 · **Errors:** 57
+- **Functions:** 47 · **Events:** 27 · **Errors:** 59
 - **Title:** AirAccountExtension — cold-function facet for AAStarAirAccountV7 (diamond-lite)
 - Holds the cold, loosely-coupled functions that were split out of AAStarAirAccountBase         to keep the account under EIP-170's 24,576-byte runtime limit:           - ERC-8004 agent identity / reputation / wallet binding           - weighted-signature config governance (setWeightConfig + change proposal flow)         Deployed once (singleton) per implementation; the account reaches it via fallback +         delegatecall, so all logic runs in the ACCOUNT's storage/context: msg.sender,         address(this), owner, guardians, events and reverts are exactly as if inline.
 
@@ -2567,6 +2567,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8dbbce84` | `pendingModuleInstall()` | view | — | Read the pending module-install proposal. proposedAt == 0 means none pending. |
 | `0x7bea8f76` | `pendingWeightChange()` | view | — | Pending weight-change proposal (M6.2). proposedAt == 0 means none pending. |
 | `0x9bbbb8ae` | `proposeModuleInstall(uint256,address,bytes)` | nonpayable | onlyOwnerOrEntryPoint | Propose a module install for the timelocked two-step flow (issue #58 / KI-6). |
+| `0x70d76552` | `proposeP256GuardianAddition(bytes32,bytes32)` | nonpayable | onlyOwner | Step 1 of the timelocked bootstrap P256-guardian addition (CC-102 F-W5/F-W7, pr-daemon B1).         Only needed for the add that reaches RECOVERY_THRESHOLD (count 1 → 2); the first guardian is         added directly by addP256Guardian. Commits to the specific (x, y) key via a 160-bit hash in         the shared _pendingGuardian slot (no new storage). After GUARDIAN_ADD_TIMELOCK, call         addP256Guardian(x, y). Re-proposing overwrites the pending entry and restarts the clock. |
 | `0x7ee76082` | `proposeRecovery(address)` | nonpayable | — | An ECDSA guardian proposes a recovery. Any guardian may propose; auto-approves self. |
 | `0x1110ac2e` | `proposeRecoveryWithSig(address,uint8,bytes)` | nonpayable | — | P-256 guardian proposes a recovery (any relayer can submit the pre-signed calldata). |
 | `0x6b56c654` | `proposeWeightChange((uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8,uint8))` | nonpayable | onlyOwner | Propose a weakening weight-config change (guardian-gated, M6.2). |
@@ -2925,6 +2926,17 @@ Authoritative, auto-generated reference for every external/public function, even
 | `module` | `address` | Module contract address (must be deployed). |
 | `initData` | `bytes` | When sigsRequired > 0: abi.encode(signerIdxs, sigs, moduleInitData).        When sigsRequired == 0: raw module init data.        Op: "INSTALL_MODULE", opData: abi.encode(moduleTypeId, module, keccak256(moduleInitData), nonce). |
 
+#### `proposeP256GuardianAddition(bytes32 x, bytes32 y)`
+
+`0x70d76552` · nonpayable · access: onlyOwner
+
+> Step 1 of the timelocked bootstrap P256-guardian addition (CC-102 F-W5/F-W7, pr-daemon B1).         Only needed for the add that reaches RECOVERY_THRESHOLD (count 1 → 2); the first guardian is         added directly by addP256Guardian. Commits to the specific (x, y) key via a 160-bit hash in         the shared _pendingGuardian slot (no new storage). After GUARDIAN_ADD_TIMELOCK, call         addP256Guardian(x, y). Re-proposing overwrites the pending entry and restarts the clock.
+
+| param | type | description |
+|---|---|---|
+| `x` | `bytes32` |  |
+| `y` | `bytes32` |  |
+
 #### `proposeRecovery(address newOwner)`
 
 `0x7ee76082` · nonpayable · access: —
@@ -3127,6 +3139,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xc8982c1ad4646a1ed6bb40061ac7f2a6aaffef7f2e096aa9805cf705fa12933b` | `AgentWalletSet(uint256,address,address)` |
 | `0xaadd69bae4c5060e9be224899997360e78e4ee632c9951aa0055eeeb5bfc6662` | `ERC8004WalletBound(uint256,address,address)` |
 | `0xeca9cd482b52ddd909a1a2ffcceae1b6dd76b5491ec997d8d9ac05c6426fa344` | `GuardianAdded(uint8,address)` |
+| `0x552d086939405f695c847ba78535d10f6cfae97c1dc2ad76193f942cf0266958` | `GuardianAdditionProposed(address,uint256)` |
 | `0x21d14a63615c145863fb5004c412ccf4ba2439b31bfd93baf5892142417ae5bf` | `GuardianRemoved(uint8,address)` |
 | `0xc7f505b2f371ae2175ee4913f4499e1f2633a7b5936321eed1cdaeb6115181d2` | `Initialized(uint64)` |
 | `0xfc129a9cf9c86292bfb325ad90f24fea23449a3870fdaa024bbfbf1afdf3db31` | `ModuleInstallCancelled(uint256,address,address)` |
@@ -3162,6 +3175,8 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xf645eedf` | `ECDSAInvalidSignature()` |
 | `0xfce698f7` | `ECDSAInvalidSignatureLength(uint256)` |
 | `0xd78bce0c` | `ECDSAInvalidSignatureS(bytes32)` |
+| `0xe73be0e7` | `GuardianAdditionNotProposed()` |
+| `0x534910fe` | `GuardianAdditionTimelockNotExpired()` |
 | `0x53682430` | `GuardianAlreadySet()` |
 | `0xe04a2600` | `IdentityRegistrationFailed()` |
 | `0xa59a4151` | `InsecureWeightConfig()` |

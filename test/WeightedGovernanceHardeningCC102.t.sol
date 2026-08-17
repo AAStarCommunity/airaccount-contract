@@ -30,8 +30,10 @@ contract MockP256Ok_CC102 {
 }
 
 /// @title CC-102 weighted-governance hardening — negative tests
-/// @notice One test per fix delivered in this tag (F-W6 / F-W8 / F-W9 / F-W11). F-W5/F-W7
-///         (guardian-set self-escalation) is a separate design decision, not covered here.
+/// @notice Covers all five delivered items: F-W6 (tier-enable gate), F-W5/F-W7 (addGuardian timelock —
+///         ECDSA path here; the P256 twin lives in P256Guardian.t.sol), F-W8 (recovery clears pending),
+///         F-W9 (guardian-set change clears pending — base removeGuardian here, the removeGuardianWithMixedSigs
+///         twin below), F-W11 (weight-sum bound). F-W12/F-W13 are disclosure items, intentionally not fixed.
 contract WeightedGovernanceHardeningCC102 is Test {
     using MessageHashUtils for bytes32;
 
@@ -196,8 +198,9 @@ contract WeightedGovernanceHardeningCC102 is Test {
         IRecoveryCC102(address(account)).executeRecovery();
         assertEq(account.owner(), newOwner);
 
-        // The pending weakening did NOT survive: even past its own timelock it is gone.
-        vm.warp(block.timestamp + WEIGHT_CHANGE_TIMELOCK + 1);
+        // The pending weakening did NOT survive the owner change: executeWeightChange fails closed on
+        // proposedAt == 0 (a timelock-independent check — no warp needed; under via_ir a second
+        // `vm.warp(block.timestamp + …)` folds to a no-op anyway, per pr-daemon).
         vm.expectRevert(AAStarAirAccountBase.NoWeightChangeProposal.selector);
         _cfg(address(account)).executeWeightChange();
     }
@@ -223,7 +226,7 @@ contract WeightedGovernanceHardeningCC102 is Test {
         vm.prank(ownerW.addr);
         account.removeGuardian(2, sigs);
 
-        vm.warp(block.timestamp + WEIGHT_CHANGE_TIMELOCK + 1);
+        // Cleared → executeWeightChange fails closed on proposedAt == 0 (timelock-independent; no warp).
         vm.expectRevert(AAStarAirAccountBase.NoWeightChangeProposal.selector);
         _cfg(address(account)).executeWeightChange();
     }
@@ -284,6 +287,34 @@ contract WeightedGovernanceHardeningCC102 is Test {
         vm.stopPrank();
         assertEq(a.guardianCount(), 2);
         assertEq(a.guardians(1), gB);
+    }
+
+    /// @dev F-W9 twin (pr-daemon B2): removeGuardianWithMixedSigs does the same left-compression as base
+    ///      removeGuardian, so it must clear the pending proposal too, or phantom slot-indexed approvals survive.
+    function test_FW9_removeGuardianWithMixedSigs_clearsPendingWeightChange() public {
+        vm.prank(ownerW.addr);
+        _cfg(address(account)).setWeightConfig(safeConfig);
+
+        AAStarAgentStorageLayout.WeightConfig memory weaker = safeConfig;
+        weaker.guardian0Weight = 2;
+        vm.prank(ownerW.addr);
+        _cfg(address(account)).proposeWeightChange(weaker);
+        vm.prank(g0.addr); _cfg(address(account)).approveWeightChange(); // 1 approval, recorded by slot index
+
+        // Remove g2 via the mixed-sig twin (2-of-3 ECDSA sigs). Must nuke the pending proposal.
+        uint8[] memory signerIdxs = new uint8[](2);
+        signerIdxs[0] = 0; signerIdxs[1] = 1;
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _signRemoval(g0.privateKey, g2.addr, 0, 2);
+        sigs[1] = _signRemoval(g1.privateKey, g2.addr, 0, 2);
+        vm.prank(ownerW.addr);
+        (bool ok,) = address(account).call(abi.encodeWithSignature(
+            "removeGuardianWithMixedSigs(uint8,uint8[],bytes[])", uint8(2), signerIdxs, sigs
+        ));
+        assertTrue(ok);
+
+        vm.expectRevert(AAStarAirAccountBase.NoWeightChangeProposal.selector);
+        _cfg(address(account)).executeWeightChange();
     }
 
     function _signRemoval(uint256 privKey, address guardianAddr, uint256 nonce, uint8 index)

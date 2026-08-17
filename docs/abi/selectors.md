@@ -187,6 +187,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0x6fa36465` | `setP256Key(bytes32,bytes32)` | AAStarAirAccountV7 |
 | `0x70a08231` | `balanceOf(address)` | IERC8004IdentityRegistry |
 | `0x70a08231` | `balanceOf(address)` | AgentRegistry |
+| `0x70d76552` | `proposeP256GuardianAddition(bytes32,bytes32)` | AirAccountExtension |
 | `0x750e75bf` | `grantNonces(address,address)` | SessionKeyValidator |
 | `0x753cd38a` | `parserFor(address)` | CalldataParserRegistry |
 | `0x79ba5097` | `acceptOwnership()` | AAStarBLSKeyRegistry |
