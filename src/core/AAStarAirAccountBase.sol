@@ -1105,16 +1105,24 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         (address recovered,,) = hash.tryRecover(aaSignature);
         if (recovered == address(0) || recovered != owner) return 1;
 
-        // If the PROTOCOL-level aggregator is configured (single value on AAStarBLSKeyRegistry, set
-        // only by the protocol Safe), defer BLS verification to the EntryPoint's batch
-        // validateSignatures(). AAStarBLSAggregator recomputes each op's message point from its
-        // userOpHash on-chain, so the batch path is bound to the op just like the single-op path
-        // below. ERC-7562: this reads AAStarBLSKeyRegistry storage in the validation phase — the SAME
-        // external-contract read category as _callBLSValidator below (the existing BLS validation),
-        // so it adds no new access surface (requires the BLS algorithm singleton to be staked).
-        // The validator pointer is SET-ONCE (see setValidator), so a compromised owner cannot
-        // redirect this to a malicious router; getAlgorithm is resolved fail-safe (try/catch).
-        if (blsAlg != address(0)) {
+        // LEGACY ONLY: if the PROTOCOL-level aggregator is configured (single value on the whole-set BLS
+        // algorithm, set only by the protocol Safe), defer BLS verification to the EntryPoint's batch
+        // validateSignatures(). AAStarBLSAggregator recomputes each op's message point from its userOpHash
+        // on-chain, so the whole-set batch path is bound to the op like the whole-set single-op path.
+        //
+        // CC-98 (pr-daemon #203 B1): this deferral is GATED on `!committee`. The per-proposal committee
+        // model is single-op only — it injects accountId = address(this), mirrors requiredQuorum(), and the
+        // per-signer Merkle/sortition binds membership per (account, epoch); NONE of that survives the batch
+        // aggregator path. Without the `!committee` guard, a committee-mode algorithm exposing a non-zero
+        // aggregator() would return early here → committee never runs (no accountId, no quorum, validate()
+        // never called). It is arithmetically fail-closed today (the account and the aggregator read the
+        // SAME nodeIdsLength at the SAME offset, and 32+k·512+321 == 32+k·32+321 only at k=0, which is
+        // rejected upstream — no payload satisfies both parsers), and the deployed validator has no
+        // aggregator(); but the account is non-upgradable, so gate it explicitly. DESIGN INVARIANT: an
+        // algorithm mounted at algId 0x01 with committee mode MUST expose `aggregator() == 0`.
+        // (Do NOT make the aggregator/batch extraction committee-stride-aware — that would convert this
+        // fail-closed into a real bypass.)
+        if (!committee && blsAlg != address(0)) {
             address protocolAggregator = _protocolAggregator(blsAlg);
             if (protocolAggregator != address(0)) {
                 return uint256(uint160(protocolAggregator));

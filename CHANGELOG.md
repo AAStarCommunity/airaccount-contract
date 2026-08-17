@@ -45,6 +45,12 @@ repo:dvt `AAStarCommitteeValidator` (YetAnotherAA-Validator #237). ABI adds `enr
     address (add to the `LIBRARIES` map, alongside `WebAuthnLib`), or the shipped account ships broken.
     `forge test` links automatically; the on-chain deploy does not.
 
+> **Mount invariant (pr-daemon #203):** an algorithm mounted at algId `0x01` with committee mode active
+> MUST expose `aggregator() == 0`. The protocol batch-aggregator deferral in `_validateTripleSignature` is
+> now gated on `!committee` — the per-proposal committee model is single-op (accountId injection + quorum
+> mirror + per-signer Merkle/sortition don't survive the batch path). Do NOT make the aggregator/batch
+> extraction committee-stride-aware (that would convert the fail-closed into a real bypass).
+>
 > **Deploy gating (not yet on-chain):** requires the committee validator deployed + mounted on Sepolia,
 > a `snapshotEpoch()` keeper, and SDK/KMS producing the per-signer `nodeId|slot|proof` wire before E2E.
 

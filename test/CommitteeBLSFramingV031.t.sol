@@ -9,6 +9,7 @@ import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
 import {IAAStarAlgorithm} from "../src/interfaces/IAAStarAlgorithm.sol";
 import {IAAStarCommitteeValidator} from "../src/interfaces/IAAStarCommitteeValidator.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 contract MockEP_Committee {
     receive() external payable {}
@@ -26,10 +27,13 @@ contract MockCommitteeValidator is IAAStarAlgorithm, IAAStarCommitteeValidator {
     uint256 public constant PER_SIGNER = 512; // 64 + TREE_DEPTH(14)*32
     bool public active = true;
     uint256 public quorum = 1;
+    address public agg; // protocol batch aggregator (0 = none)
     mapping(address => bool) public enrolled;
 
     function setActive(bool a) external { active = a; }
     function setQuorum(uint256 q) external { quorum = q; }
+    function setAggregator(address a) external { agg = a; }
+    function aggregator() external view returns (address) { return agg; }
 
     function committeeActive() external view returns (bool) { return active; }
     function requiredQuorum() external view returns (uint256) { return quorum; }
@@ -157,6 +161,46 @@ contract CommitteeBLSFramingV031 is Test {
         op.signature = _committeeT2Sig(2); // k=2 >= 2
         vm.prank(address(ep));
         assertEq(account.validateUserOp(op, h, 0), 0);
+    }
+
+    // ── pr-daemon #203 B1: committee must NOT be short-circuited by a non-zero aggregator() ─────
+
+    /// @dev Triple (0x01) committee sig: [nodeIdsLength=k(32)][per-signer(512)×k][blsSig(256)][ownerSig(65)].
+    function _committeeTripleSig(uint256 k, bytes32 userOpHash) internal view returns (bytes memory) {
+        bytes memory signers = new bytes(512 * k);
+        bytes memory blsSig = new bytes(256);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerW, MessageHashUtils.toEthSignedMessageHash(userOpHash));
+        return abi.encodePacked(uint8(0x01), bytes32(k), signers, blsSig, abi.encodePacked(r, s, v));
+    }
+
+    function test_committee_notShortCircuitedByAggregator() public {
+        _enroll();
+        committee.setAggregator(address(0xA66)); // a non-zero protocol aggregator on the 0x01 algorithm
+        (PackedUserOperation memory op, bytes32 h) = _uo();
+        op.signature = _committeeTripleSig(1, h);
+        vm.prank(address(ep));
+        // With the !committee guard, the account runs the committee path (validate() → 0 for the enrolled
+        // account) instead of deferring to the aggregator (which would return uint160(0xA66) = 2662).
+        assertEq(account.validateUserOp(op, h, 0), 0);
+    }
+
+    /// @dev Legacy (32-stride) triple sig: [nodeIdsLength=1(32)][nodeId(32)][blsSig(256)][ownerSig(65)].
+    function _legacyTripleSig(bytes32 userOpHash) internal view returns (bytes memory) {
+        bytes memory blsSig = new bytes(256);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerW, MessageHashUtils.toEthSignedMessageHash(userOpHash));
+        return abi.encodePacked(
+            uint8(0x01), bytes32(uint256(1)), keccak256("node"), blsSig, abi.encodePacked(r, s, v)
+        );
+    }
+
+    function test_legacy_stillDefersToAggregator() public {
+        committee.setActive(false);              // legacy mode
+        committee.setAggregator(address(0xA66)); // aggregator deferral is legacy-only
+        (PackedUserOperation memory op, bytes32 h) = _uo();
+        op.signature = _legacyTripleSig(h);
+        // In legacy mode the aggregator branch fires and returns the aggregator address (uint160).
+        vm.prank(address(ep));
+        assertEq(account.validateUserOp(op, h, 0), uint256(uint160(address(0xA66))));
     }
 
     // ── legacy fallback: committee mode off → 32-byte stride, no accountId ───────
