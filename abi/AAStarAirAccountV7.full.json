@@ -127,6 +127,13 @@
     },
     {
       "type": "function",
+      "name": "enrollInCommitteeValidator",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "entryPoint",
       "inputs": [],
       "outputs": [
@@ -2349,6 +2356,11 @@
     {
       "type": "error",
       "name": "ValidatorAlreadySet",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ValidatorNotSet",
       "inputs": []
     },
     {

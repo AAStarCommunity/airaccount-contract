@@ -10,6 +10,50 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ## [Unreleased]
 
+## [v0.31.0] - 2026-08-17 (CC-98 account-side per-proposal committee BLS integration)
+
+Fresh non-upgradable stack. Version constants `0.30.0` → `0.31.0` (`accountId` now
+`airaccount.v7@0.31.0`). Account side of the CC-98 per-proposal committee quorum, paired with the merged
+repo:dvt `AAStarCommitteeValidator` (YetAnotherAA-Validator #237). ABI adds `enrollInCommitteeValidator`.
+
+### Added — committee framing at the single BLS choke point (`AAStarAirAccountBase.sol`)
+- **accountId injection (CC-98 B2)**: in committee mode the account PREPENDS `accountId = address(this)`
+  before calling the validator — never a submitter-supplied value (the flip-order forgery root). Applied
+  in the shared helper `_verifyAgg`, so it covers all BLS-carrying paths (triple 0x01, T2/T3 0x09/0x0a,
+  T2WA/T3WA, weighted 0x07) at once.
+- **Mode-gated framing**: `committeeActive()` is read from the mounted validator (try/catch, fail-safe)
+  to choose the per-signer stride — 32 (legacy whole-set) vs 512 (`COMMITTEE_PER_SIGNER` =
+  64 + TREE_DEPTH·32) — instead of guessing from the payload shape. A legacy validator that lacks
+  `committeeActive()` ⇒ committee-off ⇒ **byte-identical** legacy framing (drop-in; existing BLS tests
+  unchanged).
+- **Thin quorum mirror**: `k >= requiredQuorum()` (read fail-safe; unreadable ⇒ sentinel `max` ⇒
+  fail-closed). Membership / Merkle / sortition correctness stays the validator's authority.
+- **`enrollInCommitteeValidator()`** (owner-gated): self-enrolls this account (`msg.sender` at the
+  validator is `address(this)`, self-proving) for the validator's accountId defense-in-depth. Call after
+  mount, before the validator owner flips committee mode (migration ordering).
+- `_callBLSValidator` removed (folded into the framing helper). New tests in `CommitteeBLSFramingV031.t.sol`
+  (accountId injection, non-enrolled fail-closed, quorum mirror both directions, self-proving enroll,
+  legacy fallback). Full suite 938/1-skip.
+- **`CommitteeBLSLib` (new external library)**: the heavy committee framing (legacy passthrough,
+  `requiredQuorum()` mirror, accountId prepend, validate call) is externalized to keep the account impl
+  under EIP-170. The account passes its own `accountId = address(this)` in (the B2 injection invariant),
+  so the library never relies on delegatecall identity for that value. Gas: +1 delegatecall + one payload
+  copy per BLS-tier validation (<2% over the pairing-dominated committee cost); no latency. V7 runtime
+  margin 227 B → **433 B**.
+  - ⚠️ **DEPLOY LANDMINE (mirror WebAuthnLib):** impl + extension bytecode now carry a `__$…$__` link
+    placeholder for `CommitteeBLSLib`. The deploy script MUST deploy `CommitteeBLSLib` FIRST and link its
+    address (add to the `LIBRARIES` map, alongside `WebAuthnLib`), or the shipped account ships broken.
+    `forge test` links automatically; the on-chain deploy does not.
+
+> **Mount invariant (pr-daemon #203):** an algorithm mounted at algId `0x01` with committee mode active
+> MUST expose `aggregator() == 0`. The protocol batch-aggregator deferral in `_validateTripleSignature` is
+> now gated on `!committee` — the per-proposal committee model is single-op (accountId injection + quorum
+> mirror + per-signer Merkle/sortition don't survive the batch path). Do NOT make the aggregator/batch
+> extraction committee-stride-aware (that would convert the fail-closed into a real bypass).
+>
+> **Deploy gating (not yet on-chain):** requires the committee validator deployed + mounted on Sepolia,
+> a `snapshotEpoch()` keeper, and SDK/KMS producing the per-signer `nodeId|slot|proof` wire before E2E.
+
 ## [v0.30.0] - 2026-08-17 (CC-102 weighted-governance hardening — DSR found→fixed loop)
 
 Fresh non-upgradable stack. Version constants `ACCOUNT_VERSION` / `FACTORY_VERSION` `0.29.0` → `0.30.0`
