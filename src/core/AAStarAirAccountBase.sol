@@ -13,6 +13,7 @@ import {AAStarAgentStorageLayout} from "./AAStarAgentStorageLayout.sol";
 import {AirAccountExtension} from "./AirAccountExtension.sol";
 import {AlgTierLib} from "../utils/AlgTierLib.sol";
 import {WebAuthnLib} from "../utils/WebAuthnLib.sol";
+import {CommitteeBLSLib} from "../utils/CommitteeBLSLib.sol";
 import {P256} from "solady/utils/P256.sol";
 
 /// @dev Minimal view of AAStarBLSKeyRegistry's protocol-level aggregator (issue #45 Part B).
@@ -980,24 +981,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         stride = committee ? COMMITTEE_PER_SIGNER : 32;
     }
 
-    /// @dev The validator's per-epoch required signer count, read fail-safe. An unreadable value (legacy
-    ///      validator, or a missing snapshot returning the validator's sentinel) yields type(uint256).max,
-    ///      so the account's `k >= requiredQuorum()` mirror check fails closed. Never reverts.
-    function _requiredQuorum(address blsAlg) private view returns (uint256) {
-        try IAAStarCommitteeValidator(blsAlg).requiredQuorum() returns (uint256 q) {
-            return q;
-        } catch {
-            return type(uint256).max;
-        }
-    }
-
-    /// @dev Verify a BLS aggregate over the `[signers...][blsSig(256)]` region (nodeIdsLength prefix already
-    ///      stripped). Legacy mode: pass the region straight to the whole-set validator — byte-identical to
-    ///      the pre-CC-98 `_callBLSValidator` path. Committee mode (CC-98 B2): the account PREPENDS
-    ///      accountId = address(this) — NEVER a submitter-supplied value, which is the flip-order forgery
-    ///      root — and mirrors the validator's `k >= requiredQuorum()` floor. Membership / Merkle / sortition
-    ///      correctness is the validator's authority; the account only injects identity + a thin count check.
-    ///      Fail-closed and never reverts (ERC-4337/7562).
+    /// @dev Thin wrapper over CommitteeBLSLib.verifyAgg (externalized for EIP-170 headroom). Computes and
+    ///      passes the account-injected accountId = address(this) — the CC-98 B2 invariant — so the library
+    ///      never depends on delegatecall identity semantics for that security-critical value. The heavy
+    ///      framing (legacy passthrough, requiredQuorum mirror, accountId prepend, validate call) lives in
+    ///      the linked library to keep the account impl under the 24,576-byte EIP-170 cap.
     function _verifyAgg(
         address blsAlg,
         bool committee,
@@ -1005,21 +993,9 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         uint256 k,
         bytes calldata signersAndSig
     ) private view returns (bool) {
-        if (blsAlg == address(0)) return false;
-        if (!committee) {
-            try IAAStarAlgorithm(blsAlg).validate(userOpHash, signersAndSig) returns (uint256 r) {
-                return r == 0;
-            } catch {
-                return false;
-            }
-        }
-        if (k < _requiredQuorum(blsAlg)) return false;
-        bytes memory payload = abi.encodePacked(bytes32(uint256(uint160(address(this)))), signersAndSig);
-        try IAAStarAlgorithm(blsAlg).validate(userOpHash, payload) returns (uint256 r) {
-            return r == 0;
-        } catch {
-            return false;
-        }
+        return CommitteeBLSLib.verifyAgg(
+            blsAlg, committee, bytes32(uint256(uint160(address(this)))), userOpHash, k, signersAndSig
+        );
     }
 
     /// @dev issue #45 (Codex MEDIUM): fail-safe resolution of the BLS algorithm from the validator

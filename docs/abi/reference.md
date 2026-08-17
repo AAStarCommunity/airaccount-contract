@@ -41,6 +41,7 @@ Authoritative, auto-generated reference for every external/public function, even
 - [UniswapV3Parser](#uniswapv3parser) — `src/parsers/UniswapV3Parser.sol`
 - [AgentRegistry](#agentregistry) — `src/registries/AgentRegistry.sol`
 - [AlgTierLib](#algtierlib) — `src/utils/AlgTierLib.sol`
+- [CommitteeBLSLib](#committeeblslib) — `src/utils/CommitteeBLSLib.sol`
 - [WebAuthnLib](#webauthnlib) — `src/utils/WebAuthnLib.sol`
 - [AAStarBLSKeyRegistry](#aastarblskeyregistry) — `src/validators/AAStarBLSKeyRegistry.sol`
 - [AAStarValidator](#aastarvalidator) — `src/validators/AAStarValidator.sol`
@@ -5204,6 +5205,40 @@ Authoritative, auto-generated reference for every external/public function, even
 - **Functions:** 0 · **Events:** 0 · **Errors:** 0
 - **Title:** AlgTierLib
 - Shared algorithm-to-security-tier mapping for AAStarAirAccountBase and AAStarGlobalGuard.
+
+## CommitteeBLSLib
+
+- **Source:** `src/utils/CommitteeBLSLib.sol`
+- **Functions:** 1 · **Events:** 0 · **Errors:** 0
+- **Title:** CommitteeBLSLib — externalized CC-98 committee BLS framing (EIP-170 headroom)
+- Extracted from AAStarAirAccountBase to keep the non-upgradable account impl under EIP-170.         Deployed once and linked into the impl/extension (like WebAuthnLib), so its `external`         function is delegatecalled and runs in the ACCOUNT's context. The account passes its OWN         accountId (= address(this)); the submitter never supplies it — this is the CC-98 B2 injection         invariant, kept identical to the in-contract version (byte-for-byte same validator call).
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0xb4bd1b1d` | `verifyAgg(address,bool,bytes32,bytes32,uint256,bytes)` | view | — |  |
+
+### Functions
+
+#### `verifyAgg(address blsAlg, bool committee, bytes32 accountId, bytes32 userOpHash, uint256 k, bytes signersAndSig)`
+
+`0xb4bd1b1d` · view · access: —
+
+*@dev* Verify a BLS aggregate over the `[signers...][blsSig(256)]` region (nodeIdsLength prefix      already stripped). Legacy (`committee == false`): pass the region straight to the whole-set      validator — byte-identical to the pre-CC-98 path. Committee (`committee == true`): mirror the      validator's `k >= requiredQuorum()` floor (read fail-safe; unreadable → sentinel max →      fail-closed) and PREPEND the account-injected accountId before calling validate(). Membership /      Merkle / sortition correctness stays the validator's authority. Fail-closed, never reverts      (ERC-4337/7562: the account's validation phase must return, not revert).
+
+| param | type | description |
+|---|---|---|
+| `blsAlg` | `address` |  |
+| `committee` | `bool` |  |
+| `accountId` | `bytes32` |  |
+| `userOpHash` | `bytes32` |  |
+| `k` | `uint256` |  |
+| `signersAndSig` | `bytes` |  |
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
 
 ## WebAuthnLib
 

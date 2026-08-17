@@ -305,6 +305,7 @@ Every 4-byte function selector and custom-error selector, plus event topic hashe
 | `0xb0d691fe` | `entryPoint()` | AirAccountDelegate |
 | `0xb0d691fe` | `entryPoint()` | AirAccountExtension |
 | `0xb14bb914` | `isSessionActive(address,address)` | SessionKeyValidator |
+| `0xb4bd1b1d` | `verifyAgg(address,bool,bytes32,bytes32,uint256,bytes)` | CommitteeBLSLib |
 | `0xb5abc0a2` | `cacheAggregatedKey(bytes32[])` | AAStarBLSKeyRegistry |
 | `0xb5cb7bb8` | `activeRecovery()` | AAStarAgentStorageLayout |
 | `0xb5cb7bb8` | `activeRecovery()` | AAStarAirAccountBase |

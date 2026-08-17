@@ -31,14 +31,22 @@ repo:dvt `AAStarCommitteeValidator` (YetAnotherAA-Validator #237). ABI adds `enr
 - **`enrollInCommitteeValidator()`** (owner-gated): self-enrolls this account (`msg.sender` at the
   validator is `address(this)`, self-proving) for the validator's accountId defense-in-depth. Call after
   mount, before the validator owner flips committee mode (migration ordering).
-- `_callBLSValidator` removed (folded into `_verifyAgg`). New tests in `CommitteeBLSFramingV031.t.sol`
+- `_callBLSValidator` removed (folded into the framing helper). New tests in `CommitteeBLSFramingV031.t.sol`
   (accountId injection, non-enrolled fail-closed, quorum mirror both directions, self-proving enroll,
   legacy fallback). Full suite 938/1-skip.
+- **`CommitteeBLSLib` (new external library)**: the heavy committee framing (legacy passthrough,
+  `requiredQuorum()` mirror, accountId prepend, validate call) is externalized to keep the account impl
+  under EIP-170. The account passes its own `accountId = address(this)` in (the B2 injection invariant),
+  so the library never relies on delegatecall identity for that value. Gas: +1 delegatecall + one payload
+  copy per BLS-tier validation (<2% over the pairing-dominated committee cost); no latency. V7 runtime
+  margin 227 B → **433 B**.
+  - ⚠️ **DEPLOY LANDMINE (mirror WebAuthnLib):** impl + extension bytecode now carry a `__$…$__` link
+    placeholder for `CommitteeBLSLib`. The deploy script MUST deploy `CommitteeBLSLib` FIRST and link its
+    address (add to the `LIBRARIES` map, alongside `WebAuthnLib`), or the shipped account ships broken.
+    `forge test` links automatically; the on-chain deploy does not.
 
 > **Deploy gating (not yet on-chain):** requires the committee validator deployed + mounted on Sepolia,
 > a `snapshotEpoch()` keeper, and SDK/KMS producing the per-signer `nodeId|slot|proof` wire before E2E.
-> **EIP-170:** V7 runtime margin is **227 B** at this tag — extremely tight; evaluate extracting the
-> committee framing to an external library (à la `WebAuthnLib`) before the production deploy.
 
 ## [v0.30.0] - 2026-08-17 (CC-102 weighted-governance hardening — DSR found→fixed loop)
 
