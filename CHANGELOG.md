@@ -10,6 +10,36 @@ AirAccount is a non-upgradable ERC-4337 smart wallet that makes crypto transacti
 
 ## [Unreleased]
 
+## [v0.31.0] - 2026-08-17 (CC-98 account-side per-proposal committee BLS integration)
+
+Fresh non-upgradable stack. Version constants `0.30.0` → `0.31.0` (`accountId` now
+`airaccount.v7@0.31.0`). Account side of the CC-98 per-proposal committee quorum, paired with the merged
+repo:dvt `AAStarCommitteeValidator` (YetAnotherAA-Validator #237). ABI adds `enrollInCommitteeValidator`.
+
+### Added — committee framing at the single BLS choke point (`AAStarAirAccountBase.sol`)
+- **accountId injection (CC-98 B2)**: in committee mode the account PREPENDS `accountId = address(this)`
+  before calling the validator — never a submitter-supplied value (the flip-order forgery root). Applied
+  in the shared helper `_verifyAgg`, so it covers all BLS-carrying paths (triple 0x01, T2/T3 0x09/0x0a,
+  T2WA/T3WA, weighted 0x07) at once.
+- **Mode-gated framing**: `committeeActive()` is read from the mounted validator (try/catch, fail-safe)
+  to choose the per-signer stride — 32 (legacy whole-set) vs 512 (`COMMITTEE_PER_SIGNER` =
+  64 + TREE_DEPTH·32) — instead of guessing from the payload shape. A legacy validator that lacks
+  `committeeActive()` ⇒ committee-off ⇒ **byte-identical** legacy framing (drop-in; existing BLS tests
+  unchanged).
+- **Thin quorum mirror**: `k >= requiredQuorum()` (read fail-safe; unreadable ⇒ sentinel `max` ⇒
+  fail-closed). Membership / Merkle / sortition correctness stays the validator's authority.
+- **`enrollInCommitteeValidator()`** (owner-gated): self-enrolls this account (`msg.sender` at the
+  validator is `address(this)`, self-proving) for the validator's accountId defense-in-depth. Call after
+  mount, before the validator owner flips committee mode (migration ordering).
+- `_callBLSValidator` removed (folded into `_verifyAgg`). New tests in `CommitteeBLSFramingV031.t.sol`
+  (accountId injection, non-enrolled fail-closed, quorum mirror both directions, self-proving enroll,
+  legacy fallback). Full suite 938/1-skip.
+
+> **Deploy gating (not yet on-chain):** requires the committee validator deployed + mounted on Sepolia,
+> a `snapshotEpoch()` keeper, and SDK/KMS producing the per-signer `nodeId|slot|proof` wire before E2E.
+> **EIP-170:** V7 runtime margin is **227 B** at this tag — extremely tight; evaluate extracting the
+> committee framing to an external library (à la `WebAuthnLib`) before the production deploy.
+
 ## [v0.30.0] - 2026-08-17 (CC-102 weighted-governance hardening — DSR found→fixed loop)
 
 Fresh non-upgradable stack. Version constants `ACCOUNT_VERSION` / `FACTORY_VERSION` `0.29.0` → `0.30.0`

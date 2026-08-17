@@ -229,6 +229,7 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     /// @dev issue #45 (Codex CRITICAL): the validator router is set-once; it resolves the BLS/DVT
     ///      algorithm + protocol aggregator, so a swap would let a compromised owner bypass the factor.
     error ValidatorAlreadySet();
+    error ValidatorNotSet();
 
     // M6.1 / M6.2
     error WeightConfigNotInitialized();
@@ -460,6 +461,19 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (address(validator) != address(0)) revert ValidatorAlreadySet();
         validator = IAAStarValidator(_validator);
         emit ValidatorSet(_validator);
+    }
+
+    /// @notice Self-enroll this account in the mounted CC-98 committee BLS validator. `msg.sender` at the
+    ///         validator is this account (address(this)), so enrollment is self-proving — the validator's
+    ///         accountId defense-in-depth (it fails closed on any accountId that maps to a non-enrolled
+    ///         address) recognizes this account. Owner-gated; call once after the committee validator is
+    ///         mounted and BEFORE the validator owner flips committee mode on (migration ordering). No-op
+    ///         to enroll before committee mode is active — it just pre-registers. Reverts only if no BLS
+    ///         algorithm is resolvable (nothing to enroll into) or the algorithm has no enroll() (legacy).
+    function enrollInCommitteeValidator() external onlyOwner {
+        address blsAlg = _resolveBLSAlgorithm();
+        if (blsAlg == address(0)) revert ValidatorNotSet();
+        IAAStarCommitteeValidator(blsAlg).enroll();
     }
 
     // issue #45 Part B: there is intentionally NO account-side aggregator setter. The batch BLS
@@ -943,17 +957,68 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         return (recovered != address(0) && recovered == owner) ? 0 : 1;
     }
 
-    /// @dev Shared BLS validation helper. Calls the BLS algorithm via validator router.
-    ///      Returns 0 on success, 1 on failure (no validator, no BLS alg, or alg returned 1).
-    ///      Extracts duplicated try/catch from _validateTripleSignature, _validateCumulativeTier2/3,
-    ///      and _validateWeightedSignature to reduce bytecode size.
-    function _callBLSValidator(bytes32 hash, bytes calldata blsData) private view returns (uint256) {
-        address blsAlg = _resolveBLSAlgorithm();
-        if (blsAlg == address(0)) return 1;
-        try IAAStarAlgorithm(blsAlg).validate(hash, blsData) returns (uint256 r) {
-            return r;
+    /// @dev CC-98 committee-mode per-signer stride: nodeId(32) + slot(32) + Merkle proof(TREE_DEPTH*32).
+    ///      The mounted committee validator (repo:dvt AAStarCommitteeValidator, #237) uses TREE_DEPTH=14,
+    ///      so perSigner = 64 + 448 = 512. This is part of the LOCKED committee wire format (v0.31.0);
+    ///      any change on the validator side is a coordinated cross-repo wire change (see
+    ///      IAAStarCommitteeValidator). Legacy whole-set mode uses a 32-byte stride (nodeId only).
+    uint256 internal constant COMMITTEE_PER_SIGNER = 512;
+
+    /// @dev Resolve the mounted BLS algorithm and whether it is in per-proposal committee mode (CC-98).
+    ///      `committeeActive()` is read fail-safe: a legacy validator that does not implement it reverts →
+    ///      treated as committee-off → byte-identical legacy whole-set framing (migration drop-in). Never
+    ///      reverts the ERC-4337 validation phase.
+    function _blsAlgMode() private view returns (address blsAlg, bool committee, uint256 stride) {
+        blsAlg = _resolveBLSAlgorithm();
+        if (blsAlg != address(0)) {
+            try IAAStarCommitteeValidator(blsAlg).committeeActive() returns (bool a) {
+                committee = a;
+            } catch {
+                committee = false;
+            }
+        }
+        stride = committee ? COMMITTEE_PER_SIGNER : 32;
+    }
+
+    /// @dev The validator's per-epoch required signer count, read fail-safe. An unreadable value (legacy
+    ///      validator, or a missing snapshot returning the validator's sentinel) yields type(uint256).max,
+    ///      so the account's `k >= requiredQuorum()` mirror check fails closed. Never reverts.
+    function _requiredQuorum(address blsAlg) private view returns (uint256) {
+        try IAAStarCommitteeValidator(blsAlg).requiredQuorum() returns (uint256 q) {
+            return q;
         } catch {
-            return 1;
+            return type(uint256).max;
+        }
+    }
+
+    /// @dev Verify a BLS aggregate over the `[signers...][blsSig(256)]` region (nodeIdsLength prefix already
+    ///      stripped). Legacy mode: pass the region straight to the whole-set validator — byte-identical to
+    ///      the pre-CC-98 `_callBLSValidator` path. Committee mode (CC-98 B2): the account PREPENDS
+    ///      accountId = address(this) — NEVER a submitter-supplied value, which is the flip-order forgery
+    ///      root — and mirrors the validator's `k >= requiredQuorum()` floor. Membership / Merkle / sortition
+    ///      correctness is the validator's authority; the account only injects identity + a thin count check.
+    ///      Fail-closed and never reverts (ERC-4337/7562).
+    function _verifyAgg(
+        address blsAlg,
+        bool committee,
+        bytes32 userOpHash,
+        uint256 k,
+        bytes calldata signersAndSig
+    ) private view returns (bool) {
+        if (blsAlg == address(0)) return false;
+        if (!committee) {
+            try IAAStarAlgorithm(blsAlg).validate(userOpHash, signersAndSig) returns (uint256 r) {
+                return r == 0;
+            } catch {
+                return false;
+            }
+        }
+        if (k < _requiredQuorum(blsAlg)) return false;
+        bytes memory payload = abi.encodePacked(bytes32(uint256(uint160(address(this)))), signersAndSig);
+        try IAAStarAlgorithm(blsAlg).validate(userOpHash, payload) returns (uint256 r) {
+            return r == 0;
+        } catch {
+            return false;
         }
     }
 
@@ -994,10 +1059,15 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         if (blsPayload.length < 32) return false;
         uint256 nodeIdsLength = uint256(bytes32(blsPayload[0:32]));
         if (nodeIdsLength == 0 || nodeIdsLength > 100) return false;
-        uint256 baseOffset = 32 + nodeIdsLength * 32;
+        // CC-98: the per-signer stride is 32 in legacy whole-set mode, COMMITTEE_PER_SIGNER (512) in
+        // committee mode (each signer carries nodeId + slot + Merkle proof). _verifyAgg prepends
+        // accountId = address(this) in committee mode; the submitter payload never carries accountId.
+        (address blsAlg, bool committee, uint256 stride) = _blsAlgMode();
+        if (blsAlg == address(0)) return false;
+        uint256 baseOffset = 32 + nodeIdsLength * stride;
         if (blsPayload.length != baseOffset + 256) return false;
-        // BLS verify data omits the nodeIdsLength prefix: [nodeIds][blsSig]
-        return _callBLSValidator(userOpHash, blsPayload[32:baseOffset + 256]) == 0;
+        // BLS verify data omits the nodeIdsLength prefix: [signers...][blsSig]
+        return _verifyAgg(blsAlg, committee, userOpHash, nodeIdsLength, blsPayload[32:baseOffset + 256]);
     }
 
     /**
@@ -1034,7 +1104,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         uint256 nodeIdsLength = uint256(bytes32(sigData[0:32]));
         if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
 
-        uint256 nodeIdsDataLength = nodeIdsLength * 32;
+        // CC-98: resolve the mounted BLS algorithm + committee mode ONCE. The per-signer stride (32 legacy
+        // / 512 committee) drives the offset math for the trailing owner ECDSA signature; the same blsAlg is
+        // reused for the aggregator check and _verifyAgg below (no second resolution).
+        (address blsAlg, bool committee, uint256 stride) = _blsAlgMode();
+        uint256 nodeIdsDataLength = nodeIdsLength * stride;
         uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 65;
         if (sigData.length != expectedLength) return 1;
 
@@ -1064,7 +1138,6 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // so it adds no new access surface (requires the BLS algorithm singleton to be staked).
         // The validator pointer is SET-ONCE (see setValidator), so a compromised owner cannot
         // redirect this to a malicious router; getAlgorithm is resolved fail-safe (try/catch).
-        address blsAlg = _resolveBLSAlgorithm();
         if (blsAlg != address(0)) {
             address protocolAggregator = _protocolAggregator(blsAlg);
             if (protocolAggregator != address(0)) {
@@ -1073,10 +1146,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         }
 
         // SECURITY 2: BLS aggregate verification via validator router (standalone single-op mode).
-        // The message point is recomputed from userOpHash inside _callBLSValidator and the pairing
-        // is verified against it. Payload omits the nodeIdsLength prefix: [nodeIds][blsSig].
+        // The message point is recomputed from userOpHash inside the algorithm and the pairing is verified
+        // against it. Payload omits the nodeIdsLength prefix: [signers...][blsSig]. In committee mode
+        // _verifyAgg prepends accountId = address(this) and mirrors requiredQuorum(); in legacy mode it is
+        // byte-identical to the pre-CC-98 whole-set call.
         bytes calldata blsPayload = sigData[32:baseOffset + 256];
-        return _callBLSValidator(userOpHash, blsPayload);
+        return _verifyAgg(blsAlg, committee, userOpHash, nodeIdsLength, blsPayload) ? 0 : 1;
     }
 
     /**
@@ -1128,9 +1203,14 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             if (sigData.length < cursor + 32) return 1;
             uint256 nodeIdsLength = uint256(bytes32(sigData[cursor:cursor + 32]));
             if (nodeIdsLength == 0 || nodeIdsLength > 100) return 1;
-            uint256 blsBlockLen = 32 + nodeIdsLength * 32 + 256; // issue #45: messagePoint + mpSig removed
+            // CC-98: committee mode widens the per-signer stride (32 → 512), so the block length is
+            // mode-dependent. Resolve mode here and hand the [signers...][blsSig] region (prefix stripped)
+            // straight to _verifyAgg, which prepends accountId in committee mode.
+            (address blsAlg, bool committee, uint256 stride) = _blsAlgMode();
+            if (blsAlg == address(0)) return 1;
+            uint256 blsBlockLen = 32 + nodeIdsLength * stride + 256; // issue #45: messagePoint + mpSig removed
             if (sigData.length < cursor + blsBlockLen) return 1;
-            if (!_blsPayloadValid(userOpHash, sigData[cursor:cursor + blsBlockLen])) return 1;
+            if (!_verifyAgg(blsAlg, committee, userOpHash, nodeIdsLength, sigData[cursor + 32:cursor + blsBlockLen])) return 1;
             accumulated += wc.blsWeight;
             cursor += blsBlockLen;
         }

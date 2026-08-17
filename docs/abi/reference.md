@@ -26,6 +26,7 @@ Authoritative, auto-generated reference for every external/public function, even
 - [IArbSys](#iarbsys) — `src/core/ForceExitModule.sol`
 - [IL2ToL1MessagePasser](#il2tol1messagepasser) — `src/core/ForceExitModule.sol`
 - [IAAStarAlgorithm](#iaastaralgorithm) — `src/interfaces/IAAStarAlgorithm.sol`
+- [IAAStarCommitteeValidator](#iaastarcommitteevalidator) — `src/interfaces/IAAStarCommitteeValidator.sol`
 - [IAAStarValidator](#iaastarvalidator) — `src/interfaces/IAAStarValidator.sol`
 - [IAirAccountAgent](#iairaccountagent) — `src/interfaces/IAirAccountAgent.sol`
 - [ICalldataParser](#icalldataparser) — `src/interfaces/ICalldataParser.sol`
@@ -343,7 +344,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountBase
 
 - **Source:** `src/core/AAStarAirAccountBase.sol`
-- **Functions:** 37 · **Events:** 28 · **Errors:** 62
+- **Functions:** 38 · **Events:** 28 · **Errors:** 63
 - **Title:** AAStarAirAccountBase
 - Non-upgradable ERC-4337 smart wallet base with algId-based signature routing,         tiered verification, P256 passkey, social recovery, and global guard.
 
@@ -356,6 +357,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xa526d83b` | `addGuardian(address)` | nonpayable | onlyOwner | Add a recovery guardian. Owner-only when fewer than RECOVERY_THRESHOLD guardians exist         (pre-consensus bootstrap — a single guardian cannot form the required quorum anyway).         Once RECOVERY_THRESHOLD guardians are set, use addGuardianWithMixedSigs so a stolen         owner key cannot unilaterally change the guardian set. |
 | `0x8fc2128e` | `agentExtension()` | view | — | Singleton AgentExtension holding ERC-8004 agent functions, reached via fallback. |
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
+| `0x8008a2e1` | `enrollInCommitteeValidator()` | nonpayable | onlyOwner | Self-enroll this account in the mounted CC-98 committee BLS validator. `msg.sender` at the         validator is this account (address(this)), so enrollment is self-proving — the validator's         accountId defense-in-depth (it fails closed on any accountId that maps to a non-enrolled         address) recognizes this account. Owner-gated; call once after the committee validator is         mounted and BEFORE the validator owner flips committee mode on (migration ordering). No-op         to enroll before committee mode is active — it just pre-registers. Reverts only if no BLS         algorithm is resolvable (nothing to enroll into) or the algorithm has no enroll() (legacy). |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
 | `0xb61d27f6` | `execute(address,uint256,bytes)` | nonpayable | onlyOwnerOrEntryPoint, nonReentrant | Execute a single call from this account. |
 | `0x47e1da2a` | `executeBatch(address[],uint256[],bytes[])` | nonpayable | onlyOwnerOrEntryPoint, nonReentrant | Execute a batch of calls from this account. |
@@ -441,6 +443,12 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `bool` |  |
+
+#### `enrollInCommitteeValidator()`
+
+`0x8008a2e1` · nonpayable · access: onlyOwner
+
+> Self-enroll this account in the mounted CC-98 committee BLS validator. `msg.sender` at the         validator is this account (address(this)), so enrollment is self-proving — the validator's         accountId defense-in-depth (it fails closed on any accountId that maps to a non-enrolled         address) recognizes this account. Owner-gated; call once after the committee validator is         mounted and BEFORE the validator owner flips committee mode on (migration ordering). No-op         to enroll before committee mode is active — it just pre-registers. Reverts only if no BLS         algorithm is resolvable (nothing to enroll into) or the algorithm has no enroll() (legacy).
 
 #### `entryPoint()`
 
@@ -883,6 +891,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x8b9ff862` | `UnparseableGuardedCall(address)` |
 | `0x6cd89112` | `UseGuardianConsensus()` |
 | `0x2157e2e7` | `ValidatorAlreadySet()` |
+| `0x6bb49bc4` | `ValidatorNotSet()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
 | `0xf6b2ebb8` | `WeightChangeAlreadyApproved()` |
 | `0xf0854cb8` | `WeightChangeNotApproved()` |
@@ -1257,7 +1266,7 @@ Authoritative, auto-generated reference for every external/public function, even
 ## AAStarAirAccountV7
 
 - **Source:** `src/core/AAStarAirAccountV7.sol`
-- **Functions:** 50 · **Events:** 28 · **Errors:** 64
+- **Functions:** 51 · **Events:** 28 · **Errors:** 65
 - **Title:** AAStarAirAccountV7 — ERC-4337 account for EntryPoint v0.7
 - Non-upgradable, inherits core logic from AAStarAirAccountBase. ERC-7579 Minimum Compatibility Shim (M6):   AirAccount is NOT a full ERC-7579 implementation (that is M7 work).   This shim adds the minimum surface so that ERC-7579 ecosystem tools   (paymaster SDKs, session key wizards, ZeroDev tooling) can query   account metadata and installed modules without custom integration.   Supported in M6 (read/query only):     - accountId()           — identity string for tooling     - supportsModule()      — declares validator(1) and executor(2) support     - isModuleInstalled()   — maps to existing validator slot     - supportsInterface()   — ERC-165 for ERC-1271 and ERC-7579 interface IDs     - isValidSignature()    — ERC-1271 on-chain signature validation   NOT supported in M6 (full M7):     - installModule() / uninstallModule() with guardian gate + timelock     - executeFromExecutor()     - Full ModeCode execution dispatch
 
@@ -1272,6 +1281,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0xa526d83b` | `addGuardian(address)` | nonpayable | — | Add a recovery guardian. Owner-only when fewer than RECOVERY_THRESHOLD guardians exist         (pre-consensus bootstrap — a single guardian cannot form the required quorum anyway).         Once RECOVERY_THRESHOLD guardians are set, use addGuardianWithMixedSigs so a stolen         owner key cannot unilaterally change the guardian set. |
 | `0x8fc2128e` | `agentExtension()` | view | — | Singleton AgentExtension holding ERC-8004 agent functions, reached via fallback. |
 | `0x8450a928` | `approvedAlgorithms(uint8)` | view | — | Algorithm whitelist — SINGLE SOURCE OF TRUTH (v0.17.2-beta.4). |
+| `0x8008a2e1` | `enrollInCommitteeValidator()` | nonpayable | — | Self-enroll this account in the mounted CC-98 committee BLS validator. `msg.sender` at the         validator is this account (address(this)), so enrollment is self-proving — the validator's         accountId defense-in-depth (it fails closed on any accountId that maps to a non-enrolled         address) recognizes this account. Owner-gated; call once after the committee validator is         mounted and BEFORE the validator owner flips committee mode on (migration ordering). No-op         to enroll before committee mode is active — it just pre-registers. Reverts only if no BLS         algorithm is resolvable (nothing to enroll into) or the algorithm has no enroll() (legacy). |
 | `0xb0d691fe` | `entryPoint()` | view | — | The ERC-4337 EntryPoint contract (set once in initialize, not immutable for clone compatibility) |
 | `0xb61d27f6` | `execute(address,uint256,bytes)` | nonpayable | — | Execute a single call from this account. |
 | `0x47e1da2a` | `executeBatch(address[],uint256[],bytes[])` | nonpayable | — | Execute a batch of calls from this account. |
@@ -1388,6 +1398,12 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `_0` | `bool` |  |
+
+#### `enrollInCommitteeValidator()`
+
+`0x8008a2e1` · nonpayable · access: —
+
+> Self-enroll this account in the mounted CC-98 committee BLS validator. `msg.sender` at the         validator is this account (address(this)), so enrollment is self-proving — the validator's         accountId defense-in-depth (it fails closed on any accountId that maps to a non-enrolled         address) recognizes this account. Owner-gated; call once after the committee validator is         mounted and BEFORE the validator owner flips committee mode on (migration ordering). No-op         to enroll before committee mode is active — it just pre-registers. Reverts only if no BLS         algorithm is resolvable (nothing to enroll into) or the algorithm has no enroll() (legacy).
 
 #### `entryPoint()`
 
@@ -1994,6 +2010,7 @@ Authoritative, auto-generated reference for every external/public function, even
 | `0x63ce4efa` | `UnsupportedInnerSelector()` |
 | `0x6cd89112` | `UseGuardianConsensus()` |
 | `0x2157e2e7` | `ValidatorAlreadySet()` |
+| `0x6bb49bc4` | `ValidatorNotSet()` |
 | `0x2e0ec5bc` | `WeakeningRequiresProposal()` |
 | `0xf6b2ebb8` | `WeightChangeAlreadyApproved()` |
 | `0xf0854cb8` | `WeightChangeNotApproved()` |
@@ -3645,6 +3662,49 @@ Authoritative, auto-generated reference for every external/public function, even
 | returns | type | description |
 |---|---|---|
 | `validationData` | `uint256` | 0 for success, 1 for failure |
+
+## IAAStarCommitteeValidator
+
+- **Source:** `src/interfaces/IAAStarCommitteeValidator.sol`
+- **Functions:** 3 · **Events:** 0 · **Errors:** 0
+- **Title:** IAAStarCommitteeValidator — account-side view of the CC-98 per-proposal committee BLS validator
+- The mounted BLS algorithm (router algId 0x01) is, from v0.30.0 on, a per-proposal committee         validator (repo:dvt YetAnotherAA-Validator PR #237, `AAStarCommitteeValidator is AAStarValidator`).         The account reads `committeeActive()` to choose its signature framing (inject accountId +         committee layout) instead of guessing from the payload shape — that shape-collision is the root         of the flip-order forgery (CC-98 B2). Same validator state drives both the validator's parse and         the account's framing, so there is no cross-repo desync window.
+
+### Function selector index
+
+| selector | function | mutability | access | notice |
+|---|---|---|---|---|
+| `0x110768c4` | `committeeActive()` | view | — | True iff committee mode is active (validator's `epochLength != 0`). |
+| `0xe65f2a7e` | `enroll()` | nonpayable | — | Self-enroll the caller (the account) for committee validation. `msg.sender` IS the account,         so enrollment is self-proving. Defense-in-depth for the account-injected accountId: the         validator fails closed on any accountId that maps to a non-enrolled address. |
+| `0x7036014e` | `requiredQuorum()` | view | — | Required signer count ⌈2·m_e/3⌉ for the epoch active now (over the look-ahead set         `setRoot[e-1]`). Returns `type(uint256).max` when the prerequisite snapshot is missing, so         a `k >= requiredQuorum()` mirror check fails closed. |
+
+### Functions
+
+#### `committeeActive()`
+
+`0x110768c4` · view · access: —
+
+> True iff committee mode is active (validator's `epochLength != 0`).
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `bool` |  |
+
+#### `enroll()`
+
+`0xe65f2a7e` · nonpayable · access: —
+
+> Self-enroll the caller (the account) for committee validation. `msg.sender` IS the account,         so enrollment is self-proving. Defense-in-depth for the account-injected accountId: the         validator fails closed on any accountId that maps to a non-enrolled address.
+
+#### `requiredQuorum()`
+
+`0x7036014e` · view · access: —
+
+> Required signer count ⌈2·m_e/3⌉ for the epoch active now (over the look-ahead set         `setRoot[e-1]`). Returns `type(uint256).max` when the prerequisite snapshot is missing, so         a `k >= requiredQuorum()` mirror check fails closed.
+
+| returns | type | description |
+|---|---|---|
+| `_0` | `uint256` |  |
 
 ## IAAStarValidator
 
