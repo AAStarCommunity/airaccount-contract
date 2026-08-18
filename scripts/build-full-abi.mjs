@@ -51,6 +51,28 @@ function canonicalSig(entry) {
   return `${entry.name}(${(entry.inputs || []).map(canonicalType).join(",")})`;
 }
 
+// Stamp the on-chain version constants into the artifact so a DOWNSTREAM consumer that pins
+// "the airaccount ABI version" has a value to pin. Without this, .full.json is a pure interface
+// descriptor with no version field — a consumer diffing by version is blind to ABI changes even
+// though ACCOUNT_VERSION/FACTORY_VERSION bump on-chain. (CC-103: same blind spot KMS hit on its
+// openapi spec version pin.) Parsed from source so it can never drift from the deployed constant.
+function readSolConst(path, constName) {
+  if (!existsSync(path)) {
+    console.error(`Missing source ${path} — cannot read ${constName}.`);
+    process.exit(2);
+  }
+  const m = readFileSync(path, "utf8").match(
+    new RegExp(`${constName}\\s*=\\s*"([^"]+)"`)
+  );
+  if (!m) {
+    console.error(`Cannot find string constant ${constName} in ${path}.`);
+    process.exit(2);
+  }
+  return m[1];
+}
+const accountVersion = readSolConst("src/core/AAStarAirAccountV7.sol", "ACCOUNT_VERSION");
+const factoryVersion = readSolConst("src/core/AAStarAirAccountFactoryV7.sol", "FACTORY_VERSION");
+
 const account = loadArtifact(ACCOUNT);
 const routed  = loadArtifact(ROUTED);
 
@@ -110,7 +132,7 @@ if (missing.length) {
   process.exit(1);
 }
 
-const serialized = JSON.stringify({ abi: fullAbi }, null, 2) + "\n";
+const serialized = JSON.stringify({ accountVersion, factoryVersion, abi: fullAbi }, null, 2) + "\n";
 const fnCount = fullAbi.filter((e) => e.type === "function").length;
 const routedCount = Object.keys(routedIds).length;
 
