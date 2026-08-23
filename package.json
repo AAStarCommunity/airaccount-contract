@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "gen:abi-docs": "node scripts/gen-abi-docs.mjs",
-    "gen:abi-docs:check": "node scripts/gen-abi-docs.mjs --check"
+    "gen:abi-docs:check": "node scripts/gen-abi-docs.mjs --check",
+    "repcredit:deploy:local": "tsx scripts/deploy-repcredit-local.ts"
   },
   "dependencies": {
     "@noble/curves": "^1.8.1",
