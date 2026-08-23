@@ -6,7 +6,8 @@
   "scripts": {
     "gen:abi-docs": "node scripts/gen-abi-docs.mjs",
     "gen:abi-docs:check": "node scripts/gen-abi-docs.mjs --check",
-    "repcredit:deploy:local": "tsx scripts/deploy-repcredit-local.ts"
+    "repcredit:deploy:local": "tsx scripts/deploy-repcredit-local.ts",
+    "repcredit:deploy:sepolia": "tsx scripts/deploy-repcredit-sepolia.ts"
   },
   "dependencies": {
     "@noble/curves": "^1.8.1",
@@ -14,6 +15,7 @@
     "viem": "^2.47.0"
   },
   "devDependencies": {
+    "@types/node": "^22.10.0",
     "tsx": "^4.21.0"
   }
 }
