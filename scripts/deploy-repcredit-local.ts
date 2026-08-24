@@ -7,14 +7,22 @@
  * - links both external libraries and fails on any unresolved placeholder;
  * - refuses to overwrite an existing evidence output file;
  * - redacts REPCREDIT_RPC_URL out of every emitted error and never persists it, so pointing the
- *   script at a remote node cannot leak a provider API key (CC-51 MEDIUM-1 / LOW-2);
- * - persists the transactions already mined when a run fails, so nothing becomes an orphan.
+ *   script at a remote node cannot leak a provider API key (CC-51 MEDIUM-1 / LOW-1 / LOW-2);
+ * - journals every transaction hash to disk BEFORE awaiting its receipt, never rebroadcasts on a
+ *   receipt timeout, and resumes from the journal on a rerun (CC-51 post-review MEDIUM).
+ *
+ * If a journalled transaction is genuinely dropped rather than slow, every rerun will keep polling
+ * it. That is deliberate — the alternative, an automatic rebroadcast, is what snarls the nonce. The
+ * escape is manual and explicit: confirm on a block explorer that the hash will never mine, then
+ * remove that entry from the journal file by hand before rerunning.
  *
  * Usage:
  *   REPCREDIT_RPC_URL=http://127.0.0.1:18547 \
  *   REPCREDIT_ENTRYPOINT=0x... \
  *   REPCREDIT_OUTPUT=/absolute/path/airaccount-deployment.json \
  *   pnpm tsx scripts/deploy-repcredit-local.ts
+ *
+ * Optional: REPCREDIT_JOURNAL, REPCREDIT_RECEIPT_TIMEOUT_MS, REPCREDIT_POLL_INTERVAL_MS.
  */
 
 import {
@@ -31,16 +39,22 @@ import {
   type Abi,
   type Address,
   type Hex,
-  type TransactionReceipt,
 } from "viem";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { createRedactor } from "./lib/repcredit-redact.mjs";
+import {
+  createJournal,
+  createTxRunner,
+  planFingerprint,
+  reconcilePending,
+} from "./lib/repcredit-tx-journal.mjs";
 
 const CHAIN_ID = 31_337;
 const DEFAULT_ANVIL_DEPLOYER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as Address;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 const ZERO_BYTES32 = `0x${"00".repeat(32)}` as Hex;
-const RPC_PLACEHOLDER = "<redacted-rpc-url>";
+const SALT = 20_260_823_001n;
 
 const rpcUrl = process.env.REPCREDIT_RPC_URL ?? "http://127.0.0.1:18547";
 const entryPointRaw = process.env.REPCREDIT_ENTRYPOINT ?? "";
@@ -52,7 +66,14 @@ if (!isAddress(deployerRaw)) throw new Error("REPCREDIT_DEPLOYER must be a valid
 if (!outputPath || !outputPath.startsWith("/")) {
   throw new Error("REPCREDIT_OUTPUT must be an absolute path");
 }
+// The evidence file stays write-once; the journal and the failure record live beside it so a
+// resumed run can still write its evidence here.
 if (existsSync(outputPath)) throw new Error(`refusing to overwrite ${outputPath}`);
+
+const journalPath = process.env.REPCREDIT_JOURNAL || `${outputPath}.journal.json`;
+const failurePath = `${outputPath}.failed.json`;
+const receiptTimeoutMs = Number(process.env.REPCREDIT_RECEIPT_TIMEOUT_MS ?? "") || undefined;
+const pollingIntervalMs = Number(process.env.REPCREDIT_POLL_INTERVAL_MS ?? "") || undefined;
 
 const entryPoint = getAddress(entryPointRaw);
 const deployer = getAddress(deployerRaw);
@@ -64,28 +85,7 @@ const localChain = defineChain({
 });
 const publicClient = createPublicClient({ chain: localChain, transport: http(rpcUrl) });
 const walletClient = createWalletClient({ account: deployer, chain: localChain, transport: http(rpcUrl) });
-
-const rpcOrigin = (() => {
-  try {
-    return new URL(rpcUrl).origin;
-  } catch {
-    return "";
-  }
-})();
-
-/**
- * viem's `getUrl` (viem/_esm/errors/utils.js) is the identity function, so transport errors carry the
- * full RPC URL. Harmless for the 127.0.0.1 default, but REPCREDIT_RPC_URL may be repointed at a
- * remote node whose API key sits in the URL, so redact before anything is emitted.
- */
-function redact(text: string): string {
-  let out = rpcUrl ? text.split(rpcUrl).join(RPC_PLACEHOLDER) : text;
-  if (rpcOrigin) {
-    const escaped = rpcOrigin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    out = out.replace(new RegExp(`${escaped}[^\\s"']*`, "g"), RPC_PLACEHOLDER);
-  }
-  return out.replace(/(https?:\/\/[^\s"']+?)\/(v2|v3)\/[A-Za-z0-9_-]{8,}/g, `$1/$2/${RPC_PLACEHOLDER}`);
-}
+const redact = createRedactor(rpcUrl);
 
 type Artifact = {
   abi: Abi;
@@ -93,7 +93,17 @@ type Artifact = {
 };
 
 const libraries: Record<string, Address> = {};
-const transactions: Record<string, { hash: Hex; blockNumber: string; gasUsed: string }> = {};
+
+const journal = createJournal({
+  path: journalPath,
+  fingerprint: planFingerprint({
+    script: "deploy-repcredit-local",
+    chainId: CHAIN_ID,
+    entryPoint,
+    deployer,
+    salt: SALT.toString(),
+  }),
+});
 
 function artifact(name: string): Artifact {
   const path = resolve(import.meta.dirname, `../out/${name}.sol/${name}.json`);
@@ -120,24 +130,24 @@ function linkedBytecode(name: string): Hex {
   return (out.startsWith("0x") ? out : `0x${out}`) as Hex;
 }
 
-async function record(label: string, hash: Hex): Promise<TransactionReceipt> {
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  if (receipt.status !== "success") throw new Error(`${label} reverted: ${hash}`);
-  transactions[label] = {
-    hash,
-    blockNumber: receipt.blockNumber.toString(),
-    gasUsed: receipt.gasUsed.toString(),
-  };
-  return receipt;
-}
+const runner = createTxRunner({
+  journal,
+  publicClient,
+  walletClient,
+  overrides: async () => ({ account: deployer }),
+  confirmations: 1,
+  receiptTimeoutMs,
+  pollingIntervalMs,
+});
 
 async function deploy(name: string, args: readonly unknown[] = []): Promise<Address> {
   const loaded = artifact(name);
   const data = encodeDeployData({ abi: loaded.abi, bytecode: linkedBytecode(name), args });
-  const hash = await walletClient.sendTransaction({ account: deployer, data });
-  const receipt = await record(`deploy:${name}`, hash);
-  if (!receipt.contractAddress) throw new Error(`${name}: missing contract address`);
-  return getAddress(receipt.contractAddress);
+  const result = await runner.send(`deploy:${name}`, { data });
+  const address = result.receipt?.contractAddress ?? result.entry?.contractAddress;
+  if (!address) throw new Error(`${name}: missing contract address`);
+  if (result.reused) process.stderr.write(`${JSON.stringify({ status: "resumed", step: `deploy:${name}`, address })}\n`);
+  return getAddress(address as Address);
 }
 
 async function call(
@@ -148,15 +158,22 @@ async function call(
   args: readonly unknown[],
 ): Promise<void> {
   const data = encodeFunctionData({ abi, functionName, args });
-  const hash = await walletClient.sendTransaction({ account: deployer, to: address, data });
-  await record(label, hash);
+  const result = await runner.send(label, { to: address, data });
+  if (result.reused) process.stderr.write(`${JSON.stringify({ status: "resumed", step: label })}\n`);
 }
 
 async function main(): Promise<void> {
+  journal.load();
   const chainId = await publicClient.getChainId();
   if (chainId !== CHAIN_ID) throw new Error(`local-only script: expected chain ${CHAIN_ID}, got ${chainId}`);
   if ((await publicClient.getBytecode({ address: entryPoint })) === undefined) {
     throw new Error(`EntryPoint ${entryPoint} has no code`);
+  }
+  // Reconcile before the plan restarts: a hash that mined while the previous process was dying is
+  // adopted here instead of being sent a second time.
+  if (journal.resumed) {
+    const reconciled = await reconcilePending({ journal, publicClient });
+    process.stderr.write(`${JSON.stringify({ status: "resume", journal: journalPath, reconciled })}\n`);
   }
 
   const webAuthnLib = await deploy("WebAuthnLib");
@@ -164,7 +181,8 @@ async function main(): Promise<void> {
   const committeeBlsLib = await deploy("CommitteeBLSLib");
   libraries["src/utils/CommitteeBLSLib.sol:CommitteeBLSLib"] = committeeBlsLib;
 
-  // Router address zero is deliberate: this evidence account uses explicit ECDSA [0x02] only.
+  // Router address zero is deliberate. The whitelist below is recorded but inert: dailyLimit = 0
+  // means the factory deploys no guard, so no algId/tier gate is ever consulted (CC-51 MEDIUM-4).
   const implementation = await deploy("AAStarAirAccountV7", [ZERO_ADDRESS]);
   const factory = await deploy("AAStarAirAccountFactoryV7", [
     implementation,
@@ -188,16 +206,15 @@ async function main(): Promise<void> {
     tier1Limit: 0n,
     tier2Limit: 0n,
   } as const;
-  const salt = 20_260_823_001n;
   const account = getAddress(await publicClient.readContract({
     address: factory,
     abi: factoryAbi,
     functionName: "getAddress",
-    args: [deployer, salt, config, ZERO_BYTES32, ZERO_BYTES32],
+    args: [deployer, SALT, config, ZERO_BYTES32, ZERO_BYTES32],
   }) as Address);
   await call("create:AirAccount", factory, factoryAbi, "createAccount", [
     deployer,
-    salt,
+    SALT,
     config,
     ZERO_BYTES32,
     ZERO_BYTES32,
@@ -224,10 +241,11 @@ async function main(): Promise<void> {
     deployer,
     version,
     contracts: { webAuthnLib, committeeBlsLib, implementation, factory, account, counter },
-    transactions,
+    transactions: journal.minedTransactions(),
   };
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, { flag: "wx" });
+  journal.discard();
   process.stdout.write(`${JSON.stringify(output)}\n`);
 }
 
@@ -235,14 +253,29 @@ try {
   await main();
 } catch (error) {
   const message = redact(error instanceof Error ? (error.stack ?? error.message) : String(error));
-  if (Object.keys(transactions).length > 0) {
-    // Persist what already made it on chain so partially deployed contracts are never lost.
+  // Guarded on every hash ever broadcast, not just the confirmed ones: a first-transaction timeout
+  // used to leave no record at all.
+  if (journal.allHashes().length > 0) {
     try {
-      mkdirSync(dirname(outputPath), { recursive: true });
+      const pending = journal.pending().map(([label, entry]) => ({ label, hash: entry.hash, sentAt: entry.sentAt }));
+      mkdirSync(dirname(failurePath), { recursive: true });
       writeFileSync(
-        outputPath,
-        `${JSON.stringify({ schemaVersion: 1, status: "failed", chainId: CHAIN_ID, entryPoint, deployer, error: message, libraries, transactions }, null, 2)}\n`,
-        { flag: "wx" },
+        failurePath,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          status: "failed",
+          chainId: CHAIN_ID,
+          entryPoint,
+          deployer,
+          error: message,
+          journal: journalPath,
+          libraries,
+          transactions: journal.minedTransactions(),
+          pending,
+          ...(pending.length > 0
+            ? { resume: "re-run with the same REPCREDIT_* environment: the pending hashes are polled and reconciled. Never re-broadcast them." }
+            : {}),
+        }, null, 2)}\n`,
       );
     } catch (writeError) {
       process.stderr.write(`failed to persist partial evidence: ${redact(String(writeError))}\n`);

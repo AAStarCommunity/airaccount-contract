@@ -5,14 +5,29 @@
  * logged or written. The output contains public addresses and receipts only.
  *
  * Safety properties (CC-51 review):
- * - every emitted error is passed through redact(), so the provider API key inside
- *   REPCREDIT_RPC_URL can never reach stderr or the evidence file;
+ * - every emitted error is passed through the shared redactor, so any credential inside
+ *   REPCREDIT_RPC_URL — path key, query key or `user:pass@` userinfo — can never reach
+ *   stderr or the evidence files;
  * - the EntryPoint must be the canonical v0.7 singleton unless explicitly overridden,
  *   because initialize() bakes it into a non-upgradable account permanently;
  * - fees follow the repo's proven Sepolia formula instead of viem's 1.2x default;
  * - DRY_RUN=1 links every artifact and estimates gas without sending a transaction;
- * - a failed run still persists the transactions already mined, so nothing becomes an
- *   unrecorded orphan.
+ * - every transaction hash is journalled to disk BEFORE its receipt is awaited, a receipt
+ *   timeout never rebroadcasts, and a rerun polls the journalled hashes and resumes from
+ *   where the previous attempt stopped (CC-51 post-review MEDIUM).
+ *
+ * If a journalled transaction is genuinely dropped rather than slow, every rerun will keep polling
+ * it. That is deliberate — the alternative, an automatic rebroadcast, is what snarls the nonce. The
+ * escape is manual and explicit: confirm on a block explorer that the hash will never mine, then
+ * remove that entry from the journal file by hand before rerunning.
+ *
+ * Environment:
+ *   REPCREDIT_RPC_URL, REPCREDIT_PRIVATE_KEY, REPCREDIT_ENTRYPOINT, REPCREDIT_OUTPUT (required)
+ *   REPCREDIT_JOURNAL              resume journal path (default: <REPCREDIT_OUTPUT>.journal.json)
+ *   REPCREDIT_RECEIPT_TIMEOUT_MS   per-transaction receipt wait (default: viem's 180000)
+ *   REPCREDIT_POLL_INTERVAL_MS     receipt poll interval (default: viem's client polling interval)
+ *   DRY_RUN=1                      estimate only, send nothing, write nothing
+ *   REPCREDIT_ALLOW_NONCANONICAL_ENTRYPOINT=1   deliberate escape hatch, see above
  */
 
 import {
@@ -29,11 +44,17 @@ import {
   type Abi,
   type Address,
   type Hex,
-  type TransactionReceipt,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { createRedactor } from "./lib/repcredit-redact.mjs";
+import {
+  createJournal,
+  createTxRunner,
+  planFingerprint,
+  reconcilePending,
+} from "./lib/repcredit-tx-journal.mjs";
 
 const CHAIN_ID = 11_155_111;
 // ERC-4337 v0.7 canonical EntryPoint, identical on every chain. Hardcoded across this repo
@@ -43,9 +64,9 @@ const CANONICAL_ENTRYPOINT_V07 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as
 // Proven Sepolia fee formula (deploy-v0.31.0.ts:58-63): maxFee = baseFee*2 + max(tip, 2 gwei).
 // viem's default 1.2x underprovisions and the transaction silently drops out of the mempool.
 const PRIORITY_FEE_FLOOR = 2_000_000_000n;
+const SALT = 20_260_824_001n;
 const DRY_RUN = process.env.DRY_RUN === "1";
 const ALLOW_NONCANONICAL_ENTRYPOINT = process.env.REPCREDIT_ALLOW_NONCANONICAL_ENTRYPOINT === "1";
-const RPC_PLACEHOLDER = "<redacted-rpc-url>";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 const ZERO_BYTES32 = `0x${"00".repeat(32)}` as Hex;
 const rpcUrl = process.env.REPCREDIT_RPC_URL ?? "";
@@ -68,7 +89,14 @@ if (getAddress(entryPointRaw) !== CANONICAL_ENTRYPOINT_V07 && !ALLOW_NONCANONICA
   );
 }
 if (!outputPath.startsWith("/")) throw new Error("REPCREDIT_OUTPUT must be an absolute path");
+// The evidence file stays write-once. The journal and the failure record are separate paths so a
+// resumed run can still write its evidence here.
 if (existsSync(outputPath)) throw new Error(`refusing to overwrite ${outputPath}`);
+
+const journalPath = process.env.REPCREDIT_JOURNAL || `${outputPath}.journal.json`;
+const failurePath = `${outputPath}.failed.json`;
+const receiptTimeoutMs = Number(process.env.REPCREDIT_RECEIPT_TIMEOUT_MS ?? "") || undefined;
+const pollingIntervalMs = Number(process.env.REPCREDIT_POLL_INTERVAL_MS ?? "") || undefined;
 
 const account = privateKeyToAccount(privateKey);
 const entryPoint = getAddress(entryPointRaw);
@@ -80,29 +108,7 @@ const chain = defineChain({
 });
 const publicClient = createPublicClient({ chain, transport: http(rpcUrl) });
 const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) });
-
-const rpcOrigin = (() => {
-  try {
-    return new URL(rpcUrl).origin;
-  } catch {
-    return "";
-  }
-})();
-
-/**
- * viem embeds the full request URL in transport errors — `getUrl` in viem/_esm/errors/utils.js is
- * the identity function, so nothing is masked. An unhandled RPC fault would therefore print the
- * provider API key carried in REPCREDIT_RPC_URL. Every error string is funnelled through here.
- */
-function redact(text: string): string {
-  let out = rpcUrl ? text.split(rpcUrl).join(RPC_PLACEHOLDER) : text;
-  if (rpcOrigin) {
-    const escaped = rpcOrigin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    out = out.replace(new RegExp(`${escaped}[^\\s"']*`, "g"), RPC_PLACEHOLDER);
-  }
-  // Defence in depth for any URL that reached the text by another route (nested cause, proxy, etc).
-  return out.replace(/(https?:\/\/[^\s"']+?)\/(v2|v3)\/[A-Za-z0-9_-]{8,}/g, `$1/$2/${RPC_PLACEHOLDER}`);
-}
+const redact = createRedactor(rpcUrl);
 
 type Artifact = {
   abi: Abi;
@@ -110,7 +116,17 @@ type Artifact = {
 };
 
 const libraries: Record<string, Address> = {};
-const transactions: Record<string, { hash: Hex; blockNumber: string; blockHash: Hex; gasUsed: string }> = {};
+
+const journal = createJournal({
+  path: journalPath,
+  fingerprint: planFingerprint({
+    script: "deploy-repcredit-sepolia",
+    chainId: CHAIN_ID,
+    entryPoint,
+    deployer: account.address,
+    salt: SALT.toString(),
+  }),
+});
 
 function artifact(name: string): Artifact {
   const path = resolve(import.meta.dirname, `../out/${name}.sol/${name}.json`);
@@ -150,25 +166,24 @@ async function fees(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: big
   return { maxFeePerGas: base * 2n + maxPriorityFeePerGas, maxPriorityFeePerGas };
 }
 
-async function record(label: string, hash: Hex): Promise<TransactionReceipt> {
-  const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
-  if (receipt.status !== "success") throw new Error(`${label} reverted: ${hash}`);
-  transactions[label] = {
-    hash,
-    blockNumber: receipt.blockNumber.toString(),
-    blockHash: receipt.blockHash,
-    gasUsed: receipt.gasUsed.toString(),
-  };
-  return receipt;
-}
+const runner = createTxRunner({
+  journal,
+  publicClient,
+  walletClient,
+  overrides: fees,
+  confirmations: 1,
+  receiptTimeoutMs,
+  pollingIntervalMs,
+});
 
 async function deploy(name: string, args: readonly unknown[] = []): Promise<Address> {
   const loaded = artifact(name);
   const data = encodeDeployData({ abi: loaded.abi, bytecode: linkedBytecode(name), args });
-  const hash = await walletClient.sendTransaction({ data, ...(await fees()) });
-  const receipt = await record(`deploy:${name}`, hash);
-  if (!receipt.contractAddress) throw new Error(`${name}: missing contract address`);
-  return getAddress(receipt.contractAddress);
+  const result = await runner.send(`deploy:${name}`, { data });
+  const address = result.receipt?.contractAddress ?? result.entry?.contractAddress;
+  if (!address) throw new Error(`${name}: missing contract address`);
+  if (result.reused) process.stderr.write(`${JSON.stringify({ status: "resumed", step: `deploy:${name}`, address })}\n`);
+  return getAddress(address as Address);
 }
 
 async function call(
@@ -179,7 +194,8 @@ async function call(
   args: readonly unknown[],
 ): Promise<void> {
   const data = encodeFunctionData({ abi, functionName, args });
-  await record(label, await walletClient.sendTransaction({ to: address, data, ...(await fees()) }));
+  const result = await runner.send(label, { to: address, data });
+  if (result.reused) process.stderr.write(`${JSON.stringify({ status: "resumed", step: label })}\n`);
 }
 
 async function preflight(): Promise<void> {
@@ -193,7 +209,7 @@ async function preflight(): Promise<void> {
 /**
  * DRY_RUN=1: resolve and link every artifact (the unlinked-library landmine from #149/#190),
  * verify chain and EntryPoint identity, estimate deploy gas and quote the fee. Sends nothing and
- * writes no evidence file. Mirrors deploy-v0.31.0.ts:181.
+ * writes no evidence file or journal. Mirrors deploy-v0.31.0.ts:181.
  */
 async function dryRun(): Promise<void> {
   await preflight();
@@ -234,14 +250,23 @@ async function dryRun(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Adopt a previous attempt's journal (fingerprint-gated) before anything is sent, then poll every
+  // hash it left pending. Reconciliation runs first so a transaction that mined while the previous
+  // process was dying is recognised instead of being sent a second time.
+  journal.load();
   await preflight();
+  if (journal.resumed) {
+    const reconciled = await reconcilePending({ journal, publicClient });
+    process.stderr.write(`${JSON.stringify({ status: "resume", journal: journalPath, reconciled })}\n`);
+  }
 
   const webAuthnLib = await deploy("WebAuthnLib");
   libraries["src/utils/WebAuthnLib.sol:WebAuthnLib"] = webAuthnLib;
   const committeeBlsLib = await deploy("CommitteeBLSLib");
   libraries["src/utils/CommitteeBLSLib.sol:CommitteeBLSLib"] = committeeBlsLib;
 
-  // Router zero is intentional: this evidence account uses explicit ECDSA mode 0x02.
+  // Router zero is intentional. Note the whitelist below is recorded but inert: dailyLimit = 0 means
+  // the factory deploys no guard, so no algId/tier gate is ever consulted (CC-51 MEDIUM-4 / LOW-4).
   const implementation = await deploy("AAStarAirAccountV7", [ZERO_ADDRESS]);
   const factory = await deploy("AAStarAirAccountFactoryV7", [
     implementation,
@@ -265,16 +290,15 @@ async function main(): Promise<void> {
     tier1Limit: 0n,
     tier2Limit: 0n,
   } as const;
-  const salt = 20_260_824_001n;
-  const airAccount = getAddress(await (publicClient as any).readContract({
+  const airAccount = getAddress(await publicClient.readContract({
     address: factory,
     abi: factoryAbi,
     functionName: "getAddress",
-    args: [account.address, salt, config, ZERO_BYTES32, ZERO_BYTES32],
+    args: [account.address, SALT, config, ZERO_BYTES32, ZERO_BYTES32],
   }) as Address);
   await call("create:AirAccount", factory, factoryAbi, "createAccount", [
     account.address,
-    salt,
+    SALT,
     config,
     ZERO_BYTES32,
     ZERO_BYTES32,
@@ -286,7 +310,7 @@ async function main(): Promise<void> {
     throw new Error(`AirAccount ${airAccount} was not deployed`);
   }
 
-  const version = await (publicClient as any).readContract({
+  const version = await publicClient.readContract({
     address: airAccount,
     abi: artifact("AAStarAirAccountV7").abi,
     functionName: "ACCOUNT_VERSION",
@@ -301,10 +325,12 @@ async function main(): Promise<void> {
     deployer: account.address,
     version,
     contracts: { webAuthnLib, committeeBlsLib, implementation, factory, account: airAccount, counter },
-    transactions,
+    transactions: journal.minedTransactions(),
   };
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, { flag: "wx" });
+  // The evidence file is now the record of truth; the resume journal has served its purpose.
+  journal.discard();
   process.stdout.write(`${JSON.stringify({ status: "passed", chainId: CHAIN_ID, deployer: account.address, contracts: output.contracts })}\n`);
 }
 
@@ -312,14 +338,29 @@ try {
   await (DRY_RUN ? dryRun() : main());
 } catch (error) {
   const message = redact(error instanceof Error ? (error.stack ?? error.message) : String(error));
-  if (!DRY_RUN && Object.keys(transactions).length > 0) {
-    // Persist what already made it on chain so partially deployed contracts are never lost.
+  // Guarded on every hash ever broadcast, not just the confirmed ones: a first-transaction timeout
+  // used to leave no record at all, which is exactly the case that stranded gas.
+  if (!DRY_RUN && journal.allHashes().length > 0) {
     try {
-      mkdirSync(dirname(outputPath), { recursive: true });
+      const pending = journal.pending().map(([label, entry]) => ({ label, hash: entry.hash, sentAt: entry.sentAt }));
+      mkdirSync(dirname(failurePath), { recursive: true });
       writeFileSync(
-        outputPath,
-        `${JSON.stringify({ schemaVersion: 1, status: "failed", chainId: CHAIN_ID, entryPoint, deployer: account.address, error: message, libraries, transactions }, null, 2)}\n`,
-        { flag: "wx" },
+        failurePath,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          status: "failed",
+          chainId: CHAIN_ID,
+          entryPoint,
+          deployer: account.address,
+          error: message,
+          journal: journalPath,
+          libraries,
+          transactions: journal.minedTransactions(),
+          pending,
+          ...(pending.length > 0
+            ? { resume: "re-run with the same REPCREDIT_* environment: the pending hashes are polled and reconciled. Never re-broadcast them." }
+            : {}),
+        }, null, 2)}\n`,
       );
     } catch (writeError) {
       process.stderr.write(`failed to persist partial evidence: ${redact(String(writeError))}\n`);
