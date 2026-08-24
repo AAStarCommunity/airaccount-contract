@@ -11,6 +11,14 @@
  * - journals every transaction hash to disk BEFORE awaiting its receipt, never rebroadcasts on a
  *   receipt timeout, and resumes from the journal on a rerun (CC-51 post-review MEDIUM).
  *
+ * Residual risk, deliberately accepted on this path only (CC-51 focused review MEDIUM): the deployer
+ * is an Anvil *unlocked* account, so the node signs and the hash does not exist until
+ * `eth_sendTransaction` answers. A SIGKILL in that window leaves a transaction whose hash this
+ * process never learned. deploy-repcredit-sepolia.ts closes that window by signing locally and
+ * journalling keccak256(rawTransaction) before broadcasting; that is impossible without the key.
+ * Accepted here because the chain is a local, disposable Anvil instance: the orphan costs no real
+ * gas and the whole chain can be discarded. Entries from this path are marked `signing: "node"`.
+ *
  * If a journalled transaction is genuinely dropped rather than slow, every rerun will keep polling
  * it. That is deliberate — the alternative, an automatic rebroadcast, is what snarls the nonce. The
  * escape is manual and explicit: confirm on a block explorer that the hash will never mine, then
@@ -43,8 +51,11 @@ import {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createRedactor } from "./lib/repcredit-redact.mjs";
+import { optionalPositiveInt } from "./lib/repcredit-env.mjs";
+import { writeFailureRecord } from "./lib/repcredit-failure.mjs";
 import {
   createJournal,
+  createNodeSigner,
   createTxRunner,
   planFingerprint,
   reconcilePending,
@@ -72,8 +83,9 @@ if (existsSync(outputPath)) throw new Error(`refusing to overwrite ${outputPath}
 
 const journalPath = process.env.REPCREDIT_JOURNAL || `${outputPath}.journal.json`;
 const failurePath = `${outputPath}.failed.json`;
-const receiptTimeoutMs = Number(process.env.REPCREDIT_RECEIPT_TIMEOUT_MS ?? "") || undefined;
-const pollingIntervalMs = Number(process.env.REPCREDIT_POLL_INTERVAL_MS ?? "") || undefined;
+// Strict: a malformed value is an error, not a silent fall-back to viem's default.
+const receiptTimeoutMs = optionalPositiveInt("REPCREDIT_RECEIPT_TIMEOUT_MS");
+const pollingIntervalMs = optionalPositiveInt("REPCREDIT_POLL_INTERVAL_MS");
 
 const entryPoint = getAddress(entryPointRaw);
 const deployer = getAddress(deployerRaw);
@@ -94,10 +106,25 @@ type Artifact = {
 
 const libraries: Record<string, Address> = {};
 
+// The ordered plan is folded into the journal fingerprint, so renaming/adding/removing a step
+// refuses to resume an older journal instead of orphaning that step's hash (CC-51 focused review).
+const PLAN_VERSION = 1;
+const PLAN_LABELS = [
+  "deploy:WebAuthnLib",
+  "deploy:CommitteeBLSLib",
+  "deploy:AAStarAirAccountV7",
+  "deploy:AAStarAirAccountFactoryV7",
+  "deploy:RepCreditCounter",
+  "create:AirAccount",
+] as const;
+
 const journal = createJournal({
   path: journalPath,
+  plan: [...PLAN_LABELS],
   fingerprint: planFingerprint({
     script: "deploy-repcredit-local",
+    planVersion: PLAN_VERSION,
+    labels: [...PLAN_LABELS],
     chainId: CHAIN_ID,
     entryPoint,
     deployer,
@@ -130,14 +157,18 @@ function linkedBytecode(name: string): Hex {
   return (out.startsWith("0x") ? out : `0x${out}`) as Hex;
 }
 
+// Unlocked-account signing: see the residual-risk note in the header. The journal marks these
+// entries `signing: "node"` so evidence readers can tell the two guarantees apart.
+const signer = createNodeSigner({ walletClient, from: deployer });
+
 const runner = createTxRunner({
   journal,
   publicClient,
-  walletClient,
-  overrides: async () => ({ account: deployer }),
+  signer,
   confirmations: 1,
   receiptTimeoutMs,
   pollingIntervalMs,
+  onEvent: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
 });
 
 async function deploy(name: string, args: readonly unknown[] = []): Promise<Address> {
@@ -233,15 +264,22 @@ async function main(): Promise<void> {
     functionName: "ACCOUNT_VERSION",
   }) as string;
 
+  // Nothing may be finalised while a hash is unaccounted for. Checked before the write-once
+  // evidence file is created, so a failure here leaves the journal and the path intact.
+  journal.assertFullyAccounted();
+
   const output = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     chainId,
     entryPoint,
     deployer,
     version,
+    plan: { version: PLAN_VERSION, labels: [...PLAN_LABELS] },
     contracts: { webAuthnLib, committeeBlsLib, implementation, factory, account, counter },
     transactions: journal.minedTransactions(),
+    // Every hash ever broadcast, mined or not, so the evidence is a complete account.
+    broadcasts: journal.allHashes(),
   };
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, { flag: "wx" });
@@ -257,26 +295,32 @@ try {
   // used to leave no record at all.
   if (journal.allHashes().length > 0) {
     try {
-      const pending = journal.pending().map(([label, entry]) => ({ label, hash: entry.hash, sentAt: entry.sentAt }));
-      mkdirSync(dirname(failurePath), { recursive: true });
-      writeFileSync(
-        failurePath,
-        `${JSON.stringify({
-          schemaVersion: 1,
-          status: "failed",
+      const unsettled = journal.unsettled().map(([label, entry]) => ({
+        label,
+        hash: entry.hash,
+        status: entry.status,
+        from: entry.from,
+        nonce: entry.nonce,
+        sentAt: entry.sentAt,
+      }));
+      writeFailureRecord({
+        path: failurePath,
+        record: {
           chainId: CHAIN_ID,
           entryPoint,
           deployer,
           error: message,
           journal: journalPath,
+          plan: { version: PLAN_VERSION, labels: [...PLAN_LABELS] },
           libraries,
           transactions: journal.minedTransactions(),
-          pending,
-          ...(pending.length > 0
+          broadcasts: journal.allHashes(),
+          pending: unsettled,
+          ...(unsettled.length > 0
             ? { resume: "re-run with the same REPCREDIT_* environment: the pending hashes are polled and reconciled. Never re-broadcast them." }
             : {}),
-        }, null, 2)}\n`,
-      );
+        },
+      });
     } catch (writeError) {
       process.stderr.write(`failed to persist partial evidence: ${redact(String(writeError))}\n`);
     }

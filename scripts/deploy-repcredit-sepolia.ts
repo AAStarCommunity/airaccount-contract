@@ -12,14 +12,19 @@
  *   because initialize() bakes it into a non-upgradable account permanently;
  * - fees follow the repo's proven Sepolia formula instead of viem's 1.2x default;
  * - DRY_RUN=1 links every artifact and estimates gas without sending a transaction;
- * - every transaction hash is journalled to disk BEFORE its receipt is awaited, a receipt
- *   timeout never rebroadcasts, and a rerun polls the journalled hashes and resumes from
- *   where the previous attempt stopped (CC-51 post-review MEDIUM).
+ * - every transaction is signed offline and its hash journalled BEFORE it is broadcast, so no
+ *   window exists in which the network holds a transaction this process cannot name — not even
+ *   under SIGKILL between the send call and its response (CC-51 focused review MEDIUM);
+ * - a receipt timeout never rebroadcasts, and a rerun polls the journalled hashes, coordinates
+ *   any un-broadcast payload against the mempool and the account nonce, and resumes from where
+ *   the previous attempt stopped (CC-51 post-review MEDIUM).
  *
  * If a journalled transaction is genuinely dropped rather than slow, every rerun will keep polling
- * it. That is deliberate — the alternative, an automatic rebroadcast, is what snarls the nonce. The
- * escape is manual and explicit: confirm on a block explorer that the hash will never mine, then
- * remove that entry from the journal file by hand before rerunning.
+ * it. That is deliberate — the alternative, an automatic rebroadcast with a fresh signature, is what
+ * snarls the nonce. (Re-offering the *identical* signed payload is different: same signature, same
+ * hash, idempotent — and it happens only after the mempool and the on-chain nonce have both been
+ * checked.) The escape is manual and explicit: confirm on a block explorer that the hash will never
+ * mine, then remove that entry from the journal file by hand before rerunning.
  *
  * Environment:
  *   REPCREDIT_RPC_URL, REPCREDIT_PRIVATE_KEY, REPCREDIT_ENTRYPOINT, REPCREDIT_OUTPUT (required)
@@ -32,7 +37,6 @@
 
 import {
   createPublicClient,
-  createWalletClient,
   defineChain,
   encodeDeployData,
   encodeFunctionData,
@@ -49,8 +53,11 @@ import { privateKeyToAccount } from "viem/accounts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createRedactor } from "./lib/repcredit-redact.mjs";
+import { optionalPositiveInt } from "./lib/repcredit-env.mjs";
+import { writeFailureRecord } from "./lib/repcredit-failure.mjs";
 import {
   createJournal,
+  createLocalSigner,
   createTxRunner,
   planFingerprint,
   reconcilePending,
@@ -95,8 +102,9 @@ if (existsSync(outputPath)) throw new Error(`refusing to overwrite ${outputPath}
 
 const journalPath = process.env.REPCREDIT_JOURNAL || `${outputPath}.journal.json`;
 const failurePath = `${outputPath}.failed.json`;
-const receiptTimeoutMs = Number(process.env.REPCREDIT_RECEIPT_TIMEOUT_MS ?? "") || undefined;
-const pollingIntervalMs = Number(process.env.REPCREDIT_POLL_INTERVAL_MS ?? "") || undefined;
+// Strict: a malformed value is an error, not a silent fall-back to viem's 180 s default.
+const receiptTimeoutMs = optionalPositiveInt("REPCREDIT_RECEIPT_TIMEOUT_MS");
+const pollingIntervalMs = optionalPositiveInt("REPCREDIT_POLL_INTERVAL_MS");
 
 const account = privateKeyToAccount(privateKey);
 const entryPoint = getAddress(entryPointRaw);
@@ -107,7 +115,6 @@ const chain = defineChain({
   rpcUrls: { default: { http: [rpcUrl] } },
 });
 const publicClient = createPublicClient({ chain, transport: http(rpcUrl) });
-const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) });
 const redact = createRedactor(rpcUrl);
 
 type Artifact = {
@@ -117,10 +124,26 @@ type Artifact = {
 
 const libraries: Record<string, Address> = {};
 
+// The ordered plan is declared once and folded into the journal fingerprint. Renaming, adding or
+// removing a step therefore refuses to resume an older journal rather than silently orphaning the
+// hash of a step that no longer exists (CC-51 focused review MEDIUM).
+const PLAN_VERSION = 1;
+const PLAN_LABELS = [
+  "deploy:WebAuthnLib",
+  "deploy:CommitteeBLSLib",
+  "deploy:AAStarAirAccountV7",
+  "deploy:AAStarAirAccountFactoryV7",
+  "deploy:RepCreditCounter",
+  "create:AirAccount",
+] as const;
+
 const journal = createJournal({
   path: journalPath,
+  plan: [...PLAN_LABELS],
   fingerprint: planFingerprint({
     script: "deploy-repcredit-sepolia",
+    planVersion: PLAN_VERSION,
+    labels: [...PLAN_LABELS],
     chainId: CHAIN_ID,
     entryPoint,
     deployer: account.address,
@@ -166,14 +189,23 @@ async function fees(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: big
   return { maxFeePerGas: base * 2n + maxPriorityFeePerGas, maxPriorityFeePerGas };
 }
 
+// Sign locally and derive the hash from the signed payload, so the journal always knows about a
+// transaction before the network can. See the module header of repcredit-tx-journal.mjs.
+const signer = createLocalSigner({
+  publicClient,
+  account,
+  chainId: CHAIN_ID,
+  fees,
+});
+
 const runner = createTxRunner({
   journal,
   publicClient,
-  walletClient,
-  overrides: fees,
+  signer,
   confirmations: 1,
   receiptTimeoutMs,
   pollingIntervalMs,
+  onEvent: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
 });
 
 async function deploy(name: string, args: readonly unknown[] = []): Promise<Address> {
@@ -316,20 +348,30 @@ async function main(): Promise<void> {
     functionName: "ACCOUNT_VERSION",
   }) as string;
 
+  // Nothing may be finalised while a hash is unaccounted for: an unsettled transaction, an entry
+  // outside the declared plan, or a plan step this run never reached. Checked BEFORE the evidence
+  // file is written, so a failure here leaves both the journal and the write-once path intact.
+  journal.assertFullyAccounted();
+
   const output = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     experimentLabel: "repcredit-e2e-20260824",
     generatedAt: new Date().toISOString(),
     chainId: CHAIN_ID,
     entryPoint,
     deployer: account.address,
     version,
+    plan: { version: PLAN_VERSION, labels: [...PLAN_LABELS] },
     contracts: { webAuthnLib, committeeBlsLib, implementation, factory, account: airAccount, counter },
     transactions: journal.minedTransactions(),
+    // Every hash this run ever signed or broadcast, not only the ones that ended up mined, so the
+    // evidence remains a complete account of what touched the chain (CC-51 focused review MEDIUM).
+    broadcasts: journal.allHashes(),
   };
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, { flag: "wx" });
   // The evidence file is now the record of truth; the resume journal has served its purpose.
+  // discard() re-runs the audit above and refuses to unlink if anything is still outstanding.
   journal.discard();
   process.stdout.write(`${JSON.stringify({ status: "passed", chainId: CHAIN_ID, deployer: account.address, contracts: output.contracts })}\n`);
 }
@@ -342,26 +384,34 @@ try {
   // used to leave no record at all, which is exactly the case that stranded gas.
   if (!DRY_RUN && journal.allHashes().length > 0) {
     try {
-      const pending = journal.pending().map(([label, entry]) => ({ label, hash: entry.hash, sentAt: entry.sentAt }));
-      mkdirSync(dirname(failurePath), { recursive: true });
-      writeFileSync(
-        failurePath,
-        `${JSON.stringify({
-          schemaVersion: 1,
-          status: "failed",
+      const unsettled = journal.unsettled().map(([label, entry]) => ({
+        label,
+        hash: entry.hash,
+        status: entry.status,
+        from: entry.from,
+        nonce: entry.nonce,
+        prebroadcastAt: entry.prebroadcastAt,
+        broadcastAt: entry.broadcastAt,
+      }));
+      writeFailureRecord({
+        path: failurePath,
+        record: {
           chainId: CHAIN_ID,
           entryPoint,
           deployer: account.address,
           error: message,
           journal: journalPath,
+          plan: { version: PLAN_VERSION, labels: [...PLAN_LABELS] },
           libraries,
           transactions: journal.minedTransactions(),
-          pending,
-          ...(pending.length > 0
-            ? { resume: "re-run with the same REPCREDIT_* environment: the pending hashes are polled and reconciled. Never re-broadcast them." }
+          // The full broadcast history, so no hash is lost even across several failed attempts.
+          broadcasts: journal.allHashes(),
+          pending: unsettled,
+          ...(unsettled.length > 0
+            ? { resume: "re-run with the same REPCREDIT_* environment: journalled hashes are polled, a signed-but-unbroadcast payload is coordinated against the mempool and the account nonce, and only the byte-identical payload can ever be re-offered. Never re-broadcast by hand." }
             : {}),
-        }, null, 2)}\n`,
-      );
+        },
+      });
     } catch (writeError) {
       process.stderr.write(`failed to persist partial evidence: ${redact(String(writeError))}\n`);
     }

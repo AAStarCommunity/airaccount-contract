@@ -68,14 +68,22 @@ jobs:
         working-directory: .
 
       # ── RepCredit evidence-script durability gate (CC-51) ──────────────────
-      # Fault-injection tests for the deploy scripts' transaction-hash journal: the hash must be
-      # on disk before the receipt is awaited, a receipt timeout must never rebroadcast, and a
-      # rerun must poll the journalled hash and resume. Plus the RPC-credential redaction matrix.
-      # The script-level cases spawn deploy-repcredit-local.ts against a JSON-RPC stub and need
-      # the out/ artifacts that `forge test` above produced; they self-skip if those are missing.
+      # Fault-injection tests for the deploy scripts' transaction-hash journal: the hash must be on
+      # disk before the payload is broadcast (not merely before the receipt is awaited), a receipt
+      # timeout must never rebroadcast, a failed broadcast must be coordinated against the mempool
+      # and the nonce, and a rerun must poll the journalled hash and resume. Plus the RPC-credential
+      # redaction matrix and the strict env/sidecar semantics.
+      #
+      # REQUIRE_ARTIFACTS=1 is the fail-closed switch (CC-51 focused review MEDIUM): the script-level
+      # cases spawn the deploy scripts against a JSON-RPC stub and need the out/ artifacts that
+      # `forge test` above produced. Locally they self-skip when out/ is empty; in CI a missing
+      # artifact — RepCreditCounter in particular, which `forge build --skip test` omits — must red
+      # the gate instead of skipping quietly to green.
       - name: RepCredit evidence deploy-script tests (pnpm repcredit:test)
         run: pnpm repcredit:test
         working-directory: .
+        env:
+          REQUIRE_ARTIFACTS: "1"
 
   # ── issue #45 BLS↔userOpHash binding (EIP-2537 / Prague) ───────────────────
   # The main `test` job runs under the repo-default evm_version = cancun, where the
