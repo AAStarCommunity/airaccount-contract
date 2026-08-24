@@ -2,7 +2,7 @@
 pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {RepCreditCounter} from "../src/mocks/RepCreditCounter.sol";
+import {RepCreditCounter} from "./mocks/RepCreditCounter.sol";
 
 contract RepCreditCounterTest is Test {
     RepCreditCounter internal counter;

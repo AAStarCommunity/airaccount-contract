@@ -5,7 +5,10 @@
  * - accepts only chain id 31337;
  * - uses an Anvil unlocked account, so no private key is read or printed;
  * - links both external libraries and fails on any unresolved placeholder;
- * - refuses to overwrite an existing evidence output file.
+ * - refuses to overwrite an existing evidence output file;
+ * - redacts REPCREDIT_RPC_URL out of every emitted error and never persists it, so pointing the
+ *   script at a remote node cannot leak a provider API key (CC-51 MEDIUM-1 / LOW-2);
+ * - persists the transactions already mined when a run fails, so nothing becomes an orphan.
  *
  * Usage:
  *   REPCREDIT_RPC_URL=http://127.0.0.1:18547 \
@@ -37,6 +40,7 @@ const CHAIN_ID = 31_337;
 const DEFAULT_ANVIL_DEPLOYER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as Address;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 const ZERO_BYTES32 = `0x${"00".repeat(32)}` as Hex;
+const RPC_PLACEHOLDER = "<redacted-rpc-url>";
 
 const rpcUrl = process.env.REPCREDIT_RPC_URL ?? "http://127.0.0.1:18547";
 const entryPointRaw = process.env.REPCREDIT_ENTRYPOINT ?? "";
@@ -61,6 +65,28 @@ const localChain = defineChain({
 const publicClient = createPublicClient({ chain: localChain, transport: http(rpcUrl) });
 const walletClient = createWalletClient({ account: deployer, chain: localChain, transport: http(rpcUrl) });
 
+const rpcOrigin = (() => {
+  try {
+    return new URL(rpcUrl).origin;
+  } catch {
+    return "";
+  }
+})();
+
+/**
+ * viem's `getUrl` (viem/_esm/errors/utils.js) is the identity function, so transport errors carry the
+ * full RPC URL. Harmless for the 127.0.0.1 default, but REPCREDIT_RPC_URL may be repointed at a
+ * remote node whose API key sits in the URL, so redact before anything is emitted.
+ */
+function redact(text: string): string {
+  let out = rpcUrl ? text.split(rpcUrl).join(RPC_PLACEHOLDER) : text;
+  if (rpcOrigin) {
+    const escaped = rpcOrigin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`${escaped}[^\\s"']*`, "g"), RPC_PLACEHOLDER);
+  }
+  return out.replace(/(https?:\/\/[^\s"']+?)\/(v2|v3)\/[A-Za-z0-9_-]{8,}/g, `$1/$2/${RPC_PLACEHOLDER}`);
+}
+
 type Artifact = {
   abi: Abi;
   bytecode: { object: string; linkReferences?: Record<string, Record<string, unknown>> };
@@ -70,9 +96,12 @@ const libraries: Record<string, Address> = {};
 const transactions: Record<string, { hash: Hex; blockNumber: string; gasUsed: string }> = {};
 
 function artifact(name: string): Artifact {
-  return JSON.parse(
-    readFileSync(resolve(import.meta.dirname, `../out/${name}.sol/${name}.json`), "utf8"),
-  ) as Artifact;
+  const path = resolve(import.meta.dirname, `../out/${name}.sol/${name}.json`);
+  if (!existsSync(path)) {
+    // RepCreditCounter lives in test/mocks/, so `forge build --skip test` does not produce it.
+    throw new Error(`missing artifact for ${name} at out/${name}.sol/${name}.json — run \`forge build\` (a full build, not --skip test)`);
+  }
+  return JSON.parse(readFileSync(path, "utf8")) as Artifact;
 }
 
 function linkedBytecode(name: string): Hex {
@@ -191,7 +220,6 @@ async function main(): Promise<void> {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     chainId,
-    rpcUrl,
     entryPoint,
     deployer,
     version,
@@ -203,4 +231,23 @@ async function main(): Promise<void> {
   process.stdout.write(`${JSON.stringify(output)}\n`);
 }
 
-await main();
+try {
+  await main();
+} catch (error) {
+  const message = redact(error instanceof Error ? (error.stack ?? error.message) : String(error));
+  if (Object.keys(transactions).length > 0) {
+    // Persist what already made it on chain so partially deployed contracts are never lost.
+    try {
+      mkdirSync(dirname(outputPath), { recursive: true });
+      writeFileSync(
+        outputPath,
+        `${JSON.stringify({ schemaVersion: 1, status: "failed", chainId: CHAIN_ID, entryPoint, deployer, error: message, libraries, transactions }, null, 2)}\n`,
+        { flag: "wx" },
+      );
+    } catch (writeError) {
+      process.stderr.write(`failed to persist partial evidence: ${redact(String(writeError))}\n`);
+    }
+  }
+  process.stderr.write(`${message}\n`);
+  process.exitCode = 1;
+}
