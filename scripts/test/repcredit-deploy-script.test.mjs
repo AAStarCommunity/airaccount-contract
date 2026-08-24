@@ -154,6 +154,33 @@ const ENV_ALLOWLIST = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"
 const baseEnv = () =>
   Object.fromEntries(ENV_ALLOWLIST.filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
 
+/** Start the script without waiting for it, so two runs can overlap. */
+function startScript(env, target = script) {
+  let settle;
+  const done = new Promise((resolve) => (settle = resolve));
+  const child = execFile(
+    tsx,
+    [target],
+    {
+      cwd: repoRoot,
+      env: { ...baseEnv(), REPCREDIT_RECEIPT_TIMEOUT_MS: "3000", REPCREDIT_POLL_INTERVAL_MS: "100", ...env },
+      timeout: 120_000,
+    },
+    (error, stdout, stderr) => settle({ code: error?.code ?? 0, stdout, stderr }),
+  );
+  return { child, done };
+}
+
+/** Poll until `predicate()` holds, so an overlap test does not depend on sleep guesswork. */
+async function waitFor(predicate, { timeoutMs = 20_000, intervalMs = 25 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error("timed out waiting for a condition");
+}
+
 function runScript(env, target = script) {
   return new Promise((done) => {
     execFile(
@@ -305,7 +332,9 @@ describe("deploy-repcredit-sepolia.ts fail-closed guards", () => {
     assert.match(run.stderr, /is not the canonical v0.7 EntryPoint/);
     assert.match(run.stderr, /REPCREDIT_ALLOW_NONCANONICAL_ENTRYPOINT/);
     assert.equal(run.stderr.includes(FAKE_KEY), false, "the private key must never be echoed");
-    for (const path of [output, journal, failure]) assert.equal(existsSync(path), false, `${path} must not exist`);
+    for (const path of [output, journal, failure, `${journal}.lock`]) {
+      assert.equal(existsSync(path), false, `${path} must not exist`);
+    }
   });
 
   it("writes no journal, evidence or failure record in DRY_RUN", async () => {
@@ -324,7 +353,10 @@ describe("deploy-repcredit-sepolia.ts fail-closed guards", () => {
     assert.equal(run.code, 1);
     assert.equal(run.stderr.includes(RPC_SECRET), false, "the RPC credential leaked in DRY_RUN");
     assert.equal(run.stderr.includes(FAKE_KEY), false);
-    for (const path of [output, journal, failure]) assert.equal(existsSync(path), false, `${path} must not exist`);
+    // The mutex is journal state too: a dry run takes no lock and so cannot block a real run.
+    for (const path of [output, journal, failure, `${journal}.lock`]) {
+      assert.equal(existsSync(path), false, `${path} must not exist`);
+    }
   });
 });
 
@@ -340,15 +372,22 @@ const keccak = async (hex) => {
   return keccak256(hex);
 };
 
+// The stub has to answer eth_getTransactionByHash with the *real* sender: the durability layer
+// cross-checks from/nonce before it believes a node that says "already known".
+const { privateKeyToAccount } = await import("viem/accounts");
+const SEPOLIA_KEY = `0x${"22".repeat(32)}`;
+const SEPOLIA_DEPLOYER = privateKeyToAccount(SEPOLIA_KEY).address;
+
 /**
  * A Sepolia-shaped JSON-RPC stub.
  *
  * `honestHash: false` makes eth_sendRawTransaction answer with a hash that is not the payload's —
  * the script must notice rather than adopt whatever the node claims.
  */
-function sepoliaStub({ honestHash = true, stall = true } = {}) {
+function sepoliaStub({ honestHash = true, stall = true, sendError = null, visibleAfterError = false } = {}) {
   const raws = [];
   const mined = new Map();
+  const mempool = new Set();
   const server = createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
@@ -357,7 +396,14 @@ function sepoliaStub({ honestHash = true, stall = true } = {}) {
       const batch = Array.isArray(request) ? request : [request];
       const responses = [];
       for (const entry of batch) {
-        responses.push({ jsonrpc: "2.0", id: entry.id, result: await handle(entry.method, entry.params ?? []) });
+        const result = await handle(entry.method, entry.params ?? []);
+        // A node rejecting a broadcast answers with a JSON-RPC error, not a result — that shape is
+        // what viem turns into the wrapped error the classifier has to read.
+        responses.push(
+          result?.__rpcError
+            ? { jsonrpc: "2.0", id: entry.id, error: { code: -32000, message: result.__rpcError } }
+            : { jsonrpc: "2.0", id: entry.id, result },
+        );
       }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(Array.isArray(request) ? responses : responses[0]));
@@ -388,10 +434,29 @@ function sepoliaStub({ honestHash = true, stall = true } = {}) {
         const real = await keccak(raw);
         raws.push({ raw, hash: real });
         if (!stall) mined.set(real, real);
+        // `already known` means the node kept the payload and is telling us so through an error.
+        if (sendError) {
+          if (visibleAfterError) mempool.add(real);
+          return { __rpcError: sendError };
+        }
         return honestHash ? real : `0x${"f".repeat(64)}`;
       }
-      case "eth_getTransactionByHash":
-        return null;
+      case "eth_getTransactionByHash": {
+        const [hash] = params;
+        if (!mempool.has(hash)) return null;
+        return {
+          hash,
+          from: SEPOLIA_DEPLOYER,
+          nonce: "0x0",
+          blockHash: null,
+          blockNumber: null,
+          to: null,
+          value: "0x0",
+          gas: "0x1e8480",
+          input: "0x",
+          type: "0x2",
+        };
+      }
       case "eth_getTransactionReceipt":
         return null;
       default:
@@ -407,7 +472,7 @@ function sepoliaStub({ honestHash = true, stall = true } = {}) {
 }
 
 describe("deploy-repcredit-sepolia.ts closes the broadcast window", { skip: skipWithoutArtifacts }, () => {
-  const FAKE_KEY = `0x${"22".repeat(32)}`;
+  const FAKE_KEY = SEPOLIA_KEY;
 
   it("journals the locally-derived hash, from and nonce, and never resends on a stall", async () => {
     const stub = sepoliaStub();
@@ -485,6 +550,84 @@ describe("deploy-repcredit-sepolia.ts closes the broadcast window", { skip: skip
     assert.equal(entry.status, "prebroadcast");
   });
 
+  it("treats `already known` as proof the payload is broadcast, not as a reason to abort", async () => {
+    // A load-balanced RPC pool routinely answers the broadcast with "already known" while the
+    // read backend still shows nothing by hash. Aborting there strands a transaction that landed.
+    const stub = sepoliaStub({ sendError: "already known", visibleAfterError: true });
+    const port = await stub.listen();
+    const { output, journal, failure } = paths();
+    const run = await runScript(
+      {
+        REPCREDIT_RPC_URL: `http://ops:${RPC_SECRET}@127.0.0.1:${port}`,
+        REPCREDIT_PRIVATE_KEY: FAKE_KEY,
+        REPCREDIT_ENTRYPOINT: ENTRYPOINT,
+        REPCREDIT_OUTPUT: output,
+      },
+      sepoliaScript,
+    );
+    await stub.close();
+
+    assert.equal(run.code, 1);
+    // The run went *through* the error into the ordinary polling path, and said so.
+    assert.match(run.stderr, /"status":"already-known"/);
+    assert.match(run.stderr, /NOT resent/, "it ends as a durable pending, not as a broadcast failure");
+    assert.equal(run.stderr.includes("but the broadcast failed"), false, "no abort on a known transaction");
+    assert.equal(stub.raws.length, 1, "normalising is not retrying");
+
+    const entry = read(journal).entries["deploy:WebAuthnLib"];
+    assert.equal(entry.status, "pending", "`already known` + mempool proof ⇒ broadcast");
+    assert.equal(entry.hash, stub.raws[0].hash, "and it is still the locally-derived hash");
+    assert.deepEqual(read(failure).broadcasts.map((b) => b.hash), [entry.hash]);
+    for (const [name, text] of [["stdout", run.stdout], ["stderr", run.stderr]]) {
+      assert.equal(text.includes(RPC_SECRET), false, `${RPC_SECRET} leaked into ${name}`);
+    }
+  });
+
+  it("fails closed when `already known` cannot be proven on chain", async () => {
+    // Same wording, but nothing confirms the hash. Believing the node here would be a swallowed
+    // error dressed up as success.
+    const stub = sepoliaStub({ sendError: "already known", visibleAfterError: false });
+    const port = await stub.listen();
+    const { output, journal } = paths();
+    const run = await runScript(
+      {
+        REPCREDIT_RPC_URL: `http://127.0.0.1:${port}`,
+        REPCREDIT_PRIVATE_KEY: FAKE_KEY,
+        REPCREDIT_ENTRYPOINT: ENTRYPOINT,
+        REPCREDIT_OUTPUT: output,
+      },
+      sepoliaScript,
+    );
+    await stub.close();
+
+    assert.equal(run.code, 1);
+    assert.match(run.stderr, /could not be proven/);
+    assert.equal(stub.raws.length, 1);
+    assert.equal(read(journal).entries["deploy:WebAuthnLib"].status, "prebroadcast");
+  });
+
+  it("does not swallow a nonce conflict wearing the same clothes", async () => {
+    const stub = sepoliaStub({ sendError: "already known: replacement transaction underpriced", visibleAfterError: true });
+    const port = await stub.listen();
+    const { output, journal } = paths();
+    const run = await runScript(
+      {
+        REPCREDIT_RPC_URL: `http://127.0.0.1:${port}`,
+        REPCREDIT_PRIVATE_KEY: FAKE_KEY,
+        REPCREDIT_ENTRYPOINT: ENTRYPOINT,
+        REPCREDIT_OUTPUT: output,
+      },
+      sepoliaScript,
+    );
+    await stub.close();
+
+    assert.equal(run.code, 1);
+    // Nonce wording wins over already-known wording: the run stops with the node's own reason.
+    assert.match(run.stderr, /replacement transaction underpriced/);
+    assert.equal(run.stderr.includes('"status":"already-known"'), false);
+    assert.equal(read(journal).entries["deploy:WebAuthnLib"].status, "prebroadcast");
+  });
+
   it("rejects a malformed receipt timeout instead of silently using the default", async () => {
     const { output, journal, failure } = paths();
     const run = await runScript(
@@ -500,5 +643,73 @@ describe("deploy-repcredit-sepolia.ts closes the broadcast window", { skip: skip
     assert.equal(run.code, 1);
     assert.match(run.stderr, /REPCREDIT_RECEIPT_TIMEOUT_MS must be a positive integer/);
     for (const path of [output, journal, failure]) assert.equal(existsSync(path), false, `${path} must not exist`);
+  });
+});
+
+// ── two processes, one journal path ──────────────────────────────────────────────────────────
+//
+// CC-51 focused review LOW-2, proven through the real script rather than the library alone: a
+// second evidence run pointed at the same output would previously adopt the same journal and
+// overwrite it, dropping a hash that was already on the network.
+
+describe("deploy-repcredit-local.ts refuses a concurrent run on the same journal", { skip: skipWithoutArtifacts }, () => {
+  it("admits one process, fails the second closed, and keeps the first run's hash", async () => {
+    const stub = rpcStub({ stallFrom: 1, tag: "e1" });
+    const port = await stub.listen();
+    const { output, journal } = paths();
+    const env = {
+      REPCREDIT_RPC_URL: `http://127.0.0.1:${port}`,
+      REPCREDIT_ENTRYPOINT: ENTRYPOINT,
+      REPCREDIT_OUTPUT: output,
+    };
+
+    // The first run holds the lock while it waits out a receipt that never comes.
+    const first = startScript(env);
+    await waitFor(() => existsSync(`${journal}.lock`));
+    const holder = JSON.parse(readFileSync(`${journal}.lock`, "utf8"));
+    assert.equal(holder.kind, "repcredit-journal-lock");
+
+    const second = await runScript(env);
+    assert.equal(second.code, 1, "a concurrent run must not proceed");
+    assert.match(second.stderr, /is held/);
+    assert.match(second.stderr, /pid \d+ .* is still running/);
+    assert.equal(stub.sent.length, 1, "the refused run broadcast nothing");
+    // It also must not have written the loser's view of the journal over the holder's.
+    assert.equal(JSON.parse(readFileSync(`${journal}.lock`, "utf8")).token, holder.token);
+
+    const firstResult = await first.done;
+    await stub.close();
+    assert.equal(firstResult.code, 1, "the holder still ends on its own receipt timeout");
+    assert.match(firstResult.stderr, /NOT resent/);
+
+    // The decisive check: the first run's hash survived the concurrent attempt.
+    const entry = read(journal).entries["deploy:WebAuthnLib"];
+    assert.equal(entry.hash, stub.sent[0]);
+    assert.equal(entry.status, "pending");
+    assert.equal(existsSync(`${journal}.lock`), false, "the holder released the lock on exit");
+  });
+
+  it("lets the run resume once the lock is free", async () => {
+    // Same journal, sequentially: the lock is released, so the rerun resumes normally rather than
+    // being blocked by its own predecessor's leftover.
+    const first = rpcStub({ stallFrom: 1, tag: "f1" });
+    const firstPort = await first.listen();
+    const { output, journal } = paths();
+    const env = { REPCREDIT_ENTRYPOINT: ENTRYPOINT, REPCREDIT_OUTPUT: output };
+
+    const failed = await runScript({ ...env, REPCREDIT_RPC_URL: `http://127.0.0.1:${firstPort}` });
+    await first.close();
+    assert.equal(failed.code, 1);
+    assert.equal(existsSync(`${journal}.lock`), false, "no leftover lock after a clean failure");
+
+    const stalledHash = read(journal).entries["deploy:WebAuthnLib"].hash;
+    const second = rpcStub({ stallFrom: 2, tag: "f2", mined: new Set([stalledHash]) });
+    const secondPort = await second.listen();
+    const resumed = await runScript({ ...env, REPCREDIT_RPC_URL: `http://127.0.0.1:${secondPort}` });
+    await second.close();
+
+    assert.match(resumed.stderr, /"status":"resume"/);
+    assert.equal(read(journal).entries["deploy:WebAuthnLib"].status, "mined");
+    assert.equal(second.sent.includes(stalledHash), false, "the resumed run never re-sent it");
   });
 });

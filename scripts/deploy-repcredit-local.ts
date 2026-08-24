@@ -9,7 +9,10 @@
  * - redacts REPCREDIT_RPC_URL out of every emitted error and never persists it, so pointing the
  *   script at a remote node cannot leak a provider API key (CC-51 MEDIUM-1 / LOW-1 / LOW-2);
  * - journals every transaction hash to disk BEFORE awaiting its receipt, never rebroadcasts on a
- *   receipt timeout, and resumes from the journal on a rerun (CC-51 post-review MEDIUM).
+ *   receipt timeout, and resumes from the journal on a rerun (CC-51 post-review MEDIUM);
+ * - normalises a node's `already known` answer into "this hash is broadcast" once the hash is
+ *   confirmed on chain, and holds the journal path under a fail-closed process mutex so a second
+ *   run cannot overwrite an already-broadcast hash (CC-51 focused review).
  *
  * Residual risk, deliberately accepted on this path only (CC-51 focused review MEDIUM): the deployer
  * is an Anvil *unlocked* account, so the node signs and the hash does not exist until
@@ -30,7 +33,8 @@
  *   REPCREDIT_OUTPUT=/absolute/path/airaccount-deployment.json \
  *   pnpm tsx scripts/deploy-repcredit-local.ts
  *
- * Optional: REPCREDIT_JOURNAL, REPCREDIT_RECEIPT_TIMEOUT_MS, REPCREDIT_POLL_INTERVAL_MS.
+ * Optional: REPCREDIT_JOURNAL, REPCREDIT_RECEIPT_TIMEOUT_MS, REPCREDIT_POLL_INTERVAL_MS,
+ * REPCREDIT_LOCK_STALE_MS (stale-lock grace before a dead holder's lock is recovered, default 60000).
  */
 
 import {
@@ -53,6 +57,7 @@ import { dirname, resolve } from "node:path";
 import { createRedactor } from "./lib/repcredit-redact.mjs";
 import { optionalPositiveInt } from "./lib/repcredit-env.mjs";
 import { writeFailureRecord } from "./lib/repcredit-failure.mjs";
+import { acquireJournalLock } from "./lib/repcredit-journal-lock.mjs";
 import {
   createJournal,
   createNodeSigner,
@@ -86,6 +91,7 @@ const failurePath = `${outputPath}.failed.json`;
 // Strict: a malformed value is an error, not a silent fall-back to viem's default.
 const receiptTimeoutMs = optionalPositiveInt("REPCREDIT_RECEIPT_TIMEOUT_MS");
 const pollingIntervalMs = optionalPositiveInt("REPCREDIT_POLL_INTERVAL_MS");
+const lockStaleAfterMs = optionalPositiveInt("REPCREDIT_LOCK_STALE_MS");
 
 const entryPoint = getAddress(entryPointRaw);
 const deployer = getAddress(deployerRaw);
@@ -193,7 +199,20 @@ async function call(
   if (result.reused) process.stderr.write(`${JSON.stringify({ status: "resumed", step: label })}\n`);
 }
 
+// Held for the whole run and released in the finally below; the lock module also registers an exit
+// hook, so an abrupt exit still drops it.
+let lock: { release: () => boolean } | null = null;
+
 async function main(): Promise<void> {
+  // One process per journal path. The journal is rewritten in full on every flush, so a second run
+  // sharing this path would erase hashes that are already on the network; O_EXCL makes that
+  // impossible rather than unlikely. A dead holder's lock is recovered only under the audited
+  // stale rule in repcredit-journal-lock.mjs — there is deliberately no force flag.
+  lock = await acquireJournalLock({
+    path: journalPath,
+    ...(lockStaleAfterMs ? { staleAfterMs: lockStaleAfterMs } : {}),
+    onEvent: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+  });
   journal.load();
   const chainId = await publicClient.getChainId();
   if (chainId !== CHAIN_ID) throw new Error(`local-only script: expected chain ${CHAIN_ID}, got ${chainId}`);
@@ -327,4 +346,7 @@ try {
   }
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
+} finally {
+  // The exit hook is the backstop; releasing here keeps the lock's lifetime equal to the run's.
+  lock?.release();
 }

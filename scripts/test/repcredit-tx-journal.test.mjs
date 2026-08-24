@@ -16,7 +16,13 @@
  *   6. a reverted transaction fails closed and is never retried;
  *   7. a journal that does not describe this run — different identity OR different plan — is
  *      refused rather than reused;
- *   8. nothing is discarded while a hash is unsettled, outside the plan, or unvisited.
+ *   8. nothing is discarded while a hash is unsettled, outside the plan, or unvisited;
+ *   9. an `already known` broadcast answer is normalised into "this hash is broadcast" only after
+ *      being proven on chain, and never for a nonce conflict or an unrecognised provider error
+ *      (CC-51 focused review MEDIUM);
+ *  10. a `pending` entry whose nonce was consumed elsewhere ends in a determinate conflict instead
+ *      of being polled forever, and a nonce bumped by our own transaction mining is not mistaken
+ *      for one (CC-51 focused review LOW-1).
  *
  * Run: node --test scripts/test/
  */
@@ -32,6 +38,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import {
   JournalAuditError,
   JournalNonceConflictError,
+  classifyBroadcastError,
   JournalResumeError,
   PendingReceiptTimeoutError,
   createJournal,
@@ -219,6 +226,12 @@ function fakeRawChain({
   swallow = false,
   onBroadcast,
   startNonce = 0,
+  // Injected broadcast error from the Nth (1-based) broadcast onwards, plus what the node does with
+  // the payload despite answering with an error: "mined" | "mempool" | false. `already known` is the
+  // case where the node keeps it, which is exactly why the answer may be normalised.
+  broadcastError = null,
+  broadcastErrorFrom = Infinity,
+  nodeKeepsOnError = false,
 } = {}) {
   const broadcasts = [];
   const mined = new Map();
@@ -244,6 +257,16 @@ function fakeRawChain({
       async sendRawTransaction({ serializedTransaction }) {
         const hash = keccak256(serializedTransaction);
         await onBroadcast?.(hash, serializedTransaction);
+        if (broadcastError && broadcasts.length + 1 >= broadcastErrorFrom) {
+          broadcasts.push({ hash, raw: serializedTransaction, accepted: nodeKeepsOnError !== false });
+          if (nodeKeepsOnError === "mined") {
+            mined.set(hash, receiptFor(hash));
+            nonce += 1;
+          } else if (nodeKeepsOnError === "mempool") {
+            mempool.add(hash);
+          }
+          throw broadcastError(hash);
+        }
         if (broadcasts.length + 1 >= failBroadcastFrom) {
           broadcasts.push({ hash, raw: serializedTransaction, accepted: false });
           throw new Error("connection reset by peer");
@@ -695,5 +718,266 @@ describe("finalisation audit", () => {
       return true;
     });
     assert.ok(existsSync(path));
+  });
+});
+
+// ── `already known` normalisation ────────────────────────────────────────────────────────────
+//
+// CC-51 focused review MEDIUM. An RPC pool can answer eth_sendRawTransaction with "already known"
+// while eth_getTransactionByHash on a *different* backend still says nothing. That answer means the
+// node holds our transaction, so aborting the whole run over it strands a broadcast that already
+// landed. It is normalised into "this hash is broadcast" — but only after being proven, and never
+// for a nonce conflict or for wording the classifier does not recognise.
+
+/** viem shapes: the node's text arrives in `details`/`shortMessage`, not in `message`. */
+const rpcError = (detail, name = "TransactionRejectedRpcError") =>
+  Object.assign(new Error("An error occurred when sending the transaction."), {
+    name,
+    shortMessage: "An error occurred when sending the transaction.",
+    details: detail,
+  });
+const alreadyKnown = () => rpcError("already known");
+
+describe("`already known` is normalised only when it is provable", () => {
+  it("classifies provider wordings without ever swallowing a nonce conflict", () => {
+    for (const detail of [
+      "already known",
+      "known transaction: 0xabc",
+      "ALREADY_EXISTS: already known",
+      "AlreadyKnown",
+      "Transaction already exists",
+      "already imported",
+      "tx already in the mempool",
+    ]) {
+      assert.equal(classifyBroadcastError(rpcError(detail)), "already-known", detail);
+    }
+    for (const detail of [
+      "nonce too low",
+      "nonce too high",
+      "invalid nonce",
+      "nonce has already been used",
+      "replacement transaction underpriced",
+      // The trap: wording that contains both. Nonce is checked first, so this is never normalised.
+      "already known: replacement transaction underpriced",
+    ]) {
+      assert.equal(classifyBroadcastError(rpcError(detail)), "nonce-conflict", detail);
+    }
+    for (const detail of ["insufficient funds for gas * price + value", "connection reset by peer", "intrinsic gas too low"]) {
+      assert.equal(classifyBroadcastError(rpcError(detail)), "other", detail);
+    }
+    // The wording can be buried anywhere in viem's wrapper chain.
+    assert.equal(
+      classifyBroadcastError(Object.assign(new Error("Broadcast failed"), { cause: rpcError("already known") })),
+      "already-known",
+    );
+    assert.equal(classifyBroadcastError(undefined), "other");
+  });
+
+  it("continues the run when the node already had the transaction and mined it", async () => {
+    const path = nextJournal();
+    const chain = fakeRawChain({
+      broadcastError: alreadyKnown,
+      broadcastErrorFrom: 1,
+      nodeKeepsOnError: "mined",
+    });
+    const { error, steps } = await runRawPlan(path, chain, [PLAN[0]], ["deploy:A"]);
+
+    assert.equal(error, null, "an `already known` answer must not abort the run");
+    assert.equal(chain.broadcasts.length, 1, "one offer only — normalising is not retrying");
+    const entry = onDisk(path).entries["deploy:A"];
+    assert.equal(entry.status, "mined");
+    assert.equal(entry.hash, steps[0].hash, "the precomputed hash is the one that settles");
+  });
+
+  it("keeps polling the precomputed hash when the node has it in the mempool", async () => {
+    const path = nextJournal();
+    const chain = fakeRawChain({
+      broadcastError: alreadyKnown,
+      broadcastErrorFrom: 1,
+      nodeKeepsOnError: "mempool",
+    });
+    const { error } = await runRawPlan(path, chain, [PLAN[0]], ["deploy:A"]);
+
+    // Not an abort: the run proceeded to wait for a receipt, which then timed out — the ordinary
+    // durable-pending outcome, not a lost broadcast.
+    assert.ok(error instanceof PendingReceiptTimeoutError, `expected a receipt timeout, got ${error}`);
+    const entry = onDisk(path).entries["deploy:A"];
+    assert.equal(entry.status, "pending", "`already known` + mempool proof ⇒ broadcast");
+    assert.equal(entry.hash, chain.broadcasts[0].hash);
+    assert.equal(chain.broadcasts.length, 1, "never resent");
+  });
+
+  it("fails closed when `already known` cannot be proven (the node shows nothing)", async () => {
+    const path = nextJournal();
+    // The node claims it knows the transaction but neither a receipt nor the mempool confirms it.
+    // Assuming success there would be exactly the swallowed-error failure mode.
+    const chain = fakeRawChain({ broadcastError: alreadyKnown, broadcastErrorFrom: 1, nodeKeepsOnError: false });
+    const { error } = await runRawPlan(path, chain, [PLAN[0]], ["deploy:A"]);
+
+    assert.equal(error.name, "BroadcastFailedError");
+    assert.equal(error.cause?.name, "JournalAlreadyKnownUnverifiedError");
+    assert.match(error.cause.message, /could not be proven/);
+    const entry = onDisk(path).entries["deploy:A"];
+    assert.equal(entry.status, "prebroadcast", "unproven ⇒ still not known to be broadcast");
+    assert.equal(entry.hash, chain.broadcasts[0].hash, "and the hash is kept regardless");
+  });
+
+  it("fails closed when the transaction it finds is not the one we signed", async () => {
+    const path = nextJournal();
+    const chain = fakeRawChain({ broadcastError: alreadyKnown, broadcastErrorFrom: 1, nodeKeepsOnError: "mempool" });
+    // A pool member answering for a *different* transaction is not proof of ours. The from/nonce
+    // cross-check is what turns "the provider said something" into evidence.
+    chain.publicClient.getTransaction = async ({ hash }) => ({
+      hash,
+      from: "0x000000000000000000000000000000000000dEaD",
+      nonce: 999,
+    });
+    const { error } = await runRawPlan(path, chain, [PLAN[0]], ["deploy:A"]);
+
+    assert.equal(error.name, "BroadcastFailedError");
+    assert.equal(error.cause?.name, "JournalAlreadyKnownUnverifiedError");
+    assert.equal(onDisk(path).entries["deploy:A"].status, "prebroadcast");
+  });
+
+  it("never normalises a nonce conflict reported by the broadcast itself", async () => {
+    const path = nextJournal();
+    const chain = fakeRawChain({
+      broadcastError: () => rpcError("nonce too low"),
+      broadcastErrorFrom: 1,
+      nodeKeepsOnError: false,
+    });
+    const { error } = await runRawPlan(path, chain, [PLAN[0]], ["deploy:A"]);
+
+    assert.equal(error.name, "BroadcastFailedError");
+    assert.match(error.message, /nonce too low/);
+    assert.equal(error.cause?.name, "TransactionRejectedRpcError", "the provider error is not replaced");
+    assert.equal(onDisk(path).entries["deploy:A"].status, "prebroadcast");
+  });
+
+  it("lets an unrecognised provider error through untouched", async () => {
+    const path = nextJournal();
+    const chain = fakeRawChain({
+      broadcastError: () => rpcError("insufficient funds for gas * price + value"),
+      broadcastErrorFrom: 1,
+    });
+    const { error } = await runRawPlan(path, chain, [PLAN[0]], ["deploy:A"]);
+    assert.equal(error.name, "BroadcastFailedError");
+    assert.match(error.message, /insufficient funds/);
+  });
+
+  it("resolves a resumed prebroadcast entry when the re-offer answers `already known`", async () => {
+    const path = nextJournal();
+    // First attempt: signed and journalled, broadcast failed outright.
+    const first = fakeRawChain({ failBroadcastFrom: 1 });
+    await runRawPlan(path, first, [PLAN[0]], ["deploy:A"]);
+    const hash = first.broadcasts[0].hash;
+
+    // Rerun: the node shows nothing by hash and the nonce is free, so the identical payload is
+    // re-offered — and the node answers "already known", proving it had it all along.
+    const second = fakeRawChain({
+      startNonce: 0,
+      broadcastError: alreadyKnown,
+      broadcastErrorFrom: 1,
+      nodeKeepsOnError: "mempool",
+    });
+    const resumed = await runRawPlan(path, second, [PLAN[0]], ["deploy:A"]);
+
+    assert.deepEqual(resumed.reconciled, [{ label: "deploy:A", hash, state: "already-known" }]);
+    assert.ok(resumed.error instanceof PendingReceiptTimeoutError, `expected polling, got ${resumed.error}`);
+    assert.equal(second.broadcasts.length, 1, "one re-offer, and no abort");
+    assert.equal(onDisk(path).entries["deploy:A"].status, "pending");
+  });
+});
+
+// ── pending entries are reconciled against the nonce ─────────────────────────────────────────
+//
+// CC-51 focused review LOW-1. A `pending` entry used to short-circuit to "not yet" forever. If its
+// nonce had been consumed by another transaction the hash could never mine, and every rerun simply
+// polled it again with no diagnosis.
+
+/** A journal holding one `pending` entry, as a previous run would have left it. */
+function pendingJournal({ from = TEST_ACCOUNT.address, nonce = 3, hash = `0x${"ab".repeat(32)}` } = {}) {
+  const path = nextJournal();
+  const journal = createJournal({ path, fingerprint: fingerprintFor(["deploy:A"]), plan: ["deploy:A"] });
+  journal.recordPrebroadcast("deploy:A", {
+    hash,
+    digest: "sha256:test",
+    ...(from !== null ? { from } : {}),
+    ...(nonce !== null ? { nonce } : {}),
+    raw: "0x02f8",
+  });
+  journal.markBroadcast("deploy:A");
+  return { path, journal, hash };
+}
+
+/** Chain where the hash is invisible (no receipt, not in the pool) and the nonce is configurable. */
+const invisibleChain = ({ onchainNonce, lateReceipt = null }) => {
+  let receiptCalls = 0;
+  return {
+    receiptCalls: () => receiptCalls,
+    publicClient: {
+      async getTransactionReceipt({ hash }) {
+        receiptCalls += 1;
+        // The late receipt only appears on the re-check, modelling a transaction that mines in the
+        // window between the first lookup and the nonce read.
+        if (lateReceipt && receiptCalls > 1) return receiptFor(hash);
+        throw receiptNotFound(hash);
+      },
+      async getTransaction({ hash }) {
+        throw txNotFound(hash);
+      },
+      async getTransactionCount() {
+        return onchainNonce;
+      },
+    },
+  };
+};
+
+describe("pending reconciliation checks the nonce", () => {
+  it("reports a deterministic conflict when the nonce was consumed by another transaction", async () => {
+    const { path, journal, hash } = pendingJournal({ nonce: 3 });
+    const chain = invisibleChain({ onchainNonce: 9 });
+
+    await assert.rejects(
+      () => reconcilePending({ journal, publicClient: chain.publicClient }),
+      (error) => {
+        assert.ok(error instanceof JournalNonceConflictError);
+        assert.equal(error.nonce, 3);
+        assert.equal(error.onchainNonce, 9);
+        assert.match(error.message, /can never\s+mine/);
+        return true;
+      },
+    );
+    // The hash is never dropped: a conflict is a diagnosis, not a cleanup.
+    assert.equal(onDisk(path).entries["deploy:A"].hash, hash);
+    assert.equal(onDisk(path).entries["deploy:A"].status, "pending");
+  });
+
+  it("keeps polling when the nonce is still free", async () => {
+    const { journal, hash } = pendingJournal({ nonce: 3 });
+    const chain = invisibleChain({ onchainNonce: 3 });
+    const reconciled = await reconcilePending({ journal, publicClient: chain.publicClient });
+    assert.deepEqual(reconciled, [{ label: "deploy:A", hash, state: "pending" }]);
+  });
+
+  it("does not cry conflict when the nonce bump was our own transaction mining", async () => {
+    // The race the re-check exists for: receipt absent, nonce reads as consumed, and the consumer
+    // was this very transaction. Declaring a conflict there fails a run that actually succeeded.
+    const { journal, hash } = pendingJournal({ nonce: 3 });
+    const chain = invisibleChain({ onchainNonce: 4, lateReceipt: true });
+    const reconciled = await reconcilePending({ journal, publicClient: chain.publicClient });
+    assert.deepEqual(reconciled, [{ label: "deploy:A", hash, state: "mined" }]);
+    assert.ok(chain.receiptCalls() >= 2, "the receipt is re-checked before a conflict is declared");
+  });
+
+  it("leaves node-signed entries (no journalled nonce) polling, as before", async () => {
+    const path = nextJournal();
+    const journal = createJournal({ path, fingerprint: fingerprintFor(["deploy:A"]), plan: ["deploy:A"] });
+    // recordPending is the unlocked-account path: the node picks the nonce, so there is nothing to
+    // compare against and the check must not invent one.
+    journal.recordPending("deploy:A", `0x${"cd".repeat(32)}`, "sha256:test", { from: TEST_ACCOUNT.address });
+    const chain = invisibleChain({ onchainNonce: 99 });
+    const reconciled = await reconcilePending({ journal, publicClient: chain.publicClient });
+    assert.deepEqual(reconciled.map((r) => r.state), ["pending"]);
   });
 });

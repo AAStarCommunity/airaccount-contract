@@ -38,6 +38,19 @@
  *                                same nonce, same hash: idempotent by construction, so this
  *                                cannot produce a second transaction.
  *
+ * CC-51 focused review MEDIUM (`already known`). A re-offer can be answered with "already known" /
+ * "known transaction" instead of the hash: the node holds the transaction but `eth_getTransactionByHash`
+ * had not shown it, which is routine against a load-balanced RPC pool. That answer is the strongest
+ * possible evidence the broadcast landed, so it is normalised into "this exact hash is broadcast"
+ * and the run continues into settle. Two guards keep that from becoming an error sink:
+ *   - the classifier checks nonce/replacement wording FIRST, so a nonce conflict can never be
+ *     swallowed, and anything it does not recognise propagates untouched;
+ *   - the hash is then *proved* present by receipt or mempool lookup, cross-checked against the
+ *     journalled from/nonce. Unproved "already known" fails closed rather than assuming success.
+ *
+ * A `pending` entry is reconciled against the nonce too, so an entry whose nonce was consumed by
+ * some other transaction ends in a deterministic conflict instead of being polled forever.
+ *
  * A receipt timeout NEVER resends — it surfaces as PendingReceiptTimeoutError and the entry stays
  * unsettled, which is the repo's standing lesson (a timed-out Sepolia transaction must be polled,
  * never re-broadcast).
@@ -50,7 +63,7 @@
  * write-once (`wx`), the journal is machine state and is rewritten in place.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { keccak256 } from "viem";
@@ -96,6 +109,30 @@ export class JournalRevertedError extends Error {
   }
 }
 
+/**
+ * Human-readable summary of an RPC failure.
+ *
+ * viem's `message` is often a generic wrapper ("An error occurred when sending the transaction.")
+ * while the node's actual words — `nonce too low`, `insufficient funds` — sit in `shortMessage` /
+ * `details` / the cause chain. Reporting only `message` leaves the operator with no reason at all,
+ * so the distinguishing fields are folded in. `metaMessages` is deliberately excluded: that is
+ * where viem puts the un-redacted request URL.
+ */
+function describeError(error, depth = 0) {
+  if (error === null || error === undefined) return "unknown error";
+  if (typeof error !== "object") return String(error);
+  const parts = [];
+  for (const key of ["message", "shortMessage", "details", "reason"]) {
+    const value = error[key];
+    if (typeof value === "string" && value.length > 0 && !parts.includes(value)) parts.push(value);
+  }
+  if (error.cause && depth < 3) {
+    const nested = describeError(error.cause, depth + 1);
+    if (nested && !parts.includes(nested)) parts.push(nested);
+  }
+  return parts.join(" — ") || String(error);
+}
+
 /** Signing succeeded, the journal has the hash, but the node refused or never answered. */
 export class BroadcastFailedError extends Error {
   constructor(label, hash, journalPath, cause) {
@@ -103,7 +140,7 @@ export class BroadcastFailedError extends Error {
       `${label} was signed as ${hash} and journalled BEFORE broadcast, but the broadcast failed. ` +
       `It was NOT resent blindly — re-run the same command: the hash is polled, the mempool is ` +
       `checked and the nonce is compared before the identical signed payload is offered again ` +
-      `(journal: ${journalPath}). Cause: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `(journal: ${journalPath}). Cause: ${describeError(cause)}`,
     );
     this.name = "BroadcastFailedError";
     this.label = label;
@@ -126,6 +163,33 @@ export class JournalNonceConflictError extends Error {
     this.hash = hash;
     this.nonce = nonce;
     this.onchainNonce = onchainNonce;
+  }
+}
+
+/** The node returned a hash that is not the one we signed; two transactions must never be tracked. */
+export class JournalHashMismatchError extends Error {
+  constructor(label, expected, returned) {
+    super(`${label}: node returned ${returned}, expected the signed payload's hash ${expected}`);
+    this.name = "JournalHashMismatchError";
+    this.label = label;
+    this.expected = expected;
+    this.returned = returned;
+  }
+}
+
+/** The node said "already known" but neither a receipt nor the mempool can confirm our hash. */
+export class JournalAlreadyKnownUnverifiedError extends Error {
+  constructor(label, hash, cause) {
+    super(
+      `${label}: the node rejected the broadcast as already known, but ${hash} is in neither a receipt ` +
+      `nor the mempool, so "already broadcast" could not be proven. Not treated as success and NOT ` +
+      `resent — re-run to poll and coordinate again, or resolve the hash on chain. ` +
+      `Cause: ${describeError(cause)}`,
+    );
+    this.name = "JournalAlreadyKnownUnverifiedError";
+    this.label = label;
+    this.hash = hash;
+    this.cause = cause;
   }
 }
 
@@ -168,7 +232,10 @@ export function requestDigest({ to = null, data = "0x" }) {
 
 function writeAtomic(path, text) {
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
+  // The scratch name carries pid + a random suffix. Concurrent writers are refused by the journal
+  // lock, but a shared `${path}.tmp` would let two of them interleave a half-written file into the
+  // rename below, so the temporary is never shared either (CC-51 focused review LOW-2).
+  const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   writeFileSync(tmp, text);
   // rename(2) is atomic within a filesystem: readers see either the old journal or the new one,
   // never a truncated one, even if the process dies mid-write.
@@ -408,6 +475,136 @@ async function maybe(promise) {
   }
 }
 
+const sameHash = (a, b) => typeof a === "string" && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
+
+/**
+ * Flatten everything an RPC error carries into one searchable string.
+ *
+ * viem wraps the node's reply several layers deep (`shortMessage`, `details`, `metaMessages`, and a
+ * `cause` chain), and different clients word the same condition differently, so classification must
+ * look at the whole thing rather than `error.message` alone.
+ */
+function errorText(error, depth = 0) {
+  if (error === null || error === undefined || depth > 5) return "";
+  if (typeof error === "string") return error;
+  if (typeof error !== "object") return String(error);
+  const parts = [];
+  for (const key of ["name", "message", "shortMessage", "details", "reason", "code"]) {
+    const value = error[key];
+    if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+  }
+  if (Array.isArray(error.metaMessages)) {
+    parts.push(error.metaMessages.filter((m) => typeof m === "string").join(" "));
+  }
+  if (error.cause) parts.push(errorText(error.cause, depth + 1));
+  return parts.join(" | ");
+}
+
+// Checked FIRST and never normalised: these mean a *different* transaction owns the nonce, which is
+// the one thing that must never be mistaken for "ours is already in the pool".
+const NONCE_CONFLICT_RE =
+  /nonce too low|nonce too high|invalid nonce|nonce has already been used|replacement transaction underpriced|OldNonce|INVALID_PARAMS: nonce/i;
+// geth / erigon / nethermind / besu / reth wordings for "this exact transaction is already in the pool".
+const ALREADY_KNOWN_RE =
+  /already known|known transaction|ALREADY_EXISTS|AlreadyKnown|transaction already exists|already imported|already in the (?:mempool|pool|transaction pool)/i;
+
+/**
+ * Classify a failed `eth_sendRawTransaction`.
+ *
+ * @returns {"nonce-conflict"|"already-known"|"other"} — only `already-known` may be normalised, and
+ * even then only after the hash is proven present on the node (see `locateTransaction`).
+ */
+export function classifyBroadcastError(error) {
+  const text = errorText(error);
+  if (NONCE_CONFLICT_RE.test(text)) return "nonce-conflict";
+  if (ALREADY_KNOWN_RE.test(text)) return "already-known";
+  return "other";
+}
+
+/**
+ * Prove the node holds *this* transaction: receipt first, then the mempool.
+ *
+ * The lookup is by hash, so identity is implied — but a provider that echoes back a transaction
+ * whose hash/from/nonce disagree with what we journalled is not evidence of anything, so every
+ * field we hold is cross-checked. Returns null when nothing could be proven.
+ *
+ * @returns {Promise<{state: "mined"|"reverted"|"pending", receipt?: object, tx?: object}|null>}
+ */
+async function locateTransaction({ publicClient, hash, from, nonce }) {
+  const receipt = await maybe(publicClient.getTransactionReceipt({ hash }));
+  if (receipt) {
+    if (receipt.transactionHash && !sameHash(receipt.transactionHash, hash)) return null;
+    return { state: receipt.status === "success" ? "mined" : "reverted", receipt };
+  }
+  const tx = await maybe(publicClient.getTransaction({ hash }));
+  if (!tx) return null;
+  if (tx.hash && !sameHash(tx.hash, hash)) return null;
+  if (from !== undefined && tx.from && String(tx.from).toLowerCase() !== String(from).toLowerCase()) return null;
+  if (nonce !== undefined && tx.nonce !== undefined && Number(tx.nonce) !== Number(nonce)) return null;
+  return { state: "pending", tx };
+}
+
+/**
+ * Offer an already-signed payload to the node once, and interpret the answer.
+ *
+ * The only outcome other than "the node took it" that counts as success is a *proven* "already
+ * known": recognised by wording that is not a nonce conflict, and then confirmed by receipt or
+ * mempool. Everything else — including every error this does not recognise — propagates.
+ *
+ * @returns {Promise<"broadcast"|"already-known-pending"|"already-known-mined"|"already-known-reverted">}
+ */
+async function offerSignedPayload({ journal, publicClient, label, entry, broadcast }) {
+  try {
+    const returned = await broadcast();
+    if (!sameHash(returned, entry.hash)) throw new JournalHashMismatchError(label, entry.hash, returned);
+    journal.markBroadcast(label);
+    return "broadcast";
+  } catch (error) {
+    // Never wrapped, never normalised: tracking two hashes for one label is unrecoverable.
+    if (error instanceof JournalHashMismatchError) throw error;
+    if (classifyBroadcastError(error) !== "already-known") throw error;
+    const located = await locateTransaction({
+      publicClient,
+      hash: entry.hash,
+      from: entry.from,
+      nonce: entry.nonce,
+    });
+    if (!located) throw new JournalAlreadyKnownUnverifiedError(label, entry.hash, error);
+    if (located.state === "pending") {
+      journal.markBroadcast(label);
+      return "already-known-pending";
+    }
+    // The node had it and it already reached a block: settle straight from the receipt. A revert is
+    // recorded, not thrown here — the caller's normal reverted-entry path fails the run closed.
+    journal.settle(label, located.receipt, located.state);
+    return located.state === "mined" ? "already-known-mined" : "already-known-reverted";
+  }
+}
+
+/**
+ * Has `entry`'s nonce been taken by a different transaction?
+ *
+ * Re-checks the receipt before declaring a conflict: between the earlier receipt lookup and the
+ * nonce read, our own transaction may have mined — and that bump is *our* bump. Reporting a
+ * conflict there would fail a run that actually succeeded.
+ *
+ * @returns {Promise<{state: "mined"|"reverted"|"pending"}|null>} what the late lookup found, or
+ * null when the nonce is still free. Throws JournalNonceConflictError on a genuine conflict.
+ */
+async function checkNonceConsumed({ journal, publicClient, label, entry }) {
+  if (entry.from === undefined || entry.nonce === undefined) return null;
+  const onchainNonce = await publicClient.getTransactionCount({ address: entry.from, blockTag: "latest" });
+  if (!(onchainNonce > entry.nonce)) return null;
+  const late = await locateTransaction({ publicClient, hash: entry.hash, from: entry.from, nonce: entry.nonce });
+  if (late?.receipt) {
+    journal.settle(label, late.receipt, late.state);
+    return { state: late.state };
+  }
+  // Turned up in the pool between the two lookups: it can still mine, so poll rather than guess.
+  if (late?.state === "pending") return { state: "pending" };
+  throw new JournalNonceConflictError(label, entry.hash, entry.nonce, onchainNonce);
+}
+
 /**
  * Poll every unsettled hash once and reconcile it to mined / reverted / still-pending.
  *
@@ -424,8 +621,7 @@ export async function reconcilePending({ journal, publicClient, onResult }) {
       state = receipt.status === "success" ? "mined" : "reverted";
       journal.settle(label, receipt, state);
     } else if (entry.status === "pending") {
-      // Broadcast is known to have happened; absence of a receipt just means "not yet".
-      state = "pending";
+      state = await coordinatePending({ journal, publicClient, label, entry });
     } else {
       state = await coordinatePrebroadcast({ journal, publicClient, label, entry });
     }
@@ -437,13 +633,35 @@ export async function reconcilePending({ journal, publicClient, onResult }) {
 }
 
 /**
+ * Resolve a `pending` entry with no receipt: broadcast is known to have happened, so the question
+ * is only whether it can still mine.
+ *
+ * CC-51 focused review LOW-1: `pending` used to short-circuit to "not yet" forever. If the nonce
+ * had meanwhile been consumed by some other transaction (a hand-sent replacement, a fee bump), the
+ * journalled hash could never mine and every rerun simply polled it again with no diagnosis. The
+ * nonce is now part of reconciling a pending entry, so that case ends in a determinate conflict.
+ *
+ * Entries without a journalled nonce — the node-signed local path, where the node picks it — keep
+ * the old behaviour, because there is nothing to compare against.
+ */
+async function coordinatePending({ journal, publicClient, label, entry }) {
+  const tx = await maybe(publicClient.getTransaction({ hash: entry.hash }));
+  if (tx) return "pending"; // in the pool: absence of a receipt just means "not yet"
+  // Neither mined nor in any mempool this endpoint can see. Throws on a genuine conflict.
+  const late = await checkNonceConsumed({ journal, publicClient, label, entry });
+  return late?.state ?? "pending";
+}
+
+/**
  * Resolve a `prebroadcast` entry: signed and journalled, broadcast outcome unknown.
  *
  * Order matters, and every branch is deliberate:
  *   1. in the mempool  → the broadcast did land; just keep polling the same hash;
  *   2. nonce consumed  → fail closed, this transaction can never mine (see JournalNonceConflictError);
  *   3. nonce free      → offer the byte-identical signed payload again. Identical signature ⇒
- *                        identical hash ⇒ idempotent; this is not a blind resend.
+ *                        identical hash ⇒ idempotent; this is not a blind resend. A node that
+ *                        answers "already known" is telling us the payload is already in its pool,
+ *                        which `offerSignedPayload` proves and folds into the same pending state.
  */
 async function coordinatePrebroadcast({ journal, publicClient, label, entry }) {
   const tx = await maybe(publicClient.getTransaction({ hash: entry.hash }));
@@ -458,19 +676,22 @@ async function coordinatePrebroadcast({ journal, publicClient, label, entry }) {
       `cannot be re-offered safely; resolve the hash on chain and start a fresh journal`,
     );
   }
-  const onchainNonce = await publicClient.getTransactionCount({ address: entry.from, blockTag: "latest" });
-  if (onchainNonce > entry.nonce) {
-    throw new JournalNonceConflictError(label, entry.hash, entry.nonce, onchainNonce);
+  const late = await checkNonceConsumed({ journal, publicClient, label, entry });
+  if (late?.state === "pending") {
+    journal.markBroadcast(label);
+    return "pending";
   }
-  const hash = await publicClient.sendRawTransaction({ serializedTransaction: entry.raw });
-  if (hash.toLowerCase() !== String(entry.hash).toLowerCase()) {
-    // Cannot happen for an unmodified payload; if it ever does, stop rather than track two hashes.
-    throw new JournalResumeError(
-      `${label}: re-offering the journalled payload produced ${hash}, expected ${entry.hash}`,
-    );
-  }
-  journal.markBroadcast(label);
-  return "rebroadcast-identical";
+  if (late) return late.state;
+  const outcome = await offerSignedPayload({
+    journal,
+    publicClient,
+    label,
+    entry,
+    broadcast: () => publicClient.sendRawTransaction({ serializedTransaction: entry.raw }),
+  });
+  if (outcome === "broadcast") return "rebroadcast-identical";
+  if (outcome === "already-known-pending") return "already-known";
+  return outcome === "already-known-mined" ? "mined" : "reverted";
 }
 
 /**
@@ -632,16 +853,25 @@ export function createTxRunner({
       if (signer.mode === "local") {
         const prepared = await signer.prepare(request);
         // Durability point: the hash is on disk before the payload exists anywhere but this process.
-        journal.recordPrebroadcast(label, { ...prepared, digest });
+        const entry = journal.recordPrebroadcast(label, { ...prepared, digest });
+        let outcome;
         try {
-          const hash = await signer.broadcast(prepared);
-          if (hash.toLowerCase() !== prepared.hash.toLowerCase()) {
-            throw new Error(`node returned ${hash}, expected the signed payload's hash ${prepared.hash}`);
-          }
+          outcome = await offerSignedPayload({
+            journal,
+            publicClient,
+            label,
+            entry,
+            broadcast: () => signer.broadcast(prepared),
+          });
         } catch (error) {
+          // A hash mismatch is never wrapped — it is not a transport failure, it is two
+          // transactions, and the message must survive intact to the operator.
+          if (error instanceof JournalHashMismatchError) throw error;
           throw new BroadcastFailedError(label, prepared.hash, journal.path, error);
         }
-        journal.markBroadcast(label);
+        if (outcome !== "broadcast") {
+          onEvent?.({ status: "already-known", step: label, hash: prepared.hash, outcome });
+        }
         return await settle(label, prepared.hash);
       }
 

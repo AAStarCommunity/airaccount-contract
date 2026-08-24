@@ -17,7 +17,11 @@
  *   under SIGKILL between the send call and its response (CC-51 focused review MEDIUM);
  * - a receipt timeout never rebroadcasts, and a rerun polls the journalled hashes, coordinates
  *   any un-broadcast payload against the mempool and the account nonce, and resumes from where
- *   the previous attempt stopped (CC-51 post-review MEDIUM).
+ *   the previous attempt stopped (CC-51 post-review MEDIUM);
+ * - a node answering `already known` is taken as proof the payload is broadcast — but only after
+ *   the hash is confirmed by receipt or mempool, and never for a nonce conflict;
+ * - the journal path is held under a fail-closed process mutex, so a second run cannot overwrite
+ *   the record of a transaction the first one already broadcast (CC-51 focused review LOW-2).
  *
  * If a journalled transaction is genuinely dropped rather than slow, every rerun will keep polling
  * it. That is deliberate — the alternative, an automatic rebroadcast with a fresh signature, is what
@@ -29,6 +33,7 @@
  * Environment:
  *   REPCREDIT_RPC_URL, REPCREDIT_PRIVATE_KEY, REPCREDIT_ENTRYPOINT, REPCREDIT_OUTPUT (required)
  *   REPCREDIT_JOURNAL              resume journal path (default: <REPCREDIT_OUTPUT>.journal.json)
+ *   REPCREDIT_LOCK_STALE_MS        stale-lock grace before a dead holder's lock is recovered (default: 60000)
  *   REPCREDIT_RECEIPT_TIMEOUT_MS   per-transaction receipt wait (default: viem's 180000)
  *   REPCREDIT_POLL_INTERVAL_MS     receipt poll interval (default: viem's client polling interval)
  *   DRY_RUN=1                      estimate only, send nothing, write nothing
@@ -55,6 +60,7 @@ import { dirname, resolve } from "node:path";
 import { createRedactor } from "./lib/repcredit-redact.mjs";
 import { optionalPositiveInt } from "./lib/repcredit-env.mjs";
 import { writeFailureRecord } from "./lib/repcredit-failure.mjs";
+import { acquireJournalLock } from "./lib/repcredit-journal-lock.mjs";
 import {
   createJournal,
   createLocalSigner,
@@ -105,6 +111,7 @@ const failurePath = `${outputPath}.failed.json`;
 // Strict: a malformed value is an error, not a silent fall-back to viem's 180 s default.
 const receiptTimeoutMs = optionalPositiveInt("REPCREDIT_RECEIPT_TIMEOUT_MS");
 const pollingIntervalMs = optionalPositiveInt("REPCREDIT_POLL_INTERVAL_MS");
+const lockStaleAfterMs = optionalPositiveInt("REPCREDIT_LOCK_STALE_MS");
 
 const account = privateKeyToAccount(privateKey);
 const entryPoint = getAddress(entryPointRaw);
@@ -281,7 +288,18 @@ async function dryRun(): Promise<void> {
   })}\n`);
 }
 
+// Held for the whole run and released in the finally below; the lock module also registers an exit
+// hook, so an abrupt exit still drops it.
+let lock: { release: () => boolean } | null = null;
+
 async function main(): Promise<void> {
+  // One process per journal path — see the note in repcredit-journal-lock.mjs. Taken before the
+  // journal is read, so two concurrent runs cannot both adopt (and then overwrite) the same file.
+  lock = await acquireJournalLock({
+    path: journalPath,
+    ...(lockStaleAfterMs ? { staleAfterMs: lockStaleAfterMs } : {}),
+    onEvent: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+  });
   // Adopt a previous attempt's journal (fingerprint-gated) before anything is sent, then poll every
   // hash it left pending. Reconciliation runs first so a transaction that mined while the previous
   // process was dying is recognised instead of being sent a second time.
@@ -418,4 +436,7 @@ try {
   }
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
+} finally {
+  // The exit hook is the backstop; releasing here keeps the lock's lifetime equal to the run's.
+  lock?.release();
 }
