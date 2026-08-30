@@ -21,7 +21,12 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
+          # Pinned to 1.7.1 (was `stable`). foundry `stable` rolled to 1.8.1 on 2026-08-28, whose revm
+          # regressed several tier-resolution tests (P256+BLS both validate yet the cumulative/weighted
+          # tier resolves to 0 → InsufficientTier). solc stays 0.8.33, so this is purely a revm behavior
+          # change, reproducible on clean main under 1.8.1. 1.7.1 is the last version main was green on
+          # (CI run 2026-08-18). Revisit / bump once the 1.8.x incompatibility is root-caused.
+          version: "1.7.1"
 
       - name: Run tests
         run: forge test --summary
@@ -92,7 +97,8 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
+          # Pinned to 1.7.1 — see the note on the `test` job above (foundry 1.8.1 revm tier regression).
+          version: "1.7.1"
 
       - name: Run full suite under Prague (golden-vector + single-op replay + batch aggregator + all units)
         run: forge test --evm-version prague -vv
