@@ -983,12 +983,17 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      but ANY read failure — a proxy validator whose implementation is momentarily empty, a validator
     ///      that transiently reverts, empty/malformed returndata, a bool decode failure. All of those are
     ///      labelled "true legacy" and re-open the floorless whole-set path (fail-OPEN for the read itself).
-    ///      This is NOT an attack surface (a caller cannot selectively gas-starve this call into `catch`: by
-    ///      EIP-150's 63/64 rule the downstream ecrecover/validate would OOG first — the gate call is always
-    ///      cheaper than what follows it). It is an operational risk: a genuine committee validator that
-    ///      reverts `committeeActive()` in some window is treated as legacy. Kept because "revert ⇒ legacy"
-    ///      IS this PR's chosen coexistence form; tightening it (allowlist / ERC-165 / known 0x539B, else
-    ///      fail closed) is a larger, separate change.
+    ///      This is not reachable by an attacker against the DEPLOYED committee validator, whose
+    ///      committeeActive() is a plain bool getter (~2.6k gas): for that call to OOG, the 63/64 forwarded
+    ///      to it must be under ~2.6k, which leaves the caller ~40 gas — not enough for the downstream
+    ///      ecrecover (3000) and validate(). NOTE that this bound comes from the implementation, NOT from
+    ///      the interface: IAAStarCommitteeValidator places no gas bound on committeeActive(), so a validator
+    ///      whose getter is unbounded WOULD OOG at any forwarded amount while the retained 1/64 still covers
+    ///      the downstream path (at verificationGasLimit ~4M that is ~62k). Mounting such a validator is
+    ///      owner-gated, so this is an operational/upgrade risk, not an unauthenticated attack — but do NOT
+    ///      read this note as "gas-starvation is impossible". Kept because "revert ⇒ legacy" IS this PR's
+    ///      chosen coexistence form; tightening it (allowlist / ERC-165 / known 0x539B, else fail closed)
+    ///      is a larger, separate change.
     function _blsAlgMode()
         private
         view
