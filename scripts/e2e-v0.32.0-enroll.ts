@@ -33,6 +33,8 @@ config({ path: resolve(import.meta.dirname, "../.env.sepolia") });
 const PRIORITY_FEE_FLOOR = 2_000_000_000n;
 const PRIVATE_KEY = (process.env.PRIVATE_KEY_ANNI ?? process.env.PRIVATE_KEY) as Hex;
 const RPC = process.env.SEPOLIA_RPC_URL as string;
+// Validate BEFORE privateKeyToAccount() — else viem throws a cryptic undefined-slice error (pr-daemon #211 Low).
+if (!PRIVATE_KEY) throw new Error("PRIVATE_KEY_ANNI (or PRIVATE_KEY) not set in .env.sepolia");
 const owner = privateKeyToAccount(PRIVATE_KEY);
 
 function envAddr(k: string): Address { const v = process.env[k]; if (!v) throw new Error(`${k} not set`); return getAddress(v); }

@@ -35,12 +35,14 @@
  *    verify against → every tier-2/3 op fails), not just committee. This script throws if it is empty.
  *    Rollout: dvt registers >=3 DVT nodes on 0x1A8Db639 → THEN run this deploy.
  *
- * ── MIGRATION ORDER (non-upgradable, committee mode OFF at deploy): this deploys the stack with the
- *    committee validator mounted but committeeActive() still false (validator epochLength==0). With CC-116
- *    this window is now FAIL-CLOSED for tier-2/3 (not silently legacy-passthrough): tier-1 owner-only works,
- *    tier-2/3 is rejected until committee mode is armed. Per account: call enrollInCommitteeValidator()
- *    after creation. ONLY AFTER accounts are enrolled does dvt/owner(Safe) flip the validator's
- *    setEpochLength to turn committee mode on. dvt must NOT flip first.
+ * ── MIGRATION ORDER (non-upgradable). As ACTUALLY DEPLOYED 2026-08-30 = "option 1": the mounted validator
+ *    0x1A8Db639 was ALREADY armed (committeeActive()==true, epochLength!=0) — armed during the v0.31.0
+ *    rollout — so this stack was deployed against an already-armed validator, NOT the committee-off-first
+ *    ordering. That is SAFE under CC-116: a fresh account is committee-active from birth, so its tier-2/3 is
+ *    FAIL-CLOSED until it calls enrollInCommitteeValidator() (tier-1 owner-only works throughout) — the
+ *    conservative direction, no floorless window. The script still WARNS if committeeActive() is true (below)
+ *    but proceeds. (The alternative ordering — deploy while committee OFF, enroll, THEN dvt flips
+ *    setEpochLength, dvt not flipping first — applies only if a FRESH committee-off validator is used.)
  *
  * Output env keys: AIRACCOUNT_V0320_*
  * Usage: pnpm tsx scripts/deploy-v0.32.0.ts   (DRY_RUN=1 to validate without broadcasting)
@@ -82,6 +84,9 @@ function v0290(key: string): Address {
   if (!v) throw new Error(`AIRACCOUNT_V0290_${key} not set — v0.32.0 reuses v0.29.0 peripherals`);
   return getAddress(v);
 }
+// Validate BEFORE privateKeyToAccount() below — else viem throws a cryptic "Cannot read properties of
+// undefined (reading 'slice')" that names neither the var nor the fix (pr-daemon #211 Low).
+if (!PRIVATE_KEY) throw new Error("PRIVATE_KEY_ANNI (or PRIVATE_KEY) not set in .env.sepolia");
 const deployer = privateKeyToAccount(PRIVATE_KEY);
 
 // Deployed external-library addresses (fully-qualified name → address). Populated at runtime AFTER each
@@ -195,7 +200,7 @@ async function dryRun() {
   const active = await reader.readContract({ address: committeeValidator, abi: COMMITTEE_ABI, functionName: "committeeActive" }) as boolean;
   const nodes = await reader.readContract({ address: committeeValidator, abi: COMMITTEE_ABI, functionName: "getRegisteredNodeCount" }) as bigint;
   console.log(`Committee validator ${committeeValidator}: committeeActive=${active} registeredNodes=${nodes}`);
-  if (nodes === 0n) throw new Error("committee validator has 0 registered nodes — dvt must register first (f7810089)");
+  if (nodes < 3n) throw new Error(`committee validator has ${nodes} registered nodes (<3) — dvt must register >=3 first (f7810089)`);
   if (active) console.warn("  ⚠️  committeeActive() already true — must deploy+enroll BEFORE flip (interlock)");
 
   const sess = v0290("SESSION_KEY_VALIDATOR"); v0290("FORCE_EXIT_MODULE"); v0290("DELEGATE"); v0290("PARSER_REGISTRY");
@@ -223,7 +228,7 @@ async function dryRun() {
 }
 
 async function main() {
-  if (!PRIVATE_KEY) throw new Error("PRIVATE_KEY not set");
+  // PRIVATE_KEY is validated at module load (before privateKeyToAccount above).
   if (!COMMUNITY) throw new Error("COMMUNITY_GUARDIAN_ADDRESS not set");
   if (DRY_RUN) { await dryRun(); return; }
   if (!isAddress(DVT_COMMITTEE_VALIDATOR)) {
@@ -251,10 +256,13 @@ async function main() {
   console.log(`Committee validator code: ${cvCode.length / 2 - 1} bytes ✓  committeeActive()=${activeAtDeploy}  registeredNodes=${nodeCount}`);
   // EMPTY-VALIDATOR GUARD (dvt catch, f7810089): mounting an empty validator breaks legacy whole-set too —
   // every tier-2/3 op on the new stack would fail. dvt must register >=3 DVT nodes on it before deploy.
-  if (nodeCount === 0n) {
+  // Guard matches the script's own >=3 requirement (header + rollout note): a committee validator with
+  // <3 nodes can't satisfy quorum and mounting it would break legacy tier-2/3 too — reject BEFORE paying
+  // for the whole stack (~0.07 ETH), not after the e2e fails downstream (pr-daemon #211 Low).
+  if (nodeCount < 3n) {
     throw new Error(
-      `Committee validator ${committeeValidator} has 0 registered nodes — mounting it would break legacy ` +
-      `tier-2/3 too. dvt must register the DVT node set first (Seeder f7810089), then re-run.`,
+      `Committee validator ${committeeValidator} has ${nodeCount} registered nodes (<3) — mounting it would ` +
+      `break tier-2/3. dvt must register >=3 DVT nodes first (Seeder f7810089), then re-run.`,
     );
   }
   if (activeAtDeploy) {
