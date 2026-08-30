@@ -8,6 +8,8 @@ import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
 import {AAStarValidator} from "../src/validators/AAStarValidator.sol";
 import {IAAStarAlgorithm} from "../src/interfaces/IAAStarAlgorithm.sol";
 import {IAAStarCommitteeValidator} from "../src/interfaces/IAAStarCommitteeValidator.sol";
+import {IAirAccountAgent} from "../src/interfaces/IAirAccountAgent.sol";
+import {AAStarAgentStorageLayout} from "../src/core/AAStarAgentStorageLayout.sol";
 import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
@@ -241,6 +243,86 @@ contract CommitteeBLSFramingV031 is Test {
         vm.prank(address(ep));
         // The committeeOff gate is placed BEFORE the aggregator deferral, so the result is a clean reject (1),
         // NOT the aggregator address uint160(0xA66) that legacy deferral would return.
+        assertEq(account.validateUserOp(op, h, 0), 1);
+    }
+
+    // ── CC-116 (pr-daemon #208 review): GATE-DISCRIMINATING tests ────────────────────────────────
+    //
+    // The committeeOff-mode sigs above use the 512-byte committee stride. If the gate at
+    // _validateTripleSignature / _validateWeightedSignature is DELETED, `committee` collapses to false,
+    // stride collapses to 32, and the sig fails the strict length check — which also returns 1. So those
+    // assertions cannot distinguish "gate present" from "gate deleted" (both give 1 via different paths).
+    // The mutation review proved deleting those two gates left the whole suite green. These tests close
+    // that gap by using a LEGACY-SHAPED payload (32 stride, no accountId) whose length check PASSES, so
+    // the ONLY thing standing between the sig and a tier-2/3 pass is the committeeOff gate itself:
+    //   gate present  → validateUserOp returns 1  (fail closed ✅)
+    //   gate deleted  → validateUserOp returns 0  (the exact CC-116 hole)
+    // Verification (mandatory, both directions): delete the corresponding `if (committeeOff)` line → the
+    // test MUST go red; restore → green. Confirmed for all three on foundry 1.7.1.
+
+    /// @dev Legacy-shaped triple (32 stride, no accountId): [nodeIdsLength=1(32)][nodeId(32)][blsSig(256)][ownerSig(65)].
+    ///      Its post-tag length (385) EQUALS the legacy expectedLength, so the length check does not mask the gate.
+    function _legacyShapedTriple(bytes32 userOpHash) internal view returns (bytes memory) {
+        bytes memory blsSig = new bytes(256);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerW, MessageHashUtils.toEthSignedMessageHash(userOpHash));
+        return abi.encodePacked(
+            uint8(0x01), bytes32(uint256(1)), keccak256("node"), blsSig, abi.encodePacked(r, s, v)
+        );
+    }
+
+    function test_committeeOff_legacyShapedTriple_failsClosed() public {
+        _enroll();
+        committee.setActive(false); // disarmed committee validator
+        (PackedUserOperation memory op, bytes32 h) = _uo();
+        op.signature = _legacyShapedTriple(h);
+        vm.prank(address(ep));
+        // Length check passes (385==385) and the owner ECDSA is valid, so WITHOUT the gate this reaches the
+        // whole-set validate() and passes (returns 0). The gate is the only thing that makes it 1.
+        assertEq(account.validateUserOp(op, h, 0), 1);
+    }
+
+    function test_committeeOff_legacyShapedTriple_notDeferredToAggregator() public {
+        _enroll();
+        committee.setActive(false);
+        committee.setAggregator(address(0xA66)); // legacy-shaped so the aggregator deferral WOULD fire if reached
+        (PackedUserOperation memory op, bytes32 h) = _uo();
+        op.signature = _legacyShapedTriple(h);
+        vm.prank(address(ep));
+        // Pins the ordering: the gate sits BEFORE the aggregator deferral. Gate present → 1. If the gate were
+        // moved AFTER the deferral, this legacy-shaped sig would defer and return uint160(0xA66) (2662) — a
+        // value distinct from 1, so this assertion genuinely discriminates the ordering.
+        assertEq(account.validateUserOp(op, h, 0), 1);
+    }
+
+    /// @dev Weighted (0x07) sig exercising the BLS bit — the first repo test to do so. bitmap = P256|BLS;
+    ///      legacy 32-stride BLS block so the block-length check passes when the gate is absent.
+    function _weightedBlsSig() internal pure returns (bytes memory) {
+        bytes memory blsSig = new bytes(256);
+        return abi.encodePacked(
+            uint8(0x07),                                     // algId: weighted
+            uint8(0x05),                                     // bitmap: bit0 P256 + bit2 BLS
+            bytes32(uint256(0xAA)), bytes32(uint256(0xBB)),  // P256 block (64B; mock precompile succeeds)
+            bytes32(uint256(1)), keccak256("node"), blsSig   // BLS block: nodeIdsLength=1, nodeId, blsSig
+        );
+    }
+
+    function test_committeeOff_weightedBls_failsClosed() public {
+        _enroll();
+        // Weight config where P256(2)+BLS(2)=4 >= tier1Threshold(3), but P256 alone (2) is below it. So
+        // WITHOUT the gate the BLS weight lands and the sig passes (returns 0); WITH the gate the BLS block
+        // returns 1 before accumulating. No single factor reaches the threshold (passes setWeightConfig checks).
+        AAStarAgentStorageLayout.WeightConfig memory wc = AAStarAgentStorageLayout.WeightConfig({
+            passkeyWeight: 2, ecdsaWeight: 2, blsWeight: 2,
+            guardian0Weight: 1, guardian1Weight: 1, guardian2Weight: 1,
+            _padding: 0, tier1Threshold: 3, tier2Threshold: 4, tier3Threshold: 6
+        });
+        vm.prank(ownerW.addr);
+        IAirAccountAgent(address(account)).setWeightConfig(wc);
+
+        committee.setActive(false); // disarmed committee validator
+        (PackedUserOperation memory op, bytes32 h) = _uo();
+        op.signature = _weightedBlsSig();
+        vm.prank(address(ep));
         assertEq(account.validateUserOp(op, h, 0), 1);
     }
 

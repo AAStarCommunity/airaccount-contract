@@ -979,6 +979,16 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      The only difference between (2) and (3) is returned-false vs reverted — collapsing them (the
     ///      pre-CC-116 behavior) let a committee validator's disarmed window silently ride the legacy path.
     ///      Read fail-safe; never reverts the ERC-4337 validation phase.
+    /// @dev RESIDUAL (pr-daemon #208, Low): the `catch` covers not only "committeeActive() not implemented"
+    ///      but ANY read failure — a proxy validator whose implementation is momentarily empty, a validator
+    ///      that transiently reverts, empty/malformed returndata, a bool decode failure. All of those are
+    ///      labelled "true legacy" and re-open the floorless whole-set path (fail-OPEN for the read itself).
+    ///      This is NOT an attack surface (a caller cannot selectively gas-starve this call into `catch`: by
+    ///      EIP-150's 63/64 rule the downstream ecrecover/validate would OOG first — the gate call is always
+    ///      cheaper than what follows it). It is an operational risk: a genuine committee validator that
+    ///      reverts `committeeActive()` in some window is treated as legacy. Kept because "revert ⇒ legacy"
+    ///      IS this PR's chosen coexistence form; tightening it (allowlist / ERC-165 / known 0x539B, else
+    ///      fail closed) is a larger, separate change.
     function _blsAlgMode()
         private
         view
