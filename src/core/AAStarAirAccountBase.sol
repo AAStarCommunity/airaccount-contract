@@ -965,17 +965,48 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
     ///      IAAStarCommitteeValidator). Legacy whole-set mode uses a 32-byte stride (nodeId only).
     uint256 internal constant COMMITTEE_PER_SIGNER = 512;
 
-    /// @dev Resolve the mounted BLS algorithm and whether it is in per-proposal committee mode (CC-98).
-    ///      `committeeActive()` is read fail-safe: a legacy validator that does not implement it reverts →
-    ///      treated as committee-off → byte-identical legacy whole-set framing (migration drop-in). Never
-    ///      reverts the ERC-4337 validation phase.
-    function _blsAlgMode() private view returns (address blsAlg, bool committee, uint256 stride) {
+    /// @dev Resolve the mounted BLS algorithm and its committee framing (CC-98) with a THREE-way outcome,
+    ///      distinguishing the two shapes that `try/catch` on `committeeActive()` can produce (CC-116):
+    ///        1. returns true  → `committee=true`  → per-proposal committee mode (accountId inject + quorum).
+    ///        2. returns false → `committeeOff=true` → a committee validator whose quorum floor is NOT armed
+    ///           (migration window before `setEpochLength`, or committee later disabled). Its `validate()`
+    ///           falls back to a floorless whole-set path where a single registered node passes tier-2/3.
+    ///           The account FAILS CLOSED here: no BLS-bearing tier-2/3 signature may pass while the floor
+    ///           is missing (CC-116). tier-1 owner-only and non-BLS weighted paths are unaffected.
+    ///        3. reverts       → `committee=false, committeeOff=false` → a TRUE legacy validator (e.g. the
+    ///           whole-set `AAStarValidator` at 0x539B) that never implemented `committeeActive()`. This is
+    ///           the long-term-coexistence form: byte-identical legacy whole-set framing, MUST keep working.
+    ///      The only difference between (2) and (3) is returned-false vs reverted — collapsing them (the
+    ///      pre-CC-116 behavior) let a committee validator's disarmed window silently ride the legacy path.
+    ///      Read fail-safe; never reverts the ERC-4337 validation phase.
+    /// @dev RESIDUAL (pr-daemon #208, Low): the `catch` covers not only "committeeActive() not implemented"
+    ///      but ANY read failure — a proxy validator whose implementation is momentarily empty, a validator
+    ///      that transiently reverts, empty/malformed returndata, a bool decode failure. All of those are
+    ///      labelled "true legacy" and re-open the floorless whole-set path (fail-OPEN for the read itself).
+    ///      This is not reachable by an attacker against the DEPLOYED committee validator, whose
+    ///      committeeActive() is a plain bool getter (~2.6k gas): for that call to OOG, the 63/64 forwarded
+    ///      to it must be under ~2.6k, which leaves the caller ~40 gas — not enough for the downstream
+    ///      ecrecover (3000) and validate(). NOTE that this bound comes from the implementation, NOT from
+    ///      the interface: IAAStarCommitteeValidator places no gas bound on committeeActive(), so a validator
+    ///      whose getter is unbounded WOULD OOG at any forwarded amount while the retained 1/64 still covers
+    ///      the downstream path (at verificationGasLimit ~4M that is ~62k). Mounting such a validator is
+    ///      owner-gated, so this is an operational/upgrade risk, not an unauthenticated attack — but do NOT
+    ///      read this note as "gas-starvation is impossible". Kept because "revert ⇒ legacy" IS this PR's
+    ///      chosen coexistence form; tightening it (allowlist / ERC-165 / known 0x539B, else fail closed)
+    ///      is a larger, separate change.
+    function _blsAlgMode()
+        private
+        view
+        returns (address blsAlg, bool committee, uint256 stride, bool committeeOff)
+    {
         blsAlg = _resolveBLSAlgorithm();
         if (blsAlg != address(0)) {
             try IAAStarCommitteeValidator(blsAlg).committeeActive() returns (bool a) {
                 committee = a;
+                committeeOff = !a; // implements committeeActive() AND returned false → disarmed committee validator
             } catch {
                 committee = false;
+                committeeOff = false; // does not implement committeeActive() → true legacy whole-set validator
             }
         }
         stride = committee ? COMMITTEE_PER_SIGNER : 32;
@@ -1038,8 +1069,12 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // CC-98: the per-signer stride is 32 in legacy whole-set mode, COMMITTEE_PER_SIGNER (512) in
         // committee mode (each signer carries nodeId + slot + Merkle proof). _verifyAgg prepends
         // accountId = address(this) in committee mode; the submitter payload never carries accountId.
-        (address blsAlg, bool committee, uint256 stride) = _blsAlgMode();
+        (address blsAlg, bool committee, uint256 stride, bool committeeOff) = _blsAlgMode();
         if (blsAlg == address(0)) return false;
+        // CC-116: committee validator mounted but disarmed (committeeActive()==false) → no on-chain quorum
+        // floor → fail closed. A true legacy validator (committeeActive() reverts) has committeeOff=false and
+        // continues through the whole-set path below.
+        if (committeeOff) return false;
         uint256 baseOffset = 32 + nodeIdsLength * stride;
         if (blsPayload.length != baseOffset + 256) return false;
         // BLS verify data omits the nodeIdsLength prefix: [signers...][blsSig]
@@ -1083,7 +1118,13 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
         // CC-98: resolve the mounted BLS algorithm + committee mode ONCE. The per-signer stride (32 legacy
         // / 512 committee) drives the offset math for the trailing owner ECDSA signature; the same blsAlg is
         // reused for the aggregator check and _verifyAgg below (no second resolution).
-        (address blsAlg, bool committee, uint256 stride) = _blsAlgMode();
+        (address blsAlg, bool committee, uint256 stride, bool committeeOff) = _blsAlgMode();
+        // CC-116: committee validator mounted but disarmed (committeeActive()==false) → floorless whole-set
+        // path where one registered node passes tier-2/3 → fail closed. Placed BEFORE the aggregator deferral
+        // below so a committee validator (mistakenly) exposing a non-zero aggregator() cannot ride the batch
+        // path around this gate. A true legacy validator (committeeActive() reverts → committeeOff=false) is
+        // unaffected and keeps the whole-set + aggregator behavior.
+        if (committeeOff) return 1;
         uint256 nodeIdsDataLength = nodeIdsLength * stride;
         uint256 expectedLength = 32 + nodeIdsDataLength + 256 + 65;
         if (sigData.length != expectedLength) return 1;
@@ -1190,8 +1231,11 @@ abstract contract AAStarAirAccountBase is AAStarAgentStorageLayout {
             // CC-98: committee mode widens the per-signer stride (32 → 512), so the block length is
             // mode-dependent. Resolve mode here and hand the [signers...][blsSig] region (prefix stripped)
             // straight to _verifyAgg, which prepends accountId in committee mode.
-            (address blsAlg, bool committee, uint256 stride) = _blsAlgMode();
+            (address blsAlg, bool committee, uint256 stride, bool committeeOff) = _blsAlgMode();
             if (blsAlg == address(0)) return 1;
+            // CC-116: committee validator mounted but disarmed → floorless whole-set → fail closed. A weighted
+            // signature that does NOT set the BLS bit never reaches here, so non-BLS weighted paths still work.
+            if (committeeOff) return 1;
             uint256 blsBlockLen = 32 + nodeIdsLength * stride + 256; // issue #45: messagePoint + mpSig removed
             if (sigData.length < cursor + blsBlockLen) return 1;
             if (!_verifyAgg(blsAlg, committee, userOpHash, nodeIdsLength, sigData[cursor + 32:cursor + blsBlockLen])) return 1;

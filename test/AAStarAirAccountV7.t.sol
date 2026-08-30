@@ -287,7 +287,7 @@ contract AAStarAirAccountV7Test is Test {
 
     function test_erc7579_accountId() public view {
         string memory id = account.accountId();
-        assertEq(id, "airaccount.v7@0.31.0");
+        assertEq(id, "airaccount.v7@0.32.0");
     }
 
     function test_erc7579_supportsModule_validator() public view {
