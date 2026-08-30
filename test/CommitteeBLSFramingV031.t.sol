@@ -53,6 +53,21 @@ contract MockCommitteeValidator is IAAStarAlgorithm, IAAStarCommitteeValidator {
     }
 }
 
+/// @dev TRUE legacy whole-set validator (models AAStarValidator 0x539B). Does NOT implement
+///      committeeActive()/requiredQuorum() — the account's try/catch on committeeActive() REVERTS →
+///      committeeOff=false → byte-identical whole-set framing. This is the long-term-coexistence form the
+///      CC-116 gate must NOT break: [nodeId(32)…][blsSig(256)], 32-byte stride, no accountId prefix. May
+///      optionally expose a protocol batch aggregator (legacy-only deferral path).
+contract MockLegacyValidator is IAAStarAlgorithm {
+    address public agg;
+    function setAggregator(address a) external { agg = a; }
+    function aggregator() external view returns (address) { return agg; }
+    function validate(bytes32, bytes calldata sig) external pure returns (uint256) {
+        if (sig.length <= 256) return 1;
+        return ((sig.length - 256) % 32 == 0) ? 0 : 1;
+    }
+}
+
 /// @title CC-98 committee BLS framing — account-side v0.31.0 unit tests
 contract CommitteeBLSFramingV031 is Test {
     MockEP_Committee ep;
@@ -184,30 +199,28 @@ contract CommitteeBLSFramingV031 is Test {
         assertEq(account.validateUserOp(op, h, 0), 0);
     }
 
-    /// @dev Legacy (32-stride) triple sig: [nodeIdsLength=1(32)][nodeId(32)][blsSig(256)][ownerSig(65)].
-    function _legacyTripleSig(bytes32 userOpHash) internal view returns (bytes memory) {
-        bytes memory blsSig = new bytes(256);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerW, MessageHashUtils.toEthSignedMessageHash(userOpHash));
-        return abi.encodePacked(
-            uint8(0x01), bytes32(uint256(1)), keccak256("node"), blsSig, abi.encodePacked(r, s, v)
-        );
-    }
+    // ── CC-116: committee validator DISARMED (committeeActive()==false) ⇒ tier-2/3 FAILS CLOSED ──
+    //
+    // A committee validator's validate() falls back to a floorless whole-set path when committee mode is off
+    // (migration window before setEpochLength, or committee later disabled). Pre-CC-116 the account rode that
+    // path byte-identically (a single registered node passed tier-2/3). The account now distinguishes
+    // "committeeActive() returns false" (disarmed committee validator → committeeOff=true → reject) from a
+    // TRUE legacy validator whose committeeActive() reverts (committeeOff=false → whole-set, tested below).
 
-    function test_legacy_stillDefersToAggregator() public {
-        committee.setActive(false);              // legacy mode
-        committee.setAggregator(address(0xA66)); // aggregator deferral is legacy-only
+    function test_committeeOff_triple_failsClosed() public {
+        _enroll();
+        committee.setActive(false); // disarmed committee validator (returns false, does NOT revert)
         (PackedUserOperation memory op, bytes32 h) = _uo();
-        op.signature = _legacyTripleSig(h);
-        // In legacy mode the aggregator branch fires and returns the aggregator address (uint160).
+        op.signature = _committeeTripleSig(1, h); // otherwise-valid committee triple
         vm.prank(address(ep));
-        assertEq(account.validateUserOp(op, h, 0), uint256(uint160(address(0xA66))));
+        // Even an enrolled account with a well-formed owner+BLS triple is rejected while the floor is missing.
+        assertEq(account.validateUserOp(op, h, 0), 1);
     }
 
-    // ── legacy fallback: committee mode off → 32-byte stride, no accountId ───────
-
-    function test_legacyMode_usesWholeSetStride_noAccountId() public {
-        committee.setActive(false); // committeeActive() → false → legacy framing
-        // Legacy tier-2: [P256(64)][nodeIdsLength=1(32)][nodeId(32)][blsSig(256)] (32-byte stride, no accountId)
+    function test_committeeOff_cumulativeT2_failsClosed() public {
+        _enroll();
+        committee.setActive(false);
+        // Cumulative tier-2 (0x04): [P256(64)][nodeIdsLength=1(32)][nodeId(32)][blsSig(256)] (legacy shape).
         bytes memory blsSig = new bytes(256);
         bytes memory sig = abi.encodePacked(
             uint8(0x04), bytes32(uint256(0xAA)), bytes32(uint256(0xBB)),
@@ -216,9 +229,84 @@ contract CommitteeBLSFramingV031 is Test {
         (PackedUserOperation memory op, bytes32 h) = _uo();
         op.signature = sig;
         vm.prank(address(ep));
-        // Passes ONLY if the account used the 32-byte legacy stride and did NOT prepend accountId (the mock's
-        // legacy branch accepts [nodeId(32)][blsSig(256)]). A wrongly-injected accountId or 512 stride would
-        // change the layout and fail. Confirms committeeActive()==false ⇒ byte-identical legacy framing.
-        assertEq(account.validateUserOp(op, h, 0), 0);
+        assertEq(account.validateUserOp(op, h, 0), 1); // pre-CC-116 this returned 0
+    }
+
+    function test_committeeOff_notDeferredToAggregator() public {
+        _enroll();
+        committee.setActive(false);
+        committee.setAggregator(address(0xA66)); // a non-zero aggregator must NOT open a bypass around the gate
+        (PackedUserOperation memory op, bytes32 h) = _uo();
+        op.signature = _committeeTripleSig(1, h);
+        vm.prank(address(ep));
+        // The committeeOff gate is placed BEFORE the aggregator deferral, so the result is a clean reject (1),
+        // NOT the aggregator address uint160(0xA66) that legacy deferral would return.
+        assertEq(account.validateUserOp(op, h, 0), 1);
+    }
+
+    // ── TRUE legacy validator (committeeActive() reverts) ⇒ whole-set coexistence PRESERVED ──────
+    //
+    // The gate must only fire on a disarmed committee validator, never on a genuine legacy validator that
+    // simply does not implement committeeActive(). These build a fresh account whose router 0x01 is a
+    // MockLegacyValidator (no committeeActive()).
+
+    function _legacyAccount() internal returns (AAStarAirAccountV7 acct, MockLegacyValidator legacy) {
+        uint8[] memory noAlgs = new uint8[](0);
+        AAStarAirAccountBase.InitConfig memory cfg = AAStarAirAccountBase.InitConfig({
+            guardians: [address(0), address(0), address(0)],
+            guardianP256X: [bytes32(0), bytes32(0), bytes32(0)],
+            guardianP256Y: [bytes32(0), bytes32(0), bytes32(0)],
+            dailyLimit: 0, approvedAlgIds: noAlgs, minDailyLimit: 0,
+            initialTokens: new address[](0),
+            initialTokenConfigs: new AAStarGlobalGuard.TokenConfig[](0),
+            tier1Limit: 0, tier2Limit: 0
+        });
+        acct = new AAStarAirAccountV7(address(0));
+        acct.initialize(address(ep), ownerW.addr, cfg, address(0), bytes32(0), bytes32(0));
+        AAStarValidator r = new AAStarValidator();
+        legacy = new MockLegacyValidator();
+        r.registerAlgorithm(0x01, address(legacy));
+        vm.startPrank(ownerW.addr);
+        acct.setValidator(address(r));
+        acct.setP256Key(bytes32(uint256(1)), bytes32(uint256(2)));
+        vm.stopPrank();
+        vm.deal(address(acct), 100 ether);
+    }
+
+    function test_trueLegacy_wholeSetStillPasses() public {
+        (AAStarAirAccountV7 acct,) = _legacyAccount();
+        // Legacy tier-2 (0x04): [P256(64)][nodeIdsLength=1(32)][nodeId(32)][blsSig(256)] — 32-byte stride, no
+        // accountId. committeeActive() reverts → committeeOff=false → whole-set passthrough, unchanged.
+        bytes memory blsSig = new bytes(256);
+        bytes memory sig = abi.encodePacked(
+            uint8(0x04), bytes32(uint256(0xAA)), bytes32(uint256(0xBB)),
+            bytes32(uint256(1)), keccak256("node"), blsSig
+        );
+        (PackedUserOperation memory op, bytes32 h) = _uo();
+        op.sender = address(acct);
+        h = keccak256(abi.encode(op));
+        op.signature = sig;
+        vm.prank(address(ep));
+        assertEq(acct.validateUserOp(op, h, 0), 0); // coexistence: legacy whole-set NOT broken by the gate
+    }
+
+    function test_trueLegacy_stillDefersToAggregator() public {
+        (AAStarAirAccountV7 acct, MockLegacyValidator legacy) = _legacyAccount();
+        legacy.setAggregator(address(0xA66)); // aggregator deferral remains legacy-only
+        bytes memory blsSig = new bytes(256);
+        // Build op/hash first so the owner sig binds the real userOpHash.
+        PackedUserOperation memory op = PackedUserOperation({
+            sender: address(acct), nonce: 0, initCode: "", callData: "",
+            accountGasLimits: bytes32(0), preVerificationGas: 0, gasFees: bytes32(0),
+            paymasterAndData: "", signature: ""
+        });
+        bytes32 h = keccak256(abi.encode(op));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerW, MessageHashUtils.toEthSignedMessageHash(h));
+        op.signature = abi.encodePacked(
+            uint8(0x01), bytes32(uint256(1)), keccak256("node"), blsSig, abi.encodePacked(r, s, v)
+        );
+        vm.prank(address(ep));
+        // Legacy aggregator branch fires and returns the aggregator address (uint160) — unchanged by CC-116.
+        assertEq(acct.validateUserOp(op, h, 0), uint256(uint160(address(0xA66))));
     }
 }
