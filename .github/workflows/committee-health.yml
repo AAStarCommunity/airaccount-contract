@@ -119,9 +119,13 @@ jobs:
           MARKER="<!-- committee-health-alert-v1:${KIND} -->"
           gh label create "$LABEL" --repo "$REPO" --color B60205 \
             --description "Automated committee validator health alerts" 2>/dev/null || true
+          # NOTE: pipe to REAL jq. `gh ... --jq` takes a single expression and does NOT accept `--arg`
+          # (that is a jq CLI flag); passing it makes gh treat the marker and the program as stray
+          # positional args and exit 1. Verified locally with `echo JSON | jq --arg`, which is a
+          # DIFFERENT engine than gh's built-in — the drill is what caught it.
           EXISTING="$(gh issue list --repo "$REPO" --label "$LABEL" --state open --limit 100 \
-            --json number,body --jq --arg m "$MARKER" \
-            '[.[] | select(.body // "" | contains($m))] | .[0].number // empty')"
+            --json number,body \
+            | jq -r --arg m "$MARKER" '[.[] | select(.body // "" | contains($m))] | .[0].number // empty')"
           if [ -n "$EXISTING" ]; then
             # Silent while an alert of THIS category is open: at 4 runs/hour, commenting would post ~96
             # notifications/day for one incident — the alert fatigue K exists to prevent on the WARN side.
