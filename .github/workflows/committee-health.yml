@@ -38,9 +38,16 @@ permissions:
 #   step start 09:00:18.578  ->  "opened ...#216" 09:00:23.075   = ~4.5s of list->create exposure
 # So the race is real but narrow; it was never close to being demonstrated. Cheap to remove anyway.
 #
-# The group includes github.event_name so a manual drill cannot silently EVICT a queued scheduled run:
-# with a constant group they share one queue slot, and the evicted run disappears with no trace,
-# costing a monitoring datapoint precisely when someone is poking at the system.
+# The group includes github.event_name. This is a TRADE, not a pure win — both options give something up:
+#   constant group : nothing can race, but a manual drill EVICTS a queued scheduled run. The evicted run
+#                    vanishes with no trace => a silent hole in monitoring, exactly while someone pokes.
+#   per-event group: no cross-event eviction, but a dispatch and a scheduled run CAN now overlap, which
+#                    is precisely the condition the ~4.5s list->create race needs. Worst case: both file
+#                    an issue => one duplicate. And "poke it while the schedule runs" is a COMMON action,
+#                    so this hole is reachable, not theoretical.
+# Chosen because a duplicate issue is visible and closable in seconds, whereas a silently dropped
+# monitoring run leaves no evidence it was ever supposed to happen. Having BOTH requires making the
+# dedup itself atomic (create, re-query, close your own duplicate) — deliberately out of scope here.
 concurrency:
   group: committee-health-alert-${{ github.event_name }}
   cancel-in-progress: false
