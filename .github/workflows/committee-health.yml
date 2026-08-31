@@ -111,8 +111,11 @@ jobs:
           AT_BLOCK: ${{ inputs.at_block }}
         run: |
           set +e
-          node scripts/committee-health.mjs
-          code=$?
+          # tee, because the verdict is parsed out of the output below. Grepping a file nothing wrote
+          # fails SILENTLY (empty verdict -> UNKNOWN -> recover skipped forever) and YAML lint stays
+          # green -- caught only by drilling the job.
+          node scripts/committee-health.mjs 2>&1 | tee out.txt
+          code=${PIPESTATUS[0]}
           echo "code=$code" >> "$GITHUB_OUTPUT"
           # Exit 0 covers BOTH OK and WARN, and WARN "committee is OFF" means tier-2/3 is still
           # unavailable -- so the code alone must never decide that an incident is resolved.
