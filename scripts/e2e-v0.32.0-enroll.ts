@@ -16,6 +16,14 @@
  * UserOp E2E is still NOT here — it needs SDK/KMS per-signer signatures (Seeder b8f3441f). This proves the
  * stack + enroll wiring only.
  *
+ * ⚠️ RETIRED STACK (2026-08-31). dvt stopped the keeper for validator 0x1A8Db639 (shared by the
+ *    v0.31.0 and v0.32.0 stacks) — only the v0.33.0 keeper is kept. From the next epoch that validator
+ *    is no longer pinned, so requiredQuorum() goes to the sentinel PERMANENTLY and, by CC-116, tier-2/3
+ *    on these two stacks is fail-closed for good (tier-1 owner-only still works).
+ *    => This script's ARMED branch will therefore FAIL from now on. That is a CORRECT reading of a
+ *    retired stack, NOT a regression. Unlike the ~36s structural window, this one does not self-heal.
+ *    For a live stack use scripts/e2e-v0.33.0-enroll.ts.
+ *
  * Usage: pnpm tsx scripts/e2e-v0.32.0-enroll.ts
  */
 

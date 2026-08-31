@@ -141,7 +141,15 @@ try {
   // falls back to a public endpoint by default, so one rate-limit or blip reaches here. Emitting
   // CRITICAL would make the alert assert "tier-2/3 is fail-closed" — a claim we have no evidence
   // for. Distinct exit code so the alerting layer can word it correctly.
-  fail("UNDETERMINED", `health check could not complete (says nothing about stack health): ${err?.shortMessage ?? err?.message ?? err}`);
+  const m = String(err?.shortMessage ?? err?.message ?? err);
+  // A validator deployed before this check's ABI (no epochSetValidUntil / epochConfigVersion /
+  // minCommittee) reverts on those reads. That is not a transport problem and not a sick stack —
+  // it means the router points at a PRE-CC-98-hardening validator, i.e. almost certainly a retired
+  // stack. Say so, because "could not complete: <method> reverted" gives the reader nothing to act on.
+  const abiGap = /epochSetValidUntil|epochConfigVersion|minCommittee/.test(m) && /revert/i.test(m);
+  fail("UNDETERMINED", abiGap
+    ? `validator predates this check's ABI (${m}) — the router points at an older validator that lacks the CC-98 hardening getters. Expected for a RETIRED stack (v0.31/v0.32 on 0x1A8Db639); this check only covers v0.33.0+.`
+    : `health check could not complete (says nothing about stack health): ${m}`);
 }
 
 const icon = { OK: "✅", WARN: "⚠️", UNDETERMINED: "❓", CRITICAL: "❌" }[verdict] ?? "❌";
