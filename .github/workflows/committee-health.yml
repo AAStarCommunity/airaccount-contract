@@ -224,6 +224,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # The comment must be GENERATED FROM the fact it asserts, not written in parallel with it.
+          # Hardcoding "reported OK" made the sentence's truth depend on the `if` ten lines above
+          # rather than on itself, so changing the gate would silently turn it into a lie -- and the
+          # gate-mutation drill produced exactly that: a "reported OK" comment on a WARN run.
+          VERDICT: ${{ needs.check.outputs.verdict }}
         run: |
           set -euo pipefail
           LABEL="committee-health"
@@ -240,7 +245,7 @@ jobs:
               | jq -r --arg m "$MARKER" '.[] | select(.body // "" | contains($m)) | .number')"
             for N in $NUMS; do
               gh issue comment "$N" --repo "$REPO" --body \
-                "Resolved: the check reported OK at $(date -u +%Y-%m-%dT%H:%M:%SZ). ${RUN_URL}
+                "Resolved: the check reported ${VERDICT:-unknown} at $(date -u +%Y-%m-%dT%H:%M:%SZ). ${RUN_URL}
           Closed automatically so the open set equals the current failure set. A new failure of this
           category opens a fresh issue rather than reviving this one.
           NOTE: these lines sit at the block scalar base indent (10), not at column 0 and not deeper.
