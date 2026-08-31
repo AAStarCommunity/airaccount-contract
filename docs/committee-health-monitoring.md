@@ -92,6 +92,14 @@ tail -f ~/Library/Logs/committee-health-poke.log     # run history, rotated by t
 This is the same lesson as the cron finding one layer up: **a legal config is not an accepted
 schedule**, and neither one tells you it was ignored.
 
+Measured on this machine after loading, so the mechanism itself is not in question the way `schedule:`
+is — `run interval = 900 seconds` present; `runs` went 1 → 2 at ~900 s (12:59 load, 13:14:55 second
+fire), each firing completing the full chain: dispatch → new run id → `conclusion=success`. The
+discriminator has a negative control too: a sibling agent on the same machine with `StartInterval`
+nested one level too deep shows that line **zero** times, so its presence is an observation rather
+than a constant. Whether an agent is loaded *right now* is not recorded here — that claim would rot;
+run the two commands above and read the answer.
+
 ## Manual use
 
 ```bash
