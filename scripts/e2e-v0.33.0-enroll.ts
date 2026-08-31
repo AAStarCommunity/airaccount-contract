@@ -103,7 +103,9 @@ async function main() {
   console.log(`\n=== v0.33.0 deploy-success + enroll test — Sepolia ===`);
   console.log(`Owner/deployer: ${owner.address}\nFactory: ${FACTORY}\nCommittee validator: ${COMMITTEE}\n`);
 
-  const salt = 330001n;
+  // Salt is env-overridable so a genuine FRESH create+enroll is reproducible on demand
+  // (pr-daemon #211 r2 blocker-2 alternative prescription). Default reuses the standing test account.
+  const salt = BigInt(process.env.E2E_SALT ?? "330001");
   const predicted = getAddress(await pub.readContract({
     address: FACTORY, abi: FACTORY_ABI, functionName: "getAddress", args: [owner.address, salt, CONFIG, ZERO32, ZERO32],
   }) as string);
