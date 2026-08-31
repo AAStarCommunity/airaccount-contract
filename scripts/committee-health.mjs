@@ -66,6 +66,7 @@ const CV_ABI = [
   { name: "configVersion", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { name: "epochConfigVersion", type: "function", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "uint256" }] },
   { name: "epochSetValidUntil", type: "function", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "uint256" }] },
+  { name: "minCommittee", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
 ];
 
 const pub = createPublicClient({ chain: sepolia, transport: http(RPC, { timeout: 30_000 }) });
@@ -99,6 +100,20 @@ try {
       fail("CRITICAL", `committee validator ${committee} has no code`);
     } else {
       const blk = await pub.getBlock({ blockNumber: AT });
+      // Generation probe, by ABSENCE — not by parsing error text. A CALL_EXCEPTION never carries the
+      // method name (only the selector), so text matching for "minCommittee" can never fire; and
+      // branching the OUTER catch on e.code would misread a genuine revert on the CURRENT validator as
+      // "old contract". So: probe the CC-98-hardening-only getters individually and let their absence
+      // identify the generation. (dvt's own health check states the principle: inferring a contract
+      // generation from an error with several possible causes is how a flaky RPC gets printed as fact.)
+      // Pass real args: epochSetValidUntil takes a uint256, so probing it with none fails even where
+      // it EXISTS — that mistake marked the LIVE v0.33 validator as retired until the control run
+      // caught it. Both are plain mapping/immutable getters, so any epoch key is a safe probe.
+      const probe = async (fn, args) => { try { await r(committee, CV_ABI, fn, args); return true; } catch { return false; } };
+      const [hasMinCommittee, hasValidUntil] = await Promise.all([probe("minCommittee"), probe("epochSetValidUntil", [0n])]);
+      if (!hasMinCommittee || !hasValidUntil) {
+        fail("UNDETERMINED", `validator predates this check's ABI (minCommittee=${hasMinCommittee ? "present" : "ABSENT"}, epochSetValidUntil=${hasValidUntil ? "present" : "ABSENT"}) — the router points at ${committee}, which lacks the CC-98 hardening getters (e.g. the retired v0.31/v0.32 stack on 0x1A8Db639). This check covers v0.33.0+ only.`);
+      } else {
       const [armed, rq, L, nodes, cfg] = await Promise.all([
         r(committee, CV_ABI, "committeeActive"), r(committee, CV_ABI, "requiredQuorum"),
         r(committee, CV_ABI, "epochLength"), r(committee, CV_ABI, "getRegisteredNodeCount"),
@@ -134,6 +149,7 @@ try {
       } else {
         fail("CRITICAL", `sentinel OUTSIDE the structural window — usable(e)=${pinnedE} [${why(uE)}] usable(e-1)=${pinnedPrev} [${why(uPrev)}] off=${off}/${cap}; tier-2/3 fail-closed`);
       }
+    }
     }
   }
 } catch (err) {
