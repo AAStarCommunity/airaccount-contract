@@ -12,11 +12,15 @@ name: Committee health
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # every 15 min; the structural keeper window is ~36s so this cannot false-page
+    # Offset minutes, NOT "*/15". A plain */N on a low-traffic repo was measured (pr-daemon, on the
+    # upstream committee-health.yml) to fire ZERO times in 53 minutes; offset minutes fired normally.
+    # A scheduled check that does not fire is indistinguishable from not having one — which is the
+    # exact state this file exists to end.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
     inputs:
       at_block:
-        description: "Replay the verdict as of a historical block (leave empty for latest)"
+        description: "Replay the verdict as of a historical block (needs an archive RPC; the public fallback cannot serve historical state)"
         required: false
       keeper_latency_blocks:
         description: "Override K (default 20 blocks ~ 4 min)"
@@ -26,9 +30,10 @@ permissions:
   contents: read
 
 jobs:
-  health:
+  check:
     name: committee validator health
     runs-on: ubuntu-latest
+    timeout-minutes: 10   # a hung RPC must not ride the 6h runner cap
     steps:
       - uses: actions/checkout@v4.2.2
         with:
@@ -48,12 +53,56 @@ jobs:
       - name: Check committee validator
         env:
           # Falls back to a public endpoint so this works with no repo secrets configured.
-          # Add a SEPOLIA_RPC_URL secret for a dedicated endpoint.
+          # Add a SEPOLIA_RPC_URL secret for a dedicated (and archive-capable) endpoint.
           SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
           # Router of the CURRENT stack (v0.33.0). Update this variable when the stack moves —
           # the validator itself is derived from it, so only this one value tracks the deploy.
           AIRACCOUNT_ROUTER: ${{ vars.AIRACCOUNT_ROUTER || '0xA97A752779ebfDA58612F6727Ec7C8366c39f897' }}
           EXPECTED_COMMITTEE: ${{ vars.EXPECTED_COMMITTEE }}
+          # NOTE: on the schedule path these `inputs.*` expand to the EMPTY STRING, not null. The
+          # script must therefore treat "" as unset (it uses `||`, not `??` — BigInt("") === 0n would
+          # silently set K=0 and turn every normal keeper window into a false CRITICAL).
           KEEPER_LATENCY_BLOCKS: ${{ inputs.keeper_latency_blocks }}
           AT_BLOCK: ${{ inputs.at_block }}
         run: node scripts/committee-health.mjs
+
+  alert:
+    name: open/update alert issue
+    needs: check
+    # `always() && result != 'success'` — NOT `failure()`. A timeout CANCELS the job, and `failure()`
+    # does not match a cancelled result, so a hung check would alert nobody.
+    if: always() && needs.check.result != 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the alert issue (deduped)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RESULT: ${{ needs.check.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LABEL="committee-health"
+          TITLE="Committee validator health: check not succeeding"
+          # Ensure the label exists (ignore "already exists").
+          gh label create "$LABEL" --repo "$REPO" --color B60205 \
+            --description "Automated committee validator health alerts" 2>/dev/null || true
+          EXISTING="$(gh issue list --repo "$REPO" --label "$LABEL" --state open \
+            --json number --jq '.[0].number // empty')"
+          BODY="Committee health check result: \`${RESULT}\` (cancelled = timed out).
+
+          Run: ${RUN_URL}
+
+          Verdict detail is in the \`committee validator health\` job log. CRITICAL means
+          \`requiredQuorum()\` is the sentinel outside the structural keeper window, i.e. **tier-2/3 is
+          fail-closed on this stack** (tier-1 owner-only still works)."
+          if [ -n "$EXISTING" ]; then
+            echo "deduping onto existing issue #$EXISTING"
+            gh issue comment "$EXISTING" --repo "$REPO" --body "$BODY"
+          else
+            gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --body "$BODY"
+          fi

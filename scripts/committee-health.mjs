@@ -45,7 +45,12 @@ import { sepolia } from "viem/chains";
 const RPC = process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
 const ROUTER = getAddress(process.env.AIRACCOUNT_ROUTER || "0xA97A752779ebfDA58612F6727Ec7C8366c39f897");
 const EXPECTED = process.env.EXPECTED_COMMITTEE ? getAddress(process.env.EXPECTED_COMMITTEE) : null;
-const K = BigInt(process.env.KEEPER_LATENCY_BLOCKS ?? "20");
+// `||` not `??`: on the SCHEDULE path GitHub expands an unset `inputs.*` to the EMPTY STRING, and
+// `?? ` does not catch "" — BigInt("") === 0n, which would make K=0 and flip every normal keeper
+// window (off 1-3, unpinned) from WARN to CRITICAL (~4-5 false pages/day at L=64). Local runs and
+// workflow_dispatch both hide this (undefined / real value); only the scheduled context triggers it,
+// which is exactly how this check normally runs.
+const K = BigInt(process.env.KEEPER_LATENCY_BLOCKS || "20");
 // Optional historical replay: evaluate the verdict as of a past block. Used to prove each tier fires
 // when it should (a check whose branches were never exercised is not a check).
 const AT_BLOCK = process.env.AT_BLOCK ? BigInt(process.env.AT_BLOCK) : null;
