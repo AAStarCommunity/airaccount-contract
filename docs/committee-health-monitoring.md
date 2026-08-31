@@ -96,6 +96,29 @@ node scripts/committee-health.mjs                        # run the check locally
 AT_BLOCK=11604310 node scripts/committee-health.mjs      # replay a past block (needs archive RPC)
 ```
 
+## Recovery closes what it resolved
+
+A healthy run closes the alerts it resolved, so the open set equals the *current* failure set. This is
+not a nicety layered on dedup — it is dedup's other half. Dedup means one issue per incident, so an
+open issue stops meaning "there is a problem now" and starts meaning "there was one once"; a stale
+open alert trains people to ignore open alerts, the same fatigue dedup exists to prevent, arriving
+from the other end.
+
+It closes on **`verdict == OK`**, not on exit code 0. Exit 0 covers OK *and* WARN, and one WARN —
+"committee is OFF" — means CC-116 is fail-closing tier-2/3: safe, but still unavailable. Closing a
+CRITICAL because someone disarmed the committee to stop the bleeding would report the incident
+resolved while tier-2/3 stayed down.
+
+Consequence to expect rather than file as a bug: the **structural keeper-latency WARN also blocks the
+close**, so an issue can stay open an extra cycle or two before an OK run clears it. Seen in the wild
+during this work — one dispatch landed inside that window. Separating the two WARNs needs a reason
+code beyond the verdict, which is a redesign.
+
+Closing keys on the **marker**, never on the shared label. There is deliberately no author filter
+(that would make two monitors invisible to each other and each open their own issue), so the marker is
+the only thing separating "a monitor opened this" from "a person filed this". Same convention as the
+dvt repo, so both monitors agree.
+
 ## Verdicts — `committee-health.mjs`
 
 These are the **check script's** codes, not the poker's; the poker wraps them and does not pass them
