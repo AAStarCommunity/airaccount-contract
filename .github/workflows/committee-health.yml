@@ -77,6 +77,7 @@ jobs:
       # differently per code — claiming "tier-2/3 is fail-closed" when we merely failed to read is a
       # false statement, and the RPC falls back to a public endpoint, so blips reach here routinely.
       code: ${{ steps.run.outputs.code }}
+      verdict: ${{ steps.run.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4.2.2
         with:
@@ -113,6 +114,10 @@ jobs:
           node scripts/committee-health.mjs
           code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          # Exit 0 covers BOTH OK and WARN, and WARN "committee is OFF" means tier-2/3 is still
+          # unavailable -- so the code alone must never decide that an incident is resolved.
+          verdict="$(grep -o '^verdict=.*' out.txt | tail -1 | cut -d= -f2)"
+          echo "verdict=${verdict:-UNKNOWN}" >> "$GITHUB_OUTPUT"
           exit $code
 
   alert:
@@ -202,7 +207,12 @@ jobs:
   recover:
     name: close resolved alerts
     needs: check
-    if: needs.check.result == 'success'
+    # OK only -- NOT exit code 0, which also covers WARN. One WARN ("committee is OFF") means
+    # CC-116 is fail-closing tier-2/3: safe, but still unavailable. Closing a CRITICAL because
+    # someone disarmed the committee to stop the bleeding would report the incident resolved while
+    # tier-2/3 stayed down -- this invariant broken in the worst direction. Whether the structural
+    # keeper-latency WARN should also clear needs a reason code, which is a redesign, not this PR.
+    if: needs.check.outputs.verdict == 'OK'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -227,10 +237,11 @@ jobs:
               | jq -r --arg m "$MARKER" '.[] | select(.body // "" | contains($m)) | .number')"
             for N in $NUMS; do
               gh issue comment "$N" --repo "$REPO" --body \
-                "Resolved: a health run completed cleanly at $(date -u +%Y-%m-%dT%H:%M:%SZ). ${RUN_URL}
-
-              Closed automatically so the open set equals the current failure set. A new failure of
-              this category opens a fresh issue rather than reviving this one."
+                "Resolved: the check reported OK at $(date -u +%Y-%m-%dT%H:%M:%SZ). ${RUN_URL}
+          Closed automatically so the open set equals the current failure set. A new failure of this
+          category opens a fresh issue rather than reviving this one.
+          NOTE: these lines sit at the block scalar base indent (10), not at column 0 and not deeper.
+          Column 0 ends the scalar; 4+ spaces past base make Markdown render the body as a code block."
               gh issue close "$N" --repo "$REPO" --reason completed
               echo "closed #$N (${KIND})"
             done
