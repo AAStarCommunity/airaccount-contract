@@ -112,7 +112,7 @@ try {
       const probe = async (fn, args) => { try { await r(committee, CV_ABI, fn, args); return true; } catch { return false; } };
       const [hasMinCommittee, hasValidUntil] = await Promise.all([probe("minCommittee"), probe("epochSetValidUntil", [0n])]);
       if (!hasMinCommittee || !hasValidUntil) {
-        fail("UNDETERMINED", `validator predates this check's ABI (minCommittee=${hasMinCommittee ? "present" : "ABSENT"}, epochSetValidUntil=${hasValidUntil ? "present" : "ABSENT"}) — the router points at a pre-CC-98-hardening validator, i.e. a RETIRED stack (v0.31/v0.32 on 0x1A8Db639). This check covers v0.33.0+ only.`);
+        fail("UNDETERMINED", `validator predates this check's ABI (minCommittee=${hasMinCommittee ? "present" : "ABSENT"}, epochSetValidUntil=${hasValidUntil ? "present" : "ABSENT"}) — the router points at ${committee}, which lacks the CC-98 hardening getters (e.g. the retired v0.31/v0.32 stack on 0x1A8Db639). This check covers v0.33.0+ only.`);
       } else {
       const [armed, rq, L, nodes, cfg] = await Promise.all([
         r(committee, CV_ABI, "committeeActive"), r(committee, CV_ABI, "requiredQuorum"),
