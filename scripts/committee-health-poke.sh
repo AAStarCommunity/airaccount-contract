@@ -79,11 +79,17 @@ if [ -f "$POKE_LOG" ]; then
     last_s="$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last" +%s 2>/dev/null || echo 0)"
     if [ "$last_s" -gt 0 ]; then
       gap=$(( $(date +%s) - last_s ))
-      # COUPLING, easy to break silently: VERIFY_TIMEOUT must stay well under INTERVAL/2. launchd does
-      # not run the same job concurrently, so a run still in flight delays the next launch and `gap`
-      # becomes the PREVIOUS run's duration, not an outage. The threshold is 1.5*INTERVAL = 1350s and a
-      # normal round tops out near 900+VERIFY_TIMEOUT = 1140s, leaving ~210s. Raise VERIFY_TIMEOUT past
-      # ~450 (or shrink INTERVAL) and healthy rounds start reporting phantom gaps.
+      # COUPLING, easy to break silently: a normal round -- VERIFY_TIMEOUT plus polling overhead --
+      # must finish WITHIN ONE INTERVAL. launchd does not run the same job concurrently, so a round
+      # still in flight when the next launch comes due pushes that launch out, and the measured gap
+      # stops being an outage. As long as every healthy round ends before the next launch is due, the
+      # gap cannot exceed one interval and a phantom is impossible.
+      #
+      # Deliberately no exact margin here. How launchd reschedules a launch it had to skip is not
+      # something anyone has measured, and the plausible models disagree about the breakpoint -- an
+      # earlier version of this comment carried a precise figure derived from one of them, i.e. an
+      # unverified model stated as fact. The default (240) is safe under all of them; if you raise
+      # VERIFY_TIMEOUT toward INTERVAL, measure rather than derive.
       # ROUND, do not floor: `gap/INTERVAL - 1` only opens its mouth at gap >= 2*INTERVAL, so ONE
       # skipped firing (INTERVAL < gap < 2*INTERVAL) -- the smallest and by far the commonest blind
       # window -- was the single case it stayed quiet about. Measured: 1799s was silent.
