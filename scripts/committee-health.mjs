@@ -36,7 +36,7 @@
  *   more boundaries; if a healthy keeper is ever seen pinning later than ~10 blocks, raise K rather than
  *   accept a recurring false CRITICAL — a page every epoch is the alert fatigue this design exists to avoid.
  *
- * Exit: 0 = OK/WARN, 1 = CRITICAL.
+ * Exit: 0 = OK/WARN, 1 = CRITICAL (determinate), 2 = UNDETERMINED (could not complete the read).
  * Usage: node scripts/committee-health.mjs
  */
 import { createPublicClient, http, getAddress } from "viem";
@@ -74,7 +74,10 @@ const pub = createPublicClient({ chain: sepolia, transport: http(RPC, { timeout:
 // window coincides exactly with the epoch rollover, i.e. the only moment this check has anything to
 // say. That produced a false CRITICAL (rq read pre-pin, epochPinned read post-pin => "sentinel with
 // both epochs pinned", which is unreachable in reality).
-let AT = AT_BLOCK; // resolved to a concrete block before any contract read
+let AT = AT_BLOCK; // ASSIGNED here, but RESOLVED as the first statement inside the try below —
+// viem treats blockNumber:null as "latest" without throwing, so leaving it null for even one read
+// silently un-pins that read. That asymmetry (pinned under AT_BLOCK replay, latest when live) is
+// exactly what hid the original read-skew bug from every replay I ran.
 const r = (address, abi, functionName, args) =>
   pub.readContract({ address, abi, functionName, args, blockNumber: AT });
 
@@ -82,17 +85,19 @@ let verdict = "OK", detail = "";
 const fail = (v, d) => { verdict = v; detail = d; };
 
 try {
+  // FIRST statement in the try: every read after this point — including deriving the validator and
+  // fetching its code — is pinned to this one block.
+  AT = AT_BLOCK ?? await pub.getBlockNumber();
   const committee = getAddress(await r(ROUTER, ROUTER_ABI, "getAlgorithm", [1]));
   console.log(`router   ${ROUTER}`);
   console.log(`0x01  -> ${committee}${EXPECTED ? (committee === EXPECTED ? "  (matches EXPECTED_COMMITTEE)" : "  ⚠️ DOES NOT MATCH EXPECTED_COMMITTEE " + EXPECTED) : ""}`);
   if (EXPECTED && committee !== EXPECTED) {
     fail("CRITICAL", `router 0x01 is ${committee}, expected ${EXPECTED} — the stack mounts a different validator than pinned`);
   } else {
-    const code = await pub.getBytecode({ address: committee, ...(AT_BLOCK ? { blockNumber: AT_BLOCK } : {}) });
+    const code = await pub.getBytecode({ address: committee, blockNumber: AT });
     if (!code || code === "0x") {
       fail("CRITICAL", `committee validator ${committee} has no code`);
     } else {
-      AT = AT_BLOCK ?? await pub.getBlockNumber();   // pin the whole verdict to one block
       const blk = await pub.getBlock({ blockNumber: AT });
       const [armed, rq, L, nodes, cfg] = await Promise.all([
         r(committee, CV_ABI, "committeeActive"), r(committee, CV_ABI, "requiredQuorum"),
@@ -132,8 +137,14 @@ try {
     }
   }
 } catch (err) {
-  fail("CRITICAL", `health check could not complete: ${err?.shortMessage ?? err?.message ?? err}`);
+  // UNDETERMINED, not CRITICAL. A transport/RPC failure says NOTHING about the stack, and the RPC
+  // falls back to a public endpoint by default, so one rate-limit or blip reaches here. Emitting
+  // CRITICAL would make the alert assert "tier-2/3 is fail-closed" — a claim we have no evidence
+  // for. Distinct exit code so the alerting layer can word it correctly.
+  fail("UNDETERMINED", `health check could not complete (says nothing about stack health): ${err?.shortMessage ?? err?.message ?? err}`);
 }
 
-console.log(`\n${verdict === "OK" ? "✅" : verdict === "WARN" ? "⚠️" : "❌"} ${verdict}${detail ? " — " + detail : ""}`);
-process.exit(verdict === "CRITICAL" ? 1 : 0);
+const icon = { OK: "✅", WARN: "⚠️", UNDETERMINED: "❓", CRITICAL: "❌" }[verdict] ?? "❌";
+console.log(`\n${icon} ${verdict}${detail ? " — " + detail : ""}`);
+// 0 = OK/WARN, 1 = CRITICAL (determinate: the stack is bad), 2 = UNDETERMINED (we could not look).
+process.exit(verdict === "CRITICAL" ? 1 : verdict === "UNDETERMINED" ? 2 : 0);

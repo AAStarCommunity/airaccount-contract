@@ -34,6 +34,11 @@ jobs:
     name: committee validator health
     runs-on: ubuntu-latest
     timeout-minutes: 10   # a hung RPC must not ride the 6h runner cap
+    outputs:
+      # 1 = CRITICAL (determinate), 2 = UNDETERMINED (could not look). The alert job words the issue
+      # differently per code — claiming "tier-2/3 is fail-closed" when we merely failed to read is a
+      # false statement, and the RPC falls back to a public endpoint, so blips reach here routinely.
+      code: ${{ steps.run.outputs.code }}
     steps:
       - uses: actions/checkout@v4.2.2
         with:
@@ -51,6 +56,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Check committee validator
+        id: run
         env:
           # Falls back to a public endpoint so this works with no repo secrets configured.
           # Add a SEPOLIA_RPC_URL secret for a dedicated (and archive-capable) endpoint.
@@ -64,7 +70,12 @@ jobs:
           # silently set K=0 and turn every normal keeper window into a false CRITICAL).
           KEEPER_LATENCY_BLOCKS: ${{ inputs.keeper_latency_blocks }}
           AT_BLOCK: ${{ inputs.at_block }}
-        run: node scripts/committee-health.mjs
+        run: |
+          set +e
+          node scripts/committee-health.mjs
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit $code
 
   alert:
     name: open/update alert issue
@@ -78,54 +89,60 @@ jobs:
       contents: read
       issues: write
     steps:
-      - name: Open the alert issue (once per incident)
+      - name: Open the alert issue (once per incident, per category)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RESULT: ${{ needs.check.result }}
+          CODE: ${{ needs.check.outputs.code }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # Optional. Issues opened by GITHUB_TOKEN notify NOBODY, so set this repo variable to a
-          # GitHub login to actually reach someone. Left unset => no assignee (still opens the issue).
           ALERT_ASSIGNEE: ${{ vars.ALERT_ASSIGNEE }}
         run: |
           set -euo pipefail
           LABEL="committee-health"
-          # Dedup key is a marker WE write into the body, not the label and not the author:
-          #  - label alone is forgeable: anyone labelling an unrelated issue hijacks the dedup target
-          #  - --author would need the exact bot login, and this repo has no bot-authored issues, so a
-          #    0-match cannot distinguish "right string, no data" from "wrong string" — shipping an
-          #    unverifiable string as fact is the failure mode to avoid here
-          MARKER="<!-- committee-health-alert-v1 -->"
-          TITLE="Committee validator health: check not succeeding"
+          # Exit 1 = determinate badness. Exit 2 = we could not look. Empty = job cancelled/timed out,
+          # which is also "we could not look". Wording MUST differ: asserting "tier-2/3 is fail-closed"
+          # when the RPC merely blipped is a false claim, and the public-RPC fallback makes that common.
+          case "${CODE:-}" in
+            1) KIND="critical"
+               TITLE="Committee validator health: CRITICAL"
+               WHAT="\`requiredQuorum()\` is the sentinel outside the structural keeper window — **tier-2/3 is fail-closed on this stack** (tier-1 owner-only still works)." ;;
+            2) KIND="undetermined"
+               TITLE="Committee validator health: UNDETERMINED (could not complete)"
+               WHAT="The check could not complete (RPC/transport). **This asserts nothing about stack health** — it may be perfectly fine. The RPC falls back to a public endpoint, so rate-limits and blips land here." ;;
+            *) KIND="undetermined"
+               TITLE="Committee validator health: UNDETERMINED (job ${RESULT})"
+               WHAT="The check job did not finish (result: \`${RESULT}\`; a timeout surfaces as *cancelled*). **This asserts nothing about stack health.**" ;;
+          esac
+          # Marker is PER CATEGORY: with one shared marker an open UNDETERMINED issue would suppress a
+          # later real CRITICAL — one class masking another, the same failure this split exists to fix.
+          MARKER="<!-- committee-health-alert-v1:${KIND} -->"
           gh label create "$LABEL" --repo "$REPO" --color B60205 \
             --description "Automated committee validator health alerts" 2>/dev/null || true
           EXISTING="$(gh issue list --repo "$REPO" --label "$LABEL" --state open --limit 100 \
             --json number,body --jq --arg m "$MARKER" \
             '[.[] | select(.body // "" | contains($m))] | .[0].number // empty')"
           if [ -n "$EXISTING" ]; then
-            # Deliberately do NOTHING while an alert is already open. At 4 runs/hour a commenting
-            # dedup would post ~96 notifications/day (288 over three days) for ONE incident — the same
-            # alert fatigue that K exists to prevent on the WARN side. The issue carries "something is
-            # wrong"; the run log carries the detail.
-            echo "alert already open as #$EXISTING — staying silent (see $RUN_URL)"
+            # Silent while an alert of THIS category is open: at 4 runs/hour, commenting would post ~96
+            # notifications/day for one incident — the alert fatigue K exists to prevent on the WARN side.
+            echo "a ${KIND} alert is already open as #$EXISTING — staying silent (see $RUN_URL)"
             exit 0
           fi
           BODY="$MARKER
-          Committee health check result: \`${RESULT}\` (cancelled = timed out).
+          ${WHAT}
 
+          Job result: \`${RESULT}\`, script exit code: \`${CODE:-none}\`
           Run: ${RUN_URL}
 
-          Verdict detail is in the \`committee validator health\` job log. CRITICAL means
-          \`requiredQuorum()\` is the sentinel outside the structural keeper window, i.e. **tier-2/3 is
-          fail-closed on this stack** (tier-1 owner-only still works).
+          Detail is in the \`committee validator health\` job log (it prints each \`_epochUsable\`
+          conjunct, so a config bump or expired set is distinguishable from an unpinned epoch).
 
-          This issue is opened once per incident and is NOT re-commented on every run. Close it when
-          resolved; the next failure after that opens a fresh one."
+          Opened once per incident per category; NOT re-commented every run. Close it when resolved —
+          the next failure of this category opens a fresh one."
           URL="$(gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --body "$BODY")"
           echo "opened $URL"
-          # Assign AFTER creating: `gh issue create --assignee` resolves the login BEFORE creating, so a
-          # typo'd handle fails the whole command under `set -e` and leaves NO issue at all. A missing
-          # assignee costs one notification; a failed create costs the entire alert.
+          # Assign AFTER creating: `create --assignee` resolves the login first, so a typo would fail the
+          # whole command under set -e and leave NO issue. Missing assignee costs one notification.
           if [ -n "${ALERT_ASSIGNEE:-}" ]; then
             gh issue edit "${URL##*/}" --repo "$REPO" --add-assignee "$ALERT_ASSIGNEE" || \
               echo "warning: could not assign '$ALERT_ASSIGNEE' (issue is still open)"
