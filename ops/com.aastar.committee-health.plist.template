@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd template for the external committee-health trigger.
+
+  WHY LOCAL AND NOT A CLOUD CRON: GitHub's own `schedule:` trigger was measured not to fire (this
+  repo 83min/5 slots/0; upstream YAAA 6h33m/26 slots/0, same expression). Anything scheduled INSIDE
+  Actions inherits that. A local timer has a different, and crucially a DECIDABLE, failure mode:
+  if this Mac is asleep or off, nobody is watching and you know it — unlike a silent cron that
+  looks identical to a healthy quiet system.
+
+  INSTALL (not done for you — this puts a persistent agent on your machine):
+    sed -e "s|REPO_PATH|$PWD|g" -e "s|HOME_PATH|$HOME|g" \
+      ops/com.aastar.committee-health.plist.template \
+      > ~/Library/LaunchAgents/com.aastar.committee-health.plist
+    launchctl load ~/Library/LaunchAgents/com.aastar.committee-health.plist
+  VERIFY -- ask launchd, not the file. `plutil -lint` only says the XML is legal: a StartInterval
+  nested one level too deep lints green and is never scheduled (dvt hit exactly this, and the
+  "self-heals every 120s" their comment promised had never once happened). The ABSENCE of the
+  run interval line IS the bug:
+    launchctl print gui/$(id -u)/com.aastar.committee-health | grep -E "run interval|last exit"
+    tail -f ~/Library/Logs/committee-health-poke.log
+  REMOVE:
+    launchctl unload ~/Library/LaunchAgents/com.aastar.committee-health.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.aastar.committee-health</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <!-- login shell so gh + its keychain auth resolve exactly as they do in a terminal -->
+    <string>cd REPO_PATH &amp;&amp; ./scripts/committee-health-poke.sh</string>
+  </array>
+  <key>StartInterval</key><integer>900</integer>
+  <!-- Run once at load so a broken install is visible immediately, not 15 minutes later. -->
+  <key>RunAtLoad</key><true/>
+  <!-- launchd's own spawn errors only. The run history lives in ~/Library/Logs/committee-health-poke.log,
+       written and rotated by the script itself, because /tmp is periodically cleaned on some macOS setups. -->
+  <key>StandardOutPath</key><string>HOME_PATH/Library/Logs/committee-health-launchd.log</string>
+  <key>StandardErrorPath</key><string>HOME_PATH/Library/Logs/committee-health-launchd.log</string>
+</dict>
+</plist>
