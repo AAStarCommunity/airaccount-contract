@@ -29,6 +29,16 @@ on:
 permissions:
   contents: read
 
+# Dedup is a read-then-write (list open issues -> create if none), which is NOT atomic: two alert jobs
+# running concurrently would both see "none open" and both file an issue — reintroducing exactly the
+# notification spam the single-issue design exists to prevent. The drill nearly demonstrated it: drill 1
+# opened #216 at 09:00:23 and drill 2 ran its list at 09:01:35, only 72s of margin. The scheduled
+# cadence is similarly tight — 15 min between runs vs check(10) + alert(5) timeouts, i.e. exactly
+# end-to-end. Serialise instead of racing; never cancel an in-flight alert.
+concurrency:
+  group: committee-health-alert
+  cancel-in-progress: false
+
 jobs:
   check:
     name: committee validator health
@@ -119,6 +129,9 @@ jobs:
           MARKER="<!-- committee-health-alert-v1:${KIND} -->"
           gh label create "$LABEL" --repo "$REPO" --color B60205 \
             --description "Automated committee validator health alerts" 2>/dev/null || true
+          # DEPENDENCY: this needs external `jq` (GitHub-hosted runners ship it). On a runner without
+          # it, `set -o pipefail` surfaces the failure as a FAILED ALERT JOB — i.e. as 'no alert',
+          # not as 'jq is missing'. If this ever moves to self-hosted, assert `command -v jq` first.
           # NOTE: pipe to REAL jq. `gh ... --jq` takes a single expression and does NOT accept `--arg`
           # (that is a jq CLI flag); passing it makes gh treat the marker and the program as stray
           # positional args and exit 1. Verified locally with `echo JSON | jq --arg`, which is a
