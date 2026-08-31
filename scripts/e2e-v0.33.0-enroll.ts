@@ -107,7 +107,7 @@ async function main() {
 
   // Salt is env-overridable so a genuine FRESH create+enroll is reproducible on demand
   // (pr-daemon #211 r2 blocker-2 alternative prescription). Default reuses the standing test account.
-  const salt = BigInt(process.env.E2E_SALT ?? "330001");
+  const salt = BigInt(process.env.E2E_SALT || "330001"); // `||` not `??`: E2E_SALT="" must not become salt 0
   const predicted = getAddress(await pub.readContract({
     address: FACTORY, abi: FACTORY_ABI, functionName: "getAddress", args: [owner.address, salt, CONFIG, ZERO32, ZERO32],
   }) as string);
@@ -172,11 +172,16 @@ async function main() {
       pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "epochPinned", args: [e] }) as Promise<boolean>,
       pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "epochPinned", args: [e - 1n] }) as Promise<boolean>,
     ]);
-    const cap = L - 1n < 256n ? L - 1n : 256n;
+    // cap encodes the KEEPER's pin latency, NOT the epoch's pin window. Using the pin window
+    // (min(256, L-1)) was a unit error: bn-start is by definition in [0, L-1], so that bound is
+    // vacuously true for any L <= 257 and tolerates the WHOLE epoch (100%), not the ~2-3 blocks the
+    // comment claimed — masking "keeper pinned e-1 then died" for a full epoch. Measured keeper
+    // latency is 2-3 blocks (epoch 181318 self-pin), so 4 leaves margin without hiding a dead keeper.
+    const cap = 4n;
     const keeperLatency = !pinnedE && pinnedPrev && (bn - start) <= cap;
     if (rq === UINT256_MAX && keeperLatency) {
       check("ARMED + epoch pending pin (e-1 still serving) -> sentinel is EXPECTED, not an incident", true, "true");
-      console.log(`  NOTE: structural keeper-latency window — epoch ${e} not yet pinned, e-1 pinned, block ${bn} is ${bn - start} into the epoch. tier-2/3 is transiently fail-closed (~36s at L=64). NOT a failure.`);
+      console.log(`  NOTE: structural keeper-latency window — epoch ${e} not yet pinned, e-1 pinned, block ${bn} is ${bn - start} into the epoch. tier-2/3 is transiently fail-closed (<=${cap} blocks tolerated; measured keeper latency 2-3). NOT a failure.`);
     } else {
       check("committee ARMED -> requiredQuorum satisfiable (not sentinel, >=1)", rq !== UINT256_MAX && rq >= 1n, "true");
     }
