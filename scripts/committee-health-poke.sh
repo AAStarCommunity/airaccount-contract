@@ -79,6 +79,11 @@ if [ -f "$POKE_LOG" ]; then
     last_s="$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last" +%s 2>/dev/null || echo 0)"
     if [ "$last_s" -gt 0 ]; then
       gap=$(( $(date +%s) - last_s ))
+      # COUPLING, easy to break silently: VERIFY_TIMEOUT must stay well under INTERVAL/2. launchd does
+      # not run the same job concurrently, so a run still in flight delays the next launch and `gap`
+      # becomes the PREVIOUS run's duration, not an outage. The threshold is 1.5*INTERVAL = 1350s and a
+      # normal round tops out near 900+VERIFY_TIMEOUT = 1140s, leaving ~210s. Raise VERIFY_TIMEOUT past
+      # ~450 (or shrink INTERVAL) and healthy rounds start reporting phantom gaps.
       # ROUND, do not floor: `gap/INTERVAL - 1` only opens its mouth at gap >= 2*INTERVAL, so ONE
       # skipped firing (INTERVAL < gap < 2*INTERVAL) -- the smallest and by far the commonest blind
       # window -- was the single case it stayed quiet about. Measured: 1799s was silent.
