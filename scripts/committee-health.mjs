@@ -164,7 +164,6 @@ const icon = { OK: "✅", WARN: "⚠️", UNDETERMINED: "❓", CRITICAL: "❌" }
 // Machine-readable, because the exit code cannot carry this: OK and WARN share 0, and one WARN
 // ("committee is OFF") means tier-2/3 is STILL unavailable. Anything deciding "is it resolved?"
 // must read the verdict, not the code.
-verdict = "WARN"; // DRILL-TEMP
 console.log(`verdict=${verdict}`);
 console.log(`\n${icon} ${verdict}${detail ? " — " + detail : ""}`);
 // 0 = OK/WARN, 1 = CRITICAL (determinate: the stack is bad), 2 = UNDETERMINED (we could not look).

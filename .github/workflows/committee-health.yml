@@ -215,7 +215,7 @@ jobs:
     # someone disarmed the committee to stop the bleeding would report the incident resolved while
     # tier-2/3 stayed down -- this invariant broken in the worst direction. Whether the structural
     # keeper-latency WARN should also clear needs a reason code, which is a redesign, not this PR.
-    if: needs.check.result == 'success'
+    if: needs.check.outputs.verdict == 'OK'
     runs-on: ubuntu-latest
     permissions:
       issues: write
