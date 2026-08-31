@@ -51,7 +51,12 @@ const COMMITTEE_ABI = [
   { name: "committeeActive",        type: "function", stateMutability: "view", inputs: [],                     outputs: [{ type: "bool" }] },
   { name: "getRegisteredNodeCount", type: "function", stateMutability: "view", inputs: [],                     outputs: [{ type: "uint256" }] },
   { name: "enrolledAccount",        type: "function", stateMutability: "view", inputs: [{ type: "address" }],  outputs: [{ type: "bool" }] },
+  { name: "requiredQuorum",         type: "function", stateMutability: "view", inputs: [],                     outputs: [{ type: "uint256" }] },
 ] as const;
+const ROUTER_ABI = [
+  { name: "getAlgorithm", type: "function", stateMutability: "view", inputs: [{ type: "uint8" }], outputs: [{ type: "address" }] },
+] as const;
+const UINT256_MAX = 2n ** 256n - 1n; // requiredQuorum() sentinel = "prerequisite snapshot missing" (unsatisfiable)
 
 const ZERO32 = ("0x" + "0".repeat(64)) as Hex;
 const CONFIG = {
@@ -104,8 +109,12 @@ async function main() {
   }) as string);
   console.log(`Test account (salt=${salt}): ${predicted}`);
 
+  // Track whether the MUTATING branches actually ran, so a reuse (no-op) run is distinguishable from a
+  // genuine end-to-end create+enroll in the summary (pr-daemon #211 r2 blocker 2). A run that touched
+  // nothing must not read the same as one that exercised both paths.
   const code = await pub.getBytecode({ address: predicted });
-  if (!code || code === "0x") {
+  const createdRan = !code || code === "0x";
+  if (createdRan) {
     console.log("Creating account (direct mode, msg.sender = owner)...");
     await send("createAccount", FACTORY, encodeFunctionData({
       abi: FACTORY_ABI, functionName: "createAccount", args: [owner.address, salt, CONFIG, ZERO32, ZERO32, 0n, 0n, "0x"],
@@ -117,7 +126,8 @@ async function main() {
   // enroll (owner tx; account self-enrolls at the committee validator). enroll() is callable regardless of
   // committee mode — self-registration for when tier-2/3 committee sigs are later submitted.
   const already = await pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "enrolledAccount", args: [predicted] }) as boolean;
-  if (!already) {
+  const enrollRan = !already;
+  if (enrollRan) {
     console.log("\nEnrolling account in committee validator...");
     await send("enrollInCommitteeValidator", predicted, encodeFunctionData({ abi: ACCOUNT_ABI, functionName: "enrollInCommitteeValidator", args: [] }) as Hex, 200_000n);
   } else {
@@ -134,10 +144,24 @@ async function main() {
   check("committeeActive() (armed, option 1)", await pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "committeeActive" }), "true");
   const nodes = await pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "getRegisteredNodeCount" }) as bigint;
   check("committee registeredNodes >= 3", nodes >= 3n, "true");
+  // Blocker 1 (pr-daemon #211 r2): "armed" (committeeActive()==epochLength!=0) does NOT mean "can validate".
+  // requiredQuorum()==UINT256_MAX is the "prerequisite snapshot missing" sentinel — the validator would
+  // reject every tier-2/3 op despite committeeActive()==true (the exact ~10h armed-but-unsatisfiable state
+  // the DVT keeper fix #249 closed). Assert it resolves to a real, satisfiable quorum.
+  const rq = await pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "requiredQuorum" }) as bigint;
+  check("requiredQuorum() satisfiable (not sentinel, >=1)", rq !== UINT256_MAX && rq >= 1n, "true");
+  console.log(`  (requiredQuorum=${rq})`);
+  // Blocker 3 (pr-daemon #211 r2): every check above can hold with the router wired to a DIFFERENT
+  // validator at 0x01. Pin that the account's router actually routes 0x01 to THIS committee validator.
+  check("router 0x01 -> committee validator",
+    getAddress(await pub.readContract({ address: ROUTER, abi: ROUTER_ABI, functionName: "getAlgorithm", args: [1] }) as string), COMMITTEE);
 
-  console.log(`\n=== ${fail === 0 ? "✅ PASS" : "❌ FAIL"} — ${pass} passed, ${fail} failed ===`);
+  // Blocker 2: report whether the mutating branches ran, so ✅ PASS on a reuse (no-op) run is not
+  // mistaken for a fresh end-to-end. A genuine E2E requires createdRan && enrollRan at least once.
+  const e2eKind = createdRan && enrollRan ? "FRESH end-to-end (created+enrolled)" : `REUSE (createdRan=${createdRan} enrollRan=${enrollRan}) — re-run with a new salt for a fresh E2E`;
+  console.log(`\n=== ${fail === 0 ? "✅ PASS" : "❌ FAIL"} — ${pass} passed, ${fail} failed | ${e2eKind} ===`);
   console.log(`Test account: ${predicted}`);
-  if (fail === 0) console.log("v0.32.0 stack confirmed + account enrolled. Committee already armed; tier-2/3 committee UserOp E2E needs SDK/KMS per-signer sigs (Seeder b8f3441f).");
+  if (fail === 0) console.log("v0.32.0 stack confirmed + account enrolled. Committee armed & satisfiable; tier-2/3 committee UserOp E2E needs SDK/KMS per-signer sigs (Seeder b8f3441f).");
   process.exit(fail === 0 ? 0 : 1);
 }
 main().catch((err) => { console.error(err); process.exit(1); });
