@@ -66,6 +66,7 @@ const CV_ABI = [
   { name: "configVersion", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { name: "epochConfigVersion", type: "function", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "uint256" }] },
   { name: "epochSetValidUntil", type: "function", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "uint256" }] },
+  { name: "minCommittee", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
 ];
 
 const pub = createPublicClient({ chain: sepolia, transport: http(RPC, { timeout: 30_000 }) });
@@ -99,6 +100,20 @@ try {
       fail("CRITICAL", `committee validator ${committee} has no code`);
     } else {
       const blk = await pub.getBlock({ blockNumber: AT });
+      // Generation probe, by ABSENCE — not by parsing error text. A CALL_EXCEPTION never carries the
+      // method name (only the selector), so text matching for "minCommittee" can never fire; and
+      // branching the OUTER catch on e.code would misread a genuine revert on the CURRENT validator as
+      // "old contract". So: probe the CC-98-hardening-only getters individually and let their absence
+      // identify the generation. (dvt's own health check states the principle: inferring a contract
+      // generation from an error with several possible causes is how a flaky RPC gets printed as fact.)
+      // Pass real args: epochSetValidUntil takes a uint256, so probing it with none fails even where
+      // it EXISTS — that mistake marked the LIVE v0.33 validator as retired until the control run
+      // caught it. Both are plain mapping/immutable getters, so any epoch key is a safe probe.
+      const probe = async (fn, args) => { try { await r(committee, CV_ABI, fn, args); return true; } catch { return false; } };
+      const [hasMinCommittee, hasValidUntil] = await Promise.all([probe("minCommittee"), probe("epochSetValidUntil", [0n])]);
+      if (!hasMinCommittee || !hasValidUntil) {
+        fail("UNDETERMINED", `validator predates this check's ABI (minCommittee=${hasMinCommittee ? "present" : "ABSENT"}, epochSetValidUntil=${hasValidUntil ? "present" : "ABSENT"}) — the router points at a pre-CC-98-hardening validator, i.e. a RETIRED stack (v0.31/v0.32 on 0x1A8Db639). This check covers v0.33.0+ only.`);
+      } else {
       const [armed, rq, L, nodes, cfg] = await Promise.all([
         r(committee, CV_ABI, "committeeActive"), r(committee, CV_ABI, "requiredQuorum"),
         r(committee, CV_ABI, "epochLength"), r(committee, CV_ABI, "getRegisteredNodeCount"),
@@ -135,21 +150,14 @@ try {
         fail("CRITICAL", `sentinel OUTSIDE the structural window — usable(e)=${pinnedE} [${why(uE)}] usable(e-1)=${pinnedPrev} [${why(uPrev)}] off=${off}/${cap}; tier-2/3 fail-closed`);
       }
     }
+    }
   }
 } catch (err) {
   // UNDETERMINED, not CRITICAL. A transport/RPC failure says NOTHING about the stack, and the RPC
   // falls back to a public endpoint by default, so one rate-limit or blip reaches here. Emitting
   // CRITICAL would make the alert assert "tier-2/3 is fail-closed" — a claim we have no evidence
   // for. Distinct exit code so the alerting layer can word it correctly.
-  const m = String(err?.shortMessage ?? err?.message ?? err);
-  // A validator deployed before this check's ABI (no epochSetValidUntil / epochConfigVersion /
-  // minCommittee) reverts on those reads. That is not a transport problem and not a sick stack —
-  // it means the router points at a PRE-CC-98-hardening validator, i.e. almost certainly a retired
-  // stack. Say so, because "could not complete: <method> reverted" gives the reader nothing to act on.
-  const abiGap = /epochSetValidUntil|epochConfigVersion|minCommittee/.test(m) && /revert/i.test(m);
-  fail("UNDETERMINED", abiGap
-    ? `validator predates this check's ABI (${m}) — the router points at an older validator that lacks the CC-98 hardening getters. Expected for a RETIRED stack (v0.31/v0.32 on 0x1A8Db639); this check only covers v0.33.0+.`
-    : `health check could not complete (says nothing about stack health): ${m}`);
+  fail("UNDETERMINED", `health check could not complete (says nothing about stack health): ${err?.shortMessage ?? err?.message ?? err}`);
 }
 
 const icon = { OK: "✅", WARN: "⚠️", UNDETERMINED: "❓", CRITICAL: "❌" }[verdict] ?? "❌";
