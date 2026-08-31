@@ -30,13 +30,19 @@ permissions:
   contents: read
 
 # Dedup is a read-then-write (list open issues -> create if none), which is NOT atomic: two alert jobs
-# running concurrently would both see "none open" and both file an issue — reintroducing exactly the
-# notification spam the single-issue design exists to prevent. The drill nearly demonstrated it: drill 1
-# opened #216 at 09:00:23 and drill 2 ran its list at 09:01:35, only 72s of margin. The scheduled
-# cadence is similarly tight — 15 min between runs vs check(10) + alert(5) timeouts, i.e. exactly
-# end-to-end. Serialise instead of racing; never cancel an in-flight alert.
+# overlapping would both see "none open" and both file an issue — reintroducing the notification spam
+# the single-issue design exists to prevent.
+#
+# Window size, measured (NOT the earlier "72s" figure, which was wrong — 72s was the margin by which
+# drill 2 MISSED the window, not the window itself). From drill 1's alert step log:
+#   step start 09:00:18.578  ->  "opened ...#216" 09:00:23.075   = ~4.5s of list->create exposure
+# So the race is real but narrow; it was never close to being demonstrated. Cheap to remove anyway.
+#
+# The group includes github.event_name so a manual drill cannot silently EVICT a queued scheduled run:
+# with a constant group they share one queue slot, and the evicted run disappears with no trace,
+# costing a monitoring datapoint precisely when someone is poking at the system.
 concurrency:
-  group: committee-health-alert
+  group: committee-health-alert-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
