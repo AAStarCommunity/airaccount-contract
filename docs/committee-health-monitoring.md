@@ -31,7 +31,7 @@ claiming they "fired normally" was an inference relayed as fact and is retracted
 A scheduled check that never fires is indistinguishable from having no check at all, which is the
 exact state this tooling exists to end. Hence the external trigger.
 
-## Why the poker verifies, and not just pokes
+## Why the poker verifies, and not just pokes — `committee-health-poke.sh`
 
 An alert that lives inside Actions cannot tell you that Actions never ran it — "the poke never fired"
 and "it fired but the alert could not be sent" are the same silence from the outside. So
@@ -45,7 +45,11 @@ and "it fired but the alert could not be sent" are the same silence from the out
    not see the runs" are not the same observation;
 4. report the conclusion — **0** success, **1** non-success, **3** if no conclusion is readable.
 
-| Exit | Meaning |
+`2` below is the poker's code and means *the trigger is broken*. The **other** table, further down, is
+`committee-health.mjs`'s, where `2` means *undetermined*. Two tables, two owners, one number meaning
+different things — read each against its own heading.
+
+| Exit (`committee-health-poke.sh`) | Meaning |
 |---|---|
 | 0 | healthy |
 | 1 | **the check found a problem** |
@@ -92,9 +96,12 @@ node scripts/committee-health.mjs                        # run the check locally
 AT_BLOCK=11604310 node scripts/committee-health.mjs      # replay a past block (needs archive RPC)
 ```
 
-## Verdicts
+## Verdicts — `committee-health.mjs`
 
-| Exit | Verdict | Meaning |
+These are the **check script's** codes, not the poker's; the poker wraps them and does not pass them
+through.
+
+| Exit (`committee-health.mjs`) | Verdict | Meaning |
 |---|---|---|
 | 0 | OK / WARN | armed and satisfiable; WARN covers the structural keeper-latency window |
 | 1 | CRITICAL | armed but tier-2/3 is failing closed |
