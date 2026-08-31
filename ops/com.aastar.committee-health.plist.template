@@ -9,12 +9,16 @@
   looks identical to a healthy quiet system.
 
   INSTALL (not done for you — this puts a persistent agent on your machine):
-    sed "s|REPO_PATH|$PWD|g" ops/com.aastar.committee-health.plist.template \
+    sed -e "s|REPO_PATH|$PWD|g" -e "s|HOME_PATH|$HOME|g" \
+      ops/com.aastar.committee-health.plist.template \
       > ~/Library/LaunchAgents/com.aastar.committee-health.plist
     launchctl load ~/Library/LaunchAgents/com.aastar.committee-health.plist
-  VERIFY:
-    launchctl list | grep committee-health          # second column 0 = last run exited clean
-    tail -f /tmp/committee-health-poke.log
+  VERIFY -- ask launchd, not the file. `plutil -lint` only says the XML is legal: a StartInterval
+  nested one level too deep lints green and is never scheduled (dvt hit exactly this, and the
+  "self-heals every 120s" their comment promised had never once happened). The ABSENCE of the
+  run interval line IS the bug:
+    launchctl print gui/$(id -u)/com.aastar.committee-health | grep -E "run interval|last exit"
+    tail -f ~/Library/Logs/committee-health-poke.log
   REMOVE:
     launchctl unload ~/Library/LaunchAgents/com.aastar.committee-health.plist
 -->
@@ -31,7 +35,9 @@
   <key>StartInterval</key><integer>900</integer>
   <!-- Run once at load so a broken install is visible immediately, not 15 minutes later. -->
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/tmp/committee-health-poke.log</string>
-  <key>StandardErrorPath</key><string>/tmp/committee-health-poke.log</string>
+  <!-- launchd's own spawn errors only. The run history lives in ~/Library/Logs/committee-health-poke.log,
+       written and rotated by the script itself, because /tmp is periodically cleaned on some macOS setups. -->
+  <key>StandardOutPath</key><string>HOME_PATH/Library/Logs/committee-health-launchd.log</string>
+  <key>StandardErrorPath</key><string>HOME_PATH/Library/Logs/committee-health-launchd.log</string>
 </dict>
 </plist>

@@ -13,7 +13,7 @@ nothing durable was watching.
 | Alert | `.github/workflows/committee-health.yml` — opens/updates a deduped GitHub issue | **works** |
 | Trigger (schedule) | `schedule:` cron in that workflow | **falsified — does not fire** |
 | Trigger (dispatch) | `workflow_dispatch` | **works** |
-| Trigger (external) | `scripts/committee-health-poke.sh` + `ops/*.plist.template` | **works, install is manual** |
+| Trigger (external) | `scripts/committee-health-poke.sh` + `ops/*.plist.template` | **works when installed; NOT installed by this PR — until `launchctl print` shows a `run interval` line, coverage is unchanged** |
 
 ## The trigger is falsified, not unproven
 
@@ -37,13 +37,25 @@ An alert that lives inside Actions cannot tell you that Actions never ran it —
 and "it fired but the alert could not be sent" are the same silence from the outside. So
 `committee-health-poke.sh` runs **outside** Actions and closes that loop:
 
-1. record the newest run id **before** dispatching (a real comparison, not a timestamp guess);
-2. dispatch — a rejection here is a trigger failure, exit **2**;
-3. wait for a run id that differs from the recorded one — accepted-but-no-run is also exit **2**,
-   and this is the branch Actions can never self-report;
-4. report the run's conclusion — exit **0** success, **1** non-success.
+1. record the newest **dispatched** run id before dispatching (a real comparison, not a timestamp
+   guess, and narrowed by event so another trigger's run cannot be mistaken for ours);
+2. dispatch — a rejection is a trigger failure, exit **2**;
+3. wait for a *different* run id — accepted-but-no-run is exit **2**, the branch Actions can never
+   self-report. If not one poll succeeded, that is exit **3**, because "no run appeared" and "I could
+   not see the runs" are not the same observation;
+4. report the conclusion — **0** success, **1** non-success, **3** if no conclusion is readable.
 
-Exit 2 therefore means *"the trigger is broken"*, distinct from exit 1 *"the check found something"*.
+| Exit | Meaning |
+|---|---|
+| 0 | healthy |
+| 1 | **the check found a problem** |
+| 2 | **the trigger is broken** |
+| 3 | **undetermined** — could not read a verdict |
+
+**1 is never used for an unknown.** `committee-health.mjs` spent three PRs separating "could not look"
+from "is broken" so an RPC blip is never printed as an outage; folding them back together out here
+would undo that at 15-minute cadence, and a code nobody trusts is a code nobody reads.
+
 Silence from this script is decidable: either it ran and said something, or the host was off.
 
 ## Install the external trigger (manual, by design)
@@ -56,8 +68,21 @@ launchctl list | grep committee-health   # second column 0 = last run exited cle
 tail -f /tmp/committee-health-poke.log
 ```
 
-Needs an authenticated `gh` on that machine. Runs every 15 min plus once at load, so a broken
-install shows up immediately.
+Needs an authenticated `gh` on that machine. Runs every 15 min plus once at load, so a broken install
+shows up immediately.
+
+**Verify by asking launchd, not by reading the file.** `plutil -lint` only answers "is this legal XML":
+a `StartInterval` nested one level too deep lints green and is never scheduled — dvt hit exactly that,
+and the "self-heals every 120s" promised in that file's own comment had never once happened. The
+**absence** of the run-interval line is the bug:
+
+```bash
+launchctl print gui/$(id -u)/com.aastar.committee-health | grep -E "run interval|last exit"
+tail -f ~/Library/Logs/committee-health-poke.log     # run history, rotated by the script at 1 MB
+```
+
+This is the same lesson as the cron finding one layer up: **a legal config is not an accepted
+schedule**, and neither one tells you it was ignored.
 
 ## Manual use
 
