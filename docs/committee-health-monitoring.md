@@ -21,8 +21,19 @@ Measured, both repos, same `7,22,37,52 * * * *` expression:
 
 | Repo | Window observed | Due slots | Runs fired |
 |---|---|---|---|
-| airaccount-contract | 83 min | ~5 | **0** |
+| airaccount-contract | 4 h 01 min, and counting | 16 | **0** |
 | YetAnotherAA-Validator | 6 h 33 min | 26 | **0** |
+
+Controls on the counting query, because "0 runs" and "the query returns nothing" are otherwise the
+same reading:
+
+- the identical query with `--event workflow_dispatch` returns **a non-zero count** (the load-bearing
+  part is *non-zero*, not any particular number — it rises every time anyone pokes the workflow);
+- **unfiltered**, the total equals the dispatch count. That is the stronger reading: not merely that
+  the `schedule` filter came back empty, but that every run this workflow has ever had came from
+  somewhere else.
+
+So the zero is an observation, not an empty instrument.
 
 Config was ruled out: YAML valid, workflow `state=active`, repo active, `workflow_dispatch` green on
 the same file. Offset minutes (rather than `*/15`) did **not** help — an earlier note in the workflow
@@ -87,6 +98,14 @@ tail -f ~/Library/Logs/committee-health-poke.log     # run history, rotated by t
 
 This is the same lesson as the cron finding one layer up: **a legal config is not an accepted
 schedule**, and neither one tells you it was ignored.
+
+Measured on this machine after loading, so the mechanism itself is not in question the way `schedule:`
+is — `run interval = 900 seconds` present; `runs` went 1 → 2 at ~900 s (12:59 load, 13:14:55 second
+fire), each firing completing the full chain: dispatch → new run id → `conclusion=success`. The
+discriminator has a negative control too: a sibling agent on the same machine with `StartInterval`
+nested one level too deep shows that line **zero** times, so its presence is an observation rather
+than a constant. Whether an agent is loaded *right now* is not recorded here — that claim would rot;
+run the two commands above and read the answer.
 
 ## Manual use
 
