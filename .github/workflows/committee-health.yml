@@ -182,8 +182,9 @@ jobs:
           Detail is in the \`committee validator health\` job log (it prints each \`_epochUsable\`
           conjunct, so a config bump or expired set is distinguishable from an unpinned epoch).
 
-          Opened once per incident per category; NOT re-commented every run. Close it when resolved —
-          the next failure of this category opens a fresh one."
+          Opened once per incident per category; NOT re-commented every run. A healthy run closes this
+          automatically, so an open issue means the failure is CURRENT — the next failure of this
+          category opens a fresh one."
           URL="$(gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --body "$BODY")"
           echo "opened $URL"
           # Assign AFTER creating: `create --assignee` resolves the login first, so a typo would fail the
@@ -192,3 +193,45 @@ jobs:
             gh issue edit "${URL##*/}" --repo "$REPO" --add-assignee "$ALERT_ASSIGNEE" || \
               echo "warning: could not assign '$ALERT_ASSIGNEE' (issue is still open)"
           fi
+
+  # The other half of dedup. Dedup guarantees one issue per incident per category -- which means an
+  # open issue stops meaning "there is a problem NOW" and starts meaning "there was one once". A stale
+  # open alert trains people to ignore open alerts: the same alert fatigue dedup exists to prevent,
+  # arriving from the other end. So a healthy run closes what it fixed, and the open set stays equal
+  # to the current failure set.
+  recover:
+    name: close resolved alerts
+    needs: check
+    if: needs.check.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LABEL="committee-health"
+          # Close on the MARKER, never on the label alone. There is deliberately no author filter (that
+          # would make two monitors invisible to each other and each open their own issue), so the
+          # marker is the only thing separating "a monitor opened this" from "a person opened this" --
+          # and closing someone's hand-filed issue because it shares a label is a worse bug than the
+          # stale alert this fixes. Convention shared with the dvt repo so both monitors agree.
+          for KIND in critical undetermined; do
+            MARKER="<!-- committee-health-alert-v1:${KIND} -->"
+            # Pipe to REAL jq: `gh --jq` is a different engine and does not accept `--arg`.
+            NUMS="$(gh issue list --repo "$REPO" --label "$LABEL" --state open --limit 100 \
+              --json number,body \
+              | jq -r --arg m "$MARKER" '.[] | select(.body // "" | contains($m)) | .number')"
+            for N in $NUMS; do
+              gh issue comment "$N" --repo "$REPO" --body \
+                "Resolved: a health run completed cleanly at $(date -u +%Y-%m-%dT%H:%M:%SZ). ${RUN_URL}
+
+              Closed automatically so the open set equals the current failure set. A new failure of
+              this category opens a fresh issue rather than reviving this one."
+              gh issue close "$N" --repo "$REPO" --reason completed
+              echo "closed #$N (${KIND})"
+            done
+          done
