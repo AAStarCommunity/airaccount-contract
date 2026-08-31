@@ -1,0 +1,59 @@
+# Durable health check for the committee validator the CURRENT stack mounts.
+#
+# WHY A WORKFLOW AND NOT A SESSION MONITOR: the failure this guards against (validator armed but
+# requiredQuorum() == sentinel => tier-2/3 silently fail-closed) went unseen for ~10 hours upstream
+# precisely because nothing durable was watching. An ad-hoc monitor in someone's terminal dies with
+# the terminal; this does not.
+#
+# ANTI-STALENESS: the validator address is derived from the router at algId 0x01 every run, so
+# swapping validators can never leave this green-forever against a retired address (the upstream
+# #252 failure mode). Pin AIRACCOUNT_ROUTER via a repo variable when the stack moves.
+name: Committee health
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # every 15 min; the structural keeper window is ~36s so this cannot false-page
+  workflow_dispatch:
+    inputs:
+      at_block:
+        description: "Replay the verdict as of a historical block (leave empty for latest)"
+        required: false
+      keeper_latency_blocks:
+        description: "Override K (default 20 blocks ~ 4 min)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    name: committee validator health
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          submodules: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check committee validator
+        env:
+          # Falls back to a public endpoint so this works with no repo secrets configured.
+          # Add a SEPOLIA_RPC_URL secret for a dedicated endpoint.
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          # Router of the CURRENT stack (v0.33.0). Update this variable when the stack moves —
+          # the validator itself is derived from it, so only this one value tracks the deploy.
+          AIRACCOUNT_ROUTER: ${{ vars.AIRACCOUNT_ROUTER || '0xA97A752779ebfDA58612F6727Ec7C8366c39f897' }}
+          EXPECTED_COMMITTEE: ${{ vars.EXPECTED_COMMITTEE }}
+          KEEPER_LATENCY_BLOCKS: ${{ inputs.keeper_latency_blocks }}
+          AT_BLOCK: ${{ inputs.at_block }}
+        run: node scripts/committee-health.mjs
