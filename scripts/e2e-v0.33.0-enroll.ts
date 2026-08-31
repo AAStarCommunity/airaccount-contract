@@ -52,6 +52,8 @@ const COMMITTEE_ABI = [
   { name: "getRegisteredNodeCount", type: "function", stateMutability: "view", inputs: [],                     outputs: [{ type: "uint256" }] },
   { name: "enrolledAccount",        type: "function", stateMutability: "view", inputs: [{ type: "address" }],  outputs: [{ type: "bool" }] },
   { name: "requiredQuorum",         type: "function", stateMutability: "view", inputs: [],                     outputs: [{ type: "uint256" }] },
+  { name: "epochLength",            type: "function", stateMutability: "view", inputs: [],                     outputs: [{ type: "uint256" }] },
+  { name: "epochPinned",            type: "function", stateMutability: "view", inputs: [{ type: "uint256" }],  outputs: [{ type: "bool" }] },
 ] as const;
 const ROUTER_ABI = [
   { name: "getAlgorithm", type: "function", stateMutability: "view", inputs: [{ type: "uint8" }], outputs: [{ type: "address" }] },
@@ -152,13 +154,34 @@ async function main() {
   // post-flip state, and still catches "armed but unsatisfiable" (pr-daemon #211 r2 blocker 1).
   const armed = await pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "committeeActive" }) as boolean;
   const rq = await pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "requiredQuorum" }) as bigint;
-  if (armed) {
-    check("committee ARMED -> requiredQuorum satisfiable (not sentinel, >=1)", rq !== UINT256_MAX && rq >= 1n, "true");
-  } else {
+  if (!armed) {
     check("committee OFF (pre-arm interlock) -> requiredQuorum is sentinel (consistent)", rq === UINT256_MAX, "true");
     console.log("  NOTE: committee OFF -> CC-116 makes tier-2/3 FAIL-CLOSED on this stack until dvt flips setEpochLength (tier-1 owner-only works).");
+  } else {
+    // THIRD PHASE (dvt, 2026-08-31). requiredQuorum needs _epochUsable(e) AND _epochUsable(e-1), but
+    // snapshotEpoch cannot run until block > epochStart — so at every epoch rollover there is a
+    // STRUCTURAL ~2-3 block (~36s, ~4.7% duty cycle at L=64) window where the sentinel is CORRECT and
+    // e-1 is still serving. A two-phase assertion reds every epoch (~13 min) and trains operators to
+    // ignore it — and that alert fatigue is precisely what caused the earlier 10h outage. So tolerate
+    // exactly this state, identified from on-chain reads only:
+    //   epochPinned(e)==false AND epochPinned(e-1)==true AND (block - epochStart) <= min(256, L-1)
+    const L = await pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "epochLength" }) as bigint;
+    const bn = await pub.getBlockNumber();
+    const e = bn / L, start = e * L;
+    const [pinnedE, pinnedPrev] = await Promise.all([
+      pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "epochPinned", args: [e] }) as Promise<boolean>,
+      pub.readContract({ address: COMMITTEE, abi: COMMITTEE_ABI, functionName: "epochPinned", args: [e - 1n] }) as Promise<boolean>,
+    ]);
+    const cap = L - 1n < 256n ? L - 1n : 256n;
+    const keeperLatency = !pinnedE && pinnedPrev && (bn - start) <= cap;
+    if (rq === UINT256_MAX && keeperLatency) {
+      check("ARMED + epoch pending pin (e-1 still serving) -> sentinel is EXPECTED, not an incident", true, "true");
+      console.log(`  NOTE: structural keeper-latency window — epoch ${e} not yet pinned, e-1 pinned, block ${bn} is ${bn - start} into the epoch. tier-2/3 is transiently fail-closed (~36s at L=64). NOT a failure.`);
+    } else {
+      check("committee ARMED -> requiredQuorum satisfiable (not sentinel, >=1)", rq !== UINT256_MAX && rq >= 1n, "true");
+    }
+    console.log(`  (armed=${armed} requiredQuorum=${rq === UINT256_MAX ? "SENTINEL(max)" : rq} epoch=${e} pinned(e)=${pinnedE} pinned(e-1)=${pinnedPrev})`);
   }
-  console.log(`  (committeeActive=${armed} requiredQuorum=${rq === UINT256_MAX ? "SENTINEL(max)" : rq})`);
   // Blocker 3 (pr-daemon #211 r2): every check above can hold with the router wired to a DIFFERENT
   // validator at 0x01. Pin that the account's router actually routes 0x01 to THIS committee validator.
   check("router 0x01 -> committee validator",
