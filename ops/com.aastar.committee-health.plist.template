@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd template for the external committee-health trigger.
+
+  WHY LOCAL AND NOT A CLOUD CRON: GitHub's own `schedule:` trigger was measured not to fire (this
+  repo 83min/5 slots/0; upstream YAAA 6h33m/26 slots/0, same expression). Anything scheduled INSIDE
+  Actions inherits that. A local timer has a different, and crucially a DECIDABLE, failure mode:
+  if this Mac is asleep or off, nobody is watching and you know it — unlike a silent cron that
+  looks identical to a healthy quiet system.
+
+  INSTALL (not done for you — this puts a persistent agent on your machine):
+    sed "s|REPO_PATH|$PWD|g" ops/com.aastar.committee-health.plist.template \
+      > ~/Library/LaunchAgents/com.aastar.committee-health.plist
+    launchctl load ~/Library/LaunchAgents/com.aastar.committee-health.plist
+  VERIFY:
+    launchctl list | grep committee-health          # second column 0 = last run exited clean
+    tail -f /tmp/committee-health-poke.log
+  REMOVE:
+    launchctl unload ~/Library/LaunchAgents/com.aastar.committee-health.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.aastar.committee-health</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <!-- login shell so gh + its keychain auth resolve exactly as they do in a terminal -->
+    <string>cd REPO_PATH &amp;&amp; ./scripts/committee-health-poke.sh</string>
+  </array>
+  <key>StartInterval</key><integer>900</integer>
+  <!-- Run once at load so a broken install is visible immediately, not 15 minutes later. -->
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/tmp/committee-health-poke.log</string>
+  <key>StandardErrorPath</key><string>/tmp/committee-health-poke.log</string>
+</dict>
+</plist>
