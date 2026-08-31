@@ -21,8 +21,12 @@ Measured, both repos, same `7,22,37,52 * * * *` expression:
 
 | Repo | Window observed | Due slots | Runs fired |
 |---|---|---|---|
-| airaccount-contract | 83 min | ~5 | **0** |
+| airaccount-contract | 4 h 01 min, and counting | 16 | **0** |
 | YetAnotherAA-Validator | 6 h 33 min | 26 | **0** |
+
+Positive control on the counting query, because "0 runs" and "the query returns nothing" are the same
+reading otherwise: the identical query with `--event workflow_dispatch` returns **17**. So the zero is
+an observation, not an empty instrument.
 
 Config was ruled out: YAML valid, workflow `state=active`, repo active, `workflow_dispatch` green on
 the same file. Offset minutes (rather than `*/15`) did **not** help — an earlier note in the workflow
