@@ -283,11 +283,11 @@ contract AAStarAirAccountV7_M7Test is Test {
     }
 
     function test_accountId_versionString() public view {
-        assertEq(account.accountId(), "airaccount.v7@0.32.0");
+        assertEq(account.accountId(), "airaccount.v7@0.33.0");
     }
 
     function test_ACCOUNT_VERSION_constant() public view {
-        assertEq(account.ACCOUNT_VERSION(), "0.32.0");
+        assertEq(account.ACCOUNT_VERSION(), "0.33.0");
     }
 
     // ─── supportsModule ───────────────────────────────────────────────────────

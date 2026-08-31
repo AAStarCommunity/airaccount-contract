@@ -1,6 +1,6 @@
 {
-  "accountVersion": "0.32.0",
-  "factoryVersion": "0.32.0",
+  "accountVersion": "0.33.0",
+  "factoryVersion": "0.33.0",
   "abi": [
     {
       "type": "constructor",
