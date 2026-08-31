@@ -63,11 +63,20 @@ const CV_ABI = [
   { name: "epochLength", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { name: "epochPinned", type: "function", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "bool" }] },
   { name: "getRegisteredNodeCount", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "configVersion", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "epochConfigVersion", type: "function", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "uint256" }] },
+  { name: "epochSetValidUntil", type: "function", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "uint256" }] },
 ];
 
 const pub = createPublicClient({ chain: sepolia, transport: http(RPC, { timeout: 30_000 }) });
+// ATOMICITY: every read is pinned to ONE block. Reading fields at "latest" independently lets them
+// straddle a block boundary and synthesise a state that existed at no single block — and the skew
+// window coincides exactly with the epoch rollover, i.e. the only moment this check has anything to
+// say. That produced a false CRITICAL (rq read pre-pin, epochPinned read post-pin => "sentinel with
+// both epochs pinned", which is unreachable in reality).
+let AT = AT_BLOCK; // resolved to a concrete block before any contract read
 const r = (address, abi, functionName, args) =>
-  pub.readContract({ address, abi, functionName, args, ...(AT_BLOCK ? { blockNumber: AT_BLOCK } : {}) });
+  pub.readContract({ address, abi, functionName, args, blockNumber: AT });
 
 let verdict = "OK", detail = "";
 const fail = (v, d) => { verdict = v; detail = d; };
@@ -83,18 +92,31 @@ try {
     if (!code || code === "0x") {
       fail("CRITICAL", `committee validator ${committee} has no code`);
     } else {
-      const [armed, rq, L, nodes] = await Promise.all([
+      AT = AT_BLOCK ?? await pub.getBlockNumber();   // pin the whole verdict to one block
+      const blk = await pub.getBlock({ blockNumber: AT });
+      const [armed, rq, L, nodes, cfg] = await Promise.all([
         r(committee, CV_ABI, "committeeActive"), r(committee, CV_ABI, "requiredQuorum"),
         r(committee, CV_ABI, "epochLength"), r(committee, CV_ABI, "getRegisteredNodeCount"),
+        r(committee, CV_ABI, "configVersion"),
       ]);
-      const bn = AT_BLOCK ?? await pub.getBlockNumber();
+      const bn = AT;
       const e = L > 0n ? bn / L : 0n, start = e * L, off = bn - start;
-      const [pinnedE, pinnedPrev] = L > 0n
-        ? await Promise.all([r(committee, CV_ABI, "epochPinned", [e]), r(committee, CV_ABI, "epochPinned", [e - 1n])])
-        : [false, false];
+      // _epochUsable(x) is THREE conjuncts, not just epochPinned — modelling only the first one makes
+      // a config bump or an expired set look like "both pinned yet sentinel", i.e. inexplicable.
+      const usable = async (x) => {
+        const [pinned, cv, validUntil] = await Promise.all([
+          r(committee, CV_ABI, "epochPinned", [x]), r(committee, CV_ABI, "epochConfigVersion", [x]),
+          r(committee, CV_ABI, "epochSetValidUntil", [x]),
+        ]);
+        const ok = pinned && cv === cfg && blk.timestamp < validUntil;
+        return { ok, pinned, cvOk: cv === cfg, fresh: blk.timestamp < validUntil };
+      };
+      const [uE, uPrev] = await Promise.all([usable(e), usable(e - 1n)]);
+      const pinnedE = uE.ok, pinnedPrev = uPrev.ok;
+      const why = (u) => `pinned=${u.pinned} cfgMatch=${u.cvOk} notExpired=${u.fresh}`;
       const cap = L - 1n < 256n ? L - 1n : 256n;
       console.log(`state    armed=${armed} requiredQuorum=${rq === UINT256_MAX ? "SENTINEL" : rq} nodes=${nodes} L=${L}`);
-      console.log(`epoch    e=${e} off=${off}/${cap} pinned(e)=${pinnedE} pinned(e-1)=${pinnedPrev}  block=${bn}`);
+      console.log(`epoch    e=${e} off=${off}/${cap} usable(e)=${pinnedE} [${why(uE)}] usable(e-1)=${pinnedPrev} [${why(uPrev)}]  block=${bn}`);
 
       if (!armed) {
         fail("WARN", "committee is OFF — CC-116 fail-closes tier-2/3 (safe, but unexpected for a production stack)");
@@ -105,7 +127,7 @@ try {
       } else if (!pinnedE && pinnedPrev && off <= cap) {
         fail("CRITICAL", `keeper is LATE — epoch ${e} unpinned ${off} blocks in (K=${K}); tier-2/3 fail-closed`);
       } else {
-        fail("CRITICAL", `sentinel OUTSIDE the structural window — pinned(e)=${pinnedE} pinned(e-1)=${pinnedPrev} off=${off}/${cap}; tier-2/3 fail-closed`);
+        fail("CRITICAL", `sentinel OUTSIDE the structural window — usable(e)=${pinnedE} [${why(uE)}] usable(e-1)=${pinnedPrev} [${why(uPrev)}] off=${off}/${cap}; tier-2/3 fail-closed`);
       }
     }
   }
