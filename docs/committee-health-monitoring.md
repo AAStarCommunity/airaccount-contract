@@ -24,9 +24,16 @@ Measured, both repos, same `7,22,37,52 * * * *` expression:
 | airaccount-contract | 4 h 01 min, and counting | 16 | **0** |
 | YetAnotherAA-Validator | 6 h 33 min | 26 | **0** |
 
-Positive control on the counting query, because "0 runs" and "the query returns nothing" are the same
-reading otherwise: the identical query with `--event workflow_dispatch` returns **17**. So the zero is
-an observation, not an empty instrument.
+Controls on the counting query, because "0 runs" and "the query returns nothing" are otherwise the
+same reading:
+
+- the identical query with `--event workflow_dispatch` returns **a non-zero count** (the load-bearing
+  part is *non-zero*, not any particular number — it rises every time anyone pokes the workflow);
+- **unfiltered**, the total equals the dispatch count. That is the stronger reading: not merely that
+  the `schedule` filter came back empty, but that every run this workflow has ever had came from
+  somewhere else.
+
+So the zero is an observation, not an empty instrument.
 
 Config was ruled out: YAML valid, workflow `state=active`, repo active, `workflow_dispatch` green on
 the same file. Offset minutes (rather than `*/15`) did **not** help — an earlier note in the workflow
