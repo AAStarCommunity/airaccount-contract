@@ -43,6 +43,30 @@ log() {
   printf '%s\n' "$line" >> "$POKE_LOG" 2>/dev/null || true
 }
 
+# SELF-GAP: report slots this monitor MISSED. launchd SKIPS StartInterval firings while the machine
+# sleeps -- it does not catch up -- and `caffeinate` does not cover Clamshell Sleep, so closing the lid
+# silently stops both this monitor and the keeper it watches. That was measured, not theorised: on
+# 2026-08-31 a clamshell sleep skipped 2 slots here while the keeper missed pinning an epoch, and the
+# alert only appeared after the machine woke. A monitor sharing a failure mode with its subject is not
+# a monitor, and the blind window is invisible from inside it. This cannot prevent that; it makes the
+# gap VISIBLE afterwards instead of silent, which is the property I wrongly claimed the laptop already
+# had. The real fix is not hosting keeper and monitor on a machine that sleeps.
+INTERVAL="${POKE_INTERVAL_SECONDS:-900}"
+if [ -f "$POKE_LOG" ]; then
+  last="$(grep 'dispatched;' "$POKE_LOG" | tail -1 | awk '{print $1}')"
+  if [ -n "$last" ]; then
+    # TZ=UTC is required: `date -j -f` parses in LOCAL time, so a UTC stamp comes back offset by the
+    # zone and "ran a minute ago" reads as hours old -- which made the control cell (a fresh log)
+    # report a gap it did not have.
+    last_s="$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last" +%s 2>/dev/null || echo 0)"
+    if [ "$last_s" -gt 0 ]; then
+      gap=$(( $(date +%s) - last_s ))
+      missed=$(( gap / INTERVAL - 1 ))
+      [ "$missed" -gt 0 ] && log "GAP: this monitor did not run for ${gap}s (~${missed} slot(s) missed since ${last}) -- it was down, so that window is UNOBSERVED, not healthy."
+    fi
+  fi
+fi
+
 # Record the newest run id BEFORE dispatching, so "a new run appeared" is a real comparison and not a
 # guess from a timestamp window.
 # Narrow to dispatched runs: --limit 1 across all events can return a run some other trigger started,

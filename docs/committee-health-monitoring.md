@@ -71,7 +71,18 @@ different things — read each against its own heading.
 from "is broken" so an RPC blip is never printed as an outage; folding them back together out here
 would undo that at 15-minute cadence, and a code nobody trusts is a code nobody reads.
 
-Silence from this script is decidable: either it ran and said something, or the host was off.
+**Correction, measured 2026-08-31:** this script previously claimed its silence was decidable — "either
+it ran and said something, or the host was off". **That is false on a laptop.** `launchd` *skips*
+`StartInterval` firings while the machine sleeps (it does not catch up), and `caffeinate` does not
+cover `Clamshell Sleep`, so closing the lid stops this monitor **and** the keeper it watches, with
+nobody informed. It happened: a clamshell sleep skipped two slots here while the keeper missed pinning
+an epoch, and the alert only surfaced after the machine woke — by which point the incident had nearly
+self-healed. **A monitor sharing a failure mode with its subject is not a monitor.**
+
+So each run now reports the slots it MISSED (`GAP: … that window is UNOBSERVED, not healthy`). That
+does not close the blind window — nothing running on the sleeping machine can — it makes the window
+visible afterwards instead of silent, which is the property the earlier claim assumed for free. The
+actual fix is not hosting the keeper and its monitor on a machine that sleeps.
 
 ## Install the external trigger (manual, by design)
 
