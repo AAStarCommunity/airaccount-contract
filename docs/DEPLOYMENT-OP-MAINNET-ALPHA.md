@@ -62,8 +62,10 @@ cast wallet address --account mainnet-deployer
 
 ### P5. aPNTs Token 地址
 
-@repo:sp 已于 2026-09-01 交付 OP 主网地址，但**本仓刻意仍留 `TBD`**——两条阻塞都会让这个地址失效或不可信，
-而 token 配置在 `createAccount` 时**烘焙进不可变 guard**，填错不能改，只能让用户迁移账户。
+@repo:sp 已于 2026-09-01 交付 OP 主网地址，但**本仓刻意仍留 `TBD`**。
+token 配置在 `createAccount` 时**烘焙进不可变 guard**，填错不能改，只能让用户迁移账户。
+
+**B1/B2 是「为什么现在不填」，B3 是「填的那一刻必须同时做对」——B3 已在本 PR 修好，B1/B2 仍未解除。**
 
 ```
 aPNTs (OP mainnet, chainId 10)  0x0B41C78081B5A141eb4C3C7E7FD8E58A7Bde553B
@@ -82,7 +84,21 @@ aPNTs (OP mainnet, chainId 10)  0x0B41C78081B5A141eb4C3C7E7FD8E58A7Bde553B
 - [ ] **B2 — 这个地址注定要变。** 45 字节 clone 把 impl 地址**硬编码在 runtime bytecode** 里，无 admin slot、
       无升级路径，所以 3.0.0 → 3.5.0 **无法原地升级**，只能部署新 clone = **新地址**。
       @repo:sp 已计划在 CC-115 B3 稳定后全面部署新版，故现在填入的任何地址都会在那次部署后作废。
-- [ ] 上述两条均消除后，再更新 `configs/token-presets.json` chain `"10"` 的 `aPNTs.address` 与本文 Token 预设表。
+- [x] **B3 — 预设按 6 位小数计价，而 aPNTs 是 18 位（已修，PR #239）。** `configs/token-presets.json` 里
+      aPNTs 三条链（Sepolia / 以太坊主网 / OP 主网）都写着 `"decimals": 6`，限额也是按 6 位的形状写的，
+      而链上 `decimals()` = **18**。照原样发上主网，standard 档 tier-1 限额是 **5×10⁻¹⁰ aPNTs**。
+      失败方向是 **fail-closed**（任何转账都撞 `InsufficientTokenTier`，不是资金外流），但限额一旦烘焙进
+      不可变 guard 就只能迁移账户。
+      **为什么它能长期错着没人发现**：`loadTokenPresets`（`scripts/deploy-op-mainnet.ts:82`）把
+      `tier*Limit` **原样喂进 `createAccount`**，却**从不读 `decimals`**——那个字段纯粹是文档，
+      写错不会有任何东西报错，只会误导下一个照着它写限额的人。
+      **当前挡住主网的是 `if (tokenData.address === "TBD") continue`**，也就是说
+      「填入 P5 地址」这个动作本身就是引信。
+      修法：三条链 `decimals` 6 → 18，27 个限额 × 10¹²（人类金额不变：100/1000/5000 等）。
+- [ ] B1、B2 均消除后，再更新 `configs/token-presets.json` chain `"10"` 的 `aPNTs.address` 与本文 Token 预设表。
+- [ ] 填入地址后**必须**跑 `node scripts/check-token-presets.mjs --chain 10`，要求 `EXIT=0` 且 aPNTs 行显示
+      `OK decimals=18`。散文读着对不算数——该脚本对每个非 TBD token 断言
+      `预设 decimals == 链上 decimals()` 并打印每档的人类金额。
 
 > 顺带：B2 对 sp 是好消息——owner 只能在重新部署时修正，反正要发新 clone，两件事可以一次做完。
 
@@ -330,7 +346,7 @@ Post-wire (if PROTOCOL_SAFE_ADDRESS set):
 | USDT | `0x94b008aA00579c1307B0EF2c499aD98a8ce58e58` | $500 | $5,000 | $10,000 |
 | WETH | `0x4200000000000000000000000000000000000006` | 0.5 ETH | 5 ETH | 10 ETH |
 | WBTC | `0x68f180fcCe6836688e9084f035309E29Bf0A2095` | 0.05 BTC | 0.5 BTC | 1 BTC |
-| aPNTs | **TBD** — 见 [P5](#p5-apnts-token-地址)，地址已交付但被 B1（EOA 可无限增发）+ B2（clone 不可升级，地址将变）阻塞 | — | — | — |
+| aPNTs | **TBD** — 见 [P5](#p5-apnts-token-地址)，地址已交付但被 B1（EOA 可无限增发）+ B2（clone 不可升级，地址将变）阻塞 | 500 aPNTs | 5,000 aPNTs | 10,000 aPNTs |
 
 ---
 
@@ -362,4 +378,4 @@ Post-wire (if PROTOCOL_SAFE_ADDRESS set):
 | 日期 | 变更 |
 |------|------|
 | 2026-06-24 | 初版：主网部署全计划，基于 Sepolia v0.19.0-beta.2 分析 |
-| 2026-09-01 | P5 记录 @repo:sp 交付的 aPNTs 地址并说明两条阻塞（B1 EOA 无限增发 / B2 clone 地址将变）；新增 aggregator 轮换 → tier-2/3 fail-closed 的运营窗口条目（CC-46） |
+| 2026-09-01 | P5 记录 @repo:sp 交付的 aPNTs 地址并说明三条阻塞（B1 EOA 无限增发 / B2 clone 地址将变 / B3 预设 6 位小数 vs 链上 18 位，已修）；新增 aggregator 轮换 → tier-2/3 fail-closed 的运营窗口条目；新增 `scripts/check-token-presets.mjs`（CC-46） |
