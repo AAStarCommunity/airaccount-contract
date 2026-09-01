@@ -58,7 +58,7 @@ const EXPECTED = {
   USDT:  { conservative: ["100", "1000", "5000"],    standard: ["500", "5000", "10000"],  trader: ["2000", "20000", "50000"] },
   WETH:  { conservative: ["0.1", "1", "5"],          standard: ["0.5", "5", "10"],        trader: ["2", "10", "50"] },
   WBTC:  { conservative: ["0.01", "0.1", "0.5"],     standard: ["0.05", "0.5", "1"],      trader: ["0.2", "2", "5"] },
-  aPNTs: { conservative: ["100", "1000", "5000"],    standard: ["500", "5000", "10000"],  trader: ["2000", "20000", "50000"] },
+  aPNTs: { conservative: ["1500", "15000", "75000"], standard: ["7500", "75000", "150000"], trader: ["30000", "300000", "750000"] },
 };
 
 const PROFILES = ["conservative", "standard", "trader"];
