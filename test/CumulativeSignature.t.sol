@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test, Vm} from "forge-std/Test.sol";
+import {OneTxRelay} from "./helpers/OneTxRelay.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
@@ -320,22 +321,28 @@ contract CumulativeSignatureTest is Test {
 
         // HIGH-3: callData must equal the executed call so the content-keyed algId resolves.
         userOp.callData = abi.encodeWithSelector(account.execute.selector, address(0xBEEF), uint256(0.5 ether), bytes(""));
-        vm.prank(entryPointAddr);
-        uint256 result = account.validateUserOp(userOp, userOpHash, 0);
-        assertEq(result, 0, "Cumulative T2 validation should pass");
 
-        // Execute a tier-2 value transfer (0.5 ETH) — should succeed
-        vm.prank(entryPointAddr);
-        account.execute(address(0xBEEF), 0.5 ether, "");
+        // Etched HERE and not in setUp, unlike the M3 suite: entryPointAddr is a mock CONTRACT there,
+        // and replacing its code for the whole suite would change every other test in this file. This
+        // test has no vm.expectRevert, so installing the relay inline is safe (it would otherwise
+        // consume the expectation).
+        vm.etch(entryPointAddr, address(new OneTxRelay()).code);
+
+        // Each UserOp in ONE top-level call, as EntryPoint.handleOps does: the validated algId travels
+        // to execute() through transient storage, which does not survive separate top-level calls.
+        (uint256 result,) = OneTxRelay(entryPointAddr).run(
+            address(account), userOp, userOpHash,
+            abi.encodeCall(account.execute, (address(0xBEEF), 0.5 ether, ""))
+        );
+        assertEq(result, 0, "Cumulative T2 validation should pass");
 
         // Execute a tier-1 value transfer (0.05 ETH) — should also succeed (T2 >= T1)
         // Re-validate first with callData matching the second execute.
         userOp.callData = abi.encodeWithSelector(account.execute.selector, address(0xBEEF), uint256(0.05 ether), bytes(""));
-        vm.prank(entryPointAddr);
-        account.validateUserOp(userOp, userOpHash, 0);
-
-        vm.prank(entryPointAddr);
-        account.execute(address(0xBEEF), 0.05 ether, "");
+        OneTxRelay(entryPointAddr).run(
+            address(account), userOp, userOpHash,
+            abi.encodeCall(account.execute, (address(0xBEEF), 0.05 ether, ""))
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════

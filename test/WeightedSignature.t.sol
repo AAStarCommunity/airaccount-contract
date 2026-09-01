@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test, Vm} from "forge-std/Test.sol";
+import {OneTxRelay} from "./helpers/OneTxRelay.sol";
 import {IAirAccountAgent} from "../src/interfaces/IAirAccountAgent.sol";
 import {AAStarAgentStorageLayout} from "../src/core/AAStarAgentStorageLayout.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -520,12 +521,16 @@ contract WeightedSignatureTest is Test {
         // HIGH-3: callData must equal the executed call so the content-keyed weight queue resolves.
         op.callData = abi.encodeWithSelector(tieredAcc.execute.selector, target, uint256(0.5 ether), bytes(""));
 
-        vm.prank(address(ep));
-        assertEq(tieredAcc.validateUserOp(op, userOpHash, 0), 0);
-
-        // Execute 0.5 ETH (tier2 required: 0.1<0.5≤1.0) — weight resolves to T2 → passes
-        vm.prank(address(ep));
-        tieredAcc.execute(target, 0.5 ether, "");
+        // ONE top-level call: the resolved weight/algId reaches execute() through transient storage,
+        // which foundry clears between separate top-level calls. Etched inline rather than in setUp
+        // because `ep` is a mock contract shared by the whole suite; this test has no expectRevert,
+        // so installing the relay here cannot consume one.
+        vm.etch(address(ep), address(new OneTxRelay()).code);
+        (uint256 validationData,) = OneTxRelay(address(ep)).run(
+            address(tieredAcc), op, userOpHash,
+            abi.encodeCall(tieredAcc.execute, (target, 0.5 ether, ""))
+        );
+        assertEq(validationData, 0);
         assertEq(target.balance, 0.5 ether);
     }
 
