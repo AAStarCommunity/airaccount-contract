@@ -1,0 +1,82 @@
+# Checks configs/token-presets.json against the chains it describes.
+#
+# WHY THIS IS WORTH A WORKFLOW, given it needs external RPC:
+#
+# The limits in that file are raw base units fed verbatim into createAccount's token configs, where
+# they bake into a guard that is bound once in `initialize` and can only ever be TIGHTENED —
+# addTokenConfig reverts with TokenAlreadyConfigured and decreaseTokenDailyLimit refuses increases.
+# A wrong limit is therefore not a config mistake anyone fixes later; it is permanent for every
+# account already created, and the only remedy is account migration.
+#
+# The file spent an unknown length of time declaring aPNTs at 6 decimals against an 18-decimal token
+# on Sepolia, which made the standard tier-1 limit 5e-10 aPNTs. Nothing went red, because nothing
+# validated it: `decimals` in that file is documentation, and no consumer reads it. A check that
+# lives only in someone's terminal would have missed it the same way.
+#
+# WHY PATHS-FILTERED RATHER THAN PART OF THE MAIN TEST JOB: the dangerous moment is exactly when
+# somebody edits this file — most of all when they fill in the aPNTs address that P5 has been
+# holding at TBD. That happens perhaps twice a year, so gating those PRs on a public RPC costs
+# almost nothing, while adding an RPC dependency to every PR would trade a rare real failure for a
+# frequent spurious one.
+name: Token presets
+
+on:
+  pull_request:
+    paths:
+      - "configs/token-presets.json"
+      - "scripts/check-token-presets.mjs"
+      - ".github/workflows/token-presets.yml"
+  push:
+    branches: [main]
+    paths:
+      - "configs/token-presets.json"
+      - "scripts/check-token-presets.mjs"
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: presets match chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          submodules: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The script exits 1 for a real mismatch and 2 when a chain could not be read at all. Those
+      # must not be conflated: 2 is "the check could not run", and retrying it is legitimate, while
+      # retrying a 1 just prints the same defect twice. A 2 that survives the retry still fails the
+      # job — a check that cannot see the chain has not passed, it has abstained.
+      - name: Check token presets against chain
+        env:
+          MAINNET_RPC: ${{ vars.MAINNET_RPC || 'https://ethereum-rpc.publicnode.com' }}
+          OP_MAINNET_RPC: ${{ vars.OP_MAINNET_RPC || 'https://optimism-rpc.publicnode.com' }}
+          BASE_RPC: ${{ vars.BASE_RPC || 'https://base-rpc.publicnode.com' }}
+          SEPOLIA_RPC: ${{ vars.SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }}
+        run: |
+          set +e
+          node scripts/check-token-presets.mjs
+          rc=$?
+          if [ "$rc" -eq 2 ]; then
+            echo "::warning::a chain was unreachable; retrying once before failing"
+            sleep 20
+            node scripts/check-token-presets.mjs
+            rc=$?
+          fi
+          if [ "$rc" -eq 1 ]; then
+            echo "::error::token presets disagree with the chain — see the FAIL lines above."
+            echo "::error::These limits bake into an immutable guard; a wrong one cannot be corrected later."
+          elif [ "$rc" -eq 2 ]; then
+            echo "::error::could not read a chain twice in a row — the check abstained rather than passed."
+          fi
+          exit $rc
