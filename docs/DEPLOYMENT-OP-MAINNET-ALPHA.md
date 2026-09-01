@@ -117,6 +117,19 @@ aPNTs (OP mainnet, chainId 10)  0x0B41C78081B5A141eb4C3C7E7FD8E58A7Bde553B
 
       ⚠️ **`cast code` 那行不能省、也不能用地址串比较代替**：治理 Safe `0x51eDf11f…` 与旧 aPNTs 的
       EOA owner `0x51Ac6949…` **都以 `0x51` 开头**，肉眼极易看串（本仓第一轮就差点)。
+
+      ⚠️ **终态断言不覆盖过程。** 上面六行验的全是**最终状态**——但部署者在 tx2→tx3 间隙持有
+      `communityOwner` 时可以自铸、可以加白名单 spender，而做完这些之后再把 owner 交给 Safe，
+      `communityOwner()` 和 `owner()` 读出来**一模一样**（Codex 在 @repo:sp 的验证器里发现的）。
+      所以必须一并断言 **fresh-clone 状态**，它才是排除"路上发生过什么"的那部分：
+
+      ```bash
+      cast call $T "totalSupply()(uint256)" --rpc-url $OP    # 必须 == 0（没有自铸）
+      # 外加：无额外 auto-approved spender（工厂除外）、无对部署者的自授权、
+      #       各项限额仍为 initialize 默认值
+      ```
+
+      `totalSupply() == 0` 不是"顺手记一个数"，**它就是那条断言**。
 - [ ] **顺序写死：填入地址 → 跑 `node scripts/check-token-presets.mjs --chain 10 --require-verified`
       且 `EXIT=0` → 才可部署。**
       顺序是硬要求,不是建议:地址还是 `TBD` 时脚本拿不到链上真值,它要挡的正是「填入地址」之后那一刻。
