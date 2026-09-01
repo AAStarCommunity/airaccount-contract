@@ -99,6 +99,24 @@ aPNTs (OP mainnet, chainId 10)  0x0B41C78081B5A141eb4C3C7E7FD8E58A7Bde553B
       `TokenAlreadyConfigured` revert，`decreaseTokenDailyLimit` 拒绝任何调大，而 `guard` 在 `initialize`
       里一次性绑定。所以填错限额对**已创建的账户是永久的**，唯一补救是账户迁移，不存在"改配置重来"。
 - [ ] B1、B2 均消除后，再更新 `configs/token-presets.json` chain `"10"` 的 `aPNTs.address` 与本文 Token 预设表。
+- [ ] **交接验收：只认自己对链的读数，不认对方部署日志。**
+      @repo:sp 报告他们原先的部署断言跑在 `stopBroadcast` **之后的模拟里**；该部署是四笔交易，
+      **tx2 与 tx3 之间 token 的 `communityOwner` 就是部署者 EOA**。若 tx3 掉了而 tx1/tx2 已上链，
+      脚本会在模拟上退出 0，而链上留着一个 EOA 持有的活代币——我们会收到一个「已断言过 A1」的地址。
+      他们已改为可重跑的 `15_VerifyAPNTs.s.sol`，并明确要求我们自己跑。**本仓验收照此执行**：
+
+      ```bash
+      T=<新 token>; F=<新 factory>; SAFE=0x51eDf11fDb0A4F66220eFb8efA54Eca77232E114
+      cast call $T "communityOwner()(address)" --rpc-url $OP   # 必须 == $SAFE
+      cast call $F "owner()(address)"          --rpc-url $OP   # 必须 == $SAFE
+      cast code $SAFE --rpc-url $OP | wc -c                    # 必须 > 2（"0x" 之外有内容）
+      cast call $T "decimals()(uint8)"         --rpc-url $OP   # 必须 == 18
+      cast call $T "totalSupply()(uint256)"    --rpc-url $OP
+      cast call $F "APNTS_PRICE_MAX()(uint256)" --rpc-url $OP  # 决定永久限额，必须自读
+      ```
+
+      ⚠️ **`cast code` 那行不能省、也不能用地址串比较代替**：治理 Safe `0x51eDf11f…` 与旧 aPNTs 的
+      EOA owner `0x51Ac6949…` **都以 `0x51` 开头**，肉眼极易看串（本仓第一轮就差点)。
 - [ ] **顺序写死：填入地址 → 跑 `node scripts/check-token-presets.mjs --chain 10 --require-verified`
       且 `EXIT=0` → 才可部署。**
       顺序是硬要求,不是建议:地址还是 `TBD` 时脚本拿不到链上真值,它要挡的正是「填入地址」之后那一刻。
