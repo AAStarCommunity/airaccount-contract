@@ -140,11 +140,11 @@ node scripts/committee-health.mjs                        # run the check locally
 AT_BLOCK=11604310 node scripts/committee-health.mjs      # replay a past block (needs archive RPC)
 ```
 
-## One missed pin costs TWO epochs (measured 2026-09-02)
+## k missed pins cost k+1 epochs (measured 2026-09-02)
 
-`requiredQuorum()` needs `_epochUsable(e)` **and** `_epochUsable(e-1)`. That conjunction has a
-consequence nothing here had written down: **a single epoch the keeper fails to pin fails-closed
-tier-2/3 for two full epochs**, not one.
+`requiredQuorum()` needs `_epochUsable(e)` **and** `_epochUsable(e-1)`. That conjunction means **a run
+of `k` consecutive unpinned epochs fails-closed tier-2/3 for `k+1` epochs** — the last miss is still
+inside the pair one epoch after it ends.
 
 ```
 epoch N   never pinned  -> needs {N,   N-1}: N   missing  -> sentinel for all of N
@@ -152,7 +152,13 @@ epoch N+1 pinned fine   -> needs {N+1, N  }: N   missing  -> sentinel for all of
 epoch N+2 pinned fine   -> needs {N+2, N+1}: both present -> recovered
 ```
 
-Observed exactly that shape on Sepolia against validator `0x7ac7E9d4…`:
+> ⚠️ **This is not a newly discovered coupling.** @repo:dvt's keeper file has carried it since before
+> this incident — *"a missed window fail-closes committee ops for that epoch and the next, then
+> self-heals"* — on the same line as its mitigation, *"run several for redundancy"*. The mitigation
+> was never implemented; this outage is the first time it cost anything. **The gap was in redundancy,
+> not in knowledge.**
+
+Observed on Sepolia against validator `0x7ac7E9d4…`:
 
 | block | epoch | state |
 |---|---|---|
@@ -160,16 +166,32 @@ Observed exactly that shape on Sepolia against validator `0x7ac7E9d4…`:
 | 11614080 | 181470 (off 0/63) | e-1 now usable, e not yet pinned → WARN (structural window) |
 | **11614084** | **181470 (off 4/63)** | **both pinned, `requiredQuorum=2` → OK** |
 
-Root cause: **epoch 181468 was never pinned** — all three of its conjuncts read false, which is the
-never-pinned shape, not the expired one (an expired snapshot keeps `pinned=true`). `configVersion`
-stayed 5 and `blsAggregator` stayed `0xEaeC2F51…` (4.11.0) throughout, so this was **neither** of the
-two causes documented above: not an aggregator rotation, and not ordinary keeper latency — epoch
-181469 itself *was* pinned. The keeper ran and skipped one epoch. It pinned 181470 four blocks in,
-well inside K=20, so it was healthy again immediately.
+**Two corrections from @repo:dvt after this was first written, both in the worse direction.** From
+this repo we can only see the epoch that blocks the *current* quorum, so a run of misses looks like
+one miss:
 
-**Operational consequence:** keeper availability has to be read as *"pin every epoch"*, not *"pin most
-epochs"* — the cost of one miss is doubled by the conjunction. Reported to @repo:dvt, who own the
-keeper; nothing in this repo's wiring or config was involved.
+- **`181467` was also unpinned**, not just `181468`. Nothing visible from here distinguished them —
+  `181468` is simply the one that gated `e=181469`.
+- So tier-2/3 was fail-closed across **three** epochs (`181467`–`181469`, ≈38 min at L=64), not one.
+  `k=2` misses, `k+1=3` epochs — the formula above, instantiated.
+
+**Root cause (relayed from @repo:dvt with `pmset -g log` + `EpochSnapshotted` timeline; no verifiable
+foothold here):** the laptop running the keeper went to **Clamshell Sleep** at 16:47:18Z on AC power.
+Epochs 181467 and 181468 elapsed entirely while asleep; DarkWake at 17:21:48Z, and 181469 was pinned
+108 s later at offset 25 instead of the usual 2–5 — the signature of catching up after waking. The
+keeper process never died. Consistent with what was verifiable here: `configVersion` stayed 5 and
+`blsAggregator` stayed 4.11.0 throughout, so **neither documented cause applied** — not a rotation,
+and not ordinary latency, since 181469 was itself pinned.
+
+> **Counter-intuitive detail worth carrying:** the machine already runs `caffeinate`
+> (`PreventUserIdleSystemSleep`), **which does not block Clamshell Sleep**. The protection was present
+> and inapplicable — it looked covered and was not. Same shape as the rest of this document's
+> failures: nothing announces that a guard does not apply.
+
+**This class of interruption is accepted, not an escalation.** Jason's standing decision (2026-09-01)
+is that production runs DVT+KMS on independent nodes while **during testing the laptop is fine and
+slots missed with the lid closed are accepted**. Redundant keepers are @repo:dvt's to land. Nothing in
+this repo's wiring or config was involved, and nothing here needs to change.
 
 ## "e-1 is still serving" understates the structural window
 
