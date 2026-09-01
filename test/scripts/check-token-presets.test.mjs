@@ -116,8 +116,25 @@ test("G — a chain with no RPC configured fails instead of being skipped in sil
     "no RPC configured");
 });
 
-test("H — --require-verified is not satisfied by an empty token set", () => {
-  expectFail(run((p) => { p.chains["1"].tokens = {}; }, ["--chain", "1", "--require-verified"]));
+test("H — an empty token set fails on the roster rule, before --require-verified sees it", () => {
+  // This test used to assert only "it failed", and so passed through N1 while claiming to cover the
+  // --require-verified empty-set guard. Naming the reason is what makes it test one thing.
+  expectFail(run((p) => { p.chains["1"].tokens = {}; }, ["--chain", "1", "--require-verified"]),
+    "declares no tokens");
+});
+
+test("a chain whose tokens are all unreadable ABSTAINS — it does not report a mismatch", () => {
+  // The only path that actually reaches the --require-verified empty-set guard, and the one where
+  // getting it wrong is worst: every token unreadable means the run could not look, and calling that
+  // a failure overwrites exit 2 with exit 1 — a mismatch reported that was never found.
+  const r = run((p) => {
+    for (const t of Object.values(p.chains["1"].tokens)) t.address = "0x000000000000000000000000000000000000dEaD";
+  }, ["--chain", "1", "--require-verified"]);
+  assert.equal(r.code, 2, `expected exit 2 (abstained), got ${r.code}\n${r.out}`);
+  assert.ok(r.out.includes("abstained rather than passed"), r.out);
+  assert.ok(!r.out.includes("the gate matched no tokens"),
+    `unreadability is not an empty gate; that message would be false here\n${r.out}`);
+  assert.ok(!/^OK —/m.test(r.out), `a run that abstained must not print OK\n${r.out}`);
 });
 
 test("--require-verified rejects a token whose address is still TBD", () => {

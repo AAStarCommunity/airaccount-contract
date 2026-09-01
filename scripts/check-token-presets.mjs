@@ -92,7 +92,7 @@ const presetsPath = process.argv.includes("--presets")
   : new URL("../configs/token-presets.json", import.meta.url);
 const presets = JSON.parse(readFileSync(presetsPath, "utf-8"));
 
-let failures = 0, verified = 0, declaredOnly = 0;
+let failures = 0, verified = 0, declaredOnly = 0, unreadable = 0;
 
 const clientFor = (chainId) => createPublicClient({ transport: http(RPCS[chainId]) });
 const readDecimals = (chainId, address) =>
@@ -238,6 +238,7 @@ for (const [chainId, chain] of Object.entries(presets.chains)) {
       } catch (e) {
         console.error(`  ${symbol.padEnd(6)} FAILED to read decimals() at ${t.address}: ${e.shortMessage ?? e.message}`);
         process.exitCode = 2;
+        unreadable++;
         continue;
       }
       if (onchain !== t.decimals) {
@@ -319,13 +320,28 @@ for (const [chainId, chain] of Object.entries(presets.chains)) {
 // --require-verified means "every token was verified against a chain". An empty token set
 // satisfies that vacuously, so a mistyped --chain or a dropped RPCS entry would pass a gate
 // that looked at nothing. Matching zero rows and matching every row must not both be green.
+//
+// But "verified nothing" has two causes and they are not the same answer. If every token was
+// unreadable the run ABSTAINED, and calling that a failure would overwrite exit 2 with exit 1 —
+// reporting a mismatch that was never found, and destroying the very distinction the rest of this
+// file is built on. Only the genuinely empty case is a failure; unreadability stays exit 2.
 if (requireVerified && verified === 0 && failures === 0) {
-  console.error(`FAIL --require-verified: the gate matched no tokens, so it verified nothing`);
-  failures++;
+  if (unreadable > 0) {
+    console.error(
+      `--require-verified: nothing was verified because ${unreadable} token(s) could not be read. ` +
+      `The run abstained rather than passed — exit 2, not a mismatch.`
+    );
+  } else {
+    console.error(`FAIL --require-verified: the gate matched no tokens, so it verified nothing`);
+    failures++;
+  }
 }
 
+// "OK" must not appear on a run that abstained: exit 2 means some chain could not be read, and a
+// reader who sees OK will act as though it passed.
+const verdict = failures > 0 ? "FAIL" : process.exitCode === 2 ? "ABSTAINED (a chain could not be read)" : "OK";
 console.log(
-  `\n${failures === 0 ? "OK" : "FAIL"} — ${verified} verified against chain, ` +
+  `\n${verdict} — ${verified} verified against chain, ` +
   `${declaredOnly} declared-only (address TBD), ${failures} failure(s)` +
   (requireVerified ? "  [--require-verified]" : "")
 );
