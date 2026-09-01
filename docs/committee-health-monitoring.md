@@ -202,9 +202,33 @@ window**. What e-1 keeps serving is the snapshot, not the quorum.
 
 That does not change the WARN classification — paging on it would be the alert fatigue this check
 exists to avoid — but it does change what WARN *means*: not "tier-2/3 is fine", rather "tier-2/3 is
-down for a short, expected, self-clearing interval". At the observed pin latency of ~4 blocks in 64,
-that is roughly **6% of wall-clock time by design**, and up to ~31% before K=20 would escalate it.
-Anything reading a WARN as healthy is reading it wrong.
+down for a short, expected, self-clearing interval". Anything reading a WARN as healthy is reading it
+wrong.
+
+**Measured by @repo:dvt over 138 pinned epochs (~31 h, ~9,000 blocks)** — this supersedes the ~6%
+first written here, which was a single observation of 4/64 extrapolated as if it were a mean:
+
+```
+pin offset from epoch start:  2:33  3:52  4:43  5:5  |  15:1  25:1  26:1  49:1  60:1
+mean 3.15/64 excluding the 5 outliers   (133 of 138 pins land at offset 2-5)
+⇒ steady-state fail-closed = 4.9% of wall-clock  (median 4.7%)
+⇒ floor at 1-block latency  = 1.6%   (a pin cannot precede the epoch it snapshots)
+```
+
+Direction and magnitude of the estimate held; the single point was simply above the mean. A redundant
+keeper that pins at 1–2 blocks would take this from **4.9% to ~2–3%** — which is the part of the
+window that engineering can move, as against the 1.6% the design fixes.
+
+**Total unavailability over that window: ≈8.4%** — 4.9% steady-state plus **3.6%** from epochs that
+were fully fail-closed (5 of 138). That second term comes from three unpinned epochs, not two:
+**`181356` as well**, on 08-31 at 23:14 +07, about a day before this incident and following a system
+sleep at 23:03. It is invisible from this repo for exactly the reason recorded above — only the epoch
+gating the current quorum is ever in view — which makes it a second instance of that blind spot rather
+than a new one.
+
+Both gaps follow a sleep, and both are late at night, so **this is a recurring nightly pattern, not a
+one-off**. The `k+1` rule held for both: `k=1` at 181356 cost epochs 181356–181357, `k=2` at
+181467–181468 cost 181467–181469.
 
 ## Other legitimate causes of the sentinel
 
