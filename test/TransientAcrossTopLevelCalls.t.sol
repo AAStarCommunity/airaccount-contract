@@ -15,9 +15,13 @@ import {Test} from "forge-std/Test.sol";
 /// top-level calls in one test function, a tstore and a tload. Measured on foundry 1.7.1:
 ///
 ///     forge test --match-path test/TransientAcrossTopLevelCalls.t.sol --evm-version prague
-///       -> tload after a separate top-level call: 42
+///       -> tload after a separate top-level call: 99
 ///     ... same command with --gas-report
 ///       -> tload after a separate top-level call: 0
+///
+/// Three states, three distinct numbers: 99 healthy, 0 the harness split the calls, 42 the cross-call
+/// write did nothing and you are reading the control's residue. That third reading used to collide
+/// with the healthy one.
 ///
 /// So `--gas-report` makes 1.7.1 run each top-level call as its own transaction, clearing transient
 /// storage between them; 1.8.x does that unconditionally, which is why CI is pinned to 1.7.1 (see
@@ -63,8 +67,13 @@ contract TransientAcrossTopLevelCalls is Test {
         // means the probe is broken and the probe reading is meaningless.
         assertEq(t.putThenGet(42), 42, "same-frame control failed: this probe is broken, not foundry");
 
-        t.put(42);
+        // SENTINEL, not 42: the control just wrote 42 to this same slot. Reusing that value makes a
+        // healthy read indistinguishable from reading the control's residue -- delete the line below
+        // and the file still prints 42, so the positive claim would no longer be produced by the thing
+        // it claims about. Same slot and same call shapes are kept on purpose (that is what isolates
+        // the top-level boundary as the only variable); only the VALUE differs.
+        t.put(99);
         emit log_named_uint("tload after a separate top-level call", t.get());
-        emit log_string("control is always 42. probe: 42 = transient survived | 0 = harness split the top-level calls");
+        emit log_string("99 = the cross-call write survived | 0 = harness split the top-level calls | 42 = that write did nothing (you are reading the control's residue)");
     }
 }
