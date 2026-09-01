@@ -109,6 +109,26 @@ aPNTs (OP mainnet, chainId 10)  0x0B41C78081B5A141eb4C3C7E7FD8E58A7Bde553B
 
 > 顺带：B2 对 sp 是好消息——owner 只能在重新部署时修正，反正要发新 clone，两件事可以一次做完。
 
+**状态更新（2026-09-01，@repo:sp 回复）**：sp 已接受上述路径，**B1 + B2 合并到一次重新部署**（PR #399），
+且发现比 clone 更深一层——`xPNTsFactory.implementation` 是 `immutable`，现网 2.1.0 工厂**只可能**产出
+3.0.0-unlimited clone，所以**必须先发新工厂**。其 OP 主网 dry-run 已跑通：工厂
+`xPNTsFactory-2.3.0-clone-optimized`、代币 `XPNTs-3.5.0`、`communityOwner` = CC-31 Safe
+`0x51eDf11f…`（负对照：删掉 transfer 那行，同一 dry-run 报 owner 没落到 Safe）。目前卡在他们
+`.env.optimism` 的 OP RPC 为空（原有两把 Alchemy key 泄露后已清除），恢复后一次 broadcast 即可。
+
+⚠️ **上表那个地址 `0x0B41C780…` 不要接线**——新部署会产生**新地址**，sp 落地后会推给我们。
+两条后续约束：
+- **新代币不承接旧的 140,000 供应量。**本仓无需迁移，理由见下条。
+- **新代币在 OP 主网上「已正确持有并设上限，但尚未接 gas」**：新工厂刻意以 `SUPERPAYMASTER = address(0)`
+  部署，而 OP 主网仍跑 `SuperPaymaster-3.2.2` / `Registry-3.0.2`（pre-P0-3）。要等 OP 主网升到 V5 后由 Safe
+  调 `setSuperPaymasterAddress` + `addAutoApprovedSpender`。**即：即便地址到手，OP 主网 aPNTs gasless 仍不可用**，
+  这是主网 alpha 的独立前提，不要和 P5「填地址」混为一谈。
+
+**本仓在旧代币上无余额（已验，2026-09-01）**：`balanceOf` on `0x0B41C780…` → Jason EOA
+`0xb5600060…` = **0**，CC-31 Safe `0x51eDf11f…` = **0**；本仓在 OP 主网**没有任何部署**（仅本文档为计划）。
+正对照：同一查询对 aPNTs owner EOA 返回 35,000e18、`totalSupply` 返回 140,000e18，所以 0 是真值不是查询失败。
+⇒ **旧代币供应量不承接一事不阻塞本仓，无需为我们做迁移。**
+
 ### P6. 基础设施
 
 - [ ] OP Mainnet RPC URL（Alchemy/Infura）记录到 `.env.op-mainnet` 为 `OP_MAINNET_RPC_URL`
@@ -385,4 +405,4 @@ Post-wire (if PROTOCOL_SAFE_ADDRESS set):
 | 日期 | 变更 |
 |------|------|
 | 2026-06-24 | 初版：主网部署全计划，基于 Sepolia v0.19.0-beta.2 分析 |
-| 2026-09-01 | P5 记录 @repo:sp 交付的 aPNTs 地址并说明三条阻塞（B1 EOA 无限增发 / B2 clone 地址将变 / B3 预设 6 位小数 vs 链上 18 位，已修）；新增 aggregator 轮换 → tier-2/3 fail-closed 的运营窗口条目；新增 `scripts/check-token-presets.mjs`（CC-46） |
+| 2026-09-01 | P5 记录 @repo:sp 交付的 aPNTs 地址并说明三条阻塞（B1 EOA 无限增发 / B2 clone 地址将变 / B3 预设 6 位小数 vs 链上 18 位，已修）；新增 aggregator 轮换 → tier-2/3 fail-closed 的运营窗口条目；新增 `scripts/check-token-presets.mjs`；记录 sp 重新部署路径（PR #399）+ 本仓旧代币零余额 + 新代币暂未接 gas（CC-46） |
