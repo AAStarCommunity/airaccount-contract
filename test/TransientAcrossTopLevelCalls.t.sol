@@ -24,18 +24,47 @@ import {Test} from "forge-std/Test.sol";
 /// .github/workflows/test.yml). It is a harness artifact, NOT a real sensitivity of EIP-1153 across
 /// frames and NOT a contract defect: the on-chain assumption is untouched.
 ///
-/// This test asserts nothing on purpose -- the value it prints IS the answer, and asserting either
-/// reading would make it fail in one of the two modes it exists to compare.
+/// The CROSS-CALL value is deliberately not asserted -- it legitimately differs by mode, so asserting
+/// either reading would fail in one of the two modes this exists to compare. The same-frame control
+/// IS asserted, because it must hold in all of them.
+///
+/// Why the control matters more than it looks: on 1.7.1 you can tell a healthy probe from a broken one
+/// by running twice (healthy prints 42 then 0; broken prints 0 twice). **On 1.8.x that stops working**
+/// -- the split is unconditional, so a healthy probe prints 0 both times, which is byte-identical to
+/// the broken signature. And 1.8.x is what someone hitting this in the wild is running. The control
+/// removes the need for a second run entirely.
+///
+/// UNVERIFIED PREMISE, stated rather than assumed: that the control still reads 42 on 1.8.x rests on
+/// 1.8.x splitting only TOP-LEVEL calls, sub-calls within one staying in the same transaction. Nobody
+/// here has measured that -- it is the same premise this file's conclusion already depends on. One
+/// command settles it on any machine with 1.8.x: if the control reads 0 there, this comment is wrong
+/// AND the shared premise needs re-examining, which is the more valuable outcome.
 contract TStoreProbe {
     function put(uint256 v) external { assembly { tstore(7, v) } }
     function get() external view returns (uint256 v) { assembly { v := tload(7) } }
+
+    /// Same-frame control: the identical two sub-calls, same slot, same shapes -- but both inside ONE
+    /// top-level call. That isolates the single variable under test (the top-level call boundary), so
+    /// it must read 42 in EVERY mode. If it does not, the probe itself has rotted (slot renumbered on
+    /// one side, transient storage unavailable, --evm-version not applied, solc semantics changed) and
+    /// the reading below says nothing about foundry.
+    function putThenGet(uint256 v) external returns (uint256) {
+        this.put(v);
+        return this.get();
+    }
 }
 
 contract TransientAcrossTopLevelCalls is Test {
     function test_probe() public {
         TStoreProbe t = new TStoreProbe();
+
+        // Assertable in every mode, so a single run is self-explanatory and the file is a check
+        // rather than a log line: control 42 + probe 0 means the harness split the calls; control 0
+        // means the probe is broken and the probe reading is meaningless.
+        assertEq(t.putThenGet(42), 42, "same-frame control failed: this probe is broken, not foundry");
+
         t.put(42);
         emit log_named_uint("tload after a separate top-level call", t.get());
-        emit log_string("42 = transient survived (plain forge test) | 0 = harness split the calls (--gas-report, or foundry 1.8.x)");
+        emit log_string("control is always 42. probe: 42 = transient survived | 0 = harness split the top-level calls");
     }
 }
