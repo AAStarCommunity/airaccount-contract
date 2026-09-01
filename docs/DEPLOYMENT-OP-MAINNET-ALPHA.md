@@ -99,15 +99,32 @@ aPNTs (OP mainnet, chainId 10)  0x0B41C78081B5A141eb4C3C7E7FD8E58A7Bde553B
       `TokenAlreadyConfigured` revert，`decreaseTokenDailyLimit` 拒绝任何调大，而 `guard` 在 `initialize`
       里一次性绑定。所以填错限额对**已创建的账户是永久的**，唯一补救是账户迁移，不存在"改配置重来"。
 - [ ] B1、B2 均消除后，再更新 `configs/token-presets.json` chain `"10"` 的 `aPNTs.address` 与本文 Token 预设表。
-- [ ] **顺序写死：填入地址 → 跑 `node scripts/check-token-presets.mjs --chain 10` 且 `EXIT=0` → 才可部署。**
-      顺序是硬要求,不是建议:地址还是 `TBD` 时脚本只能拿**声明的** `decimals` 校验限额,拿不到链上真值;
-      它要挡的正是「填入地址」之后那一刻,早跑一次不能代替。aPNTs 行必须显示
-      `OK decimals=18`（而不是 `OK against DECLARED decimals=18`）。
+- [ ] **顺序写死：填入地址 → 跑 `node scripts/check-token-presets.mjs --chain 10 --require-verified`
+      且 `EXIT=0` → 才可部署。**
+      顺序是硬要求,不是建议:地址还是 `TBD` 时脚本拿不到链上真值,它要挡的正是「填入地址」之后那一刻。
+      **判据是退出码,不是读输出里的字符串**——`--require-verified` 让任何仍是 TBD 的 token 直接算失败,
+      所以「有没有真的对着链验过」由机器判定。（人去分辨 `OK decimals=18` 和
+      `OK against DECLARED decimals=18` 是可以漏看的,漏看不会报错还会指错地方。）
       脚本断言的是**限额本身**——`BigInt(tier1Limit) == parseUnits(期望人类金额, 链上 decimals)`,
       期望值（aPNTs standard = 500/5000/10000）显式写在脚本里、不从被检查的文件推导，否则检查是循环的。
       只断言 `decimals` 相等是不够的:那会放过「decimals 改对了、限额仍是旧尺度」的文件，而那正是 B3 本身。
+      脚本另有一条**跨链一致性**检查(常开):同一 symbol 在各链声明的 `decimals` 必须一致,且只要有任一条链
+      对着链验过,其他链的声明就必须等于它。aPNTs 在 Sepolia 上验出 18,于是 chain 10 即便地址仍是 `TBD`、
+      `decimals` 与限额彼此自洽,写 `6` 也会当场被判失败——**这是声明路径唯一能被看见的方式**。
 
 > 顺带：B2 对 sp 是好消息——owner 只能在重新部署时修正，反正要发新 clone，两件事可以一次做完。
+
+**更正（2026-09-01，@repo:sp 自我更正）——`XPNTs-3.5.0` 并没有强制上限，所以版本升级本身不解 B1**：
+`issuanceCap` **不是 mint 闸门**。唯一的 `_mint` 调用点在 `mint(address,uint256)`，只有 `onlyFactoryOrOwner`
+守卫、**没有 cap 检查**；`issuanceCap` 只被 view `isOverIssued()` 读（供 DVT 调用），默认 0（未设），
+之后由 `communityOwner` 设定。也就是说 3.5.0 买到的是**可观测性 + owner 自愿声明的上限**，不是强制天花板。
+⇒ **真正修掉「EOA 可无限增发」的是 owner 变成 Safe，不是版本号**。Safe 依然能无限增发，只是不能单方面做，
+且 `isOverIssued()` 会标出来。本文 B1 的措辞据此保持不变（B1 说的一直是 owner，不是版本）。
+
+**对本仓 tier 分档的影响**：`decimals` 已确认为 **18**（`xPNTsToken` 从不覆写 `decimals()`，继承 OZ 默认，
+3.0.0/3.5.0 皆然），所以 27 个限额**无需再缩放**。但**目前没有可依据的 supply cap**——要有人从 Safe 调
+`setIssuanceCap`，而那个数字还没人决定。如果我们要让 100/1000/5000 这类绝对值代表供应量的稳定比例，
+**这个治理决定是本仓的前置条件**，且它现在卡在治理而非 sp。
 
 **状态更新（2026-09-01，@repo:sp 回复）**：sp 已接受上述路径，**B1 + B2 合并到一次重新部署**（PR #399），
 且发现比 clone 更深一层——`xPNTsFactory.implementation` 是 `immutable`，现网 2.1.0 工厂**只可能**产出
@@ -119,7 +136,7 @@ aPNTs (OP mainnet, chainId 10)  0x0B41C78081B5A141eb4C3C7E7FD8E58A7Bde553B
 ⚠️ **上表那个地址 `0x0B41C780…` 不要接线**——新部署会产生**新地址**，sp 落地后会推给我们。
 两条后续约束：
 - **新代币不承接旧的 140,000 供应量。**本仓无需迁移，理由见下条。
-- **新代币在 OP 主网上「已正确持有并设上限，但尚未接 gas」**：新工厂刻意以 `SUPERPAYMASTER = address(0)`
+- **新代币在 OP 主网上「已正确持有，但尚未接 gas」**（原文写的「设上限」已被 sp 自己更正，见上）：新工厂刻意以 `SUPERPAYMASTER = address(0)`
   部署，而 OP 主网仍跑 `SuperPaymaster-3.2.2` / `Registry-3.0.2`（pre-P0-3）。要等 OP 主网升到 V5 后由 Safe
   调 `setSuperPaymasterAddress` + `addAutoApprovedSpender`。**即：即便地址到手，OP 主网 aPNTs gasless 仍不可用**，
   这是主网 alpha 的独立前提，不要和 P5「填地址」混为一谈。

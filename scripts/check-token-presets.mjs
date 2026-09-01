@@ -21,10 +21,20 @@
  *   3. dailyLimit >= tier2Limit >= tier1Limit          [always]
  *
  * Tokens whose address is still "TBD" are checked against their DECLARED decimals — the
- * limits can still be self-inconsistent before an address exists. Such a token is not
- * fully verified until the address is filled in and this runs again against the chain.
+ * limits can still be self-inconsistent before an address exists. That path cannot, by
+ * construction, catch a token whose declared decimals are simply wrong but whose limits
+ * agree with them: that is the original bug's exact shape, and it would pass. Two things
+ * close it:
  *
- * Usage: node scripts/check-token-presets.mjs [--chain 10]
+ *   - CROSS-CHAIN CONSISTENCY (always on): one symbol must declare the same decimals on
+ *     every chain, and if ANY chain has a real address, every chain's declaration must
+ *     equal what that chain reports. aPNTs verified at 18 on Sepolia therefore convicts a
+ *     `"decimals": 6` on chain 10 while its address is still TBD.
+ *   - --require-verified: treat any declared-only token as a failure. This is what the
+ *     pre-deploy gate should use, so passing is `EXIT=0` rather than a human reading the
+ *     word "DECLARED" out of a line of output.
+ *
+ * Usage: node scripts/check-token-presets.mjs [--chain 10] [--require-verified]
  * Exit 0 = all good, 1 = a mismatch, 2 = could not reach a chain.
  */
 import { readFileSync } from "node:fs";
@@ -70,16 +80,55 @@ function human(raw, decimals) {
 const only = process.argv.includes("--chain")
   ? process.argv[process.argv.indexOf("--chain") + 1]
   : null;
+const requireVerified = process.argv.includes("--require-verified");
 
 const presets = JSON.parse(readFileSync(new URL("../configs/token-presets.json", import.meta.url), "utf-8"));
 
 let failures = 0, verified = 0, declaredOnly = 0;
 
+const clientFor = (chainId) => createPublicClient({ transport: http(RPCS[chainId]) });
+const readDecimals = (chainId, address) =>
+  clientFor(chainId).readContract({ address, abi: DECIMALS_ABI, functionName: "decimals" });
+
+/**
+ * Pass 1 — establish, per symbol, what the chains actually say. This runs over EVERY chain
+ * regardless of --chain: the cross-chain invariant is only useful if the truth can come from
+ * a chain other than the one being checked, which is the whole point when the checked chain's
+ * address is still TBD.
+ */
+const truth = new Map(); // symbol -> { decimals, chainId, address }
+const unreachable = [];
+for (const [chainId, chain] of Object.entries(presets.chains)) {
+  if (!RPCS[chainId]) continue;
+  for (const [symbol, t] of Object.entries(chain.tokens ?? {})) {
+    if (!t.address || t.address === "TBD") continue;
+    let d;
+    try {
+      d = Number(await readDecimals(chainId, t.address));
+    } catch (e) {
+      unreachable.push(`${symbol}@${chainId}: ${e.shortMessage ?? e.message}`);
+      continue;
+    }
+    const prior = truth.get(symbol);
+    if (prior && prior.decimals !== d) {
+      console.error(
+        `FAIL ${symbol}: chains disagree on decimals — ${prior.decimals} at ${prior.address} ` +
+        `(chain ${prior.chainId}) vs ${d} at ${t.address} (chain ${chainId})`
+      );
+      failures++;
+    }
+    if (!prior) truth.set(symbol, { decimals: d, chainId, address: t.address });
+  }
+}
+if (unreachable.length) {
+  console.warn(`warning: could not read decimals for ${unreachable.length} token(s) — cross-chain truth is partial`);
+  for (const u of unreachable) console.warn(`  ${u}`);
+}
+
 for (const [chainId, chain] of Object.entries(presets.chains)) {
   if (only && chainId !== only) continue;
   const rpc = RPCS[chainId];
   if (!rpc) { console.log(`chain ${chainId} (${chain._name}): no RPC configured, skipping`); continue; }
-  const client = createPublicClient({ transport: http(rpc) });
   console.log(`\nchain ${chainId} — ${chain._name}`);
 
   for (const [symbol, t] of Object.entries(chain.tokens ?? {})) {
@@ -96,7 +145,7 @@ for (const [chainId, chain] of Object.entries(presets.chains)) {
     if (!isTBD) {
       let onchain;
       try {
-        onchain = Number(await client.readContract({ address: t.address, abi: DECIMALS_ABI, functionName: "decimals" }));
+        onchain = Number(await readDecimals(chainId, t.address));
       } catch (e) {
         console.error(`  ${symbol.padEnd(6)} FAILED to read decimals() at ${t.address}: ${e.shortMessage ?? e.message}`);
         process.exitCode = 2;
@@ -108,6 +157,24 @@ for (const [chainId, chain] of Object.entries(presets.chains)) {
         continue;
       }
       decimals = onchain;
+    }
+
+    // ── cross-chain: a declaration is convicted by any chain that carries this symbol ──
+    const known = truth.get(symbol);
+    if (known && known.decimals !== t.decimals) {
+      console.error(
+        `  ${symbol.padEnd(6)} FAIL decimals: declared ${t.decimals} here, but ${known.decimals} on chain ` +
+        `${known.chainId} (${known.address}, read from chain)`
+      );
+      if (isTBD) console.error(`           address is TBD here, so only this cross-chain check can see it`);
+      failures++;
+      continue;
+    }
+
+    if (isTBD && requireVerified) {
+      console.error(`  ${symbol.padEnd(6)} FAIL address is TBD — --require-verified demands a real address`);
+      failures++;
+      continue;
     }
 
     // ── limits: the load-bearing check, against an expectation outside this file ──
@@ -152,6 +219,7 @@ for (const [chainId, chain] of Object.entries(presets.chains)) {
 
 console.log(
   `\n${failures === 0 ? "OK" : "FAIL"} — ${verified} verified against chain, ` +
-  `${declaredOnly} declared-only (address TBD), ${failures} failure(s)`
+  `${declaredOnly} declared-only (address TBD), ${failures} failure(s)` +
+  (requireVerified ? "  [--require-verified]" : "")
 );
 if (failures > 0) process.exitCode = 1;
