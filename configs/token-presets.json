@@ -36,10 +36,10 @@
         },
         "aPNTs": {
           "address": "0xDf669834F04988BcEE0E3B6013B6b867Bd38778d",
-          "decimals": 6,
-          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
-          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
-          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+          "decimals": 18,
+          "conservative": { "tier1Limit": "100000000000000000000",  "tier2Limit": "1000000000000000000000",  "dailyLimit": "5000000000000000000000"  },
+          "standard":     { "tier1Limit": "500000000000000000000",  "tier2Limit": "5000000000000000000000",  "dailyLimit": "10000000000000000000000" },
+          "trader":       { "tier1Limit": "2000000000000000000000", "tier2Limit": "20000000000000000000000", "dailyLimit": "50000000000000000000000" }
         }
       }
     },
@@ -76,10 +76,10 @@
         },
         "aPNTs": {
           "address": "TBD",
-          "decimals": 6,
-          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
-          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
-          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+          "decimals": 18,
+          "conservative": { "tier1Limit": "100000000000000000000",  "tier2Limit": "1000000000000000000000",  "dailyLimit": "5000000000000000000000"  },
+          "standard":     { "tier1Limit": "500000000000000000000",  "tier2Limit": "5000000000000000000000",  "dailyLimit": "10000000000000000000000" },
+          "trader":       { "tier1Limit": "2000000000000000000000", "tier2Limit": "20000000000000000000000", "dailyLimit": "50000000000000000000000" }
         }
       }
     },
@@ -116,10 +116,10 @@
         },
         "aPNTs": {
           "address": "TBD",
-          "decimals": 6,
-          "conservative": { "tier1Limit": "100000000",  "tier2Limit": "1000000000",  "dailyLimit": "5000000000"  },
-          "standard":     { "tier1Limit": "500000000",  "tier2Limit": "5000000000",  "dailyLimit": "10000000000" },
-          "trader":       { "tier1Limit": "2000000000", "tier2Limit": "20000000000", "dailyLimit": "50000000000" }
+          "decimals": 18,
+          "conservative": { "tier1Limit": "100000000000000000000",  "tier2Limit": "1000000000000000000000",  "dailyLimit": "5000000000000000000000"  },
+          "standard":     { "tier1Limit": "500000000000000000000",  "tier2Limit": "5000000000000000000000",  "dailyLimit": "10000000000000000000000" },
+          "trader":       { "tier1Limit": "2000000000000000000000", "tier2Limit": "20000000000000000000000", "dailyLimit": "50000000000000000000000" }
         }
       }
     },
