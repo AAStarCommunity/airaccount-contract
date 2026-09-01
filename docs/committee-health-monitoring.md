@@ -140,6 +140,114 @@ node scripts/committee-health.mjs                        # run the check locally
 AT_BLOCK=11604310 node scripts/committee-health.mjs      # replay a past block (needs archive RPC)
 ```
 
+## k missed pins cost k+1 epochs (measured 2026-09-02)
+
+`requiredQuorum()` needs `_epochUsable(e)` **and** `_epochUsable(e-1)`. That conjunction means **a run
+of `k` consecutive unpinned epochs fails-closed tier-2/3 for `k+1` epochs** — the last miss is still
+inside the pair one epoch after it ends.
+
+```
+epoch N   never pinned  -> needs {N,   N-1}: N   missing  -> sentinel for all of N
+epoch N+1 pinned fine   -> needs {N+1, N  }: N   missing  -> sentinel for all of N+1
+epoch N+2 pinned fine   -> needs {N+2, N+1}: both present -> recovered
+```
+
+> ⚠️ **This is not a newly discovered coupling.** @repo:dvt's keeper file has carried it since before
+> this incident — *"a missed window fail-closes committee ops for that epoch and the next, then
+> self-heals"* — on the same line as its mitigation, *"run several for redundancy"*. The mitigation
+> was never implemented; this outage is the first time it cost anything. **The gap was in redundancy,
+> not in knowledge.**
+
+Observed on Sepolia against validator `0x7ac7E9d4…`:
+
+| block | epoch | state |
+|---|---|---|
+| 11614051 | 181469 (off 35/63) | `requiredQuorum=SENTINEL`, `usable(e)=true`, **`usable(e-1)=false`** → CRITICAL |
+| 11614080 | 181470 (off 0/63) | e-1 now usable, e not yet pinned → WARN (structural window) |
+| **11614084** | **181470 (off 4/63)** | **both pinned, `requiredQuorum=2` → OK** |
+
+**Two corrections from @repo:dvt after this was first written, both in the worse direction.** From
+this repo we can only see the epoch that blocks the *current* quorum, so a run of misses looks like
+one miss:
+
+- **`181467` was also unpinned**, not just `181468`. Nothing visible from here distinguished them —
+  `181468` is simply the one that gated `e=181469`.
+- So tier-2/3 was fail-closed across **three** epochs (`181467`–`181469`, ≈38 min at L=64), not one.
+  `k=2` misses, `k+1=3` epochs — the formula above, instantiated.
+
+**Root cause (relayed from @repo:dvt with `pmset -g log` + `EpochSnapshotted` timeline; no verifiable
+foothold here):** the laptop running the keeper went to **Clamshell Sleep** at 16:47:18Z on AC power.
+Epochs 181467 and 181468 elapsed entirely while asleep; DarkWake at 17:21:48Z, and 181469 was pinned
+108 s later at offset 25 instead of the usual 2–5 — the signature of catching up after waking. The
+keeper process never died. Consistent with what was verifiable here: `configVersion` stayed 5 and
+`blsAggregator` stayed 4.11.0 throughout, so **neither documented cause applied** — not a rotation,
+and not ordinary latency, since 181469 was itself pinned.
+
+> **Counter-intuitive detail worth carrying:** the machine already runs `caffeinate`
+> (`PreventUserIdleSystemSleep`), **which does not block Clamshell Sleep**. The protection was present
+> and inapplicable — it looked covered and was not. Same shape as the rest of this document's
+> failures: nothing announces that a guard does not apply.
+
+**This class of interruption is accepted, not an escalation.** Jason's standing decision (2026-09-01)
+is that production runs DVT+KMS on independent nodes while **during testing the laptop is fine and
+slots missed with the lid closed are accepted**. Redundant keepers are @repo:dvt's to land. Nothing in
+this repo's wiring or config was involved, and nothing here needs to change.
+
+## "e-1 is still serving" understates the structural window
+
+The script header says the rollover window is one where "e-1 is still serving". Measured, that is not
+what the account sees: during that window `requiredQuorum()` returns the sentinel, so the account-side
+`signerCount >= requiredQuorum()` gate can never pass and **tier-2/3 is fail-closed for the whole
+window**. What e-1 keeps serving is the snapshot, not the quorum.
+
+That does not change the WARN classification — paging on it would be the alert fatigue this check
+exists to avoid — but it does change what WARN *means*: not "tier-2/3 is fine", rather "tier-2/3 is
+down for a short, expected, self-clearing interval". Anything reading a WARN as healthy is reading it
+wrong.
+
+**Measured by @repo:dvt over 138 pinned epochs (~31 h, ~9,000 blocks)** — this supersedes the ~6%
+first written here, which was a single observation of 4/64 extrapolated as if it were a mean:
+
+```
+pin offset from epoch start:  2:33  3:52  4:43  5:5  |  15:1  25:1  26:1  49:1  60:1
+mean 3.15/64 excluding the 5 outliers   (133 of 138 pins land at offset 2-5)
+⇒ steady-state fail-closed = 4.9% of wall-clock  (median 4.7%)
+⇒ floor at 1-block latency  = 1.6%   (a pin cannot precede the epoch it snapshots)
+```
+
+Direction and magnitude of the estimate held; the single point was simply above the mean. A redundant
+keeper that pins at 1–2 blocks would take this from **4.9% to ~2–3%** — which is the part of the
+window that engineering can move, as against the 1.6% the design fixes.
+
+**Total unavailability over that window: ≈8.3%, and that is a floor rather than an estimate of the
+middle.** Populations, since mixing them is easy: the window holds **141 epochs** — 138 that were
+pinned plus **3 that never were**, and the never-pinned ones are by definition not inside "138 pinned"
+(caught in review; an earlier draft here divided by 138 and got 8.4%).
+
+```
+fully fail-closed          5 / 141                        = 3.55%
+steady-state on the rest   136 / 141 × 3.15/64 (= 4.92%)  = 4.75%
+                                                     total ≈ 8.29%
+```
+
+**Why it is a floor:** the 4.92% mean deliberately excludes five outlier pins (offsets 15, 25, 26, 49,
+60), and those were real unavailability too. Counting them — less 181469's, already inside the five
+fully-failed epochs — gives `569/137 = 4.15/64 = 6.5%`, and a total of **≈9.8%**. (Keep numerator and
+denominator on the same population: 569 covers 137 pins, so it is divided by 137, not by 136. An
+earlier draft mixed them, which is the same slip as the 138/141 one above, one paragraph later.)
+Excluding outliers is the right call for describing *typical* keeper latency; it is the wrong call for
+describing *availability*, because an outlier epoch is exactly when tier-2/3 was down longest. Read
+8.3% as the optimistic end of an **8.3–9.8%** band.
+
+The `5 / 141` term above comes from **three** unpinned epochs, not two: **`181356` as well**, on 08-31
+at 23:14 +07, about a day before this incident and following a system sleep at 23:03. It is invisible
+from this repo for exactly the reason recorded above — only the epoch gating the current quorum is
+ever in view — which makes it a second instance of that blind spot rather than a new one.
+
+Both gaps follow a sleep, and both are late at night, so **this is a recurring nightly pattern, not a
+one-off**. The `k+1` rule held for both: `k=1` at 181356 cost epochs 181356–181357, `k=2` at
+181467–181468 cost 181467–181469.
+
 ## Other legitimate causes of the sentinel
 
 A `requiredQuorum()` sentinel is not always a keeper failure. `setBlsAggregator` on the validator
