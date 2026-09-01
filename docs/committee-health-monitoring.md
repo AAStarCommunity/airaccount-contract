@@ -133,8 +133,10 @@ requires the new aggregator to match the registry's and **bumps `configVersion`*
 `epochConfigVersion[e] == configVersion` conjunct of `_epochUsable` — so **every existing epoch
 snapshot becomes unusable and must be re-pinned**. When SuperPaymaster rotates its aggregator,
 tier-2/3 genuinely is fail-closed for a short window and this check correctly reports CRITICAL.
-**Read `configVersion` before chasing the keeper**: if it just moved, the cause is the rotation and
-the fix is a fresh pin, not a keeper restart. The same window makes a phase-aware E2E run right after
+**Before chasing the keeper, look at `cfgMatch` in the epoch line** — that is what the check actually
+prints for this conjunct (`cfgMatch=false` means `epochConfigVersion[e] != configVersion`), and then
+read `configVersion` on the validator. If it just moved, the cause is the rotation and the fix is a
+fresh pin, not a keeper restart. The same window makes a phase-aware E2E run right after
 a rotation read a transient sentinel — an expected reading, not a regression.
 
 ## Which router is being watched
