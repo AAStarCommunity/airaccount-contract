@@ -205,12 +205,19 @@ $100 是发行价 $0.02 的 **5,000×**，按单次 +30% 走完约 **33 步**（
 
 **Jason 定的是一个数:`conservative` 档 tier1 = $30 的 aPNTs = `30 / 0.02` = **1,500 aPNTs`。**
 其余八格**不是新设计的**,是由本仓既有模板的两条比例直接推出——这两条在
-`configs/token-presets.json` 现有的 USDC / USDT / WETH / WBTC 上**逐一核对过、完全一致**:
+`configs/token-presets.json` 现有的 USDC / USDT / WETH / WBTC 上核对过——**12 格中 11 格成立，
+有一个例外，见下表脚注**:
 
 | 比例 | 值 | 出处 |
 |---|---|---|
-| profile **内** tier1:tier2:daily | conservative `1:10:50` · standard `1:10:20` · trader `1:10:25` | 每个 profile 下四个 token 全部一致 |
-| profile **间** tier1 阶梯 | conservative : standard : trader = **`1 : 5 : 20`** | 四个 token 全部一致（USDC 100/500/2000 等） |
+| profile **内** tier1:tier2:daily | conservative `1:10:50` · standard `1:10:20` · trader `1:10:25` | 12 格中 **11 格**成立；唯一例外 **`WETH.trader` = `1:5:25`**（`2/10/50`，按形状应为 `2/20/50`） |
+| profile **间** tier1 阶梯 | conservative : standard : trader = **`1 : 5 : 20`** | 四个 token **4/4 全部一致**（USDC 100/500/2000、WETH 0.1/0.5/2、WBTC 0.01/0.05/0.2、USDT 同 USDC） |
+
+> **关于那个例外**：aPNTs 的 trader 档跟的是其余三个 token 的 `1:10:25`，所以**它不影响本节任何一个
+> aPNTs 数字**。`WETH.trader` 是既有笔误还是有意为之**未定**——把 tier2 从 10 改到 20 是**放宽**，
+> 而 10 ETH 在美元上也说得通（≈$30k，同档 USDC 是 $20k），所以本仓**不动它**，留给 Jason 定。
+> （本文早先一版写成"四个 token 全部一致"，是错的：这个例外是本仓自己先发现、并已报给 Jason 的，
+> 却没有写进这句话——拿到了事实没接到用得上它的地方，与本文别处记录的是同一类错。）
 
 于是（`decimals` 18）:
 
@@ -222,6 +229,12 @@ $100 是发行价 $0.02 的 **5,000×**，按单次 +30% 走完约 **33 步**（
 
 三档**一致地**比同档 USDC 严 3.3×（= $100/$30），说明模板形状被完整保留、只有锚点下移，
 这正是「不另起一套」的检验:如果三档的倍率各不相同,就说明我在某处偷偷引入了新判断。
+
+> ⚠️ **CI 绿 ≠ 这些数字被验证过。** `token-presets.json` 与 `check-token-presets.mjs` 里那张
+> `EXPECTED` 是**同一个 commit 一起改的**，所以门禁通过只证明**两份拷贝彼此一致**，
+> 不证明这九个值是对的。真正承重的是上面那套比例推导，以及 Jason 定的那个锚点。
+> 门禁能挡的是**此后**任何一边被单独改动（负对照：只回滚 `EXPECTED` → `EXIT=1`）。
+> 这些值会烘进不可变 guard，**别把「绿过」当成担保**。
 
 ⚠️ **档位是否够用,取决于「典型账户余额」,不是总供应量**（@repo:sp 更正,已接受）:
 `dailyLimit` 管的是**单个账户**一天的支出,所以决定它咬不咬得住的是**那个账户的余额**,
@@ -244,7 +257,7 @@ $100 是发行价 $0.02 的 **5,000×**，按单次 +30% 走完约 **33 步**（
 📌 **Sepolia 上有四个 aPNTs，生态分裂在三个上，而本仓接的是最旧的那个**（2026-09-01 上链核实，
 起因是 sp 报 15,539 而本仓只读到 2,780——两边各读了不同的代币）：
 
-| 地址 | version | totalSupply | Jason 余额 | 谁在接 |
+| 地址 | version | totalSupply | 余额 @ `0xb5600060e6de5E11D3636731964218E53caadf0E` | 谁在接 |
 |---|---|---|---|---|
 | `0x696A73701b104c6cCBbAadDD2216788ea08EaB89` | **3.4.0** | 12,734,618 | **15,539** | **SDK `config.sepolia.json` · SP 当前 `deployments/config.sepolia.json` · DVT x402** ← 生态现役 |
 | `0x9e66B457E0ABb1F139FD8A596d00f784eBA2873b` | 3.4.0 | 22,630 | 1,328 | DVT relay 白名单 `targetToken_apnts` |
