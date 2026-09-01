@@ -42,8 +42,12 @@ jobs:
         with:
           submodules: false
 
+      # version is required — pnpm/action-setup@v4 errors out without it, and this repo's
+      # package.json has no "packageManager" key to fall back on. Matches test.yml.
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
       - uses: actions/setup-node@v4
         with:
