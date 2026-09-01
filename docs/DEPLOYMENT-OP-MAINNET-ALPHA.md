@@ -95,10 +95,17 @@ aPNTs (OP mainnet, chainId 10)  0x0B41C78081B5A141eb4C3C7E7FD8E58A7Bde553B
       **当前挡住主网的是 `if (tokenData.address === "TBD") continue`**，也就是说
       「填入 P5 地址」这个动作本身就是引信。
       修法：三条链 `decimals` 6 → 18，27 个限额 × 10¹²（人类金额不变：100/1000/5000 等）。
+      **补充（pr-daemon 复核）**：限额只能收紧、不能放宽——`addTokenConfig` 对已配置的 token 直接
+      `TokenAlreadyConfigured` revert，`decreaseTokenDailyLimit` 拒绝任何调大，而 `guard` 在 `initialize`
+      里一次性绑定。所以填错限额对**已创建的账户是永久的**，唯一补救是账户迁移，不存在"改配置重来"。
 - [ ] B1、B2 均消除后，再更新 `configs/token-presets.json` chain `"10"` 的 `aPNTs.address` 与本文 Token 预设表。
-- [ ] 填入地址后**必须**跑 `node scripts/check-token-presets.mjs --chain 10`，要求 `EXIT=0` 且 aPNTs 行显示
-      `OK decimals=18`。散文读着对不算数——该脚本对每个非 TBD token 断言
-      `预设 decimals == 链上 decimals()` 并打印每档的人类金额。
+- [ ] **顺序写死：填入地址 → 跑 `node scripts/check-token-presets.mjs --chain 10` 且 `EXIT=0` → 才可部署。**
+      顺序是硬要求,不是建议:地址还是 `TBD` 时脚本只能拿**声明的** `decimals` 校验限额,拿不到链上真值;
+      它要挡的正是「填入地址」之后那一刻,早跑一次不能代替。aPNTs 行必须显示
+      `OK decimals=18`（而不是 `OK against DECLARED decimals=18`）。
+      脚本断言的是**限额本身**——`BigInt(tier1Limit) == parseUnits(期望人类金额, 链上 decimals)`,
+      期望值（aPNTs standard = 500/5000/10000）显式写在脚本里、不从被检查的文件推导，否则检查是循环的。
+      只断言 `decimals` 相等是不够的:那会放过「decimals 改对了、限额仍是旧尺度」的文件，而那正是 B3 本身。
 
 > 顺带：B2 对 sp 是好消息——owner 只能在重新部署时修正，反正要发新 clone，两件事可以一次做完。
 
