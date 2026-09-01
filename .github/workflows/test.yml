@@ -44,7 +44,7 @@ jobs:
           # The same split also happens ON 1.7.1 whenever `--gas-report` is passed -- which is how this
           # first surfaced (CC-94, reported as "six tier tests fail under --gas-report"). Run
           # test/TransientAcrossTopLevelCalls.t.sol with and without that flag to see it directly: the
-          # probe prints 42 and then 0, with no contract of ours involved.
+          # probe prints 99 and then 0, with no contract of ours involved.
           version: "1.7.1"
 
       - name: Run tests

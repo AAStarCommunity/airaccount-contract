@@ -33,7 +33,7 @@ import {Test} from "forge-std/Test.sol";
 /// IS asserted, because it must hold in all of them.
 ///
 /// Why the control matters more than it looks: on 1.7.1 you can tell a healthy probe from a broken one
-/// by running twice (healthy prints 42 then 0; broken prints 0 twice). **On 1.8.x that stops working**
+/// by running twice (healthy prints 99 then 0; broken prints 0 twice). **On 1.8.x that stops working**
 /// -- the split is unconditional, so a healthy probe prints 0 both times, which is byte-identical to
 /// the broken signature. And 1.8.x is what someone hitting this in the wild is running. The control
 /// removes the need for a second run entirely.
