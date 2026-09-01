@@ -140,6 +140,50 @@ node scripts/committee-health.mjs                        # run the check locally
 AT_BLOCK=11604310 node scripts/committee-health.mjs      # replay a past block (needs archive RPC)
 ```
 
+## One missed pin costs TWO epochs (measured 2026-09-02)
+
+`requiredQuorum()` needs `_epochUsable(e)` **and** `_epochUsable(e-1)`. That conjunction has a
+consequence nothing here had written down: **a single epoch the keeper fails to pin fails-closed
+tier-2/3 for two full epochs**, not one.
+
+```
+epoch N   never pinned  -> needs {N,   N-1}: N   missing  -> sentinel for all of N
+epoch N+1 pinned fine   -> needs {N+1, N  }: N   missing  -> sentinel for all of N+1
+epoch N+2 pinned fine   -> needs {N+2, N+1}: both present -> recovered
+```
+
+Observed exactly that shape on Sepolia against validator `0x7ac7E9d4…`:
+
+| block | epoch | state |
+|---|---|---|
+| 11614051 | 181469 (off 35/63) | `requiredQuorum=SENTINEL`, `usable(e)=true`, **`usable(e-1)=false`** → CRITICAL |
+| 11614080 | 181470 (off 0/63) | e-1 now usable, e not yet pinned → WARN (structural window) |
+| **11614084** | **181470 (off 4/63)** | **both pinned, `requiredQuorum=2` → OK** |
+
+Root cause: **epoch 181468 was never pinned** — all three of its conjuncts read false, which is the
+never-pinned shape, not the expired one (an expired snapshot keeps `pinned=true`). `configVersion`
+stayed 5 and `blsAggregator` stayed `0xEaeC2F51…` (4.11.0) throughout, so this was **neither** of the
+two causes documented above: not an aggregator rotation, and not ordinary keeper latency — epoch
+181469 itself *was* pinned. The keeper ran and skipped one epoch. It pinned 181470 four blocks in,
+well inside K=20, so it was healthy again immediately.
+
+**Operational consequence:** keeper availability has to be read as *"pin every epoch"*, not *"pin most
+epochs"* — the cost of one miss is doubled by the conjunction. Reported to @repo:dvt, who own the
+keeper; nothing in this repo's wiring or config was involved.
+
+## "e-1 is still serving" understates the structural window
+
+The script header says the rollover window is one where "e-1 is still serving". Measured, that is not
+what the account sees: during that window `requiredQuorum()` returns the sentinel, so the account-side
+`signerCount >= requiredQuorum()` gate can never pass and **tier-2/3 is fail-closed for the whole
+window**. What e-1 keeps serving is the snapshot, not the quorum.
+
+That does not change the WARN classification — paging on it would be the alert fatigue this check
+exists to avoid — but it does change what WARN *means*: not "tier-2/3 is fine", rather "tier-2/3 is
+down for a short, expected, self-clearing interval". At the observed pin latency of ~4 blocks in 64,
+that is roughly **6% of wall-clock time by design**, and up to ~31% before K=20 would escalate it.
+Anything reading a WARN as healthy is reading it wrong.
+
 ## Other legitimate causes of the sentinel
 
 A `requiredQuorum()` sentinel is not always a keeper failure. `setBlsAggregator` on the validator
