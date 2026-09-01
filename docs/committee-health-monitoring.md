@@ -219,8 +219,23 @@ Direction and magnitude of the estimate held; the single point was simply above 
 keeper that pins at 1–2 blocks would take this from **4.9% to ~2–3%** — which is the part of the
 window that engineering can move, as against the 1.6% the design fixes.
 
-**Total unavailability over that window: ≈8.4%** — 4.9% steady-state plus **3.6%** from epochs that
-were fully fail-closed (5 of 138). That second term comes from three unpinned epochs, not two:
+**Total unavailability over that window: ≈8.3%, and that is a floor rather than an estimate of the
+middle.** Populations, since mixing them is easy: the window holds **141 epochs** — 138 that were
+pinned plus **3 that never were**, and the never-pinned ones are by definition not inside "138 pinned"
+(caught in review; an earlier draft here divided by 138 and got 8.4%).
+
+```
+fully fail-closed          5 / 141                        = 3.55%
+steady-state on the rest   136 / 141 × 3.15/64 (= 4.92%)  = 4.75%
+                                                     total ≈ 8.29%
+```
+
+**Why it is a floor:** the 4.92% mean deliberately excludes five outlier pins (offsets 15, 25, 26, 49,
+60), and those were real unavailability too. Counting them — minus 181469's, already inside the 5
+fully-failed epochs — raises the steady-state mean to 4.18/64 and the total to **≈9.9%**. Excluding
+outliers is the right call for describing *typical* keeper latency; it is the wrong call for
+describing *availability*, because an outlier epoch is exactly when tier-2/3 was down longest. Read
+8.3% as the optimistic end of an 8.3–9.9% band. That second term comes from three unpinned epochs, not two:
 **`181356` as well**, on 08-31 at 23:14 +07, about a day before this incident and following a system
 sleep at 23:03. It is invisible from this repo for exactly the reason recorded above — only the epoch
 gating the current quorum is ever in view — which makes it a second instance of that blind spot rather
