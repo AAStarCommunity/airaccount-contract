@@ -231,15 +231,18 @@ steady-state on the rest   136 / 141 × 3.15/64 (= 4.92%)  = 4.75%
 ```
 
 **Why it is a floor:** the 4.92% mean deliberately excludes five outlier pins (offsets 15, 25, 26, 49,
-60), and those were real unavailability too. Counting them — minus 181469's, already inside the 5
-fully-failed epochs — raises the steady-state mean to 4.18/64 and the total to **≈9.9%**. Excluding
-outliers is the right call for describing *typical* keeper latency; it is the wrong call for
+60), and those were real unavailability too. Counting them — less 181469's, already inside the five
+fully-failed epochs — gives `569/137 = 4.15/64 = 6.5%`, and a total of **≈9.8%**. (Keep numerator and
+denominator on the same population: 569 covers 137 pins, so it is divided by 137, not by 136. An
+earlier draft mixed them, which is the same slip as the 138/141 one above, one paragraph later.)
+Excluding outliers is the right call for describing *typical* keeper latency; it is the wrong call for
 describing *availability*, because an outlier epoch is exactly when tier-2/3 was down longest. Read
-8.3% as the optimistic end of an 8.3–9.9% band. That second term comes from three unpinned epochs, not two:
-**`181356` as well**, on 08-31 at 23:14 +07, about a day before this incident and following a system
-sleep at 23:03. It is invisible from this repo for exactly the reason recorded above — only the epoch
-gating the current quorum is ever in view — which makes it a second instance of that blind spot rather
-than a new one.
+8.3% as the optimistic end of an **8.3–9.8%** band.
+
+The `5 / 141` term above comes from **three** unpinned epochs, not two: **`181356` as well**, on 08-31
+at 23:14 +07, about a day before this incident and following a system sleep at 23:03. It is invisible
+from this repo for exactly the reason recorded above — only the epoch gating the current quorum is
+ever in view — which makes it a second instance of that blind spot rather than a new one.
 
 Both gaps follow a sleep, and both are late at night, so **this is a recurring nightly pattern, not a
 one-off**. The `k+1` rule held for both: `k=1` at 181356 cost epochs 181356–181357, `k=2` at
