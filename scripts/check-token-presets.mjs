@@ -111,13 +111,24 @@ for (const [chainId, chain] of Object.entries(presets.chains)) {
     }
     const prior = truth.get(symbol);
     if (prior && prior.decimals !== d) {
-      console.error(
-        `FAIL ${symbol}: chains disagree on decimals — ${prior.decimals} at ${prior.address} ` +
-        `(chain ${prior.chainId}) vs ${d} at ${t.address} (chain ${chainId})`
-      );
-      failures++;
+      if (t.decimalsIntentionallyDiffers || prior.declaredDiffers) {
+        console.log(
+          `note ${symbol}: decimals differ across chains on purpose — ${prior.decimals} on chain ` +
+          `${prior.chainId}, ${d} on chain ${chainId}`
+        );
+      } else {
+        console.error(
+          `FAIL ${symbol}: chains disagree on decimals — ${prior.decimals} at ${prior.address} ` +
+          `(chain ${prior.chainId}) vs ${d} at ${t.address} (chain ${chainId})`
+        );
+        console.error(
+          `     if this is genuinely correct, set "decimalsIntentionallyDiffers": "<why>" on the token entry`
+        );
+        failures++;
+      }
+      continue;
     }
-    if (!prior) truth.set(symbol, { decimals: d, chainId, address: t.address });
+    if (!prior) truth.set(symbol, { decimals: d, chainId, address: t.address, declaredDiffers: !!t.decimalsIntentionallyDiffers });
   }
 }
 if (unreachable.length) {
@@ -125,10 +136,21 @@ if (unreachable.length) {
   for (const u of unreachable) console.warn(`  ${u}`);
 }
 
+if (only && !presets.chains[only]) {
+  console.error(`FAIL --chain ${only}: no such chain in token-presets.json — nothing would be checked`);
+  process.exitCode = 1;
+  process.exit();
+}
+
 for (const [chainId, chain] of Object.entries(presets.chains)) {
   if (only && chainId !== only) continue;
-  const rpc = RPCS[chainId];
-  if (!rpc) { console.log(`chain ${chainId} (${chain._name}): no RPC configured, skipping`); continue; }
+  // A chain present in the presets but absent from RPCS used to be skipped in silence, which
+  // is the same empty-set hazard as an unknown --chain: nothing checked, still green.
+  if (!RPCS[chainId]) {
+    console.error(`  chain ${chainId} (${chain._name}): FAIL no RPC configured — its tokens cannot be checked`);
+    failures++;
+    continue;
+  }
   console.log(`\nchain ${chainId} — ${chain._name}`);
 
   for (const [symbol, t] of Object.entries(chain.tokens ?? {})) {
@@ -160,13 +182,23 @@ for (const [chainId, chain] of Object.entries(presets.chains)) {
     }
 
     // ── cross-chain: a declaration is convicted by any chain that carries this symbol ──
+    // A symbol legitimately having different decimals per chain is real (USDT is 6 on
+    // Ethereum and 18 on BNB Chain), so the rule has a declared exit rather than only a
+    // way around it — otherwise the cheapest response to a false positive is deleting the
+    // rule. The failure message names the exit so the next person does not have to find it.
     const known = truth.get(symbol);
-    if (known && known.decimals !== t.decimals) {
+    if (known && known.decimals !== t.decimals && t.decimalsIntentionallyDiffers) {
+      console.log(`  ${symbol.padEnd(6)} cross-chain decimals differ on purpose: ${t.decimalsIntentionallyDiffers}`);
+    } else if (known && known.decimals !== t.decimals) {
       console.error(
         `  ${symbol.padEnd(6)} FAIL decimals: declared ${t.decimals} here, but ${known.decimals} on chain ` +
         `${known.chainId} (${known.address}, read from chain)`
       );
       if (isTBD) console.error(`           address is TBD here, so only this cross-chain check can see it`);
+      console.error(
+        `           if this is genuinely correct (a token really does differ per chain), set ` +
+        `"decimalsIntentionallyDiffers": "<why>" on this token entry`
+      );
       failures++;
       continue;
     }
@@ -215,6 +247,14 @@ for (const [chainId, chain] of Object.entries(presets.chains)) {
       console.log(`  ${symbol.padEnd(6)} OK decimals=${decimals}  ${shown.join("  ")}`);
     }
   }
+}
+
+// --require-verified means "every token was verified against a chain". An empty token set
+// satisfies that vacuously, so a mistyped --chain or a dropped RPCS entry would pass a gate
+// that looked at nothing. Matching zero rows and matching every row must not both be green.
+if (requireVerified && verified === 0 && failures === 0) {
+  console.error(`FAIL --require-verified: the gate matched no tokens, so it verified nothing`);
+  failures++;
 }
 
 console.log(
