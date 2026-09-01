@@ -19,11 +19,32 @@ import { execSync } from "node:child_process";
 
 const PAIRS = [["AAStarAirAccountV7", "AirAccountExtension"]];
 
+// Resolve a type id to its LAYOUT SHAPE. The raw `type` string embeds solc's AST node id
+// (`t_contract(IAAStarValidator)19712`), which is a compilation artifact, not storage layout: the same
+// declaration gets different ids in different builds. Keying on it made this check compare compiler
+// bookkeeping while claiming to compare layout — and it passed for months only because the two
+// contracts happened to be assigned matching ids under the pinned toolchain. Unpinning removed the
+// coincidence and the check reported six "mismatches" whose slot, offset, label and type shape were
+// all identical. The types map gives what we actually care about: encoding, width, a node-id-free
+// label, and members for structs.
+function shape(types, typeId, depth = 0) {
+  const t = types?.[typeId];
+  if (!t) return typeId; // unresolved: fall back to the raw id rather than silently matching
+  const base = `${t.label}|${t.encoding}|${t.numberOfBytes}`;
+  if (!t.members || depth > 4) return base;
+  const members = t.members
+    .map((m) => `${m.slot}:${m.offset}:${m.label}:${shape(types, m.type, depth + 1)}`)
+    .join(",");
+  return `${base}{${members}}`;
+}
+
 function layout(contract) {
   const out = execSync(`forge inspect ${contract} storage-layout --json`, { maxBuffer: 1e8 }).toString();
   const parsed = JSON.parse(out);
   // Key each slot on the fields that matter for the shared-storage boundary.
-  return (parsed.storage || []).map((s) => `${s.slot}:${s.offset}:${s.label}:${s.type}`);
+  return (parsed.storage || []).map(
+    (s) => `${s.slot}:${s.offset}:${s.label}:${shape(parsed.types, s.type)}`
+  );
 }
 
 let failed = false;

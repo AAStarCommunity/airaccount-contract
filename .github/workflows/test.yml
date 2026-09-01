@@ -21,31 +21,30 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          # Pinned to 1.7.1 (was `stable`). foundry `stable` rolled to 1.8.1 on 2026-08-28.
+          # UNPINNED (was 1.7.1). Keeping the history because the reason is easy to re-derive wrongly.
           #
-          # ROOT CAUSE (corrected — see PR #209 review). foundry 1.8.x runs each top-level call from a
-          # test as its OWN transaction, so EIP-1153 transient storage is cleared BETWEEN top-level
-          # calls. This account carries the validated algId and the session-key tag from
-          # validateUserOp into execute() through content-keyed transient slots
-          # (AAStarAirAccountBase.sol:1720-1762). Under 1.8.x the two `vm.prank`ed calls in those
-          # tests no longer share transient state, so algId reads back as 0 -> _algTier(0) == 0 ->
-          # InsufficientTier(required, 0), and the session-key scope tag is lost.
+          # foundry 1.8.x runs each top-level call from a test as its OWN transaction, so EIP-1153
+          # transient storage is cleared BETWEEN top-level calls. This account carries the validated
+          # algId and the session-key scope tag from validateUserOp into execute() through transient
+          # slots (AAStarAirAccountBase.sol), so six tier tests that made those two calls separately
+          # read algId back as 0 -> _algTier(0) == 0 -> InsufficientTier(required, 0). It was never a
+          # revm tier-resolution change and never about P256/BLS, and it is not a contract defect: the
+          # on-chain assumption is that both phases run in one transaction, which still holds.
           #
-          # It is NOT a revm tier-resolution change and NOT about P256/BLS: both validate normally in
-          # the trace. Minimal repro with no contract of ours involved — a 2-function contract doing
-          # `tstore(7, v)` / `tload(7)`, called twice at top level inside ONE test function, returns
-          # 42 on 1.7.1 and 0 on 1.8.1 (gas 6,654 -> 30,928, i.e. +~21000 intrinsic per call).
-          # solc stays 0.8.33, so bytecode is unchanged either way.
+          # The same split happens on 1.7.1 under `--gas-report`, which is how it first surfaced
+          # (CC-94). test/TransientAcrossTopLevelCalls.t.sol demonstrates it with no contract of ours:
+          # the probe prints 99 and then 0.
           #
-          # Un-pinning therefore needs the affected tests restructured to run validation and execution
-          # in ONE transaction (via handleOps), not a contract fix. 1.7.1 is the last version main was
-          # green on (CI run 2026-08-18).
+          # Those six tests now run validation and execution in ONE top-level call via
+          # test/helpers/OneTxRelay.sol, mirroring EntryPoint.handleOps, so the pin is no longer
+          # needed. Verified locally under `--gas-report` (the closest available proxy for 1.8.x on a
+          # 1.7.1 toolchain) and, critically, by CI itself now running whatever `stable` resolves to.
           #
-          # The same split also happens ON 1.7.1 whenever `--gas-report` is passed -- which is how this
-          # first surfaced (CC-94, reported as "six tier tests fail under --gas-report"). Run
-          # test/TransientAcrossTopLevelCalls.t.sol with and without that flag to see it directly: the
-          # probe prints 99 and then 0, with no contract of ours involved.
-          version: "1.7.1"
+          # EXPECTED COUNT CHANGE, so nobody reads it as lost coverage: the suite total goes 948 -> 947
+          # across this un-pin. No test was removed. GuardMeteringInvariantTest's two invariants are
+          # counted as 2 by 1.7.1 and as ONE invariant campaign by `stable`; both invariants still run
+          # and pass there (runs: 256, calls: 128000). Same tree, different accounting.
+          version: stable
 
       - name: Run tests
         run: forge test --summary
@@ -116,9 +115,9 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          # Pinned to 1.7.1 — see the note on the `test` job above (foundry 1.8.x clears EIP-1153
+          # See the un-pin note on the `test` job above (foundry 1.8.x clears EIP-1153
           # transient storage between top-level calls in a test).
-          version: "1.7.1"
+          version: stable
 
       - name: Run full suite under Prague (golden-vector + single-op replay + batch aggregator + all units)
         run: forge test --evm-version prague -vv

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
+import {OneTxRelay} from "./helpers/OneTxRelay.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
 import {AAStarGlobalGuard} from "../src/core/AAStarGlobalGuard.sol";
@@ -17,6 +18,19 @@ contract MockP256AlwaysValid {
 
 /// @title AAStarAirAccountV7 M3 Tests - P256, Tiered Routing, Aggregator, Guard
 contract AAStarAirAccountV7M3Test is Test {
+    /// Runs validateUserOp and the account call inside ONE top-level call. See OneTxRelay for why.
+    function _validateThenCall(
+        address acct,
+        PackedUserOperation memory op,
+        bytes32 opHash,
+        bytes memory accountCall
+    ) internal returns (uint256 validationData, bytes memory ret) {
+        // The relay is installed in setUp, NOT here: vm.expectRevert applies to the very next call,
+        // so deploying or etching inside this helper would consume the expectation and the test would
+        // fail with "next call did not revert as expected" while the contract behaved correctly.
+        return OneTxRelay(entryPoint).run(acct, op, opHash, accountCall);
+    }
+
     AAStarAirAccountV7 public account;
     AAStarGlobalGuard public guard;
     address public entryPoint = address(0xEE);
@@ -27,6 +41,9 @@ contract AAStarAirAccountV7M3Test is Test {
         (ownerAddr, ownerKey) = makeAddrAndKey("owner");
         account = new AAStarAirAccountV7(address(0));
         account.initialize(entryPoint, ownerAddr, _emptyConfig(), address(0), bytes32(0), bytes32(0));
+        // Lets a test run validateUserOp and the account call in ONE top-level call, the way
+        // EntryPoint.handleOps does on-chain. See test/helpers/OneTxRelay.sol.
+        vm.etch(entryPoint, address(new OneTxRelay()).code);
 
         vm.deal(address(account), 10 ether);
     }
@@ -400,13 +417,11 @@ contract AAStarAirAccountV7M3Test is Test {
             signature: sig
         });
 
-        // validateUserOp stores ECDSA algId in transient queue
-        vm.prank(entryPoint);
-        ga.validateUserOp(userOp, userOpHash, 0);
-
-        vm.prank(entryPoint);
+        // ONE top-level call: the ECDSA algId that validateUserOp puts in the transient queue must
+        // still be there when executeBatch resolves it, which is only true within a single
+        // transaction. The revert bubbles with its original data, so the selector match still holds.
         vm.expectRevert(abi.encodeWithSignature("InsufficientTier(uint8,uint8)", 2, 1));
-        ga.executeBatch(dests, values, funcs);
+        _validateThenCall(address(ga), userOp, userOpHash, batchCallData);
     }
 
     /// @notice Multi-TX bypass: 2nd UserOp pushing cumulative over tier1Limit is rejected.
@@ -449,11 +464,12 @@ contract AAStarAirAccountV7M3Test is Test {
             paymasterAndData: "", signature: sig1
         });
 
-        // TX1: 0.1 ETH — cumulative = 0.1 → tier1 → OK
-        vm.prank(entryPoint);
-        ga.validateUserOp(userOp1, userOpHash1, 0);
-        vm.prank(entryPoint);
-        ga.execute(address(0xBEEF), 0.1 ether, "");
+        // TX1: 0.1 ETH — cumulative = 0.1 → tier1 → OK. Each UserOp is ONE top-level call so the
+        // algId survives from validation into execution, as it does on-chain.
+        _validateThenCall(
+            address(ga), userOp1, userOpHash1,
+            abi.encodeCall(ga.execute, (address(0xBEEF), 0.1 ether, ""))
+        );
 
         // TX2: another 0.1 ETH — cumulative = 0.2 → tier2 required → FAIL
         bytes32 userOpHash2 = keccak256("multiTxTest2");
@@ -468,12 +484,11 @@ contract AAStarAirAccountV7M3Test is Test {
             paymasterAndData: "", signature: sig2
         });
 
-        vm.prank(entryPoint);
-        ga.validateUserOp(userOp2, userOpHash2, 0);
-
-        vm.prank(entryPoint);
         vm.expectRevert(abi.encodeWithSignature("InsufficientTier(uint8,uint8)", 2, 1));
-        ga.execute(address(0xBEEF), 0.1 ether, "");
+        _validateThenCall(
+            address(ga), userOp2, userOpHash2,
+            abi.encodeCall(ga.execute, (address(0xBEEF), 0.1 ether, ""))
+        );
     }
 
     /// @notice todaySpent() view correctly returns zero for a new day.
@@ -497,10 +512,13 @@ contract AAStarAirAccountV7M3Test is Test {
         });
 
         vm.deal(address(account), 1 ether);
-        vm.prank(entryPoint);
-        account.validateUserOp(userOp, userOpHash, 0);
-        vm.prank(entryPoint);
-        account.execute(address(0xBEEF), 0.1 ether, ""); // Should succeed (no guard, no dailySpent)
+        // ONE top-level call, as EntryPoint.handleOps does on-chain: the algId travels from
+        // validateUserOp to execute through transient storage, which foundry clears between separate
+        // top-level calls (always on 1.8.x, and on 1.7.1 under --gas-report).
+        _validateThenCall(
+            address(account), userOp, userOpHash,
+            abi.encodeCall(account.execute, (address(0xBEEF), 0.1 ether, ""))
+        );
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────

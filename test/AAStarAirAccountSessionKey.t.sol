@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
+import {OneTxRelay} from "./helpers/OneTxRelay.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {AAStarAirAccountV7} from "../src/core/AAStarAirAccountV7.sol";
 import {AAStarAirAccountBase} from "../src/core/AAStarAirAccountBase.sol";
@@ -551,17 +552,22 @@ contract SessionKeyBatchScopeTest is Test {
         bytes32 h = keccak256(abi.encode(uop));
         uop.signature = _skSigBatch(address(account), sessionKey_, sessionKeyPriv_, h);
 
-        vm.prank(address(ep));
-        assertEq(account.validateUserOp(uop, h, 0), 0);
+        // Install the relay BEFORE vm.expectRevert: that cheatcode applies to the very next call, so
+        // etching afterwards would consume the expectation and the test would fail with "next call
+        // did not revert as expected" while the contract behaved correctly.
+        vm.etch(address(ep), address(new OneTxRelay()).code);
 
         // Must revert — disallowedTarget is outside contractScope.
         // v0.17.2: base bubbles up the unified SessionKeyValidator's specific error;
         // for an out-of-scope dest, that's CallTargetForbidden(dest).
-        vm.prank(address(ep));
+        // Validation and execution run in ONE top-level call so the session scope tag survives; the
+        // relay bubbles the revert with its original data, so the selector match still holds.
         vm.expectRevert(
             abi.encodeWithSignature("CallTargetForbidden(address)", address(disallowedTarget))
         );
-        account.executeBatch(dests, values, funcs);
+        OneTxRelay(address(ep)).run(
+            address(account), uop, h, abi.encodeCall(AAStarAirAccountBase.executeBatch, (dests, values, funcs))
+        );
     }
 
     /// @notice executeBatch with all calls to allowed target must succeed.
