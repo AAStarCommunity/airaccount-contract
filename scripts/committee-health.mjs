@@ -43,7 +43,15 @@ import { createPublicClient, http, getAddress } from "viem";
 import { sepolia } from "viem/chains";
 
 const RPC = process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
-const ROUTER = getAddress(process.env.AIRACCOUNT_ROUTER || "0xA97A752779ebfDA58612F6727Ec7C8366c39f897");
+// The VALIDATOR is derived from the router every run, which is what stops this check going
+// green-forever against a retired validator. The ROUTER itself is not: it falls back to a built-in
+// address, and nothing forces anyone to update it when the stack moves. That is the same failure
+// mode, one level up -- after the next deploy this would happily keep reporting OK about a stack
+// nobody uses. It cannot be fixed by picking a better default, so make the choice VISIBLE: say
+// whether a human selected this router or the file did.
+const ROUTER_DEFAULT = "0xA97A752779ebfDA58612F6727Ec7C8366c39f897"; // v0.33.0
+const ROUTER_IS_DEFAULT = !process.env.AIRACCOUNT_ROUTER;
+const ROUTER = getAddress(process.env.AIRACCOUNT_ROUTER || ROUTER_DEFAULT);
 const EXPECTED = process.env.EXPECTED_COMMITTEE ? getAddress(process.env.EXPECTED_COMMITTEE) : null;
 // `||` not `??`: on the SCHEDULE path GitHub expands an unset `inputs.*` to the EMPTY STRING, and
 // `?? ` does not catch "" — BigInt("") === 0n, which would make K=0 and flip every normal keeper
@@ -90,7 +98,9 @@ try {
   // fetching its code — is pinned to this one block.
   AT = AT_BLOCK ?? await pub.getBlockNumber();
   const committee = getAddress(await r(ROUTER, ROUTER_ABI, "getAlgorithm", [1]));
-  console.log(`router   ${ROUTER}`);
+  console.log(`router   ${ROUTER}${ROUTER_IS_DEFAULT
+    ? "  ⚠️ BUILT-IN DEFAULT (v0.33.0) — no AIRACCOUNT_ROUTER set, so this watches that stack even after the stack moves"
+    : "  (from AIRACCOUNT_ROUTER)"}`);
   console.log(`0x01  -> ${committee}${EXPECTED ? (committee === EXPECTED ? "  (matches EXPECTED_COMMITTEE)" : "  ⚠️ DOES NOT MATCH EXPECTED_COMMITTEE " + EXPECTED) : ""}`);
   if (EXPECTED && committee !== EXPECTED) {
     fail("CRITICAL", `router 0x01 is ${committee}, expected ${EXPECTED} — the stack mounts a different validator than pinned`);
