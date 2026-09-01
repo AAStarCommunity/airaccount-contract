@@ -126,6 +126,29 @@ node scripts/committee-health.mjs                        # run the check locally
 AT_BLOCK=11604310 node scripts/committee-health.mjs      # replay a past block (needs archive RPC)
 ```
 
+## Other legitimate causes of the sentinel
+
+A `requiredQuorum()` sentinel is not always a keeper failure. `setBlsAggregator` on the validator
+requires the new aggregator to match the registry's and **bumps `configVersion`**, which fails the
+`epochConfigVersion[e] == configVersion` conjunct of `_epochUsable` — so **every existing epoch
+snapshot becomes unusable and must be re-pinned**. When SuperPaymaster rotates its aggregator,
+tier-2/3 genuinely is fail-closed for a short window and this check correctly reports CRITICAL.
+**Read `configVersion` before chasing the keeper**: if it just moved, the cause is the rotation and
+the fix is a fresh pin, not a keeper restart. The same window makes a phase-aware E2E run right after
+a rotation read a transient sentinel — an expected reading, not a regression.
+
+## Which router is being watched
+
+The validator is derived from the router every run, which is what stops this check reporting green
+forever against a retired validator. **The router itself is not derived** — it falls back to a
+built-in address and nothing forces anyone to update it when the stack moves, which is the same
+failure mode one level up. No better default fixes that, so each run states whether a human picked
+the router (`(from AIRACCOUNT_ROUTER)`) or the file did (`BUILT-IN DEFAULT`). Set the
+`AIRACCOUNT_ROUTER` repo variable when the stack moves; until someone does, the warning is the honest
+reading. The workflow deliberately passes that variable through **empty** rather than filling in a
+default, because doing the latter made the script report a router as human-chosen when nobody had
+chosen it.
+
 ## Recovery closes what it resolved
 
 A healthy run closes the alerts it resolved, so the open set equals the *current* failure set. This is
