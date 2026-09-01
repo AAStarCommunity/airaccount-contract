@@ -102,7 +102,11 @@ jobs:
           SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
           # Router of the CURRENT stack (v0.33.0). Update this variable when the stack moves —
           # the validator itself is derived from it, so only this one value tracks the deploy.
-          AIRACCOUNT_ROUTER: ${{ vars.AIRACCOUNT_ROUTER || '0xA97A752779ebfDA58612F6727Ec7C8366c39f897' }}
+          # Pass the variable THROUGH, empty if unset -- do NOT fill the default in here. Doing so
+          # handed the script an AIRACCOUNT_ROUTER that looked chosen by a human when nobody had
+          # chosen it, so the run announced "(from AIRACCOUNT_ROUTER)" in the one context where it
+          # matters. The script owns the default and can therefore say which happened.
+          AIRACCOUNT_ROUTER: ${{ vars.AIRACCOUNT_ROUTER }}
           EXPECTED_COMMITTEE: ${{ vars.EXPECTED_COMMITTEE }}
           # NOTE: on the schedule path these `inputs.*` expand to the EMPTY STRING, not null. The
           # script must therefore treat "" as unset (it uses `||`, not `??` — BigInt("") === 0n would
