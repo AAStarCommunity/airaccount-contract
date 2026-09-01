@@ -34,8 +34,13 @@
  *     pre-deploy gate should use, so passing is `EXIT=0` rather than a human reading the
  *     word "DECLARED" out of a line of output.
  *
- * Usage: node scripts/check-token-presets.mjs [--chain 10] [--require-verified]
+ * Usage: node scripts/check-token-presets.mjs [--chain 10] [--require-verified] [--presets <path>]
  * Exit 0 = all good, 1 = a mismatch, 2 = could not reach a chain.
+ *
+ * --presets exists so the tests can point this at fixtures instead of editing the real config and
+ * restoring it afterwards. That pattern cost a wrong conclusion once: a `git checkout` meant to undo
+ * a fixture also reverted the uncommitted script under test, and the run that followed looked exactly
+ * like a real result. A broken fixture yields a reading shaped like a conclusion.
  */
 import { readFileSync } from "node:fs";
 import { createPublicClient, http, parseUnits } from "viem";
@@ -82,7 +87,10 @@ const only = process.argv.includes("--chain")
   : null;
 const requireVerified = process.argv.includes("--require-verified");
 
-const presets = JSON.parse(readFileSync(new URL("../configs/token-presets.json", import.meta.url), "utf-8"));
+const presetsPath = process.argv.includes("--presets")
+  ? process.argv[process.argv.indexOf("--presets") + 1]
+  : new URL("../configs/token-presets.json", import.meta.url);
+const presets = JSON.parse(readFileSync(presetsPath, "utf-8"));
 
 let failures = 0, verified = 0, declaredOnly = 0;
 
