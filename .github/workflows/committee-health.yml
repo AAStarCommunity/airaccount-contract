@@ -30,7 +30,9 @@ on:
     # since landing gives ~3%, but half of them could not have fired -- the same error this comment
     # corrects, repeated one line down.)
     # dvt measured the same shape at 15-minute cadence (3.6%), and the opposite for DAILY crons:
-    # aastar-sdk's `0 6` delivered 76/76 over 75 days, consistently ~6 h late. So: sub-hourly
+    # aastar-sdk's `0 6` delivered 76/76 over 75 days -- the delivery rate holds precisely, the delay
+    # is variable (median ~2.1 h, spread 0.25-11.7 h; an earlier draft said "~6 h", which was
+    # second-hand and wrong). So: sub-hourly
     # schedules are mostly dropped, daily schedules do arrive but hours late, and a newly created
     # schedule is silent for hours.
     #

@@ -6,7 +6,9 @@
 # (registration delay), then 2 fires across ~30 due slots in the 7.7 h after that -- about 7%. The
 # denominator excludes the registration window on purpose; counting all 63 slots since the workflow
 # landed would give ~3% by dividing through slots that could not have fired. dvt measured 3.6% at
-# the same cadence, and the reverse for DAILY crons (aastar-sdk: 76/76 over 75 days, ~6 h late).
+# the same cadence, and the reverse for DAILY crons (aastar-sdk: 76/76 over 75 days -- delivery holds,
+# latency is variable: median ~2.1 h, spread 0.25-11.7 h; an earlier draft said "~6 h", second-hand
+# and wrong).
 #
 # CORRECTED, and the error is worth keeping: this comment used to say the trigger never fires and had
 # been "falsified". Every window it cited (83 min, 4h01m, 6h33m) sat inside that registration delay,

@@ -38,7 +38,11 @@ firing could not happen — which is the very error this section is correcting, 
 later. Rates need a denominator of slots that could actually have fired.
 
 dvt measured the same shape at 15-minute cadence (3.6%) and the opposite for **daily** crons:
-`aastar-sdk`'s `0 6` delivered **76/76 over 75 days**, consistently ~6 h late. So the rule is not "cron
+`aastar-sdk`'s `0 6` delivered **76/76 over 75 days** — a delivery rate that holds precisely — arriving
+late by a **variable** amount (median ~2.1 h, spread 0.25–11.7 h across those 76 runs). An earlier
+draft of this section said "consistently ~6 h late"; that figure was second-hand and wrong, and is
+corrected here before it spread further. Only the delivery rate is load-bearing for the conclusion
+below; the latency is context. So the rule is not "cron
 is broken" but:
 
 - **sub-hourly schedules are mostly dropped**,
