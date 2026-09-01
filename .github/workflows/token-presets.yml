@@ -25,12 +25,14 @@ on:
     paths:
       - "configs/token-presets.json"
       - "scripts/check-token-presets.mjs"
+      - "test/scripts/check-token-presets.test.mjs"
       - ".github/workflows/token-presets.yml"
   push:
     branches: [main]
     paths:
       - "configs/token-presets.json"
       - "scripts/check-token-presets.mjs"
+      - "test/scripts/check-token-presets.test.mjs"
   workflow_dispatch:
 
 jobs:
@@ -61,6 +63,17 @@ jobs:
       # must not be conflated: 2 is "the check could not run", and retrying it is legitimate, while
       # retrying a 1 just prints the same defect twice. A 2 that survives the retry still fails the
       # job — a check that cannot see the chain has not passed, it has abstained.
+      # The unit tests codify every negative control this checker has ever needed — each one flipped
+      # its exit code at some point. They run before the live check so a regression in the checker is
+      # not mistaken for a problem with the config it is reading.
+      - name: Test the checker itself
+        run: node --test test/scripts/check-token-presets.test.mjs
+        env:
+          MAINNET_RPC: ${{ vars.MAINNET_RPC || 'https://ethereum-rpc.publicnode.com' }}
+          OP_MAINNET_RPC: ${{ vars.OP_MAINNET_RPC || 'https://optimism-rpc.publicnode.com' }}
+          BASE_RPC: ${{ vars.BASE_RPC || 'https://base-rpc.publicnode.com' }}
+          SEPOLIA_RPC: ${{ vars.SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }}
+
       - name: Check token presets against chain
         env:
           MAINNET_RPC: ${{ vars.MAINNET_RPC || 'https://ethereum-rpc.publicnode.com' }}
