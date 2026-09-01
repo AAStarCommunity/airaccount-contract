@@ -11,36 +11,50 @@ nothing durable was watching.
 |---|---|---|
 | Check | `scripts/committee-health.mjs` — reads the stack, prints a verdict, exits 0/1/2 | **works** |
 | Alert | `.github/workflows/committee-health.yml` — opens/updates a deduped GitHub issue | **works** |
-| Trigger (schedule) | `schedule:` cron in that workflow | **falsified — does not fire** |
+| Trigger (schedule) | `schedule:` cron in that workflow | **fires, but ~3% of due slots — unusable as coverage** |
 | Trigger (dispatch) | `workflow_dispatch` | **works** |
 | Trigger (external) | `scripts/committee-health-poke.sh` + `ops/*.plist.template` | **works when installed; NOT installed by this PR — until `launchctl print` shows a `run interval` line, coverage is unchanged** |
 
-## The trigger is falsified, not unproven
+## The trigger fires — far too sparsely to be coverage
 
-Measured, both repos, same `7,22,37,52 * * * *` expression:
+**Corrected.** This section previously said the `schedule:` trigger was *falsified — it does not
+fire*. That was wrong, and how it went wrong is worth more than the conclusion: every window measured
+(83 min here, then 4 h 01 min; 6 h 33 min in the dvt repo) fell inside the **registration delay** of a
+newly created scheduled workflow. No firing could have been observed in any of them. **A window in
+which the first event has not happened yet is not a delivery rate of zero.**
 
-| Repo | Window observed | Due slots | Runs fired |
-|---|---|---|---|
-| airaccount-contract | 4 h 01 min, and counting | 16 | **0** |
-| YetAnotherAA-Validator | 6 h 33 min | 26 | **0** |
+Measured here after waiting long enough:
 
-Controls on the counting query, because "0 runs" and "the query returns nothing" are otherwise the
-same reading:
+| | |
+|---|---|
+| workflow landed | `2026-08-31T08:55Z` |
+| **first** `schedule` fire | `2026-08-31T17:01:39Z` — **8.1 h later** |
+| registration delay | 8.1 h in which **no firing was possible** |
+| since the first fire (7.7 h) | **2 fires / ~30 due slots ≈ 7%** |
 
-- the identical query with `--event workflow_dispatch` returns **a non-zero count** (the load-bearing
-  part is *non-zero*, not any particular number — it rises every time anyone pokes the workflow);
-- **unfiltered**, the total equals the dispatch count. That is the stronger reading: not merely that
-  the `schedule` filter came back empty, but that every run this workflow has ever had came from
-  somewhere else.
+That last row deliberately excludes the registration delay from its denominator. Dividing 2 fires by
+all 63 slots since the workflow landed gives ~3%, but 32 of those slots were inside the window where
+firing could not happen — which is the very error this section is correcting, repeated one paragraph
+later. Rates need a denominator of slots that could actually have fired.
 
-So the zero is an observation, not an empty instrument.
+dvt measured the same shape at 15-minute cadence (3.6%) and the opposite for **daily** crons:
+`aastar-sdk`'s `0 6` delivered **76/76 over 75 days** — a delivery rate that holds precisely — arriving
+late by a **variable** amount (median ~2.1 h, spread 0.25–11.7 h across those 76 runs). An earlier
+draft of this section said "consistently ~6 h late"; that figure was second-hand and wrong, and is
+corrected here before it spread further. Only the delivery rate is load-bearing for the conclusion
+below; the latency is context. So the rule is not "cron
+is broken" but:
 
-Config was ruled out: YAML valid, workflow `state=active`, repo active, `workflow_dispatch` green on
-the same file. Offset minutes (rather than `*/15`) did **not** help — an earlier note in the workflow
-claiming they "fired normally" was an inference relayed as fact and is retracted; see PR #223.
+- **sub-hourly schedules are mostly dropped**,
+- **daily schedules do arrive, hours late**,
+- **a newly created schedule is silent for hours** — budget >12 h before concluding anything.
 
-A scheduled check that never fires is indistinguishable from having no check at all, which is the
-exact state this tooling exists to end. Hence the external trigger.
+Ruled out, so this is GitHub's scheduler rather than this config: the YAML parses with a valid
+`on.schedule.cron`, the workflow is `state=active` via the API, the repo is neither archived nor
+disabled, and `workflow_dispatch` on the same file runs green.
+
+**~7% delivery cannot catch what this exists to catch**: the real incident on 2026-08-31 lasted 12.8
+minutes. The cron is kept as redundancy, not as coverage; the external poker supplies the cadence.
 
 ## Why the poker verifies, and not just pokes — `committee-health-poke.sh`
 

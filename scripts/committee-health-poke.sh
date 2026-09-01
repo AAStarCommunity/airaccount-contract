@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
 # External trigger for the committee-health workflow, plus the one check Actions cannot do for itself.
 #
-# WHY THIS EXISTS: the `schedule:` trigger in .github/workflows/committee-health.yml does not fire.
-# Measured, not inferred -- this repo: 83 minutes / ~5 due slots / 0 runs; the upstream YAAA repo,
-# identical `7,22,37,52` expression: 6h33m / 26 due slots / 0 runs. Config was ruled out (YAML valid,
-# workflow state=active, repo active, workflow_dispatch green). So the check's capability is fine and
-# its trigger is falsified. This script supplies a trigger that is proven to work.
+# WHY THIS EXISTS: the `schedule:` trigger in .github/workflows/committee-health.yml fires far too
+# sparsely to be coverage. Measured in this repo: first fire came 8.1 h after the workflow landed
+# (registration delay), then 2 fires across ~30 due slots in the 7.7 h after that -- about 7%. The
+# denominator excludes the registration window on purpose; counting all 63 slots since the workflow
+# landed would give ~3% by dividing through slots that could not have fired. dvt measured 3.6% at
+# the same cadence, and the reverse for DAILY crons (aastar-sdk: 76/76 over 75 days -- delivery holds,
+# latency is variable: median ~2.1 h, spread 0.25-11.7 h; an earlier draft said "~6 h", second-hand
+# and wrong).
+#
+# CORRECTED, and the error is worth keeping: this comment used to say the trigger never fires and had
+# been "falsified". Every window it cited (83 min, 4h01m, 6h33m) sat inside that registration delay,
+# so none of them could have observed a firing. A window in which the first event has not happened
+# yet is not a delivery rate of zero. The conclusion survives the correction -- ~3% cannot catch a
+# 12.8-minute outage, which is exactly how long the real 2026-08-31 incident lasted -- but the reason
+# is "too sparse", not "never". ~7% cannot catch a 12.8-minute outage either way.
 #
 # WHY THE POKER ALSO VERIFIES: dvt raised that an Actions-hosted alert cannot distinguish "the poke
 # never fired" from "it fired but the alert could not be sent" -- both look like silence from outside.

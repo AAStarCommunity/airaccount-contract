@@ -12,25 +12,37 @@ name: Committee health
 
 on:
   schedule:
-    # ⚠️ THIS TRIGGER HAS NEVER BEEN OBSERVED TO FIRE. Do not treat this workflow as durable
-    # monitoring on the strength of the cron line alone.
+    # ⚠️ THIS TRIGGER FIRES, BUT FAR TOO SPARSELY TO MONITOR ANYTHING. Do not treat this workflow as
+    # durable monitoring on the strength of the cron line alone.
     #
-    # The earlier claim here — "offset minutes fired normally" — was FALSE. It was second-hand and I
-    # never measured it; it has since been falsified. Measurements, all with schedule events = 0:
-    #   "*/15"           0 fires / 53 min  /  4 slots   (upstream repo)
-    #   "7,22,37,52"     0 fires / 6h33m   / 26 slots   (dvt repo, same cron as here)
-    #   "7,22,37,52"     0 fires / 83 min  /  5 slots   (this repo, and counting)
-    # Offsetting is NOT a fix; the failure is not specific to */N.
+    # CORRECTED. An earlier version of this comment said the trigger "has never been observed to fire"
+    # and called it falsified. That was WRONG, and the mistake is instructive: every window measured
+    # (83 min here, then 4h01m; 6h33m in the dvt repo) fell inside the REGISTRATION DELAY of a newly
+    # created scheduled workflow, so no firing could have been observed in any of them. A window in
+    # which the first event has not happened yet is not a delivery rate of zero.
     #
-    # Ruled out, so this is the trigger and not the config: the YAML parses with a valid
+    # Measured in this repo, after waiting long enough:
+    #   workflow landed        2026-08-31T08:55Z
+    #   first schedule fire    2026-08-31T17:01:39Z   <- 8.1 h later
+    #   registration delay     8.1 h in which no firing was possible
+    #   since first fire (7.7h) 2 fires / ~30 due slots = ~7%
+    # (Rate excludes the registration delay from the denominator on purpose: dividing by all 63 slots
+    # since landing gives ~3%, but half of them could not have fired -- the same error this comment
+    # corrects, repeated one line down.)
+    # dvt measured the same shape at 15-minute cadence (3.6%), and the opposite for DAILY crons:
+    # aastar-sdk's `0 6` delivered 76/76 over 75 days -- the delivery rate holds precisely, the delay
+    # is variable (median ~2.1 h, spread 0.25-11.7 h; an earlier draft said "~6 h", which was
+    # second-hand and wrong). So: sub-hourly
+    # schedules are mostly dropped, daily schedules do arrive but hours late, and a newly created
+    # schedule is silent for hours.
+    #
+    # Ruled out, so this is GitHub's scheduler and not this config: the YAML parses with a valid
     # on.schedule.cron, the workflow is state=active via the API, the repo is neither archived nor
-    # disabled and has recent pushes (so it is not the 60-day inactivity auto-disable), and
-    # workflow_dispatch on this very workflow runs green — the job works, the trigger never arrives.
+    # disabled and has recent pushes, and workflow_dispatch on this very workflow runs green.
     #
-    # Kept because it costs nothing if GitHub's scheduler recovers, and dispatch remains the only
-    # PROVEN trigger. Until a schedule event is actually observed, treat durable coverage as an
-    # ACCEPTED GAP, not as delivered. The header's own line — "a scheduled check that does not fire
-    # is indistinguishable from not having one" — currently points at this file.
+    # Kept as redundancy, NOT as coverage. ~7% delivery cannot catch the failure this exists to catch:
+    # the real incident on 2026-08-31 lasted 12.8 minutes. The external poker
+    # (scripts/committee-health-poke.sh) is what actually provides cadence.
     - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
     inputs:

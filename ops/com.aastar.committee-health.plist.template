@@ -2,18 +2,36 @@
 <!--
   launchd template for the external committee-health trigger.
 
-  WHY LOCAL AND NOT A CLOUD CRON: GitHub's own `schedule:` trigger was measured not to fire (this
-  repo 83min/5 slots/0; upstream YAAA 6h33m/26 slots/0, same expression). Anything scheduled INSIDE
-  Actions inherits that. A local timer has a different, and crucially a DECIDABLE, failure mode:
-  if this Mac is asleep or off, nobody is watching and you know it — unlike a silent cron that
-  looks identical to a healthy quiet system.
+  WHY LOCAL AND NOT A CLOUD CRON: GitHub's `schedule:` trigger fires far too sparsely to be coverage.
+  Measured in this repo: the first schedule event arrived 8.1 h after the workflow landed
+  (registration delay), then 2 fires across ~31 due slots in the 7.7 h after that, about 7%. That
+  cannot catch the failure this watches — the real incident on 2026-08-31 lasted 12.8 minutes.
+
+  CORRECTED, twice, and both retractions are kept here as the reason rather than deleted:
+
+  1. This block used to say the cron "was measured not to fire (83min/5 slots/0; 6h33m/26 slots/0)".
+     Wrong. Both of those windows sat entirely inside the registration delay above, so neither could
+     have observed a firing. A window in which the first event has not happened yet is not a
+     delivery rate of zero.
+
+  2. It also used to say a local timer's failure mode is DECIDABLE — "if this Mac is asleep or off,
+     nobody is watching and you know it". Also wrong, and disproved on the same day: the Mac did not
+     power off, it CLAMSHELL SLEPT. launchd SKIPS StartInterval firings while asleep (it does not
+     catch up) and caffeinate does not cover Clamshell Sleep, so closing the lid stopped this monitor
+     (2 slots skipped, 15:53:12Z → 16:38:28Z, matching pmset sleep 16:03:21Z → DarkWake 16:34:46Z) at
+     the same moment it stopped the keeper this monitor exists to watch. Nobody knew until someone
+     touched the laptop. A monitor that shares a failure mode with its subject is not a monitor.
+
+  So install this as the best available trigger, NOT as a solved problem: each run now reports the
+  slots it missed, which makes the blind window visible afterwards but cannot close it. The actual
+  fix is not hosting the keeper and its monitor on a machine that sleeps.
 
   INSTALL (not done for you — this puts a persistent agent on your machine):
     sed -e "s|REPO_PATH|$PWD|g" -e "s|HOME_PATH|$HOME|g" \
       ops/com.aastar.committee-health.plist.template \
       > ~/Library/LaunchAgents/com.aastar.committee-health.plist
     launchctl load ~/Library/LaunchAgents/com.aastar.committee-health.plist
-  VERIFY -- ask launchd, not the file. `plutil -lint` only says the XML is legal: a StartInterval
+  VERIFY — ask launchd, not the file. `plutil -lint` only says the XML is legal: a StartInterval
   nested one level too deep lints green and is never scheduled (dvt hit exactly this, and the
   "self-heals every 120s" their comment promised had never once happened). The ABSENCE of the
   run interval line IS the bug:
