@@ -39,6 +39,11 @@ jobs:
           # test/helpers/OneTxRelay.sol, mirroring EntryPoint.handleOps, so the pin is no longer
           # needed. Verified locally under `--gas-report` (the closest available proxy for 1.8.x on a
           # 1.7.1 toolchain) and, critically, by CI itself now running whatever `stable` resolves to.
+          #
+          # EXPECTED COUNT CHANGE, so nobody reads it as lost coverage: the suite total goes 948 -> 947
+          # across this un-pin. No test was removed. GuardMeteringInvariantTest's two invariants are
+          # counted as 2 by 1.7.1 and as ONE invariant campaign by `stable`; both invariants still run
+          # and pass there (runs: 256, calls: 128000). Same tree, different accounting.
           version: stable
 
       - name: Run tests

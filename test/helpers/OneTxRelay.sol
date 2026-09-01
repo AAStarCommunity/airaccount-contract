@@ -12,6 +12,15 @@ interface IValidatingAccount {
 /// Runs validateUserOp and the account call in ONE top-level call, the way EntryPoint.handleOps does
 /// on-chain.
 ///
+/// SCOPE, so nobody builds on a promise this does not make: it mirrors handleOps' TRANSACTION
+/// BOUNDARY and nothing else. It does NOT gate execution on `validationData` (a UserOp whose
+/// validation returns 1 will still have its call executed here, where the real EntryPoint would
+/// reject it), and it always passes `missingAccountFunds = 0`, so the prefund path in
+/// AAStarAirAccountV7 (_payPrefund) is never exercised through it. Neither gap is observable in the
+/// current tests -- adding `require(validationData == 0)` leaves the suite at 947 passed -- but a
+/// future test of the form "an invalid signature must not execute" would PASS through this relay
+/// while the call actually happened. Add the gate before writing that test, not after.
+///
 /// WHY THIS EXISTS: the account carries the validated algId (and the session-key scope tag) from
 /// validateUserOp into execute() through EIP-1153 transient storage. That is safe on-chain because
 /// both phases of a UserOp run inside one transaction. But foundry runs each TOP-LEVEL call from a
@@ -33,8 +42,13 @@ interface IValidatingAccount {
 ///   * AAStarAirAccountV7_M3.t.sol etches in setUp, because its entryPoint is a bare address (0xEE)
 ///     with no behaviour to preserve.
 ///   * CumulativeSignature / WeightedSignature / SessionKey etch INSIDE the one test that needs it,
-///     because their entryPoint is a shared MOCK CONTRACT. Etching that in setUp would replace its
-///     code for every other test in the file.
+///     as a PRECAUTION only: their entryPoint is a mock CONTRACT rather than a bare address. Measured
+///     (pr-daemon), the precaution buys nothing today -- moving all three etches into setUp keeps
+///     43/23/13 green, and even etching those mocks to empty code keeps them green, because no test
+///     in those files ever calls a method on the mock; it is used purely as an address via
+///     `vm.prank(address(ep))`. So today this is the same situation as M3's bare address, not a
+///     different one. Keep the narrow scope for when that stops being true, but do not read the
+///     asymmetry as evidence that unifying it would break something now.
 ///
 /// ORDERING TRAP, worth knowing before you move an etch: `vm.expectRevert` applies to the very next
 /// call, so deploying or etching the relay AFTER it consumes the expectation. The failure reads
