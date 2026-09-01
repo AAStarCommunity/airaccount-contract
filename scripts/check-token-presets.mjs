@@ -131,6 +131,57 @@ for (const [chainId, chain] of Object.entries(presets.chains)) {
     if (!prior) truth.set(symbol, { decimals: d, chainId, address: t.address, declaredDiffers: !!t.decimalsIntentionallyDiffers });
   }
 }
+// Pass 1b — the roster. Every check above compares rows that ARE there; none of them notices a row
+// that stopped being there, so the exit code had a second road to 0: "fewer things to verify".
+// Deleting one entry is the sharp case — dropping aPNTs from Sepolia removes the only chain that
+// carries it, which silently un-anchors the cross-chain rule and lets a wrong declaration back
+// through on chain 10. Absence, not disagreement, is the blind spot.
+const seen = new Map(); // symbol -> [{chainId, decimals, hasAddress}]
+for (const [chainId, chain] of Object.entries(presets.chains)) {
+  const tokens = Object.entries(chain.tokens ?? {});
+  if (tokens.length === 0) {
+    console.error(`FAIL chain ${chainId} (${chain._name}) declares no tokens — nothing here can be checked`);
+    failures++;
+  }
+  for (const [symbol, t] of tokens) {
+    if (!seen.has(symbol)) seen.set(symbol, []);
+    seen.get(symbol).push({ chainId, decimals: t.decimals, hasAddress: !!t.address && t.address !== "TBD" });
+  }
+}
+for (const symbol of Object.keys(EXPECTED)) {
+  const rows = seen.get(symbol);
+  if (!rows) {
+    console.error(`FAIL ${symbol}: declared in EXPECTED but present on no chain — it was removed, or never added`);
+    failures++;
+    continue;
+  }
+  // Declarations must agree with each other even when no chain can arbitrate. Without this, wiping
+  // the one chain that carries a symbol turns two contradictory declarations into two passes.
+  const decls = [...new Set(rows.map((r) => r.decimals))];
+  const hatched = Object.values(presets.chains).some((c) => c.tokens?.[symbol]?.decimalsIntentionallyDiffers);
+  if (decls.length > 1 && !hatched) {
+    console.error(
+      `FAIL ${symbol}: chains declare different decimals (${rows.map((r) => `${r.decimals}@${r.chainId}`).join(", ")}) ` +
+      `and no chain carries it to arbitrate`
+    );
+    console.error(`     if this is genuinely correct, set "decimalsIntentionallyDiffers": "<why>" on the token entry`);
+    failures++;
+  }
+  // A hard failure, not a warning. Dropping the one entry that carries a real address leaves the
+  // remaining declarations self-consistent with nothing to check them against — which is how
+  // deleting Sepolia's aPNTs quietly reopened the wrong-decimals case on chain 10. A warning is
+  // exactly what gets scrolled past, and "the check went quiet" is the failure this file exists for.
+  // The remedy is to deploy the token somewhere (testnet counts) or to keep it out of EXPECTED until
+  // it exists — not to leave it unverifiable.
+  if (!rows.some((r) => r.hasAddress)) {
+    console.error(
+      `FAIL ${symbol}: no chain gives it a real address, so nothing can verify its decimals — ` +
+      `deploy it on at least one chain (testnet counts) or remove it from EXPECTED`
+    );
+    failures++;
+  }
+}
+
 if (unreachable.length) {
   console.warn(`warning: could not read decimals for ${unreachable.length} token(s) — cross-chain truth is partial`);
   for (const u of unreachable) console.warn(`  ${u}`);
