@@ -157,12 +157,20 @@ for (const symbol of Object.keys(EXPECTED)) {
   }
   // Declarations must agree with each other even when no chain can arbitrate. Without this, wiping
   // the one chain that carries a symbol turns two contradictory declarations into two passes.
+  //
+  // The guard tests only that the declarations disagree, so the message must not assert anything
+  // about arbitration being unavailable — that is a separate fact, and it is checked here rather
+  // than assumed. Saying "no chain carries it" above a line that then quotes a chain sends the
+  // reader looking for a deployment that is not missing, and the false sentence prints first.
   const decls = [...new Set(rows.map((r) => r.decimals))];
   const hatched = Object.values(presets.chains).some((c) => c.tokens?.[symbol]?.decimalsIntentionallyDiffers);
   if (decls.length > 1 && !hatched) {
+    const arbiter = truth.get(symbol);
     console.error(
-      `FAIL ${symbol}: chains declare different decimals (${rows.map((r) => `${r.decimals}@${r.chainId}`).join(", ")}) ` +
-      `and no chain carries it to arbitrate`
+      `FAIL ${symbol}: chains declare different decimals (${rows.map((r) => `${r.decimals}@${r.chainId}`).join(", ")})` +
+      (arbiter
+        ? ` — chain ${arbiter.chainId} reads ${arbiter.decimals} from ${arbiter.address}, so the others are wrong`
+        : ` and no chain carries it to arbitrate`)
     );
     console.error(`     if this is genuinely correct, set "decimalsIntentionallyDiffers": "<why>" on the token entry`);
     failures++;
