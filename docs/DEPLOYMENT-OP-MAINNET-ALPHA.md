@@ -62,8 +62,29 @@ cast wallet address --account mainnet-deployer
 
 ### P5. aPNTs Token 地址
 
-- [ ] aPNTs 在 OP Mainnet 已部署，地址已更新到 `configs/token-presets.json` 中 chain `"10"` 的 `aPNTs.address`
-- [ ] 当前状态：`"address": "TBD"` — 部署前必须填入
+@repo:sp 已于 2026-09-01 交付 OP 主网地址，但**本仓刻意仍留 `TBD`**——两条阻塞都会让这个地址失效或不可信，
+而 token 配置在 `createAccount` 时**烘焙进不可变 guard**，填错不能改，只能让用户迁移账户。
+
+```
+aPNTs (OP mainnet, chainId 10)  0x0B41C78081B5A141eb4C3C7E7FD8E58A7Bde553B
+  name "AAStar PNTs" · symbol "aPNTs" · decimals 18 · totalSupply 140,000e18
+  code = 45 字节 EIP-1167 minimal proxy → impl 0xa19101bfa30495f23cef0ef354999b3e3f8b2ab9
+  impl version() = "XPNTs-3.0.0-unlimited"（本仓当前 XPNTs-3.5.0）
+  communityOwner() = 0x51Ac694981b6CEa06aA6c51751C227aac5F6b8A3   ← code 长度 0 = EOA
+```
+
+- [ ] **B1 — owner 是 EOA，且可无限增发。** `communityOwner` 不是 CC-31 治理 Safe
+      `0x51eDf11fDb0A4F66220eFb8efA54Eca77232E114`（两者都以 `0x51` 开头，极易看串，但 Safe 在 OP 上有 ~172 字节
+      代码，前者是 0）。版本串里的 `-unlimited` 是字面意思：`eth_call` 模拟 `mint(owner, 1e24)`（**全部供应量的 7 倍**）
+      从该 EOA **成功**，从随机地址 revert（`0x8e4a23d6` + caller）——即无 cap、无 pause，单个外部私钥可任意稀释。
+      这不只是 sp 侧治理卫生问题：本仓主网 guard 的 tier1/tier2/daily 三档**以 aPNTs 计价**，
+      那把私钥因此实际控制着我们不可变限额的经济含义。**owner 转入 Safe 之前不得填入。**
+- [ ] **B2 — 这个地址注定要变。** 45 字节 clone 把 impl 地址**硬编码在 runtime bytecode** 里，无 admin slot、
+      无升级路径，所以 3.0.0 → 3.5.0 **无法原地升级**，只能部署新 clone = **新地址**。
+      @repo:sp 已计划在 CC-115 B3 稳定后全面部署新版，故现在填入的任何地址都会在那次部署后作废。
+- [ ] 上述两条均消除后，再更新 `configs/token-presets.json` chain `"10"` 的 `aPNTs.address` 与本文 Token 预设表。
+
+> 顺带：B2 对 sp 是好消息——owner 只能在重新部署时修正，反正要发新 clone，两件事可以一次做完。
 
 ### P6. 基础设施
 
@@ -240,6 +261,21 @@ pnpm tsx scripts/e2e-create-test-account.ts  # （需适配 OP mainnet 地址）
 **DVT 节点追加**
 - 通过 Safe 调用 `blsAlgorithm.registerPublicKey(nodeId, pubKey)` 注册新节点
 
+**BLS aggregator 轮换 —— 必须按计划内维护窗口排期，不是随时可做的运维动作**
+
+`setBlsAggregator` 要求新 aggregator 与 registry 一致，并会 **bump `configVersion`**，这会打破
+`epochConfigVersion[e] == configVersion`，使**所有已有 epoch 快照失效、必须由 keeper 重新 pin**。
+在重新 pin 完成之前，**tier-2/3 fail-closed**（tier-1 不受影响）。因此：
+
+- 轮换前后与 @repo:dvt keeper 协调重新 pin，并把这段窗口当作已知的降级窗口对外说明；
+- 窗口内 `scripts/committee-health.mjs` 会正确报 CRITICAL，且 epoch 行会显示 `cfgMatch=false`——
+  这是**预期读数，不是 keeper 故障**，排查顺序见 `docs/committee-health-monitoring.md`；
+- 同理，紧跟轮换之后跑 E2E 会读到瞬时 sentinel，属预期而非回归。
+
+三条腿（Registry / SuperPaymaster / DVTValidator 各自的 aggregator 指针）必须一起切。@repo:sp 报告
+2026-08-30 曾只改 Registry 一个指针，分裂在 OP 主网上存活两天且无任何检查报红，现已加 `Check11_AggregatorPointers`
+门禁阻断部署。本仓主网上线后如引入 aggregator，需把该指针纳入同一门禁。
+
 **Etherscan 合约验证**（可在部署后任意时间执行）
 
 ```bash
@@ -294,7 +330,7 @@ Post-wire (if PROTOCOL_SAFE_ADDRESS set):
 | USDT | `0x94b008aA00579c1307B0EF2c499aD98a8ce58e58` | $500 | $5,000 | $10,000 |
 | WETH | `0x4200000000000000000000000000000000000006` | 0.5 ETH | 5 ETH | 10 ETH |
 | WBTC | `0x68f180fcCe6836688e9084f035309E29Bf0A2095` | 0.05 BTC | 0.5 BTC | 1 BTC |
-| aPNTs | **TBD** — 填入后更新 | — | — | — |
+| aPNTs | **TBD** — 见 [P5](#p5-apnts-token-地址)，地址已交付但被 B1（EOA 可无限增发）+ B2（clone 不可升级，地址将变）阻塞 | — | — | — |
 
 ---
 
@@ -326,3 +362,4 @@ Post-wire (if PROTOCOL_SAFE_ADDRESS set):
 | 日期 | 变更 |
 |------|------|
 | 2026-06-24 | 初版：主网部署全计划，基于 Sepolia v0.19.0-beta.2 分析 |
+| 2026-09-01 | P5 记录 @repo:sp 交付的 aPNTs 地址并说明两条阻塞（B1 EOA 无限增发 / B2 clone 地址将变）；新增 aggregator 轮换 → tier-2/3 fail-closed 的运营窗口条目（CC-46） |
