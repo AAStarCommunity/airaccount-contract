@@ -244,9 +244,39 @@ at 23:14 +07, about a day before this incident and following a system sleep at 2
 from this repo for exactly the reason recorded above — only the epoch gating the current quorum is
 ever in view — which makes it a second instance of that blind spot rather than a new one.
 
-Both gaps follow a sleep, and both are late at night, so **this is a recurring nightly pattern, not a
-one-off**. The `k+1` rule held for both: `k=1` at 181356 cost epochs 181356–181357, `k=2` at
-181467–181468 cost 181467–181469.
+Every gap follows a **system sleep**, and a third event on 09-02 settled what kind of pattern that is.
+It is **not nightly** — that reading came from the first two samples and did not survive the third:
+
+| event | epochs missed | window (+07) | duration | sleep |
+|---|---|---|---|---|
+| 1 | `181356` | 08-31 23:14 | — | after a sleep at 23:03 |
+| 2 | `181467`–`181468` | 09-01 23:51 → 00:18 | 0.45 h | Clamshell Sleep, on AC |
+| 3 | `181506` | 09-02 08:27 → 08:40 | 0.22 h | **08:20 `Sleep Service Back to Sleep`, on battery** |
+
+The third is a **morning** maintenance sleep, not a lid closing, and the machine was on battery rather
+than AC — which sleeps more readily. So the rule is **any system sleep, at any hour**, and the sleeps
+are **short** (0.45 h and 0.22 h measured). @repo:dvt confirmed the machine ran normally in between:
+epochs **181469–181505, 37 consecutive, all pinned**, covering the rest of that night.
+
+> **The error worth keeping is mine.** Seeing 8.0 hours between event 2's recovery and event 3's
+> alert, I inferred a ~7.7 h sleep and ~34 missed epochs, and told dvt the availability figure might
+> move by an order of magnitude. It was one epoch. **I had read the gap *between* events as the
+> duration *of* an event.** From this vantage point those look identical — only `e-1` is ever visible,
+> so a quiet interval and a broken one produce the same single data point. The measurement that
+> settles it (37 consecutive healthy pins in between) can only be taken keeper-side.
+
+What does survive is the structural half: **the check can only see this at wake.** The visible shape —
+`e` pinned, `e-1` not — exists only once the keeper resumes pinning, so every occurrence presents as a
+new event regardless of when the sleep began.
+
+The `k+1` rule has now held three times: `k=1` at 181356 → 2 epochs, `k=2` at 181467–181468 →
+3 epochs, `k=1` at 181506 → 2 epochs.
+
+**Converged figure (@repo:dvt, 178 epochs / ~39 h, deduplicated across both scans):** 4 missed pins
+across 3 events, 7 of 178 epochs fully fail-closed = 3.9%, plus 4.9% steady-state ⇒ **≈8.6% total**,
+which sits inside the 8.3–9.8% band above rather than displacing it. **Treat it as a point estimate on
+a thin sample** — 3 events over 39 hours says little about frequency, and the steady-state term is far
+better characterised than the outage term.
 
 ## Other legitimate causes of the sentinel
 
