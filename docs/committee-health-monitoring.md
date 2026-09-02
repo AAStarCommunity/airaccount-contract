@@ -273,6 +273,18 @@ new event regardless of when the sleep began.
 The `k+1` rule has now held three times: `k=1` at 181356 → 2 epochs, `k=2` at 181467–181468 →
 3 epochs, `k=1` at 181506 → 2 epochs.
 
+> ⛔ **NOT A PRODUCTION AVAILABILITY FIGURE. Do not quote it as one.**
+>
+> The figure below measures **one keeper process, on a developer laptop, against Sepolia**. The
+> dominant term is that laptop's sleep behaviour, which is a property of *that machine* and not of the
+> committee design, the validator, or AirAccount. Production runs DVT and KMS on independent
+> always-on nodes (Jason, 2026-09-01), and this number says nothing about what that will do.
+>
+> It is useful for exactly two things: **deciding whether the testing-period trade-off still holds**,
+> and **serving as a before-measurement for the eventual move off the laptop**. Anyone reaching for
+> it to characterise the system has picked up the wrong number — the same failure this file records
+> twice already, one level up: a statistic computed for one question reused as the answer to another.
+
 **Current figure: ≈11.7% — and it should be read as a LOWER BOUND, not a point estimate.**
 
 The revisions run **8.4 → 8.3 → 8.6 → 10.0 → 11.7**. An earlier version of this paragraph called
@@ -338,6 +350,17 @@ covers the keeper's whole life from its first pin, so the sparse early period is
 artefact of where the window started.
 
 Frequency remains the weak term, but it is no longer measured by hand.
+
+> **Relayed from @repo:dvt; not reachable in dvt `master` at `f100c17` (checked 2026-09-02).** Checked the
+> same way the removed caveat sentence was: `git log --all -S 'check:pin-rate'` finds **0 commits**,
+> `HEAD:package.json` **0** matches, while the working tree has `package.json:41` and an *untracked*
+> `scripts/check-pin-rate.mjs`. Positive control: `-S 'snapshotEpoch'` → **25** commits, so the search
+> is not vacuous. The tool is real but lives only in an uncommitted working tree, so **do not go
+> looking for it in dvt and conclude you are wrong when you cannot find it.**
+>
+> Compare `:155` above, which quotes dvt's keeper header and *is* verbatim in their committed `HEAD` —
+> that is what a citation with a landing point looks like.
+
 @repo:dvt now runs `npm run check:pin-rate` (`--blocks`, `--json`, `--max-missed` as a gate), which
 refuses to report rather than under-report on a chunked-scan failure, refuses to call zero events
 "keeper down" (indistinguishable from insufficient log retention, positive-controlled against the
