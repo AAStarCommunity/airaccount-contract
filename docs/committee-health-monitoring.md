@@ -236,17 +236,128 @@ fully-failed epochs — gives `569/137 = 4.15/64 = 6.5%`, and a total of **≈9.
 denominator on the same population: 569 covers 137 pins, so it is divided by 137, not by 136. An
 earlier draft mixed them, which is the same slip as the 138/141 one above, one paragraph later.)
 Excluding outliers is the right call for describing *typical* keeper latency; it is the wrong call for
-describing *availability*, because an outlier epoch is exactly when tier-2/3 was down longest. Read
-8.3% as the optimistic end of an **8.3–9.8%** band.
+describing *availability*, because an outlier epoch is exactly when tier-2/3 was down longest. Read 8.3% as the optimistic end of an 8.3–9.8% band — **both superseded by the measured figure in
+"Current figure" below**; kept here only because the reasoning that produced the upper bound turned
+out to be the correct one.
 
 The `5 / 141` term above comes from **three** unpinned epochs, not two: **`181356` as well**, on 08-31
 at 23:14 +07, about a day before this incident and following a system sleep at 23:03. It is invisible
 from this repo for exactly the reason recorded above — only the epoch gating the current quorum is
 ever in view — which makes it a second instance of that blind spot rather than a new one.
 
-Both gaps follow a sleep, and both are late at night, so **this is a recurring nightly pattern, not a
-one-off**. The `k+1` rule held for both: `k=1` at 181356 cost epochs 181356–181357, `k=2` at
-181467–181468 cost 181467–181469.
+Every gap follows a **system sleep**, and a third event on 09-02 settled what kind of pattern that is.
+It is **not nightly** — that reading came from the first two samples and did not survive the third:
+
+| event | epochs missed | window (+07) | duration | sleep |
+|---|---|---|---|---|
+| 1 | `181356` | 08-31 23:14 | — | after a sleep at 23:03 |
+| 2 | `181467`–`181468` | 09-01 23:51 → 00:18 | 0.45 h | Clamshell Sleep, on AC |
+| 3 | `181506` | 09-02 08:27 → 08:40 | 0.22 h | **08:20 `Sleep Service Back to Sleep`, on battery** |
+
+The third is a **morning** maintenance sleep, not a lid closing, and the machine was on battery rather
+than AC — which sleeps more readily. So the rule is **any system sleep, at any hour**, and the sleeps
+are **short** (0.45 h and 0.22 h measured). @repo:dvt confirmed the machine ran normally in between:
+epochs **181469–181505, 37 consecutive, all pinned**, covering the rest of that night.
+
+> **The error worth keeping is mine.** Seeing 8.0 hours between event 2's recovery and event 3's
+> alert, I inferred a ~7.7 h sleep and ~34 missed epochs, and told dvt the availability figure might
+> move by an order of magnitude. It was one epoch. **I had read the gap *between* events as the
+> duration *of* an event.** From this vantage point those look identical — only `e-1` is ever visible,
+> so a quiet interval and a broken one produce the same single data point. The measurement that
+> settles it (37 consecutive healthy pins in between) can only be taken keeper-side.
+
+What does survive is the structural half: **the check can only see this at wake.** The visible shape —
+`e` pinned, `e-1` not — exists only once the keeper resumes pinning, so every occurrence presents as a
+new event regardless of when the sleep began.
+
+The `k+1` rule has now held three times: `k=1` at 181356 → 2 epochs, `k=2` at 181467–181468 →
+3 epochs, `k=1` at 181506 → 2 epochs.
+
+**Current figure: ≈11.7% — and it should be read as a LOWER BOUND, not a point estimate.**
+
+The revisions run **8.4 → 8.3 → 8.6 → 10.0 → 11.7**. An earlier version of this paragraph called
+every one of them upward; the `8.4 → 8.3` step was **downward** — the denominator fix recorded two
+sections above, in this same file. Correcting a claim that the document itself falsifies is worth the
+line: the sequence is not monotone.
+
+**The floor reading does not rest on that sequence.** It rests on the direction of what is still
+uncounted. Each substantive revision so far restored something a previous method had silently dropped
+— "one observation is a mean", an outlier exclusion, epochs lost at a scan boundary — and every
+*known* remaining source of error works the same way: an unstated exclusion removes unavailability
+from the total, and none of the ones seen so far added any. The 8.3 correction is the exception that
+proves the shape, since it was an arithmetic fix rather than a recovered exclusion. So treat 11.7% as
+a floor until a revision moves it down **for a reason other than arithmetic**.
+
+@repo:dvt, 195 epochs / 43.2 h, clamped to the deploy block:
+
+```
+missed pins   5.1%   (10 of 195 epochs fail-closed, from 6 missed pins across 4 events)
+steady state  7.0%   (185/195 × 7.0% = 6.6%)
+              ────
+total        ≈11.8%  (dvt report 11.7%; the gap is rounding of the steady-state term)
+```
+
+> **The tool's first real run also caught a bug in the tool, in the opposite direction.** Widening the
+> window to 30,000 blocks produced `k=273, TOTAL 63.4%` — **phantom**: most of those epochs predate
+> the contract's own deploy block (11599099 ≈ epoch 181236), so it was scoring unavailability against
+> a system that did not yet exist. Two guards now: clamp to the deploy block, and **discard any
+> missing-pin run that begins at a window edge**, because "the keeper wasn't running" and "the
+> committee wasn't live yet" are indistinguishable in the data. Worth recording next to the revision
+> history above: **the same instrument can under-report by dropping real gaps and over-report by
+> inventing them, and only naming the population separates the two.**
+
+The interim 8.6% and 10.0% figures, and the 8.3–9.8% band, are all superseded. (An earlier revision
+declared 10.0% superseded and then printed its table immediately below, unmarked — that table is now
+gone rather than left to be quoted.)
+
+**A typical epoch is better than the mean.** Measured on the preceding 187-epoch run, whose pin delays
+were `2:42 3:67 4:60 5:7 6:1 | 15:1 25:1 26:2 49:1 60:1`, the mean was 4.19/64 against a **median of
+3** — a handful of very late catch-up pins pull the mean up. The two numbers answer different questions and must not be mixed: **"what does a typical epoch
+look like" is the median, 3/64 = 4.7%; "how much wall-clock is tier-2/3 unavailable" is the total
+above.**
+
+> **How the wrong number got here, which is the part worth keeping.** This document already stated the
+> rule — *excluding outliers is right for describing typical latency and wrong for describing
+> availability, because an outlier epoch is exactly when tier-2/3 was down longest* — and computed
+> **9.8%** from it as the band's upper end. Then dvt's 8.6% arrived, built on an outlier-excluded mean,
+> and it was adopted as "converged" anyway. **The principle was written down two paragraphs above the
+> number that violated it.** dvt has since removed the exclusion from their tooling and remeasured;
+> their steady-state term is now 6.5%, which is the same 4.15–4.19/64 the 9.8% upper bound had used.
+> The upper bound was the answer all along.
+>
+> Both errors have one shape: **a methodological choice that is never written down travels as far as
+> an unlabelled guess.** Theirs was "drop the outliers"; mine, earlier in this file, was "one
+> observation is a mean".
+
+**Frequency is not rising — or at least the data cannot say so.** Intervals between the four events
+run 24.6 h → 8.6 h → 0.65 h, which looks like acceleration. It is not distinguishable from clustering:
+at 4 events in 43.2 h the mean interval is 10.8 h, and under a Poisson process the chance that at
+least one of three intervals lands at ≤0.65 h is about **16%**. **16% is not a small number**, so the
+apparent speed-up is exactly what randomness produces at this sample size. The corrected scan also
+covers the keeper's whole life from its first pin, so the sparse early period is real rather than an
+artefact of where the window started.
+
+Frequency remains the weak term, but it is no longer measured by hand.
+@repo:dvt now runs `npm run check:pin-rate` (`--blocks`, `--json`, `--max-missed` as a gate), which
+refuses to report rather than under-report on a chunked-scan failure, refuses to call zero events
+"keeper down" (indistinguishable from insufficient log retention, positive-controlled against the
+retired `0x1A8Db639`), and refuses a window under two full epochs. Each run appends to
+`deploy/.run/pin-rate-history.jsonl`, so the record outlives RPC log retention — which is what makes
+the next occurrence measurable instead of extrapolated.
+
+> **Why the cause of the 09:06 event cannot be established, and why that is the point.** (09:06 +07,
+> the fourth event — a clock time, not a date.) @repo:dvt
+> could not confirm the sleep this time: the machine's `pmset` log had been truncated to **80 seconds**
+> of history. They proved it was truncation rather than a bad query by looking for the *known*
+> 08:20:29 entry from the previous event and not finding it — a positive control on the data source
+> itself. The circumstantial evidence is consistent (two unrelated launchd tasks on the same machine
+> also skipped their triggers in that window, both otherwise healthy and exiting 0) but was correctly
+> not stated as proof.
+>
+> **On-chain events persist, so an outage can be reconstructed days later; machine state does not.**
+> Evidence about the host exists only if something recorded it before the fact. That asymmetry is why
+> the fix is moving the keeper to a machine that does not sleep, at which point the cause stops
+> mattering — not better forensics after the fact.
 
 ## Other legitimate causes of the sentinel
 
