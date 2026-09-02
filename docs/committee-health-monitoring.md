@@ -351,7 +351,7 @@ artefact of where the window started.
 
 Frequency remains the weak term, but it is no longer measured by hand.
 
-> **Relayed from @repo:dvt; not reachable as of dvt `master` `f100c17` (2026-09-02).** Checked the
+> **Relayed from @repo:dvt; not reachable in dvt `master` at `f100c17` (checked 2026-09-02).** Checked the
 > same way the removed caveat sentence was: `git log --all -S 'check:pin-rate'` finds **0 commits**,
 > `HEAD:package.json` **0** matches, while the working tree has `package.json:41` and an *untracked*
 > `scripts/check-pin-rate.mjs`. Positive control: `-S 'snapshotEpoch'` → **25** commits, so the search
