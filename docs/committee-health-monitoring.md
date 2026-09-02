@@ -273,6 +273,19 @@ new event regardless of when the sleep began.
 The `k+1` rule has now held three times: `k=1` at 181356 → 2 epochs, `k=2` at 181467–181468 →
 3 epochs, `k=1` at 181506 → 2 epochs.
 
+> ⛔ **NOT A PRODUCTION AVAILABILITY FIGURE. Do not quote it as one.**
+>
+> Everything below measures **one keeper process, on a developer laptop, against Sepolia**. The
+> dominant term is that laptop's sleep behaviour, which is a property of *that machine* and not of the
+> committee design, the validator, or AirAccount. Production runs DVT and KMS on independent
+> always-on nodes (Jason, 2026-09-01), and this number says nothing about what that will do.
+>
+> It is useful for exactly two things: **deciding whether the testing-period trade-off still holds**,
+> and **serving as a before-measurement for the eventual move off the laptop**. Anyone reaching for
+> it to characterise the system has picked up the wrong number — the same failure this file records
+> twice already, one level up: a statistic computed for one question reused as the answer to another.
+> @repo:dvt carry the same caveat on their keeper header.
+
 **Current figure: ≈11.7% — and it should be read as a LOWER BOUND, not a point estimate.**
 
 The revisions run **8.4 → 8.3 → 8.6 → 10.0 → 11.7**. An earlier version of this paragraph called
