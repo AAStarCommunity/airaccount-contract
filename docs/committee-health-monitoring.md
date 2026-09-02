@@ -350,6 +350,17 @@ covers the keeper's whole life from its first pin, so the sparse early period is
 artefact of where the window started.
 
 Frequency remains the weak term, but it is no longer measured by hand.
+
+> **Relayed from @repo:dvt; not reachable as of dvt `master` `f100c17` (2026-09-02).** Checked the
+> same way the removed caveat sentence was: `git log --all -S 'check:pin-rate'` finds **0 commits**,
+> `HEAD:package.json` **0** matches, while the working tree has `package.json:41` and an *untracked*
+> `scripts/check-pin-rate.mjs`. Positive control: `-S 'snapshotEpoch'` → **25** commits, so the search
+> is not vacuous. The tool is real but lives only in an uncommitted working tree, so **do not go
+> looking for it in dvt and conclude you are wrong when you cannot find it.**
+>
+> Compare `:155` above, which quotes dvt's keeper header and *is* verbatim in their committed `HEAD` —
+> that is what a citation with a landing point looks like.
+
 @repo:dvt now runs `npm run check:pin-rate` (`--blocks`, `--json`, `--max-missed` as a gate), which
 refuses to report rather than under-report on a chunked-scan failure, refuses to call zero events
 "keeper down" (indistinguishable from insufficient log retention, positive-controlled against the
