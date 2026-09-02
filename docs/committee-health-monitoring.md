@@ -236,8 +236,8 @@ fully-failed epochs — gives `569/137 = 4.15/64 = 6.5%`, and a total of **≈9.
 denominator on the same population: 569 covers 137 pins, so it is divided by 137, not by 136. An
 earlier draft mixed them, which is the same slip as the 138/141 one above, one paragraph later.)
 Excluding outliers is the right call for describing *typical* keeper latency; it is the wrong call for
-describing *availability*, because an outlier epoch is exactly when tier-2/3 was down longest. Read
-8.3% as the optimistic end of an **8.3–9.8%** band.
+describing *availability*, because an outlier epoch is exactly when tier-2/3 was down longest. Read 8.3% as the optimistic end of an 8.3–9.8% band — **both superseded by the measured 10.0% below**;
+kept here only because the reasoning that produced the upper bound turned out to be the correct one.
 
 The `5 / 141` term above comes from **three** unpinned epochs, not two: **`181356` as well**, on 08-31
 at 23:14 +07, about a day before this incident and following a system sleep at 23:03. It is invisible
@@ -272,11 +272,41 @@ new event regardless of when the sleep began.
 The `k+1` rule has now held three times: `k=1` at 181356 → 2 epochs, `k=2` at 181467–181468 →
 3 epochs, `k=1` at 181506 → 2 epochs.
 
-**Converged figure (@repo:dvt, 178 epochs / ~39 h, deduplicated across both scans):** 4 missed pins
-across 3 events, 7 of 178 epochs fully fail-closed = 3.9%, plus 4.9% steady-state ⇒ **≈8.6% total**,
-which sits inside the 8.3–9.8% band above rather than displacing it. **Treat it as a point estimate on
-a thin sample** — 3 events over 39 hours says little about frequency, and the steady-state term is far
-better characterised than the outage term.
+**Settled figure: ≈10.0% (@repo:dvt, 187 epochs / 41.5 h).** An interim 8.6% appeared here and was
+wrong; both it and the 8.3–9.8% band it sat in are superseded.
+
+```
+missed pins   3.7%   (7 of 187 epochs fully fail-closed)
+steady state  6.5%   (mean pin delay 4.19/64)
+              ────
+total        10.0%   ·  structural floor 1.6%
+```
+
+**Mean 4.19 against a median of 3** — the distribution is `2:42 3:67 4:60 5:7 6:1 | 15:1 25:1 26:2
+49:1 60:1`, so a typical epoch is better than the mean and a handful of very late catch-up pins pull
+it up. The two numbers answer different questions and must not be mixed: **"what does a typical epoch
+look like" is the median, 3/64 = 4.7%; "how much wall-clock is tier-2/3 unavailable" is 10.0%.**
+
+> **How the wrong number got here, which is the part worth keeping.** This document already stated the
+> rule — *excluding outliers is right for describing typical latency and wrong for describing
+> availability, because an outlier epoch is exactly when tier-2/3 was down longest* — and computed
+> **9.8%** from it as the band's upper end. Then dvt's 8.6% arrived, built on an outlier-excluded mean,
+> and it was adopted as "converged" anyway. **The principle was written down two paragraphs above the
+> number that violated it.** dvt has since removed the exclusion from their tooling and remeasured;
+> their steady-state term is now 6.5%, which is the same 4.15–4.19/64 the 9.8% upper bound had used.
+> The upper bound was the answer all along.
+>
+> Both errors have one shape: **a methodological choice that is never written down travels as far as
+> an unlabelled guess.** Theirs was "drop the outliers"; mine, earlier in this file, was "one
+> observation is a mean".
+
+Frequency remains the weak term — 3 events is a thin base — but it is no longer measured by hand.
+@repo:dvt now runs `npm run check:pin-rate` (`--blocks`, `--json`, `--max-missed` as a gate), which
+refuses to report rather than under-report on a chunked-scan failure, refuses to call zero events
+"keeper down" (indistinguishable from insufficient log retention, positive-controlled against the
+retired `0x1A8Db639`), and refuses a window under two full epochs. Each run appends to
+`deploy/.run/pin-rate-history.jsonl`, so the record outlives RPC log retention — which is what makes
+the next occurrence measurable instead of extrapolated.
 
 ## Other legitimate causes of the sentinel
 
