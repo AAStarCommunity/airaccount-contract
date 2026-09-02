@@ -236,8 +236,9 @@ fully-failed epochs — gives `569/137 = 4.15/64 = 6.5%`, and a total of **≈9.
 denominator on the same population: 569 covers 137 pins, so it is divided by 137, not by 136. An
 earlier draft mixed them, which is the same slip as the 138/141 one above, one paragraph later.)
 Excluding outliers is the right call for describing *typical* keeper latency; it is the wrong call for
-describing *availability*, because an outlier epoch is exactly when tier-2/3 was down longest. Read 8.3% as the optimistic end of an 8.3–9.8% band — **both superseded by the measured 10.0% below**;
-kept here only because the reasoning that produced the upper bound turned out to be the correct one.
+describing *availability*, because an outlier epoch is exactly when tier-2/3 was down longest. Read 8.3% as the optimistic end of an 8.3–9.8% band — **both superseded by the measured figure in
+"Current figure" below**; kept here only because the reasoning that produced the upper bound turned
+out to be the correct one.
 
 The `5 / 141` term above comes from **three** unpinned epochs, not two: **`181356` as well**, on 08-31
 at 23:14 +07, about a day before this incident and following a system sleep at 23:03. It is invisible
@@ -274,12 +275,18 @@ The `k+1` rule has now held three times: `k=1` at 181356 → 2 epochs, `k=2` at 
 
 **Current figure: ≈11.7% — and it should be read as a LOWER BOUND, not a point estimate.**
 
-This number has been revised four times, and **every revision was upward**: 8.4 → 8.6 → 10.0 → 11.7.
-Each time the cause was the same — the previous method silently excluded something that belonged in
-the total (my "one observation is a mean"; dvt's outlier exclusion; then epochs dropped at a scan
-boundary). **Four same-direction corrections is a property of the measurement, not a coincidence:**
-every unstated exclusion removes unavailability and none adds it, so the estimate can only walk one
-way. Until a revision moves it *down*, treat the published number as a floor.
+The revisions run **8.4 → 8.3 → 8.6 → 10.0 → 11.7**. An earlier version of this paragraph called
+every one of them upward; the `8.4 → 8.3` step was **downward** — the denominator fix recorded two
+sections above, in this same file. Correcting a claim that the document itself falsifies is worth the
+line: the sequence is not monotone.
+
+**The floor reading does not rest on that sequence.** It rests on the direction of what is still
+uncounted. Each substantive revision so far restored something a previous method had silently dropped
+— "one observation is a mean", an outlier exclusion, epochs lost at a scan boundary — and every
+*known* remaining source of error works the same way: an unstated exclusion removes unavailability
+from the total, and none of the ones seen so far added any. The 8.3 correction is the exception that
+proves the shape, since it was an arithmetic fix rather than a recovered exclusion. So treat 11.7% as
+a floor until a revision moves it down **for a reason other than arithmetic**.
 
 @repo:dvt, 195 epochs / 43.2 h, clamped to the deploy block:
 
@@ -295,23 +302,19 @@ total        ≈11.8%  (dvt report 11.7%; the gap is rounding of the steady-stat
 > the contract's own deploy block (11599099 ≈ epoch 181236), so it was scoring unavailability against
 > a system that did not yet exist. Two guards now: clamp to the deploy block, and **discard any
 > missing-pin run that begins at a window edge**, because "the keeper wasn't running" and "the
-> committee wasn't live yet" are indistinguishable in the data. Worth recording next to the four
-> upward revisions: **the same instrument can under-report by dropping real gaps and over-report by
+> committee wasn't live yet" are indistinguishable in the data. Worth recording next to the revision
+> history above: **the same instrument can under-report by dropping real gaps and over-report by
 > inventing them, and only naming the population separates the two.**
 
-The interim 8.6% and 10.0% figures, and the 8.3–9.8% band, are all superseded.
+The interim 8.6% and 10.0% figures, and the 8.3–9.8% band, are all superseded. (An earlier revision
+declared 10.0% superseded and then printed its table immediately below, unmarked — that table is now
+gone rather than left to be quoted.)
 
-```
-missed pins   3.7%   (7 of 187 epochs fully fail-closed)
-steady state  6.5%   (mean pin delay 4.19/64)
-              ────
-total        10.0%   ·  structural floor 1.6%
-```
-
-**Mean 4.19 against a median of 3** — the distribution is `2:42 3:67 4:60 5:7 6:1 | 15:1 25:1 26:2
-49:1 60:1`, so a typical epoch is better than the mean and a handful of very late catch-up pins pull
-it up. The two numbers answer different questions and must not be mixed: **"what does a typical epoch
-look like" is the median, 3/64 = 4.7%; "how much wall-clock is tier-2/3 unavailable" is 10.0%.**
+**A typical epoch is better than the mean.** Measured on the preceding 187-epoch run, whose pin delays
+were `2:42 3:67 4:60 5:7 6:1 | 15:1 25:1 26:2 49:1 60:1`, the mean was 4.19/64 against a **median of
+3** — a handful of very late catch-up pins pull the mean up. The two numbers answer different questions and must not be mixed: **"what does a typical epoch
+look like" is the median, 3/64 = 4.7%; "how much wall-clock is tier-2/3 unavailable" is the total
+above.**
 
 > **How the wrong number got here, which is the part worth keeping.** This document already stated the
 > rule — *excluding outliers is right for describing typical latency and wrong for describing
@@ -342,7 +345,8 @@ retired `0x1A8Db639`), and refuses a window under two full epochs. Each run appe
 `deploy/.run/pin-rate-history.jsonl`, so the record outlives RPC log retention — which is what makes
 the next occurrence measurable instead of extrapolated.
 
-> **Why the cause of the 09-06 event cannot be established, and why that is the point.** @repo:dvt
+> **Why the cause of the 09:06 event cannot be established, and why that is the point.** (09:06 +07,
+> the fourth event — a clock time, not a date.) @repo:dvt
 > could not confirm the sleep this time: the machine's `pmset` log had been truncated to **80 seconds**
 > of history. They proved it was truncation rather than a bad query by looking for the *known*
 > 08:20:29 entry from the previous event and not finding it — a positive control on the data source
