@@ -416,7 +416,19 @@ cost". A single percentage containing both describes neither. **The 11.7% figure
 left unchanged**, and is now explicitly scoped to self-healing misses (`k ≤ 3`).
 
 For the record, the same tool over a wider window that *contains* this event
-(`--blocks 12000`, 186 epochs, 41.1 h) reports **41.0%** = 37.1% missed (69/186) + 6.1% steady. Both
+(`--blocks 12000`, 186 epochs, 41.1 h) reports **≈41.0%**, decomposed the same way as the block above
+— the steady term is a rate *per surviving epoch*, so it scales by what the misses left:
+
+```
+missed                     69 / 186                    = 37.10%
+steady on the rest         (1 − 37.10%) × 3.93/64      =  3.86%
+                                                  total ≈ 40.96%
+```
+
+(An earlier draft here wrote `= 37.1% + 6.1%`, which sums to 43.2% — the total was right and the
+decomposition dropped the `× (1 − missed)` factor. Third time this file has mixed populations, and the
+first time the *result* survived it; recorded because anyone recomputing from that line would have got
+43.2% and doubted the rest of the page.) Both
 numbers are correct for their own question. **Neither is a system property** — same scope caveat as
 above; the only environment-independent term in either is the **1.6% structural floor**, since a pin
 cannot precede the epoch it snapshots. Long-run frequency should come from the accumulated
