@@ -134,9 +134,18 @@ try {
       // reader to investigate a validator swap that had not happened.
       //
       // So a failed probe now has to survive a POSITIVE CONTROL before it may be called absence:
-      // re-read a getter that exists on every generation of this contract. Control succeeds ⇒ the RPC
-      // is answering and the function really is missing. Control fails ⇒ we could not look, which is
-      // a different verdict and a different message.
+      // re-read a getter that exists on every generation of this contract — verified by selector
+      // against the retired 0x1A8Db639 bytecode: configVersion (dd64d24d) present, minCommittee and
+      // epochSetValidUntil absent, so pointing at an old stack still lands on the ABI verdict rather
+      // than this one. Control fails ⇒ we could not look, which is a different verdict and a
+      // different message.
+      //
+      // What the control does NOT establish: it runs AFTER the probe, so it shows the RPC was
+      // answering at t1, not at t0 when the probe failed. A hiccup that clears inside one round trip
+      // is still recorded as absence. Narrowing that further needs a multicall or a control on each
+      // side of the probe, which costs more than the residue is worth — but do not read this as
+      // "a failed probe proves the function is missing". It only rules out an outage still in
+      // progress a moment later.
       let transportFailed = false;
       const probe = async (fn, args) => {
         try { await r(committee, CV_ABI, fn, args); return true; } catch {
