@@ -285,7 +285,9 @@ The `k+1` rule has now held three times: `k=1` at 181356 → 2 epochs, `k=2` at 
 > it to characterise the system has picked up the wrong number — the same failure this file records
 > twice already, one level up: a statistic computed for one question reused as the answer to another.
 
-**Current figure: ≈11.7% — and it should be read as a LOWER BOUND, not a point estimate.**
+**Current figure: ≈11.7% — a LOWER BOUND, not a point estimate, and it covers SELF-HEALING misses
+only** (`k ≤ 3`, host asleep, keeper survives). The process-death class is measured separately in
+"Two failure classes" below and is deliberately **not** folded in.
 
 The revisions run **8.4 → 8.3 → 8.6 → 10.0 → 11.7**. An earlier version of this paragraph called
 every one of them upward; the `8.4 → 8.3` step was **downward** — the denominator fix recorded two
@@ -381,6 +383,66 @@ the next occurrence measurable instead of extrapolated.
 > Evidence about the host exists only if something recorded it before the fact. That asymmetry is why
 > the fix is moving the keeper to a machine that does not sleep, at which point the cause stops
 > mattering — not better forensics after the fact.
+
+## Two failure classes, and why they must not share a percentage
+
+Everything above this line describes **self-healing** misses: the host sleeps, the keeper survives,
+and it pins again on waking. `k` ran 1–3, every occurrence cleared inside a couple of epochs, and the
+≈11.7% figure is the availability cost of *that* class.
+
+On 2026-09-04 a **second class** appeared, and it is not a longer version of the first:
+
+```
+missed pins 181682–181733   k=52   ⇒ 53 epochs fail-closed (181682–181734)
+began   epoch 181682, block ≈11627648      ~23:11 +07
+ended   epoch 181734, block 11630983       03:44Z — a HUMAN restart by @repo:dvt
+                                            tx 0x2f30bf42…
+```
+
+**The keeper process was dead, not asleep.** @repo:dvt established it while the outage was live:
+`ps -p 70119` gone, no keeper process at all, and `pmset` showing the machine had been **awake for
+over two hours**. The three DVT nodes in docker were `Up 2 days` and healthy throughout. So this was
+not eleven hours of sleep — it was **eleven hours of nobody restarting it**.
+
+**It could not self-heal, and nothing was going to notice.** The previous eight recovered because the
+process was alive and resumed on wake. Here there was no process, so the committee stayed fail-closed
+until a person intervened. The alert fired **45 times** (dvt #305) with nothing acting on it.
+
+### Do not fold this into the 11.7%
+
+@repo:dvt's recommendation, adopted: **the two classes must not be averaged into one number.** 11.7%
+answers "what does a sleeping laptop cost"; this event answers "what does an unsupervised process
+cost". A single percentage containing both describes neither. **The 11.7% figure above is therefore
+left unchanged**, and is now explicitly scoped to self-healing misses (`k ≤ 3`).
+
+For the record, the same tool over a wider window that *contains* this event
+(`--blocks 12000`, 186 epochs, 41.1 h) reports **41.0%** = 37.1% missed (69/186) + 6.1% steady. Both
+numbers are correct for their own question. **Neither is a system property** — same scope caveat as
+above; the only environment-independent term in either is the **1.6% structural floor**, since a pin
+cannot precede the epoch it snapshots. Long-run frequency should come from the accumulated
+`pin-rate-history.jsonl`, never from one window.
+
+### What separated the two classes: push condition ③
+
+The shapes are identical on chain — **"asleep" and "process gone" both look like "no pin"** — so
+nothing in this repo can tell them apart directly. What did was the escalation rule @repo:dvt supplied:
+**an alert persisting beyond ~2 epochs without self-healing.** That is the only reason this was raised
+instead of being filed as the ninth instance of a known pattern, and it was the first time that
+condition fired.
+
+### The gap this exposed: nothing measures whether the keeper is alive
+
+This repo's check reads the chain. @repo:dvt's `check:pin-rate` reads chain events. **Neither can see
+process state**, and the monitors are better supervised than the thing they monitor: dvt run launchd
+jobs for the health check (15 min) and for apply-rotation (1 h), while the keeper itself was started
+by hand under `nohup` with no `KeepAlive`. A liveness probe belongs on the keeper's host, not here —
+recorded so nobody reads a green chain-side check as evidence the keeper is running.
+
+> **Trap when reading keeper output, not chain state.** The keeper logged `epoch 181733: pinning`
+> while the chain recorded **181734**: it read the epoch at one block and its tx mined at another,
+> across an epoch boundary (181734 begins at block 11630976), and the contract records the epoch at
+> execution time. Near a boundary the two differ by one. **`epochPinned()` is the source of truth;
+> keeper stdout is not.**
 
 ## Other legitimate causes of the sentinel
 
