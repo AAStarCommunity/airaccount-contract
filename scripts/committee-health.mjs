@@ -125,9 +125,38 @@ try {
       // Pass real args: epochSetValidUntil takes a uint256, so probing it with none fails even where
       // it EXISTS — that mistake marked the LIVE v0.33 validator as retired until the control run
       // caught it. Both are plain mapping/immutable getters, so any epoch key is a safe probe.
-      const probe = async (fn, args) => { try { await r(committee, CV_ABI, fn, args); return true; } catch { return false; } };
+      //
+      // A bare `catch { return false }` here read "the RPC hiccuped" as "the getter does not exist" —
+      // the exact mistake the paragraph above warns about, committed one line below it. Observed:
+      // one run reported epochSetValidUntil=ABSENT while minCommittee=present, and a run five blocks
+      // later found both present. A deployed contract's ABI does not change, so the ABSENT was
+      // transport noise printed as a fact about the stack — and the message it produced sent the
+      // reader to investigate a validator swap that had not happened.
+      //
+      // So a failed probe now has to survive a POSITIVE CONTROL before it may be called absence:
+      // re-read a getter that exists on every generation of this contract — verified by selector
+      // against the retired 0x1A8Db639 bytecode: configVersion (dd64d24d) present, minCommittee and
+      // epochSetValidUntil absent, so pointing at an old stack still lands on the ABI verdict rather
+      // than this one. Control fails ⇒ we could not look, which is a different verdict and a
+      // different message.
+      //
+      // What the control does NOT establish: it runs AFTER the probe, so it shows the RPC was
+      // answering at t1, not at t0 when the probe failed. A hiccup that clears inside one round trip
+      // is still recorded as absence. Narrowing that further needs a multicall or a control on each
+      // side of the probe, which costs more than the residue is worth — but do not read this as
+      // "a failed probe proves the function is missing". It only rules out an outage still in
+      // progress a moment later.
+      let transportFailed = false;
+      const probe = async (fn, args) => {
+        try { await r(committee, CV_ABI, fn, args); return true; } catch {
+          try { await r(committee, CV_ABI, "configVersion"); return false; }
+          catch { transportFailed = true; return false; }
+        }
+      };
       const [hasMinCommittee, hasValidUntil] = await Promise.all([probe("minCommittee"), probe("epochSetValidUntil", [0n])]);
-      if (!hasMinCommittee || !hasValidUntil) {
+      if (transportFailed) {
+        fail("UNDETERMINED", `could not probe the validator's ABI — the control read (configVersion) failed too, so this says nothing about which generation ${committee} is, and nothing about stack health`);
+      } else if (!hasMinCommittee || !hasValidUntil) {
         fail("UNDETERMINED", `validator predates this check's ABI (minCommittee=${hasMinCommittee ? "present" : "ABSENT"}, epochSetValidUntil=${hasValidUntil ? "present" : "ABSENT"}) — the router points at ${committee}, which lacks the CC-98 hardening getters (e.g. the retired v0.31/v0.32 stack on 0x1A8Db639). This check covers v0.33.0+ only.`);
       } else {
       const [armed, rq, L, nodes, cfg] = await Promise.all([
