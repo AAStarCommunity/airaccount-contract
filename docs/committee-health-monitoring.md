@@ -442,13 +442,19 @@ nothing in this repo can tell them apart directly. What did was the escalation r
 instead of being filed as the ninth instance of a known pattern, and it was the first time that
 condition fired.
 
-### The gap this exposed: nothing measures whether the keeper is alive
+### "Is the keeper alive" is outside this check's domain — it is not a defect in it
 
 This repo's check reads the chain. @repo:dvt's `check:pin-rate` reads chain events. **Neither can see
-process state**, and the monitors are better supervised than the thing they monitor: dvt run launchd
-jobs for the health check (15 min) and for apply-rotation (1 h), while the keeper itself was started
-by hand under `nohup` with no `KeepAlive`. A liveness probe belongs on the keeper's host, not here —
-recorded so nobody reads a green chain-side check as evidence the keeper is running.
+process state, and no amount of improving either will change that** — a chain-only instrument returns
+a constant for "is the process running", because that question is not in its coordinate system. The
+distinction matters operationally: calling it a *gap* sends the next person to improve this check,
+which cannot work; calling it *out of domain* sends them to add a probe of a different kind, on the
+keeper's host, which is where it belongs and is not this repo.
+
+What the outage did expose is a real asymmetry: **the monitors are better supervised than the thing
+they monitor.** dvt run launchd jobs for the health check (15 min) and for apply-rotation (1 h), while
+the keeper itself was started by hand under `nohup` with no `KeepAlive`. Recorded so nobody reads a
+green chain-side check as evidence the keeper is running — it is not evidence either way.
 
 > **Trap when reading keeper output, not chain state.** The keeper logged `epoch 181733: pinning`
 > while the chain recorded **181734**: it read the epoch at one block and its tx mined at another,
