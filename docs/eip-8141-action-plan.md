@@ -97,7 +97,10 @@ VERIFY 用 `FRAMEPARAM` 校验帧形状（首帧 snapshot、末帧 settle、中�
   **BLS 路径（0x01/0x04/0x05/0x09/0x0a）保留不删**（router 只增原则），新账户默认白名单换成 0x0b。
 - **实测（2026-11-10，forge 原型，foundry 1.7.1）**：账户端 `verify()` = k × [ecrecover + depth-7 Merkle proof 对自身存储的 root]，叶子 `keccak(accountId, epoch, signer)`：
   k=2 → **29,277 gas**（620 B payload）；k=3 → 38,886；k=5 → 58,191；k=10 → 107,443。
-  BLS 路径的同一组件 ~527k（CC-95）。预期 tier2 总量 ≈ 102k（tier-1 基线）+ ~30k + calldata ≈ **~140k，对比今天 629k**。原型见 issue #294。
+  BLS 路径的外部 `validate()` 整段 ~514–527k（CC-95；其中加密原语下限 ~154k = pairing 103k + hash-to-curve 51–66k，其余 ~345k 是验证器实现开销）。
+  预期 tier2 总量 ≈ 102k（tier-1 基线）+ ~30k + calldata ≈ **~140k，对比今天 629k**。原型见 issue #294。
+  **payload 大小**：ECDSA 每签名者 310 B（depth-7；N=1024 时 406 B）；今天 committee 模式 BLS 每签名者 512 B + 256 B 签名——现状下 BLS 并不更小。
+  BLS 的"大小恒定"只在注册表 + 位图编码下成立（256 B + N/8），那是 k 大时的正确形态，不是 k ≤ 10 的 sortition 委员会的。
 
 **8141 后**：k 个节点签名直接放进 `signatures[]`（SECP256K1 条目），账户从 `SIGPARAM` 读 `resolved_signer`，验 proof 对 `committeeRoot`。`refreshCommittee` 走 SENDER 帧。
 

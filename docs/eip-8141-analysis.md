@@ -93,14 +93,21 @@ AirAccount 今天的代码把两件事揉在一起（`_validateSignature` 既验
 #### 张力 2 —— Tier-2/3 的 BLS DVT 验证进不了 8141 公共 mempool，而且是双重出局
 
 - **gas**：Sepolia 实测 tier1 = 101,948 / tier2 = 629,363 / tier3 = 637,037 gasUsed（CC-95，n=10）；
-  tier1→2 的 ~527k 几乎全是 `validate()` 里的 hash-to-curve（[`2026-08-16-tier-bls-gas-optimization-analysis.md`](2026-08-16-tier-bls-gas-optimization-analysis.md)）。上限 100k 且是前缀总和。
+  tier1→2 的 ~527k ≈ 外部 `validate()` 整段。按 [`2026-08-16-tier-bls-gas-optimization-analysis.md`](2026-08-16-tier-bls-gas-optimization-analysis.md) 的实测分解：
+  pairing ~103k（EIP-2537 定价 37,700 + 32,600×2，**20%**）+ hash-to-curve ~66k（**13%**：expand_message + 2×MAP_FP2_TO_G2 预编译 + G2ADD）
+  = 加密原语下限 **~154k**；其余 **~345k（67%）是验证器实现开销**（点解码、子群检查、每节点 128 B 注册公钥 SLOAD ≈ 8.4k、G1 聚合、calldata 解析、stake 检查）。
+  ⚠️ 本文初稿写成"几乎全是 hash-to-curve"，是错的——该文档已明确指出那是未测量的推断。
+  对 8141 的结论不变：**仅 pairing 一项（103k）就超过 100k 前缀上限**，实现再优化也进不了公共 mempool。
 - **存储**：`_blsAlgMode` 读 `committeeActive()`、`verifyAgg` 读 `requiredQuorum()`、验证器内部读 epoch pin / 节点注册表、`validator.getAlgorithm`——
   全是 `tx.sender` 以外的存储，无质押豁免。
 
 **结论不是"优化 BLS"，而是换容器。** 8141 的 `signatures[]` 本身就是协议验证的多签容器：
 3 节点 2-of-3 = 2 条 SECP256K1 条目，协议验证 2 × 2,800 gas；账户 VERIFY 只需读 `SIGPARAM resolved_signer`，
 对照**自身存储**里的委员会名单 / epoch root，数够 k 个即过。
-BLS"一次 pairing 换 N 次验证"的收益在 N ≤ ~30 时为负（30 × 2,800 = 84k < 100k）。BLS 留给 SuperPaymaster 的 slash / 大 N 场景。
+BLS"一次 pairing 换 N 次验证"的收益要在签名者数量大时才兑现：ECDSA 路径实测斜率 ≈ 9.8k gas/签名者（含 310 B calldata + Merkle 证明），
+BLS 即使实现做到极致也有 ~154k 固定下限 + 每节点公钥读取 ~2–10k，**交叉点约 20–50 个签名者**；以今天 ~470k 的实现则永不交叉。
+sortition 把"节点池 N"和"签名者数 k"解耦（CC-98 已如此），k 不随 N 增长、证明深度只按 log2(N) 增长，所以 k ≤ 10 的委员会用 ECDSA，
+BLS 留给 k 大的场景（SuperPaymaster slash、全集签名）——且若保留 BLS，签名者集合应改用**注册表 + 位图**（N=1000 → 125 B）而不是现在每签名者 512 B 的 Merkle 证明，否则 BLS 的"签名大小恒定"优势根本没有兑现。
 
 #### 张力 3 —— SuperPaymaster 的商业模式与公共 mempool 不兼容
 
