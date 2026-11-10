@@ -95,7 +95,9 @@ VERIFY 用 `FRAMEPARAM` 校验帧形状（首帧 snapshot、末帧 settle、中�
 - 验证期只读自身存储：节点提供 `(nodeKey, Merkle proof)`，账户验 proof 对 `committeeRoot`，数够 `committeeQuorum` 即过。
 - 新 algId `0x0b`（名字待定，例如 `ALG_COMMITTEE_ECDSA`）：`[k 个 (nodeAddr, ECDSA sig, Merkle proof)]`，协议/预编译验 ECDSA，账户验 proof。
   **BLS 路径（0x01/0x04/0x05/0x09/0x0a）保留不删**（router 只增原则），新账户默认白名单换成 0x0b。
-- 预期收益（推断，待实测）：tier2 从 ~629k 降到 ~110k（k=2 × ecrecover + 2 × Merkle proof），因为砍掉的是 hash-to-curve 的 ~500k。
+- **实测（2026-11-10，forge 原型，foundry 1.7.1）**：账户端 `verify()` = k × [ecrecover + depth-7 Merkle proof 对自身存储的 root]，叶子 `keccak(accountId, epoch, signer)`：
+  k=2 → **29,277 gas**（620 B payload）；k=3 → 38,886；k=5 → 58,191；k=10 → 107,443。
+  BLS 路径的同一组件 ~527k（CC-95）。预期 tier2 总量 ≈ 102k（tier-1 基线）+ ~30k + calldata ≈ **~140k，对比今天 629k**。原型见 issue #294。
 
 **8141 后**：k 个节点签名直接放进 `signatures[]`（SECP256K1 条目），账户从 `SIGPARAM` 读 `resolved_signer`，验 proof 对 `committeeRoot`。`refreshCommittee` 走 SENDER 帧。
 
@@ -140,6 +142,13 @@ accountId 注入（CC-98 B2）在 Merkle 叶子里保留（叶子 = `keccak(acco
 
 ## 2. 抽象解决不了、需要拍板的三件事
 
+> 2026-11-10 Jason：D1 → D1-a（存量留在 4337）；D2 → 批准，跨仓以 issue 协调：
+> dvt [YetAnotherAA-Validator#397](https://github.com/AAStarCommunity/YetAnotherAA-Validator/issues/397) ·
+> kms [AirAccount#215](https://github.com/AAStarCommunity/AirAccount/issues/215) ·
+> sdk [aastar-sdk#432](https://github.com/AAStarCommunity/aastar-sdk/issues/432) ·
+> sp [SuperPaymaster#616](https://github.com/AAStarCommunity/SuperPaymaster/issues/616)；
+> 本仓库 tracking [#294](https://github.com/AAStarCommunity/airaccount-contract/issues/294)。D3 见下。
+
 #### D1 —— 已部署账户拿不到 8141 入口
 
 账户不可升级。VERIFY 入口是新 ABI，无法后加到已部署账户。两个选项：
@@ -169,7 +178,7 @@ airaccount 侧可以先把 0x0b 的账户端做完并用 mock 节点测试，但
 
 | # | 任务 | 接缝 | 价值 | 依赖 |
 |---|---|---|---|---|
-| A1 | 确认当前 ERC-7562 合规：`_blsAlgMode / verifyAgg / SessionKeyValidator.validate()` 的验证期第三方存储读取，bundler 是靠什么放行的；写进 `known-issues.md` | S3 前置 | 主网风险；8141 下无解 | 无 |
+| A1 | **已查明（2026-11-10）**：所有走 Pimlico 的 E2E（`e2e-v0.25.0…v0.28.0-bundler.ts`）只发过 Tier-1 owner-ECDSA op；tier-2/3 与 session-key 脚本全部用 `EntryPoint.handleOps` 直发——**它们从未经过公共 bundler**。ERC-7562：账户验证期只能读自身存储（STO-010）和关联存储（STO-021，`keccak(sender‖x)+n`）；非关联存储只在 op 含**已质押 paymaster/factory** 时可只读（STO-033）。router `algorithms[algId]`、委员会验证器的 `committeeActive()/requiredQuorum()`/epoch pin/节点表都是非关联 → **自付 gas 的 tier-2/3 与 session-key op 会被 7562 严格的公共 bundler 拒绝；有质押 paymaster 赞助时才放行**。剩余动作：写进 `known-issues.md`；加 Pimlico session-key 探针作为回归测试；确认 SuperPaymaster 质押状态（sp#616） | S3 前置 | 业务含义：今天 tier-2/3 只能靠我们自己的 relay 或质押的 SP，不是"任何 bundler 都能发" | 无 |
 | A2 | S1：SignerSet / Policy 切分 + 差分测试 | S1 | 消灭 val/exec 脱节类 bug 的温床；为 8141 入口铺路 | 无 |
 | A3 | S2：`_guardBegin / _guardCommit` 混合模式 + 与 parser 并跑对比 | S2 | 回答 KI-14 / #194；对齐 atomic batch | 无 |
 | A4 | S3 账户端：`committeeRoot` 镜像 + 0x0b k-of-n ECDSA algId（mock 节点测试） | S3 | tier2 gas 629k → ~110k；验证期不读第三方存储 | D2 |
