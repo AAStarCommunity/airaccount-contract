@@ -480,7 +480,9 @@ ABI: use [`abi/AAStarAirAccountV7.full.json`](abi/AAStarAirAccountV7.full.json) 
 | Document | Description |
 |----------|-------------|
 | [docs/M4.5-weighted-signature-research.md](docs/M4.5-weighted-signature-research.md) | Weighted signature design research — threshold schemes, bitmap encoding |
-| [docs/eip-8130-upgrade-plan.md](docs/eip-8130-upgrade-plan.md) | EIP-8130 upgrade path analysis — non-upgradable migration strategy |
+| [docs/eip-8141-analysis.md](docs/eip-8141-analysis.md) | EIP-7701 → EIP-8141 Frame Transaction — spec calibration + three structural mismatches with AirAccount |
+| [docs/eip-8141-action-plan.md](docs/eip-8141-action-plan.md) | EIP-8141 action plan — five abstraction seams (SignerSet / effect guard / committee root / TxContext / payment), decisions D1–D3, phases A–C |
+| [docs/eip-8130-upgrade-plan.md](docs/eip-8130-upgrade-plan.md) | EIP-8130 upgrade path analysis — non-upgradable migration strategy (superseded by the 8141 plan above) |
 | [docs/validator-upgrade-pq-analysis.md](docs/validator-upgrade-pq-analysis.md) | Post-quantum validator analysis — CRYSTALS-Dilithium, EVM precompile timeline |
 
 ---
